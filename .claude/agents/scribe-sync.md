@@ -3,7 +3,7 @@ name: scribe-sync
 description: "Usar cuando haya que crear o actualizar tickets Jira (proyecto CA) o páginas Notion a partir de un spec ya redactado por el Supervisor. No redacta contenido nuevo; transcribe."
 model: haiku
 effort: low
-tools: Read, Bash, mcp__48b59900-2394-4350-9fb7-7c341974954b__createJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__editJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__searchJiraIssuesUsingJql, mcp__48b59900-2394-4350-9fb7-7c341974954b__getJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__transitionJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__addCommentToJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__createIssueLink, mcp__4f36201b-062c-4f92-8478-8b0ef4774e00__notion-fetch, mcp__4f36201b-062c-4f92-8478-8b0ef4774e00__notion-update-page, mcp__4f36201b-062c-4f92-8478-8b0ef4774e00__notion-create-pages
+tools: Read, Bash, mcp__48b59900-2394-4350-9fb7-7c341974954b__createJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__editJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__searchJiraIssuesUsingJql, mcp__48b59900-2394-4350-9fb7-7c341974954b__getJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__getTransitionsForJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__transitionJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__addCommentToJiraIssue, mcp__48b59900-2394-4350-9fb7-7c341974954b__createIssueLink, mcp__4f36201b-062c-4f92-8478-8b0ef4774e00__notion-fetch, mcp__4f36201b-062c-4f92-8478-8b0ef4774e00__notion-update-page, mcp__4f36201b-062c-4f92-8478-8b0ef4774e00__notion-create-pages
 maxTurns: 60
 ---
 
