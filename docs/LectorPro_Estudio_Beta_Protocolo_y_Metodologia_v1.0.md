@@ -2,7 +2,7 @@
 
 ## *Protocolo metodología benchmarks y plan de análisis*
 
-Versión 1.0 de trabajo  
+Versión 1.2 de trabajo  
 16 de septiembre de 2026  
 Chile
 
@@ -47,7 +47,7 @@ Los benchmarks incluidos son umbrales iniciales de producto e investigación. De
 
 LectorPro es una plataforma de apoyo a la evaluación formativa de lectura oral y comprensión. El beta cerrado evaluará el recorrido completo desde la invitación y el consentimiento del apoderado hasta la captura de audio, el análisis automatizado, la revisión de resultados y la comunicación de información útil para adultos responsables.
 
-El diseño combina telemetría de producto, pruebas técnicas, comparación con revisión humana, observación de sesiones, encuestas e entrevistas. La unidad primaria de análisis es la sesión de lectura; el estudiante es una unidad agrupadora y el colegio constituye un nivel organizacional. Los resultados se reportarán de manera agregada y por segmentos suficientemente amplios.
+El diseño combina telemetría de producto, pruebas técnicas, comparación con revisión humana, observación de sesiones, encuestas e entrevistas. La unidad primaria de análisis es la sesión de lectura; el estudiante es una unidad agrupadora y el colegio constituye un nivel organizacional. Los resultados se reportarán de manera agregada y por segmentos suficientemente amplios, con anonimización irreversible; prohibidos audio, citas identificables o seudonimizadas y cualquier resultado reidentificable (DEC-BR-001).
 
 ## **Resultado que debe producir el estudio**
 
@@ -105,7 +105,7 @@ No existe todavía evidencia suficiente para afirmar que el recorrido completo d
 * Calificaciones, promoción, sanciones o decisiones significativas automatizadas.  
 * Comparación pública entre estudiantes, docentes o colegios.  
 * ReaderLab y módulos clínicos no incluidos expresamente en el beta.  
-* Entrenamiento general de modelos de terceros con datos del estudio.
+* Entrenamiento de modelos, propios o de terceros, y mejora de producto con datos del beta (prohibido también contractualmente para encargados y subencargados; DEC-BR-001).
 
 # **3 Objetivos preguntas e hipótesis**
 
@@ -146,7 +146,7 @@ Estudio prospectivo de métodos mixtos, sin grupo de control, organizado en olas
 | Actor | Participación |
 | :---- | :---- |
 | Estudiantes | Lectura, comprensión, percepción de la experiencia y derecho a detenerse. |
-| Apoderados | Información, consentimiento, encuesta y entrevistas opcionales. |
+| Apoderados | Información, consentimiento, encuesta y entrevistas opcionales (instrumento de consentimiento propio del apoderado, fuera del consentimiento del estudiante; DEC-BR-001, punto 4). |
 | Docentes | Coordinación, observación, interpretación y utilidad pedagógica. |
 | Colegios | Gobernanza, habilitación, soporte e información agregada. |
 | Equipo LectorPro | Operación, revisión, soporte, seguridad y análisis. |
@@ -176,9 +176,11 @@ Estudio prospectivo de métodos mixtos, sin grupo de control, organizado en olas
 | 0 Calibración | 12 a 20 sesiones supervisadas | Estabilizar audio, eventos y revisión humana | Sin fallos críticos; replay cerrado |
 | 1 Colegio inicial | 20 a 30 estudiantes; 1 colegio | Validar operación real y UX | Consentimiento, seguridad y calidad cumplen |
 | 2 Beta cerrado | 60 a 100 estudiantes; 2 a 3 colegios | Estimar desempeño y variabilidad | Benchmarks primarios o plan correctivo acotado |
-| 3 Expansión | 150 a 250 acumulados; 3 a 5 colegios y familias individuales | Robustez, segmentos y operación | GO formal para piloto |
+| 3 Expansión | 150 a 250 acumulados; 3 a 5 colegios | Robustez, segmentos y operación | GO formal para piloto |
 
 &nbsp;
+
+**Nota.** El canal de familias individuales queda fuera de todo el primer beta (DEC-BR-013, precisión 2026-09-23): el primer beta es exclusivamente institution-mediated; ese escenario pasa a una fase futura (Beta 2).
 
 **Nota de muestra** Los rangos son una propuesta operacional, no un cálculo de potencia para eficacia pedagógica. Con 100 sesiones y una proporción observada cercana a 95%, el margen aproximado de un intervalo de confianza de 95% es ±4,3 puntos porcentuales; con 200, cerca de ±3 puntos.
 
@@ -205,8 +207,8 @@ Se utilizará muestreo intencional estratificado por ciclo escolar y contexto de
 
 1. Crear invitación asociada a estudio, cohorte y estudiante seudónimo.  
 2. Enviar invitación al apoderado desde LectorPro y verificar control del email mediante código de un solo uso.  
-3. Presentar información y decisiones separadas para participación, audio, análisis automatizado y usos opcionales.  
-4. Emitir estado mínimo de elegibilidad; colegio y profesor no reciben el detalle de decisiones opcionales.  
+3. Presentar información y decisiones separadas para las cuatro finalidades requeridas: participación (STUDY_PARTICIPATION), audio (AUDIO_RECORDING), análisis automatizado (AUTOMATED_ANALYSIS) y revisión humana (HUMAN_REVIEW); sin usos opcionales en el primer beta (DEC-BR-001).  
+4. Emitir estado mínimo de elegibilidad; colegio y profesor reciben únicamente el estado de elegibilidad de cada estudiante, nunca el detalle de decisiones por finalidad (DEC-BR-001: sin finalidades opcionales en el primer beta).  
 5. Explicar la actividad al estudiante y confirmar que desea continuar.  
 6. Ejecutar chequeo de dispositivo, micrófono, ruido y conectividad.  
 7. Realizar lectura y comprensión con capacidad visible de pausar o detener.  
@@ -414,7 +416,7 @@ El objetivo es WCAG 2.2 nivel AA en los flujos web críticos, con pruebas de tec
 
 ## **Consentimiento y autorización**
 
-El apoderado se verifica mediante email y código de un solo uso. Las decisiones se registran por estudiante y por finalidad: participación, grabación de audio, análisis automatizado y usos opcionales. Si se rechaza o revoca una finalidad indispensable, el estudiante no participa o deja de participar. Los usos opcionales nunca condicionan el beta.
+El apoderado se verifica mediante email y código de un solo uso. Las decisiones se registran por estudiante y por finalidad, las cuatro requeridas: STUDY_PARTICIPATION, AUDIO_RECORDING, AUTOMATED_ANALYSIS y HUMAN_REVIEW; sin usos opcionales en el primer beta (DEC-BR-001). Si se rechaza o revoca una finalidad indispensable, el estudiante no participa o deja de participar.
 
 ## **Datos previstos**
 
@@ -422,10 +424,10 @@ El apoderado se verifica mediante email y código de un solo uso. Las decisiones
 | :---- | :---- | :---- |
 | Identificadores | Invitación y relación con cohorte | Seudonimizar; no solicitar RUT por defecto |
 | Consentimiento | Demostrar decisión y vigencia | Versión, hash, fecha, canal y verificación. Dos capas según DEC-BR-007: ledger de integridad sin PII directa (plazo en LEGAL DECISION) y capa PII con supresión verificable. La eliminación de cierre (§ del cierre) incluye backups dentro de las 8 semanas |
-| Audio | Ejecutar y validar la evaluación | Máximo 12 meses desde la grabación |
-| Derivados | Transcripción, alineación y métricas | Plazo igual o menor al audio identificable |
+| Audio | AUDIO_RECORDING + HUMAN_REVIEW | Máximo 12 meses desde la grabación |
+| Derivados | AUTOMATED_ANALYSIS | Plazo igual o menor al audio identificable |
 | Telemetría | Calidad y UX | Eventos mínimos y sin contenido innecesario |
-| Investigación | Encuestas, observación y entrevistas | Separar identidad del análisis |
+| Investigación | STUDY_PARTICIPATION (encuestas y observación al estudiante) | Separar identidad del análisis. Entrevistas a apoderados: instrumento de consentimiento propio del apoderado, fuera del consentimiento del estudiante (DEC-BR-001, punto 4) |
 
 &nbsp;
 
@@ -570,3 +572,5 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 ## **Control de versiones**
 
 v1.1 — 2026-09-23 — Cambios por DEC-BR-002, DEC-BR-007, DEC-BR-012 y DEC-BR-013 (Notion, Open Decisions — Build Blockers). Ediciones puntuales en §2 (responsable, canales), §10 (retención), §11 (responsabilidades, semana 0, aprobaciones).
+
+v1.2 — 2026-09-23 — DEC-BR-001 aceptada (taxonomía de finalidades, HUMAN_REVIEW requerida, sin opcionales, publicación agregada, entrevistas a apoderados con instrumento propio); precisión DEC-BR-013 (Ola 3 sin familias individuales).

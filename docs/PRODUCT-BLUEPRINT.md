@@ -61,8 +61,8 @@ Cualquier excepción a estos principios es un human gate.
 - Población: estudiantes de 1° a 7° básico en una cohorte autorizada. Apoderado verificado por email y código, con decisiones vigentes por estudiante (Protocolo §4).
 - Participan estudiantes, apoderados, docentes, colegios y el equipo LectorPro (Protocolo §4). Solo apoderados, colegios y administradores son actores de Consent App (Master Plan encabezado).
 - Olas: 0 Calibración (12 a 20 sesiones), 1 Colegio inicial (20 a 30 estudiantes), 2 Beta cerrado (60 a 100), 3 Expansión (150 a 250 acumulados) (Protocolo §4).
-- Finalidades del estudio: participación, grabación de audio y análisis automatizado son obligatorias. Los usos opcionales nunca condicionan el beta. Rechazar o revocar una finalidad indispensable implica que el estudiante no participa o deja de participar (Protocolo §4, §10).
-- Las finalidades candidatas de Consent App (participation, recording, processing, humanReview, research, productImprovement) no son texto legal definitivo. Antes del piloto, cada una necesita base jurídica, obligatoriedad, datos, encargado, retención, consumidor y consecuencia de rechazo (Master Plan §15). `LEGAL DECISION`.
+- Finalidades del estudio (DEC-BR-001, aceptada 2026-09-23): STUDY_PARTICIPATION, AUDIO_RECORDING, AUTOMATED_ANALYSIS y HUMAN_REVIEW, las cuatro requeridas, sin finalidades opcionales en el primer beta. Rechazar o revocar una finalidad indispensable implica que el estudiante no participa o deja de participar (Protocolo §4, §10).
+- PRODUCT_IMPROVEMENT y AI_TRAINING quedan prohibidas en el primer beta, también por contrato con encargados y subencargados. No existe finalidad RESEARCH: la publicación de resultados queda dentro de STUDY_PARTICIPATION, agregada y anonimizada de forma irreversible (DEC-BR-001). Antes del piloto, cada finalidad necesita base jurídica, datos, encargado, retención, consumidor y consecuencia de rechazo (Master Plan §15). `LEGAL DECISION`.
 - Invitación: el colegio la envía con un enlace de token aleatorio, expirable, revocable y de un solo propósito. El colegio no necesita entregar inicialmente el email del apoderado (Master Plan §11).
 - Datos obligatorios del colegio: `studyRef`, `schoolRef`, `studentRef`. Nombre y curso son opcionales según UX/legal (Master Plan §9). `LEGAL DECISION`.
 - Todo texto legal lleva la marca `DRAFT — LEGAL REVIEW REQUIRED` hasta su aprobación (Master Plan §53, M2).
@@ -80,7 +80,7 @@ Registro canónico: Notion "14 — Decisions & Registers / Open Decisions — Bu
 
 | ID | Tema | Estado | Master Plan §55 |
 |---|---|---|---|
-| DEC-BR-001 | Optional purposes for LectorPro Beta | OPEN | Finalidades exactas del consentimiento. `LEGAL DECISION` |
+| DEC-BR-001 | Optional purposes for LectorPro Beta | ACEPTADA 2026-09-23: taxonomía canónica STUDY_PARTICIPATION/AUDIO_RECORDING/AUTOMATED_ANALYSIS/HUMAN_REVIEW, las cuatro requeridas, sin opcionales | Finalidades exactas del consentimiento. `LEGAL DECISION` |
 | DEC-BR-002 | Controller / Processor by processing activity | LEGAL REVIEW · ampliación ACEPTADA 2026-09-23 como hipótesis (R1) | Responsable/Encargado por tratamiento. `LEGAL DECISION` (finding R1) |
 | DEC-BR-003 | DecisionMaker authority assurance | LEGAL REVIEW | Nivel de prueba de autoridad del apoderado. `LEGAL DECISION` |
 | DEC-BR-004 | Minimum Subject recognition data | OPEN | Datos mínimos que entrega el colegio |
@@ -92,6 +92,6 @@ Registro canónico: Notion "14 — Decisions & Registers / Open Decisions — Bu
 | DEC-BR-010 | PIA readiness | OPEN | — (historia CA-85) |
 | DEC-BR-011 | Documentary source of truth: Notion para conocimiento humano, repo solo ejecutable | ACCEPTED (2026-09-23) | — |
 | DEC-BR-012 | Revisión ética: dueño y gate | ACCEPTED (2026-09-23): Study Lead dueño, gate en G2 | — |
-| DEC-BR-013 | First beta channel scope: solo canal colegio | ACCEPTED (2026-09-23) | — |
+| DEC-BR-013 | First beta channel scope: solo canal colegio | ACCEPTED (2026-09-23) (precisión 2026-09-23: todo el primer beta, incl. Ola 3) | — |
 
 El Master Plan §55 exige resolver las cinco decisiones de la última columna antes de pasar M2.

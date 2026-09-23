@@ -1,6 +1,6 @@
 # Consent App — Master Plan
 
-> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011).
+> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011), DEC-BR-001 (§15, §37) y precisión DEC-BR-013 (2026-09-23).
 
 **Producto:** LectorPro Consent App
 **Dominio:** `consent.lectorpro.cl`
@@ -542,19 +542,18 @@ Integrity Verification
 
 El modelo será granular.
 
-Conceptualmente:
+Taxonomía fijada por DEC-BR-001 (aceptada 2026-09-23, Notion). Sin finalidades opcionales en el primer beta.
 
-```text
-Consent
-├── participation
-├── recording
-├── processing
-├── humanReview
-├── research
-└── productImprovement
-```
+| Código | Requerida | Descripción breve | Equivalencia antigua |
+|---|---|---|---|
+| `STUDY_PARTICIPATION` | Sí | Participación del estudiante en el estudio; incluye la publicación de resultados en forma agregada y anonimizada de manera irreversible (sin audio, citas identificables o seudonimizadas). | participation |
+| `AUDIO_RECORDING` | Sí | Grabación de audio del estudiante durante la evaluación. | recording |
+| `AUTOMATED_ANALYSIS` | Sí | Análisis automatizado del audio/derivados por el motor. | processing |
+| `HUMAN_REVIEW` | Sí | Revisión humana de una muestra de audio para validar el motor. | humanReview |
 
-**Estos propósitos son candidatos, no el texto legal definitivo.**
+`PRODUCT_IMPROVEMENT` y `AI_TRAINING` quedan prohibidas en el primer beta, también por contrato con encargados y subencargados. No existe finalidad `RESEARCH`: la publicación agregada y anonimizada queda dentro de `STUDY_PARTICIPATION`.
+
+> Nota conceptual: grabación y revisión humana son operaciones asociadas a la finalidad de evaluación/validación del estudio; Consent App mantiene `HUMAN_REVIEW` separada por trazabilidad.
 
 Antes del piloto deben definirse exactamente:
 
@@ -573,12 +572,7 @@ No debe existir una finalidad sin consumidor o tratamiento claramente definido.
 
 Particularmente:
 
-```text
-AI_TRAINING
-HUMAN_REVIEW
-```
-
-no deben activarse simplemente “por si acaso”.
+`HUMAN_REVIEW` sí se activa en el primer beta porque hay necesidad concreta de validación (Protocolo §7). `AI_TRAINING` y `PRODUCT_IMPROVEMENT` quedan prohibidas: no deben activarse simplemente "por si acaso" (DEC-BR-001).
 
 ---
 
@@ -1232,6 +1226,8 @@ LectorPro
     ↓
 GET consent status
 ```
+
+> Ejemplo no canónico. Reemplazado por PRD §17 y DEC-BR-001 (2026-09-23): las finalidades son códigos `STUDY_PARTICIPATION`, `AUDIO_RECORDING`, `AUTOMATED_ANALYSIS`, `HUMAN_REVIEW`; `humanReview` no es opcional; `evaluation`/`aiTraining` no existen; `studyRef`/`studentRef` corresponden a `contextRef`/`subjectRef`.
 
 Ejemplo conceptual:
 
