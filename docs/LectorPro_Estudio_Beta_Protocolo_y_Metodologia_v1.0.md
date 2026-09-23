@@ -2,7 +2,7 @@
 
 ## *Protocolo metodología benchmarks y plan de análisis*
 
-Versión 1.2 de trabajo  
+Versión 1.3 de trabajo  
 16 de septiembre de 2026  
 Chile
 
@@ -96,7 +96,7 @@ No existe todavía evidencia suficiente para afirmar que el recorrido completo d
 
 * Lectura oral de textos definidos para el estudio y preguntas de comprensión asociadas.  
 * Flujo independiente de consentimiento, captura, procesamiento, revisión y resultados.  
-* Cohortes escolares e individuales, diferenciadas en el análisis.  
+* Cohortes escolares, mediadas exclusivamente por la institución (DEC-BR-013, 2026-09-23).  
 * Evaluación técnica de ASR, alineamiento CTC, reconciliación y reglas posteriores según versión activa.
 
 ## **Fuera de alcance**
@@ -105,7 +105,7 @@ No existe todavía evidencia suficiente para afirmar que el recorrido completo d
 * Calificaciones, promoción, sanciones o decisiones significativas automatizadas.  
 * Comparación pública entre estudiantes, docentes o colegios.  
 * ReaderLab y módulos clínicos no incluidos expresamente en el beta.  
-* Entrenamiento de modelos, propios o de terceros, y mejora de producto con datos del beta (prohibido también contractualmente para encargados y subencargados; DEC-BR-001).
+* Entrenamiento de modelos, propios o de terceros, mejora de producto e inclusión del audio del beta en cualquier corpus permanente de regresión, entrenamiento o mejora de producto (prohibido también contractualmente para encargados y subencargados; DEC-BR-001, precisión CA-98). Un corpus futuro deberá provenir de datos sintéticos, licenciados o públicos, o de un contexto de tratamiento separado.
 
 # **3 Objetivos preguntas e hipótesis**
 
@@ -329,9 +329,11 @@ La unidad mínima será palabra o evento temporalmente alineado; la sesión cons
 | Conjunto | Uso | Regla |
 | :---- | :---- | :---- |
 | Desarrollo | Ajustar reglas y corregir errores | No se usa para declarar desempeño final |
-| Regresión | Evitar reaparición de defectos | Versionado e inmutable por release |
+| Regresión | Evitar reaparición de defectos | Versionado por release. Puede incluir audio del beta solo durante el estudio y mientras corresponda su conservación; no es un corpus permanente (CA-98) |
 | Validación beta | Estimar desempeño real | Pauta sellada antes de comparación |
 | Holdout | Comprobación final | No visible durante tuning |
+
+Al cumplirse la condición de supresión, el audio del beta y sus derivados no anonimizados se eliminan también de todos los conjuntos (desarrollo, regresión, validación beta, holdout) y de cualquier dataset auxiliar, exportación o copia de trabajo, con registro de destrucción. Solo pueden conservarse resultados irreversiblemente anonimizados (DEC-BR-001, CA-98).
 
 &nbsp;
 
@@ -443,8 +445,8 @@ La voz no se tratará como identificador biométrico por defecto. Debe documenta
 * Cifrado en tránsito y reposo, secretos administrados y mínimo privilegio.  
 * Auditoría de accesos administrativos con motivo, alcance y caducidad.  
 * Pruebas negativas de acceso entre colegios y eliminación de cualquier fuga activa antes del beta.  
-* Contratos y evaluación de proveedores, incluyendo prohibición de entrenamiento no autorizado.  
-* Plan de incidentes, backups probados, restauración y eliminación verificable.
+* Contratos y evaluación de proveedores, incluyendo prohibición de entrenamiento de modelos y de mejora de producto con datos del beta (DEC-BR-001).  
+* Plan de incidentes, backups probados, restauración y eliminación verificable. Ningún backup, snapshot, réplica o restauración extiende la retención de una categoría. Para eso se segrega el almacenamiento por retención, se aplica lifecycle/TTL por categoría, se destruyen claves como defensa adicional y se mantiene un registro de supresiones que se reaplica antes de devolver datos restaurados a uso operativo (DEC-BR-007, CA-97).
 
 ## **Revisión ética**
 
@@ -486,7 +488,7 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 * Chequeo diario de incidentes, consentimiento, fallos y calidad de captura.  
 * Revisión semanal de scorecard, riesgos, issues y capacidad de soporte.  
 * Gate formal entre olas con evidencia firmada.  
-* Congelamiento del dataset y del plan antes del informe final.
+* Congelamiento del dataset y del plan antes del informe final; el congelamiento no suspende la supresión (CA-98).
 
 ## **Artefactos de salida**
 
@@ -574,3 +576,5 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 v1.1 — 2026-09-23 — Cambios por DEC-BR-002, DEC-BR-007, DEC-BR-012 y DEC-BR-013 (Notion, Open Decisions — Build Blockers). Ediciones puntuales en §2 (responsable, canales), §10 (retención), §11 (responsabilidades, semana 0, aprobaciones).
 
 v1.2 — 2026-09-23 — DEC-BR-001 aceptada (taxonomía de finalidades, HUMAN_REVIEW requerida, sin opcionales, publicación agregada, entrevistas a apoderados con instrumento propio); precisión DEC-BR-013 (Ola 3 sin familias individuales).
+
+v1.3 — 2026-09-23 — Precisiones DEC-BR-007 (CA-97: almacenamiento segregado por retención, lifecycle/TTL por categoría, destrucción de claves como defensa adicional y registro de supresiones reaplicado en cada restauración) y DEC-BR-001 (CA-98: audio del beta excluido de todo corpus permanente, supresión en datasets auxiliares, solo resultados irreversiblemente anonimizados). Ediciones en §2 (fuera de alcance), §7 (conjuntos de datos), §10 (controles de seguridad) y §11 (cadencia). Precisión DEC-BR-013: alcance solo cohortes escolares (§2).
