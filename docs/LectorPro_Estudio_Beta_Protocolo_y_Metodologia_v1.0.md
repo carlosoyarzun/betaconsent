@@ -2,7 +2,7 @@
 
 ## *Protocolo metodología benchmarks y plan de análisis*
 
-Versión 1.3 de trabajo  
+Versión 1.4 de trabajo  
 16 de septiembre de 2026  
 Chile
 
@@ -45,7 +45,7 @@ Los benchmarks incluidos son umbrales iniciales de producto e investigación. De
 
 # **1 Resumen ejecutivo**
 
-LectorPro es una plataforma de apoyo a la evaluación formativa de lectura oral y comprensión. El beta cerrado evaluará el recorrido completo desde la invitación y el consentimiento del apoderado hasta la captura de audio, el análisis automatizado, la revisión de resultados y la comunicación de información útil para adultos responsables.
+LectorPro es una plataforma de apoyo a la evaluación formativa de lectura oral y comprensión. El beta cerrado evaluará el recorrido completo desde la invitación y el consentimiento del apoderado hasta la captura de audio, el análisis automatizado, la revisión de resultados y la comunicación de resultados formativos individuales solo al apoderado; colegio y docentes reciben únicamente el estado de elegibilidad e información agregada (CA-109, PRIV-CNS-007).
 
 El diseño combina telemetría de producto, pruebas técnicas, comparación con revisión humana, observación de sesiones, encuestas e entrevistas. La unidad primaria de análisis es la sesión de lectura; el estudiante es una unidad agrupadora y el colegio constituye un nivel organizacional. Los resultados se reportarán de manera agregada y por segmentos suficientemente amplios, con anonimización irreversible; prohibidos audio, citas identificables o seudonimizadas y cualquier resultado reidentificable (DEC-BR-001).
 
@@ -61,7 +61,7 @@ El diseño combina telemetría de producto, pruebas técnicas, comparación con 
 
 | Principio | Aplicación en el estudio |
 | :---- | :---- |
-| Formativo | Sin nota, sanción ni diagnóstico; orienta mejoras de producto y apoyo pedagógico. |
+| Formativo | Sin nota, sanción ni diagnóstico. Sus hallazgos agregados e irreversiblemente anonimizados informan la decisión sobre la siguiente ola, los cambios necesarios antes del piloto y el diseño del apoyo pedagógico; los datos del beta no se usan para mejora de producto ni entrenamiento de modelos (DEC-BR-001, CA-102). |
 | Progresivo | La exposición aumenta solo cuando los gates anteriores están cerrados. |
 | Humano en el circuito | La IA se compara con evidencia humana y los casos inciertos se revisan. |
 | Privacidad desde el diseño | Datos mínimos, consentimiento por estudiante, finalidad separada y retención limitada. |
@@ -129,7 +129,7 @@ Determinar si LectorPro puede operar un beta cerrado seguro, comprensible y téc
 | RQ1 | ¿Se completa el flujo sin ayuda? | Al menos 90% completa la sesión válida | Funnel, errores y observación |
 | RQ2 | ¿El audio es utilizable? | Al menos 95% de sesiones genera audio procesable | QA de audio y reintentos |
 | RQ3 | ¿El motor coincide con revisión humana? | Concordancia sustancial en métricas y eventos definidos | Pauta ciega y métricas de error |
-| RQ4 | ¿Los resultados se comprenden? | Adultos distinguen señal formativa de diagnóstico | Tareas de comprensión e entrevistas |
+| RQ4 | ¿Los resultados se comprenden? | Apoderados distinguen señal formativa de diagnóstico en los resultados de su estudiante; docentes, en informes de ejemplo ficticios | Tareas de comprensión y entrevistas |
 | RQ5 | ¿Los controles de privacidad operan? | 100% de sesiones corresponde a consentimiento vigente | Auditoría y pruebas negativas |
 | RQ6 | ¿Hay diferencias materiales por contexto? | Ningún segmento presenta degradación sin explicación y mitigación | Análisis estratificado |
 
@@ -139,7 +139,7 @@ Determinar si LectorPro puede operar un beta cerrado seguro, comprensible y téc
 
 ## **Diseño**
 
-Estudio prospectivo de métodos mixtos, sin grupo de control, organizado en olas secuenciales. Cada ola utiliza una versión identificada del producto, un conjunto de textos definido y criterios de decisión cerrados antes de analizar resultados. Los cambios de motor, interfaz o reglas se registran y no se mezclan silenciosamente en el mismo análisis.
+Estudio prospectivo de métodos mixtos, sin grupo de control, organizado en olas secuenciales. Cada ola utiliza una versión identificada del producto, un conjunto de textos definido y criterios de decisión cerrados antes de analizar resultados. Los cambios de motor, interfaz o reglas se registran y no se mezclan silenciosamente en el mismo análisis. Los cambios entre olas se desarrollan sin datos del beta y se orientan solo por hallazgos agregados (§7, CA-102).
 
 ## **Población**
 
@@ -147,7 +147,7 @@ Estudio prospectivo de métodos mixtos, sin grupo de control, organizado en olas
 | :---- | :---- |
 | Estudiantes | Lectura, comprensión, percepción de la experiencia y derecho a detenerse. |
 | Apoderados | Información, consentimiento, encuesta y entrevistas opcionales (instrumento de consentimiento propio del apoderado, fuera del consentimiento del estudiante; DEC-BR-001, punto 4). |
-| Docentes | Coordinación, observación, interpretación y utilidad pedagógica. |
+| Docentes | Coordinación logística, observación cualitativa de las sesiones (condiciones, comprensión de instrucciones, bienestar e incidentes, sin registrar juicios sobre el desempeño lector individual) y valoración de la utilidad pedagógica en entrevistas, a partir de informes de ejemplo ficticios. Reciben únicamente el estado de elegibilidad de cada estudiante; no reciben decisiones por finalidad ni resultados individuales del motor en el primer beta (CA-109). |
 | Colegios | Gobernanza, habilitación, soporte e información agregada. |
 | Equipo LectorPro | Operación, revisión, soporte, seguridad y análisis. |
 
@@ -208,7 +208,7 @@ Se utilizará muestreo intencional estratificado por ciclo escolar y contexto de
 1. Crear invitación asociada a estudio, cohorte y estudiante seudónimo.  
 2. Enviar invitación al apoderado desde LectorPro y verificar control del email mediante código de un solo uso.  
 3. Presentar información y decisiones separadas para las cuatro finalidades requeridas: participación (STUDY_PARTICIPATION), audio (AUDIO_RECORDING), análisis automatizado (AUTOMATED_ANALYSIS) y revisión humana (HUMAN_REVIEW); sin usos opcionales en el primer beta (DEC-BR-001).  
-4. Emitir estado mínimo de elegibilidad; colegio y profesor reciben únicamente el estado de elegibilidad de cada estudiante, nunca el detalle de decisiones por finalidad (DEC-BR-001: sin finalidades opcionales en el primer beta).  
+4. Emitir estado mínimo de elegibilidad; colegio y profesor reciben únicamente el estado de elegibilidad de cada estudiante, nunca el detalle de decisiones por finalidad ni resultados individuales, que se comunican solo al apoderado (DEC-BR-001: sin finalidades opcionales en el primer beta; CA-109, PRIV-CNS-007).  
 5. Explicar la actividad al estudiante y confirmar que desea continuar.  
 6. Ejecutar chequeo de dispositivo, micrófono, ruido y conectividad.  
 7. Realizar lectura y comprensión con capacidad visible de pausar o detener.  
@@ -328,12 +328,14 @@ La unidad mínima será palabra o evento temporalmente alineado; la sesión cons
 
 | Conjunto | Uso | Regla |
 | :---- | :---- | :---- |
-| Desarrollo | Ajustar reglas y corregir errores | No se usa para declarar desempeño final |
-| Regresión | Evitar reaparición de defectos | Versionado por release. Puede incluir audio del beta solo durante el estudio y mientras corresponda su conservación; no es un corpus permanente (CA-98) |
+| Desarrollo | Corregir errores y ajustar reglas entre olas | Solo datos sintéticos, licenciados o públicos; nunca audio, derivados, anotaciones ni resultados del beta (DEC-BR-001, CA-102, RULE-CNS-028) |
+| Regresión | Evitar reaparición de defectos | Versionado por release. Puede incluir audio del beta solo durante el estudio y mientras corresponda su conservación; no es un corpus permanente (CA-98). Con audio del beta solo se ejecuta sobre versiones candidatas congeladas y registradas, como medición; no es insumo de ajuste (CA-102, RULE-CNS-028) |
 | Validación beta | Estimar desempeño real | Pauta sellada antes de comparación |
-| Holdout | Comprobación final | No visible durante tuning |
+| Holdout | Comprobación final | No visible durante el desarrollo de cambios entre olas |
 
 Al cumplirse la condición de supresión, el audio del beta y sus derivados no anonimizados se eliminan también de todos los conjuntos (desarrollo, regresión, validación beta, holdout) y de cualquier dataset auxiliar, exportación o copia de trabajo, con registro de destrucción. Solo pueden conservarse resultados irreversiblemente anonimizados (DEC-BR-001, CA-98).
+
+Validar el motor (medir una versión congelada contra la pauta humana) es parte de las finalidades aprobadas. Ajustarlo con datos del beta (reglas, umbrales, léxicos, configuración o modelos) es mejora de producto y está prohibido en el primer beta. Los hallazgos agregados e irreversiblemente anonimizados pueden orientar cambios desarrollados con datos no-beta (DEC-BR-001, CA-102, RULE-CNS-028).
 
 &nbsp;
 
@@ -395,7 +397,7 @@ Las notas y entrevistas se codificarán con un esquema inicial —comprensión, 
 * Las instrucciones están adaptadas al curso y se presentan una por vez.  
 * La interfaz muestra claramente cómo iniciar, pausar, repetir o detener.  
 * Un error técnico no se presenta como fracaso del estudiante.  
-* El adulto recibe resultados con límites, contexto y acciones posibles.  
+* El apoderado recibe los resultados individuales con límites, contexto y acciones posibles; colegio y docentes no reciben resultados individuales (CA-109, PRIV-CNS-007).  
 * El flujo completo funciona en mobile y no depende de precisión motora fina.
 
 ## **Accesibilidad**
@@ -476,7 +478,7 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 | Semana 0 | Gates legales, éticos, seguridad, instrumentos y capacitación | GO para ola 0 |
 | Semana 1 | Calibración supervisada | Defectos y replay |
 | Semana 2 | Ola 1 en colegio inicial | Reporte rápido |
-| Semana 3 | Análisis, fixes y revalidación | GO o NO GO |
+| Semana 3 | Análisis, fixes desarrollados sin datos del beta (§7) y revalidación | GO o NO GO |
 | Semanas 4 y 5 | Ola 2 beta cerrado | Dataset de validación |
 | Semana 6 | Análisis mixto y entrevistas | Hallazgos integrados |
 | Semanas 7 y 8 | Cierre, eliminación, reportes y decisión | Readiness para piloto |
@@ -578,3 +580,5 @@ v1.1 — 2026-09-23 — Cambios por DEC-BR-002, DEC-BR-007, DEC-BR-012 y DEC-BR-
 v1.2 — 2026-09-23 — DEC-BR-001 aceptada (taxonomía de finalidades, HUMAN_REVIEW requerida, sin opcionales, publicación agregada, entrevistas a apoderados con instrumento propio); precisión DEC-BR-013 (Ola 3 sin familias individuales).
 
 v1.3 — 2026-09-23 — Precisiones DEC-BR-007 (CA-97: almacenamiento segregado por retención, lifecycle/TTL por categoría, destrucción de claves como defensa adicional y registro de supresiones reaplicado en cada restauración) y DEC-BR-001 (CA-98: audio del beta excluido de todo corpus permanente, supresión en datasets auxiliares, solo resultados irreversiblemente anonimizados). Ediciones en §2 (fuera de alcance), §7 (conjuntos de datos), §10 (controles de seguridad) y §11 (cadencia). Precisión DEC-BR-013: alcance solo cohortes escolares (§2).
+
+v1.4 — 2026-09-23 — Precisión DEC-BR-001 (2026-09-23), CA-102: validar sí, ajustar no; cambios entre olas desarrollados sin datos del beta y orientados solo por hallazgos agregados irreversiblemente anonimizados (RULE-CNS-028). CA-109: colegio y docentes reciben solo estado de elegibilidad e información agregada; resultados individuales solo al apoderado; interpretación docente sobre informes de ejemplo ficticios (PRIV-CNS-007). Ediciones en §1 (resumen, principios), §3 (RQ4), §4 (diseño, población), §5 (procedimiento), §7 (conjuntos de datos), §9 (criterios de experiencia) y §11 (cronograma).
