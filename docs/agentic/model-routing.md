@@ -1,8 +1,8 @@
 # Model Routing — Consent App
 
 **ID:** ADR-AI-001
-**Estado:** PROPUESTO (requiere aprobación de Carlos Oyarzún)
-**Fecha:** 2026-09-23
+**Estado:** APROBADO (Carlos Oyarzún, 2026-09-23; Jira CA-65)
+**Fecha:** 2026-09-23 (propuesto y aprobado)
 **Cumple:** Notion 09 → "AI Engineering & Evals" (documentar model selection, routing, prompts, tools, MCP strategy, fallback, cost/latency).
 **Gobernado por:** Master Plan §32 (IA), §33 (Modelo Agentic), §36 (Contradiction Protocol); Notion 09 (AI Boundaries, Agent Guardrails & Human Gates, Agent Audit).
 
@@ -103,6 +103,6 @@ Ahorro esperado en sesiones de lectura/organización: 60–70%. En sesiones de i
 
 ## 11. Pendientes para cerrar este ADR
 
-- [ ] Aprobación de Carlos.
+- [x] Aprobación de Carlos (2026-09-23).
 - [ ] Ticket CA para completar `agent/roles.yaml`, `permissions.yaml`, `tools.yaml`, `escalation.yaml` (Notion 16).
 - [ ] Medir una sesión real con y sin routing y reemplazar las estimaciones de §8.
