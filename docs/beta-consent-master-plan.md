@@ -1,6 +1,6 @@
 # Consent App — Master Plan
 
-> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011), DEC-BR-001 (§15, §37) y precisión DEC-BR-013 (2026-09-23).
+> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011), DEC-BR-001 (§15, §37), §6 (DEC-BR-001, 2026-09-23) y precisión DEC-BR-013 (2026-09-23).
 
 **Producto:** LectorPro Consent App
 **Dominio:** `consent.lectorpro.cl`
@@ -195,14 +195,15 @@ Debe analizarse **por actividad de tratamiento**.
 
 Ejemplo conceptual:
 
-| Tratamiento            | Responsable | Encargado | Estado       |
-| ---------------------- | ----------- | --------- | ------------ |
-| Invitación del colegio | TBD         | TBD       | Legal review |
-| Gestión de Consent App | TBD         | TBD       | Legal review |
-| Evaluación de lectura  | TBD         | TBD       | Legal review |
-| Procesamiento IA       | TBD         | TBD       | Legal review |
-| Investigación          | TBD         | TBD       | Legal review |
-| Entrenamiento futuro   | TBD         | TBD       | Legal review |
+| Tratamiento                                                                | Responsable                    | Encargado                       | Estado                                         |
+| --------------------------------------------------------------------------- | ------------------------------- | --------------------------------- | ------------------------------------------------ |
+| Invitación del colegio                                                     | TBD                             | TBD                                | Legal review                                    |
+| Gestión de Consent App                                                     | TBD                             | TBD                                | Legal review                                    |
+| Evaluación de lectura                                                      | TBD                             | TBD                                | Legal review                                    |
+| Procesamiento IA                                                           | TBD                             | TBD                                | Legal review                                    |
+| Validación del motor y publicación agregada (dentro de STUDY_PARTICIPATION) | TBD / Legal review (DEC-BR-002)  | TBD / Legal review (DEC-BR-002)    | Legal review                                    |
+| Revisión humana (HUMAN_REVIEW)                                            | TBD / Legal review (DEC-BR-002)  | TBD / Legal review (DEC-BR-002)    | Legal review                                    |
+| Mejora de producto / entrenamiento de modelos                             | Prohibido en el primer beta (DEC-BR-001); no entra en la matriz | Prohibido en el primer beta (DEC-BR-001); no entra en la matriz | Prohibido en el primer beta (DEC-BR-001) |
 
 Debe existir:
 
