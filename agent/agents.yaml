@@ -1,0 +1,141 @@
+version: 1
+policy_precedence: "docs/agentic/model-routing.md > this file"
+
+supervisor:
+  model: claude-fable-5-1
+  role: orchestrator
+  may_read_sources: false
+  may_edit_product_code: false
+
+tiers:
+  T0:
+    name: Supervisor
+    model: claude-fable-5-1
+  T1:
+    name: Reasoning
+    model: claude-opus-5
+  T2:
+    name: Execution
+    model: claude-sonnet-5
+  T3:
+    name: Retrieval
+    model: claude-haiku-4-5
+
+agents:
+  - name: medina-scout
+    master_plan_role: MEDINA
+    tier: T3
+    model: claude-haiku-4-5
+    effort: low
+    max_turns: 30
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: medina-synth
+    master_plan_role: MEDINA
+    tier: T2
+    model: claude-sonnet-5
+    effort: medium
+    max_turns: 40
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: santos-product
+    master_plan_role: SANTOS
+    tier: T1
+    model: claude-opus-5
+    effort: high
+    max_turns: 40
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: ravena-ux
+    master_plan_role: RAVENA
+    tier: T2
+    model: claude-sonnet-5
+    effort: medium
+    max_turns: 40
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: gaona-measure
+    master_plan_role: GAONA
+    tier: T2
+    model: claude-sonnet-5
+    effort: medium
+    max_turns: 30
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: lampone-architect
+    master_plan_role: LAMPONE
+    tier: T1
+    model: claude-opus-5
+    effort: high
+    max_turns: 50
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: lampone-security
+    master_plan_role: LAMPONE
+    tier: T1
+    model: claude-opus-5
+    effort: high
+    max_turns: 50
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: lampone-dev
+    master_plan_role: LAMPONE
+    tier: T2
+    model: claude-sonnet-5
+    effort: medium
+    max_turns: 80
+    may_write_code: true
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: lampone-qa
+    master_plan_role: LAMPONE
+    tier: T2
+    model: claude-sonnet-5
+    effort: medium
+    max_turns: 60
+    may_write_code: true
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: auditor-contradictions
+    master_plan_role: TRANSVERSAL
+    tier: T1
+    model: claude-opus-5
+    effort: high
+    max_turns: 40
+    may_write_code: false
+    may_write_jira: false
+    may_write_notion: false
+
+  - name: scribe-sync
+    master_plan_role: TRANSVERSAL
+    tier: T3
+    model: claude-haiku-4-5
+    effort: low
+    max_turns: 60
+    may_write_code: false
+    may_write_jira: true
+    may_write_notion: true
+
+human_gates:
+  - "Toda LEGAL DECISION y todo copy legal de producción."
+  - "Cambios a la semántica de consentimiento, revocación, elegibilidad."
+  - "Excepciones a principios no negociables."
+  - "Releases con riesgo residual crítico aceptado."
+  - "Cierre de cualquier DEC-BR-### o ADR-###."
+  - "Cualquier push, merge a main, deploy, o borrado en Jira/Notion."

@@ -1,0 +1,171 @@
+/* ==========================================================================
+   LectorPro Design System — Tokens (CSS Custom Properties)
+   Agnostic & Zero Dependencies
+   ========================================================================== */
+
+:root {
+  /* Native form controls (checkbox, select, scrollbars) follow the app theme,
+     not the OS appearance. "light dark" let macOS Dark Mode paint dark checkboxes
+     on a light page. Light is the default; [data-theme] blocks override below. */
+  color-scheme: light;
+  accent-color: #2563EB;
+
+  /* Typography */
+  --lp-font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --lp-font-size-xs: 12px;
+  --lp-font-size-sm: 14px;
+  --lp-font-size-md: 16px;
+  --lp-font-size-lg: 18px;
+  --lp-font-size-xl: 20px;
+  --lp-font-size-xxl: 24px;
+  --lp-font-size-xxxl: 30px;
+
+  --lp-font-weight-regular: 400;
+  --lp-font-weight-medium: 500;
+  --lp-font-weight-semibold: 600;
+  --lp-font-weight-bold: 700;
+  --lp-font-weight-extrabold: 800;
+
+  --lp-line-height-none: 1;
+  --lp-line-height-tight: 1.25;
+  --lp-line-height-normal: 1.5;
+  --lp-line-height-loose: 1.75;
+
+  /* Spacing Scale */
+  --lp-spacing-4: 4px;
+  --lp-spacing-8: 8px;
+  --lp-spacing-12: 12px;
+  --lp-spacing-16: 16px;
+  --lp-spacing-20: 20px;
+  --lp-spacing-24: 24px;
+  --lp-spacing-32: 32px;
+  --lp-spacing-40: 40px;
+  --lp-spacing-48: 48px;
+  --lp-spacing-64: 64px;
+
+  --lp-spacing-xs: var(--lp-spacing-4);
+  --lp-spacing-sm: var(--lp-spacing-8);
+  --lp-spacing-md: var(--lp-spacing-12);
+  --lp-spacing-lg: var(--lp-spacing-16);
+  --lp-spacing-xl: var(--lp-spacing-20);
+  --lp-spacing-xxl: var(--lp-spacing-24);
+  --lp-spacing-xxxl: var(--lp-spacing-32);
+
+  /* Border Radius */
+  --lp-radius-sm: 6px;
+  --lp-radius-md: 8px;
+  --lp-radius-lg: 12px;
+  --lp-radius-xl: 16px;
+  --lp-radius-full: 999px;
+
+  /* Shadows */
+  --lp-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --lp-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --lp-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --lp-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+  /* Layout Dimensions */
+  --lp-sidebar-width: 296px;
+  --lp-sidebar-collapsed-width: 80px;
+  --lp-topbar-height: 72px;
+  --lp-page-padding-x: 32px;
+  --lp-page-padding-y: 32px;
+  --lp-page-max-width: 1280px;
+
+  /* Z-Index Hierarchy */
+  --lp-z-dropdown: 1000;
+  --lp-z-sticky: 1020;
+  --lp-z-fixed: 1030;
+  --lp-z-modal-backdrop: 1040;
+  --lp-z-modal: 1050;
+  --lp-z-popover: 1060;
+  --lp-z-tooltip: 1070;
+
+  /* Static Colors & Feedback */
+  --lp-color-feedback-success: #10B981;
+  --lp-color-feedback-success-bg: rgba(16, 185, 129, 0.12);
+  --lp-color-feedback-warning: #F59E0B;
+  --lp-color-feedback-warning-bg: rgba(245, 158, 11, 0.12);
+  --lp-color-feedback-error: #EF4444;
+  --lp-color-feedback-error-bg: rgba(239, 68, 68, 0.12);
+  --lp-color-feedback-info: #3B82F6;
+  --lp-color-feedback-info-bg: rgba(59, 130, 246, 0.12);
+
+  /* Gamification Tokens */
+  --lp-color-gamification-streak: #F97316;
+  --lp-color-gamification-star: #EAB308;
+  --lp-color-gamification-badge: #6366F1;
+  --lp-gradient-hero: linear-gradient(45deg, #4F46E5, #06B6D4);
+  --lp-gradient-action: linear-gradient(45deg, #FF6B6B, #FF8787);
+
+  /* Semantic Theme Tokens (Light Default) */
+  --lp-bg-page: #F8FAFC;
+  --lp-bg-subtle: #F1F5F9;
+
+  --lp-surface-default: #FFFFFF;
+  --lp-surface-elevated: #FFFFFF;
+  --lp-surface-active: #F1F5F9;
+
+  --lp-text-primary: #1E293B;
+  --lp-text-secondary: #475569;
+  --lp-text-muted: #64748B;
+
+  --lp-border-default: #E2E8F0;
+  --lp-border-strong: #CBD5E1;
+
+  --lp-action-primary: #1A5CB8;
+  --lp-action-primary-hover: #164FA0;
+  --lp-action-primary-text: #FFFFFF;
+  --lp-action-secondary: #EAF3FC;
+  --lp-action-secondary-hover: #C5DEFF;
+  --lp-action-secondary-text: #1A5CB8;
+}
+
+/* Explicit Theme Override Attributes (Light is Default) */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --lp-bg-page: #0F172A;
+  --lp-bg-subtle: #1E293B;
+
+  --lp-surface-default: #1E293B;
+  --lp-surface-elevated: #334155;
+  --lp-surface-active: #334155;
+
+  --lp-text-primary: #F8FAFC;
+  --lp-text-secondary: #CBD5E1;
+  --lp-text-muted: #94A3B8;
+
+  --lp-border-default: #334155;
+  --lp-border-strong: #475569;
+
+  --lp-action-primary: #2563EB;
+  --lp-action-primary-hover: #1D4ED8;
+  --lp-action-primary-text: #FFFFFF;
+  --lp-action-secondary: #1E293B;
+  --lp-action-secondary-hover: #334155;
+  --lp-action-secondary-text: #60A5FA;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --lp-bg-page: #F8FAFC;
+  --lp-bg-subtle: #F1F5F9;
+
+  --lp-surface-default: #FFFFFF;
+  --lp-surface-elevated: #FFFFFF;
+  --lp-surface-active: #F1F5F9;
+
+  --lp-text-primary: #1E293B;
+  --lp-text-secondary: #475569;
+  --lp-text-muted: #64748B;
+
+  --lp-border-default: #E2E8F0;
+  --lp-border-strong: #CBD5E1;
+
+  --lp-action-primary: #1A5CB8;
+  --lp-action-primary-hover: #164FA0;
+  --lp-action-primary-text: #FFFFFF;
+  --lp-action-secondary: #EAF3FC;
+  --lp-action-secondary-hover: #C5DEFF;
+  --lp-action-secondary-text: #1A5CB8;
+}
