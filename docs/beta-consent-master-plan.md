@@ -1,6 +1,6 @@
 # Consent App — Master Plan
 
-> Copia de referencia. Fuente de verdad: Notion (DEC-BR-011). Enmiendas registradas en Notion y no reflejadas aquí salvo P08 (DEC-BR-007) y la nota de §56 (DEC-BR-011).
+> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011).
 
 **Producto:** LectorPro Consent App
 **Dominio:** `consent.lectorpro.cl`

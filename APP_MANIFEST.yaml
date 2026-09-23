@@ -8,7 +8,7 @@ legal_basis_reference: "Ley 21.719"
 sources_of_truth:
   notion: { description: "Fuente de verdad del conocimiento humano (DEC-BR-011)", url: "https://app.notion.com/p/Consent-App-3e3ee09a7fbc80b1b87ee3f73de6f10c" }
   jira: { description: "Backlog y estado de trabajo, proyecto CA", url: "https://carlos-oyarzun.atlassian.net/jira/software/projects/CA/boards/5/backlog" }
-  repo: { description: "Fuente de verdad solo de lo ejecutable (specs, contratos, código, tests, evidencia)", url: "local" }
+  repo: { description: "Fuente de verdad solo de lo ejecutable (specs, contratos, código, tests, evidencia)", url: "local", note: "Excepción transitoria (DEC-BR-011, precisión 2026-09-23): texto íntegro autoritativo del Master Plan y del Protocolo hasta su importación a Notion" }
 
 directories:
   - { path: specs/, purpose: "Specs ejecutables (YAML) derivadas de REQ/RULE aprobados" }

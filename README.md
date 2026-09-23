@@ -12,6 +12,8 @@ Plataforma standalone de consentimiento. Primer caso: Estudio Beta de LectorPro 
    https://carlos-oyarzun.atlassian.net/jira/software/projects/CA/boards/5/backlog
 3. **Este repo**: fuente de verdad SOLO de lo ejecutable (specs, contratos, código, tests, evidencia). Ver `docs/SOURCE-OF-TRUTH.md`.
 
+Excepción transitoria (DEC-BR-011, precisión 2026-09-23): el texto íntegro del Master Plan y del Protocolo vive en `docs/` hasta importarlo a Notion; sus enmiendas nacen como DEC-BR en Notion.
+
 En caso de conflicto entre Notion y el repo, prevalece Notion y se emite un FINDING (Contradiction Protocol, Master Plan §36).
 
 ## Cómo se trabaja con Claude Code

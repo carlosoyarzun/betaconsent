@@ -38,6 +38,10 @@ RUNTIME EVIDENCE
 
 El código nunca redefine silenciosamente una regla de producto.
 
+## Precisión 2026-09-23
+
+Precisión (2026-09-23): el texto íntegro del Master Plan (`docs/beta-consent-master-plan.md`) y del Protocolo del Estudio Beta (`docs/LectorPro_Estudio_Beta_Protocolo_y_Metodologia_v1.0.md`, v1.1) existe hoy solo en el repo; Notion tiene un resumen. Hasta que se importen a Notion, la copia del repo es el texto íntegro autoritativo de esos dos documentos, y toda enmienda se registra primero como entrada DEC-BR en Notion y luego se aplica al archivo con nota de versión. El resto del conocimiento humano (decisiones, reglas, requisitos, UX, gates) sigue siendo Notion-first.
+
 ## Regla de conflicto
 
 Si el repo y Notion se contradicen, prevalece Notion. Se detiene la implementación y se emite un FINDING clasificado P0/P1/P2 (Contradiction Protocol, Master Plan §36) al Supervisor; no se resuelve en silencio.

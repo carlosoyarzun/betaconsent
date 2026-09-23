@@ -1,6 +1,6 @@
 # PRODUCT-BLUEPRINT: Consent App
 
-Estado: BORRADOR (M0, CA-17) · Fuente de verdad: Notion "Consent App" (DEC-BR-011); este archivo es copia de referencia.
+Estado: BORRADOR (M0, CA-17) · Fuente de verdad: Notion "Consent App" (DEC-BR-011); este archivo es copia de referencia; Master Plan y Protocolo íntegros en `docs/` (precisión DEC-BR-011).
 
 > Documento exigido en M0 Foundation (Master Plan §53). Su contenido anticipa entregables de M1 (Problem, Purpose, Scope, Actors) cuyo cierre corresponde a Gate G1 (Master Plan §53). No crea requisitos nuevos: cada afirmación cita su fuente.
 
