@@ -1,0 +1,41 @@
+name: Consent App
+slug: consent-app
+domain: consent.lectorpro.cl
+status: pre-build
+first_case: LectorPro Beta Study
+legal_basis_reference: "Ley 21.719"
+
+sources_of_truth:
+  notion: { description: "Fuente de verdad del conocimiento humano (DEC-BR-011)", url: "https://app.notion.com/p/Consent-App-3e3ee09a7fbc80b1b87ee3f73de6f10c" }
+  jira: { description: "Backlog y estado de trabajo, proyecto CA", url: "https://carlos-oyarzun.atlassian.net/jira/software/projects/CA/boards/5/backlog" }
+  repo: { description: "Fuente de verdad solo de lo ejecutable (specs, contratos, código, tests, evidencia)", url: "local" }
+
+directories:
+  - { path: specs/, purpose: "Specs ejecutables (YAML) derivadas de REQ/RULE aprobados" }
+  - { path: contracts/, purpose: "Contratos OpenAPI/AsyncAPI y JSON Schemas" }
+  - { path: ai/, purpose: "Config y prompts de IA en producción (no agentic dev)" }
+  - { path: traceability/, purpose: "Matrices de trazabilidad REQ-spec-contract-code-test" }
+  - { path: registers/, purpose: "Registros operativos (p.ej. registro de tratamiento)" }
+  - { path: evidence/, purpose: "Evidencia de runtime append-only" }
+  - { path: tests/, purpose: "Tests unitarios, integración, E2E, TEST-CNS-###" }
+  - { path: infra/, purpose: "Infraestructura como código" }
+  - { path: db/, purpose: "Esquemas y migraciones de base de datos" }
+  - { path: src/, purpose: "Código de producto" }
+  - { path: agent/, purpose: "Configuración de subagentes (agents.yaml) y logs locales" }
+
+agents_config: agent/agents.yaml
+
+doc_map:
+  - { path: README.md, purpose: "Qué es la app, estado, fuentes de verdad, estructura" }
+  - { path: AGENTS.md, purpose: "Índice de los 11 subagentes" }
+  - { path: CLAUDE.md, purpose: "Reglas operativas para Claude Code en este repo" }
+  - { path: APP_MANIFEST.yaml, purpose: "Este archivo: metadata ejecutable de la app" }
+  - { path: docs/SOURCE-OF-TRUTH.md, purpose: "DEC-BR-011 y cadena de precedencia §35" }
+  - { path: docs/PRODUCT-BLUEPRINT.md, purpose: "Blueprint de producto, borrador M0/CA-17, copia de referencia de Notion" }
+  - { path: docs/beta-consent-master-plan.md, purpose: "Master Plan canónico" }
+  - { path: docs/LectorPro_Estudio_Beta_Protocolo_y_Metodologia_v1.0.md, purpose: "Protocolo y metodología del estudio" }
+  - { path: docs/legal/ley-21719.md, purpose: "Referencia legal Ley 21.719" }
+  - { path: docs/agentic/model-routing.md, purpose: "ADR-AI-001, routing de modelos por subagente" }
+  - { path: design-system/docs/agent-rules.md, purpose: "Reglas de agentes para el Design System" }
+  - { path: design-system/docs/html-guide.md, purpose: "Guía HTML del Design System" }
+  - { path: design-system/docs/usage.md, purpose: "Guía de uso del Design System" }

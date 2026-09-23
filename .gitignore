@@ -5,6 +5,9 @@
 .claude/worktrees/
 .claude/settings.local.json
 
+# Log local de hooks (no es evidencia versionada)
+agent/audit.log
+
 # Secrets / entornos
 .env
 .env.*
