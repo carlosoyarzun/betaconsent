@@ -4,9 +4,9 @@
 Plataforma standalone de consentimiento (primer caso: Estudio Beta de LectorPro, `consent.lectorpro.cl`).
 Estado: **pre-build**. Solo existe documentación. No hay código, specs ejecutables ni contratos todavía.
 
-## Fuentes de verdad (precedencia, Master Plan §35)
-1. `docs/beta-consent-master-plan.md` (canónico, 2.232 líneas: no leerlo entero desde la sesión principal)
-2. Notion "Consent App" (hub 00–16): decisiones DEC-BR-###, ADR-###, workstreams BR-##, gates G0–G9
+## Fuentes de verdad (precedencia, Master Plan §35; DEC-BR-011 del 2026-09-23 resuelve R8/CA-82)
+1. Notion "Consent App" (hub 00–16): fuente de verdad de todo el conocimiento humano: Master Plan, decisiones DEC-BR-###, ADR-###, reglas, requisitos, workstreams BR-##, gates G0–G9. Ante conflicto con cualquier copia en el repo prevalece Notion y se emite FINDING.
+2. `docs/beta-consent-master-plan.md` (2.232 líneas: no leerlo entero desde la sesión principal) y `docs/LectorPro_Estudio_Beta_Protocolo_y_Metodologia_v1.0.md` (v1.1): texto íntegro autoritativo de ambos hasta importarlos a Notion (precisión DEC-BR-011, 2026-09-23); toda enmienda nace como DEC-BR en Notion y se aplica al archivo con nota de versión. Fuera de eso, el repo es fuente de verdad solo de lo ejecutable: `specs/`, `contracts/`, `agent/`, `ai/`, `traceability/`, `registers/`, `evidence/`, `tests/`, `infra/`, `db/`, `src/`. Los 34 subdominios `docs/` del §56 no se replican en el repo.
 3. Jira proyecto `CA` (backlog y estado de trabajo)
 4. `docs/LectorPro_Estudio_Beta_Protocolo_y_Metodologia_v1.0.md` (protocolo del estudio)
 5. `docs/legal/ley-21719.md` (referencia legal, 1.722 líneas)
@@ -43,7 +43,8 @@ Ningún modelo decide: existencia de consentimiento, aceptación del usuario, va
 Toda incertidumbre jurídica se marca `LEGAL DECISION` y requiere revisión humana.
 
 ## Human gates (Carlos decide, nadie más)
-LEGAL DECISION y copy legal de producción · cambios a semántica de consentimiento/revocación/elegibilidad · excepciones a principios no negociables · cierre de DEC-BR-### y ADR-### · release con riesgo crítico aceptado · `git push`, merge a `main`, deploy, borrados en Jira/Notion.
+LEGAL DECISION y copy legal de producción · cambios a semántica de consentimiento/revocación/elegibilidad · excepciones a principios no negociables · cierre de DEC-BR-### y ADR-### · release con riesgo crítico aceptado · merge de ramas a `main`, deploy, borrados en Jira/Notion.
+Excepción (Carlos, 2026-09-23): `git push` de commits de docs/config a `main` no requiere confirmación; se reporta el hash. Nunca force-push.
 
 ## Contradiction Protocol (Master Plan §36)
 Contradicción spec↔code, requirement↔UX, law↔product, privacy↔analytics, security↔architecture, contract↔implementation → detener, clasificar P0/P1/P2, emitir FINDING. P0 nunca se resuelve en silencio.
