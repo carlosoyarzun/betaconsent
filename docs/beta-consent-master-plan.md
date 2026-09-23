@@ -1,5 +1,7 @@
 # Consent App — Master Plan
 
+> Copia de referencia. Fuente de verdad: Notion (DEC-BR-011). Enmiendas registradas en Notion y no reflejadas aquí salvo P08 (DEC-BR-007) y la nota de §56 (DEC-BR-011).
+
 **Producto:** LectorPro Consent App
 **Dominio:** `consent.lectorpro.cl`
 **Estado inicial:** Pre-pilot / construcción
@@ -122,7 +124,7 @@ P06  No preselected consent choices.
 
 P07  Revocation must be possible.
 
-P08  Historical evidence is append-only.
+P08  Historical evidence is append-only. (precisión DEC-BR-007, 2026-09-23: aplica a la capa de integridad, sin PII directa; la capa de PII tiene supresión verificable)
 
 P09  Current state is derived from evidence.
 
@@ -2119,6 +2121,8 @@ Antes de pasar M2 deberían estar resueltas:
 ---
 
 # 56. Arquitectura documental
+
+> DEC-BR-011 (2026-09-23): los 34 subdominios `docs/` no se replican en el repo; viven en Notion. Solo aplican las carpetas ejecutables.
 
 El repositorio seguirá los dominios que ya definimos:
 

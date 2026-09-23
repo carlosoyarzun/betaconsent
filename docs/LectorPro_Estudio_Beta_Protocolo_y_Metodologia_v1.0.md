@@ -20,10 +20,10 @@ Los benchmarks incluidos son umbrales iniciales de producto e investigación. De
 | :---- | :---- |
 | Sponsor | \[Entidad legal o representante\] |
 | Responsable del estudio | \[Nombre y rol\] |
-| Responsable del tratamiento | LectorPro sujeto a confirmación jurídica por tratamiento |
+| Responsable del tratamiento | Por determinar por actividad de tratamiento (DEC-BR-002, Notion). Canal colegio: hipótesis en revisión jurídica |
 | Estado | Borrador para revisión |
 | Población | Estudiantes de 1° a 7° básico con autorización válida |
-| Canales | Colegios participantes y familias individuales |
+| Canales | Colegios participantes. El canal de familias individuales queda fuera del primer beta (DEC-BR-013, 2026-09-23) |
 | Producto | LectorPro y aplicación independiente de consentimiento |
 | Duración propuesta | 8 semanas por ciclo completo de beta |
 
@@ -421,7 +421,7 @@ El apoderado se verifica mediante email y código de un solo uso. Las decisiones
 | Categoría | Finalidad | Regla |
 | :---- | :---- | :---- |
 | Identificadores | Invitación y relación con cohorte | Seudonimizar; no solicitar RUT por defecto |
-| Consentimiento | Demostrar decisión y vigencia | Versión, hash, fecha, canal y verificación |
+| Consentimiento | Demostrar decisión y vigencia | Versión, hash, fecha, canal y verificación. Dos capas según DEC-BR-007: ledger de integridad sin PII directa (plazo en LEGAL DECISION) y capa PII con supresión verificable. La eliminación de cierre (§ del cierre) incluye backups dentro de las 8 semanas |
 | Audio | Ejecutar y validar la evaluación | Máximo 12 meses desde la grabación |
 | Derivados | Transcripción, alineación y métricas | Plazo igual o menor al audio identificable |
 | Telemetría | Calidad y UX | Eventos mínimos y sin contenido innecesario |
@@ -455,7 +455,7 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 | Rol | Responsabilidad |
 | :---- | :---- |
 | Sponsor | Autoriza recursos, riesgo residual y continuidad. |
-| Study Lead | Mantiene protocolo, ejecución, desviaciones y cierre. |
+| Study Lead | Mantiene protocolo, ejecución, desviaciones y cierre. Revisión ética: determinación escrita de si corresponde Comité Ético Científico y, si aplica, gestión de su aprobación (DEC-BR-012). |
 | Research Lead | Instrumentos, pauta humana, análisis y evidencia. |
 | Product Engineering | Versión, eventos, estabilidad y correcciones. |
 | Privacy Legal | Bases, textos, DPIA, contratos y derechos. |
@@ -469,7 +469,7 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 
 | Periodo | Actividad | Salida |
 | :---- | :---- | :---- |
-| Semana 0 | Gates legales, seguridad, instrumentos y capacitación | GO para ola 0 |
+| Semana 0 | Gates legales, éticos, seguridad, instrumentos y capacitación | GO para ola 0 |
 | Semana 1 | Calibración supervisada | Defectos y replay |
 | Semana 2 | Ola 1 en colegio inicial | Reporte rápido |
 | Semana 3 | Análisis, fixes y revalidación | GO o NO GO |
@@ -563,5 +563,10 @@ Debe resolverse por escrito si corresponde revisión por un Comité Ético Cient
 | Privacy Legal | \[ \] | \[ \] | \[ \] | \[ \] |
 | Security | \[ \] | \[ \] | \[ \] | \[ \] |
 | Research | \[ \] | \[ \] | \[ \] | \[ \] |
+| Determinación ética escrita (y aprobación de comité si aplica) | Study Lead | \[ \] | \[ \] | Previa a la emisión de invitaciones (DEC-BR-012) |
 
 &nbsp;
+
+## **Control de versiones**
+
+v1.1 — 2026-09-23 — Cambios por DEC-BR-002, DEC-BR-007, DEC-BR-012 y DEC-BR-013 (Notion, Open Decisions — Build Blockers). Ediciones puntuales en §2 (responsable, canales), §10 (retención), §11 (responsabilidades, semana 0, aprobaciones).

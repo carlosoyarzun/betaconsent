@@ -31,6 +31,7 @@ Estado: BORRADOR (M0, CA-17) · Fuente de verdad: Notion "Consent App" (DEC-BR-0
 - CRM, plataforma de marketing, gestión escolar, suite de gestión de estudiantes (Master Plan §41).
 - Remediación de datos aguas abajo: Consent App registra la decisión y el sistema consumidor actúa sobre los datos que mantiene (Master Plan §22).
 - Por defecto no se solicita: RUT, dirección, fecha de nacimiento, diagnósticos, PIE, notas, historial académico, fotografía, documento de identidad (Master Plan §9).
+- Canal de familias individuales en el primer beta (DEC-BR-013, 2026-09-23).
 
 ## 4. Actores
 
@@ -44,6 +45,7 @@ Estado: BORRADOR (M0, CA-17) · Fuente de verdad: Notion "Consent App" (DEC-BR-0
 
 - Relaciones declarables: Madre, Padre, Representante legal, Persona con cuidado personal, Otro. El caso "Otro" puede requerir tratamiento especial (Master Plan §10). `LEGAL DECISION`.
 - Responsable/Encargado se define por actividad de tratamiento y hoy está en TBD / Legal review (Master Plan §6). `LEGAL DECISION`.
+- Canal único del primer beta: colegio (DEC-BR-013).
 
 ## 5. Principios no negociables (Master Plan §4)
 
@@ -79,16 +81,17 @@ Registro canónico: Notion "14 — Decisions & Registers / Open Decisions — Bu
 | ID | Tema | Estado | Master Plan §55 |
 |---|---|---|---|
 | DEC-BR-001 | Optional purposes for LectorPro Beta | OPEN | Finalidades exactas del consentimiento. `LEGAL DECISION` |
-| DEC-BR-002 | Controller / Processor by processing activity | LEGAL REVIEW | Responsable/Encargado por tratamiento. `LEGAL DECISION` (finding R1) |
+| DEC-BR-002 | Controller / Processor by processing activity | LEGAL REVIEW · ampliación ACEPTADA 2026-09-23 como hipótesis (R1) | Responsable/Encargado por tratamiento. `LEGAL DECISION` (finding R1) |
 | DEC-BR-003 | DecisionMaker authority assurance | LEGAL REVIEW | Nivel de prueba de autoridad del apoderado. `LEGAL DECISION` |
 | DEC-BR-004 | Minimum Subject recognition data | OPEN | Datos mínimos que entrega el colegio |
 | DEC-BR-005 | Eligibility ownership | OPEN | — |
 | DEC-BR-006 | Revocation downstream behavior | OPEN / LEGAL REVIEW | Consecuencia exacta de la revocación en LectorPro. `LEGAL DECISION` |
-| DEC-BR-007 | Consent App retention schedule | LEGAL REVIEW | — (finding R5) |
+| DEC-BR-007 | Consent App retention schedule | LEGAL REVIEW · ampliación ACEPTADA 2026-09-23 como dirección: dos capas (R5) | — (finding R5) |
 | DEC-BR-008 | Architecture stack | OPEN | — |
 | DEC-BR-009 | Evidence integrity construction | OPEN | — |
 | DEC-BR-010 | PIA readiness | OPEN | — (historia CA-85) |
 | DEC-BR-011 | Documentary source of truth: Notion para conocimiento humano, repo solo ejecutable | ACCEPTED (2026-09-23) | — |
-| DEC-BR-012 | Revisión ética: dueño y gate | PROPUESTA (borrador en curso, finding R3) | — |
+| DEC-BR-012 | Revisión ética: dueño y gate | ACCEPTED (2026-09-23): Study Lead dueño, gate en G2 | — |
+| DEC-BR-013 | First beta channel scope: solo canal colegio | ACCEPTED (2026-09-23) | — |
 
 El Master Plan §55 exige resolver las cinco decisiones de la última columna antes de pasar M2.
