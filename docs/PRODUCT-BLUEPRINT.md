@@ -39,7 +39,7 @@ Estado: BORRADOR (M0, CA-17) · Fuente de verdad: Notion "Consent App" (DEC-BR-0
 |---|---|---|
 | Apoderado / tutor | Usuario principal. Verifica email, declara su relación y su autoridad, decide, revoca y ejerce derechos | Master Plan encabezado, §10, §13 |
 | Estudiante (titular, NNA) | Sujeto de la autorización. Se identifica con una referencia pseudónima (`studentRef`), no con RUT | Master Plan §9 |
-| Establecimiento educacional (Organization / tenant) | Envía la invitación y entrega los datos mínimos del estudiante. Aislado por tenant | Master Plan §8, §9, §11 |
+| Establecimiento educacional (School = tenant, `tenant_id`) | Envía la invitación y entrega los datos mínimos del estudiante. Aislado por `tenant_id` (única clave de aislamiento); Organization/sostenedor es una capa opcional DEFERRED/OUT OF SCOPE en la Iteración 0 (DEC-BR-015, DEC-BR-016, ACEPTADAS 2026-09-25 para IT0) | Master Plan §8, §9, §11 |
 | Administrador autorizado | Opera el Admin MVP | Master Plan encabezado, §41 |
 | LectorPro (sistema consumidor) | Consulta el estado del consentimiento y recibe eventos. No recibe identidad del apoderado por defecto | Master Plan §37, §38 |
 
@@ -93,5 +93,9 @@ Registro canónico: Notion "14 — Decisions & Registers / Open Decisions — Bu
 | DEC-BR-011 | Documentary source of truth: Notion para conocimiento humano, repo solo ejecutable | ACCEPTED (2026-09-23) | — |
 | DEC-BR-012 | Revisión ética: dueño y gate | ACCEPTED (2026-09-23): Study Lead dueño, gate en G2 | — |
 | DEC-BR-013 | First beta channel scope: solo canal colegio | ACCEPTED (2026-09-23) (precisión 2026-09-23: todo el primer beta, incl. Ola 3) | — |
+| DEC-BR-014 | Iteración 0: esqueleto construible en paralelo a G2/G3, con gates propios G-IT0-ENTRY/G-IT0-EXIT (no canónicos) | ACCEPTED — scope IT0 sintético (2026-09-25) | — |
+| DEC-BR-015 | Aislamiento de tenant: tenant = establecimiento, clave `tenant_id` | ACCEPTED — partes IT0 (2026-09-25) | — |
+| DEC-BR-016 | Organization / School / Tenant / Account boundaries | ACCEPTED — partes IT0 (2026-09-25) | — |
+| DEC-BR-017 | Consent Revocation and Recovery (modifica partes de DEC-BR-006) | ACCEPTED (2026-09-25) | Consecuencia exacta de la revocación en LectorPro. `LEGAL DECISION` |
 
-El Master Plan §55 exige resolver las cinco decisiones de la última columna antes de pasar M2.
+El Master Plan §55 exige resolver las cinco decisiones de la última columna antes de pasar M2. DEC-BR-014…017 son ACCEPTED "para IT0 sintético": no cierran las decisiones legales pendientes ni habilitan datos reales (SEC F01, Master Plan §54).

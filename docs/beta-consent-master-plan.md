@@ -1,6 +1,6 @@
 # Consent App — Master Plan
 
-> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011), DEC-BR-001 (§15, §37), §6 (DEC-BR-001, 2026-09-23) y precisión DEC-BR-013 (2026-09-23).
+> Texto íntegro autoritativo del Master Plan hasta su importación a Notion (DEC-BR-011, precisión 2026-09-23). Toda enmienda nace como DEC-BR en Notion y se aplica aquí con nota. Enmiendas aplicadas: P08 (DEC-BR-007), nota §56 (DEC-BR-011), DEC-BR-001 (§15, §37), §6 (DEC-BR-001, 2026-09-23), precisión DEC-BR-013 (2026-09-23) y, 2026-09-25, DEC-BR-014 (Iteración 0, ACCEPTED — scope IT0 sintético), DEC-BR-015 y DEC-BR-016 (partes IT0, ACCEPTED; §8), DEC-BR-017 (revocación y recuperación, ACCEPTED; §22) y ADR-001/002/006 (ACCEPTED — scope IT0 sintético; §53 M10; ADR-003/proveedor cloud pendiente, no se documenta aquí).
 
 **Producto:** LectorPro Consent App
 **Dominio:** `consent.lectorpro.cl`
@@ -269,12 +269,14 @@ BETA_2026_02
 
 # 8. Modelo de organización
 
-Debe existir separación explícita entre organizaciones.
+> DEC-BR-015 y DEC-BR-016 (partes IT0; ACCEPTED, Carlos, 2026-09-25): `tenant_id` es la única clave de aislamiento (School 1—1 Tenant); "Organization" en este §8 se lee como el tenant/colegio, no como el sostenedor. Organization como capa opcional sobre 1..N tenants y BillingSubscription quedan **DEFERRED / OUT OF SCOPE IT0** (diseñadas en DEC-BR-016, sin esquemas ni roles en la Iteración 0). La participación del establecimiento en el estudio es `SchoolParticipation` (no "Studies" directamente); la participación del estudiante es `Enrollment`. Cerrar un Enrollment (traslado, `LEFT_SCHOOL`) nunca es retiro de consentimiento: el retiro solo existe como revocación (§22, DEC-BR-017).
+
+Debe existir separación explícita entre organizaciones (tenants).
 
 ```text
-Organization
+Tenant (School)
      │
-     ├── Studies
+     ├── SchoolParticipation (estudio)
      │
      ├── Invitations
      │
@@ -742,6 +744,8 @@ No necesita exponer IDs internos sensibles.
 ---
 
 # 22. Revocación
+
+> DEC-BR-017 "Consent Revocation and Recovery" (ACCEPTED, Carlos, 2026-09-25) modifica y, donde indica, supersede las partes correspondientes de DEC-BR-006 sobre revocación. Invariante: `eligibility_to_participate != eligibility_to_revoke` — una pausa de tenant/estudio, una BillingSubscription vencida, un Enrollment cerrado o un traslado de colegio nunca pueden impedir una revocación; las rutas de derechos exigen que el tenant exista, no que esté activo. Además de la revocación normal (`authPath=OTP`), existen una vía de recuperación de un solo uso al canal ya asociado (`authPath=RECOVERY`, `recoveryMethod=CHANNEL_LINK`) y un caso humano con doble control (`recoveryMethod=HUMAN_ASSISTED`) para cuando el apoderado no puede usar el OTP; ninguna vía puede terminar en denegación por expiración: escala a atención humana. Solo el apoderado (DecisionMaker) revoca; el colegio solo puede reportar o iniciar un caso, nunca ejecutar la revocación.
 
 Nunca:
 
@@ -1920,6 +1924,8 @@ Accessibility tests
 ---
 
 ## M10 — Implementation
+
+> DEC-BR-014 "Iteración 0" (ACCEPTED, Carlos, 2026-09-25) crea **G-IT0-ENTRY** y **G-IT0-EXIT**, etapas de producto **no canónicas** (no forman parte de la numeración canónica de gates G0–G9 de Notion "Gates & Milestones") que acotan una slice construible en paralelo a M2–M6, antes de G6, con datos exclusivamente sintéticos. G-IT0 no reemplaza ni adelanta G6: M10 completo (todos los slices, con datos reales) sigue exigiendo G6. Alcance IT0: un colegio = un tenant (staff → invitation → guardian verification → consent decision → revocation/recovery → ledger); Organization/sostenedor, BillingSubscription y reporting cross-tenant quedan DEFERRED/OUT OF SCOPE IT0 (DEC-BR-016). Stack aceptado **para IT0 sintético** (ADR-001 frontend React+TypeScript y backend Node.js LTS+TypeScript; ADR-002 PostgreSQL con RLS `FORCE` por `tenant_id`; ADR-006 tenant isolation). La plataforma de despliegue (ADR-003) queda pendiente de decisión de Carlos y no se documenta aquí; producción sigue `NOT PROVISIONED`.
 
 Implementación por **vertical slices**, no por capas gigantes.
 
