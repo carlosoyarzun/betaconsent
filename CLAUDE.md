@@ -57,6 +57,9 @@ Contradicción spec↔code, requirement↔UX, law↔product, privacy↔analytics
 - Idioma de trabajo: español. Código, identificadores y YAML en inglés.
 - Commits: Conventional Commits en español (`docs:`, `feat:`, `spec:`, `adr:`, `test:`, `chore:`).
 
-## Estado documental (2026-09-23)
-Gates según Notion "Build Readiness Checklist": G1 75% · G2 0% · G3 27% · G4 17% · G5 0% · G6 0%.
-Bloqueantes: DEC-BR-001…010 abiertas, ADR-001…010 sin aprobar, cero specs/contratos escritos.
+## Estado documental (2026-09-25)
+Gates según Notion "Build Readiness Checklist" (medición del 2026-09-23; G4 pasó a REOPENED el 2026-09-25): G1 75% · G2 0% · G3 27% · G4 REOPENED · G5 0% · G6 0%.
+Aceptadas por Carlos el 2026-09-25: DEC-BR-014 (Iteración 0), DEC-BR-015 (tenant = colegio), DEC-BR-016 (boundaries, partes IT0), DEC-BR-017 (revocation & recovery); ADR-001/002/006 "ACCEPTED — scope IT0 sintético" y ADR-003 aceptado como comparación sin proveedor elegido (PRODUCTION NOT PROVISIONED), en revisión por Carlos: deployment target de IT0 = infraestructura propia (patrón studio.lectorpro.cl), proveedor cloud diferido (FINDING P1, 2026-09-25). No asumir AWS ni ningún proveedor; SM-CNS-001 v6, SEC-CNS-005, SEC-CNS-006.
+Iteración 0 (DEC-BR-014): etapa de producto no canónica, solo datos sintéticos; G-IT0-ENTRY (E1–E6) y G-IT0-EXIT (X1–X8). Épica Jira CA-115 (historias CA-116…CA-135).
+Invariantes vigentes: `tenant_id` es la única clave de aislamiento (nunca `organization_*`); `eligibility_to_participate != eligibility_to_revoke`.
+Bloqueantes: P0 del enlace (DEC-BR-003) bloquea todo uso de datos personales reales; LD-17 bloquea staging (X2); las DEC-BR-001…013 que siguen abiertas en Notion Open Decisions (p.ej. DEC-BR-003, DEC-BR-008) y ADR-004/005/007…011 sin aprobar; cero specs/contratos escritos.
