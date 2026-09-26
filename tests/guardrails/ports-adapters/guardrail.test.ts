@@ -1,4 +1,4 @@
-// Gobierna: ADR-001 §11, CA-136 (H21).
+// Gobierna: ADR-001 §11, CA-136 (H21), SEC-CNS-010 (P1-01..P1-08).
 // Tests del guardrail Ports & Adapters contra fixtures y contra el repo real.
 
 import { test } from "node:test";
@@ -37,6 +37,26 @@ const cases: Case[] = [
   { fixture: "layer-violation-client-import-infra", expectFail: true, expectedKinds: ["LAYER_BOUNDARY"] },
   { fixture: "manifest-sdk-without-adapter", expectFail: true, expectedKinds: ["MANIFEST_SDK_WITHOUT_ADAPTER"] },
   { fixture: "clean-repo", expectFail: false },
+  { fixture: "entrypoint-import-infra-allowed", expectFail: false },
+  { fixture: "manifest-npm-alias-sdk", expectFail: true, expectedKinds: ["MANIFEST_NPM_ALIAS_SDK"] },
+  { fixture: "manifest-nonregistry-dependency", expectFail: true, expectedKinds: ["MANIFEST_NONREGISTRY_DEPENDENCY"] },
+  { fixture: "manifest-forbidden-sdk", expectFail: true, expectedKinds: ["MANIFEST_FORBIDDEN_SDK"] },
+  { fixture: "forbidden-mode-in-adapters", expectFail: true, expectedKinds: ["DENY_LIST_FORBIDDEN"] },
+  {
+    fixture: "manifest-forbidden-sdk-transitive",
+    expectFail: true,
+    expectedKinds: ["MANIFEST_FORBIDDEN_SDK_TRANSITIVE"],
+  },
+  {
+    fixture: "config-alias-not-supported-tsconfig",
+    expectFail: true,
+    expectedKinds: ["CONFIG_ALIAS_NOT_SUPPORTED"],
+  },
+  {
+    fixture: "config-alias-not-supported-package-imports",
+    expectFail: true,
+    expectedKinds: ["CONFIG_ALIAS_NOT_SUPPORTED"],
+  },
 ];
 
 for (const c of cases) {
@@ -86,5 +106,62 @@ test("el CLI (check.ts) sobre un fixture con violaciones termina con código dis
   const cliPath = join(REPO_ROOT, "tools", "guardrails", "ports-adapters", "check.ts");
   assert.throws(() => {
     execFileSync(process.execPath, [cliPath, fixture("static-import-deny-violation")], { encoding: "utf-8" });
+  });
+});
+
+// SEC-CNS-010 (lampone-security, hallazgo P1-01..P1-08): corpus de evasión con 28 técnicas
+// distintas para saltarse el guardrail (require dinámico, aliasing, globals, eval,
+// symlinks, directorios prohibidos, alias no relativos, etc.). Cada punto de evasión debe
+// producir al menos una violación: fail-closed total.
+const EVASION_CORPUS_ROOT = "evasion-corpus-sec-cns-010";
+const EVASION_POINTS = [
+  "src/server/modules/e01-alias.ts",
+  "src/server/modules/e02-call.ts",
+  "src/server/modules/e03-template.ts",
+  "src/server/modules/e04-concat.ts",
+  "src/server/modules/e05-mainmodule.ts",
+  "src/server/modules/e06-globalthis.ts",
+  "src/server/modules/e07-eval.ts",
+  "src/server/modules/e08-metaresolve.ts",
+  "src/server/modules/e09-createrequire-alias.ts",
+  "src/server/modules/e10-createrequire-named.ts",
+  "src/server/modules/e11-js.js",
+  "src/server/modules/e12-mjs.mjs",
+  "src/server/modules/e13-cjs.cjs",
+  "src/server/modules/e14-jsx.jsx",
+  "src/server/modules/e15-mts.mts",
+  "src/server/modules/e16-importtype.ts",
+  "src/server/modules/e17-mixedcase.ts",
+  "src/server/modules/e18-declare.ts",
+  "src/server/modules/e19-bare-infra.ts",
+  "src/server/modules/e20-reexport-local-pkg.ts",
+  "src/server/modules/e21-url.ts",
+  "src/server/modules/e22-process-dlopen.ts",
+  "src/server/modules/e23-symlink.ts",
+  "src/server/modules/e24-symdir",
+  "src/server/modules/e25-vue.vue",
+  "src/server/modules/e26-json.d.ts",
+  "src/server/modules/dist/x.ts",
+  "src/server/modules/node_modules/@aws-sdk/client-s3/index.js",
+  "src/server/modules/node_modules",
+  "src/server/platform/p.ts", // "../../infra/adapters/s.ts" (la 2ª línea, "../../infra-evil/x.ts", es un control: no debe fallar por sí sola)
+];
+
+test("corpus de evasión SEC-CNS-010: todos los puntos de evasión fallan cerrado", () => {
+  const { violations } = runGuardrail(fixture(EVASION_CORPUS_ROOT));
+  const filesWithViolations = new Set(violations.map((v) => v.file).filter((f): f is string => f !== undefined));
+  const missed = EVASION_POINTS.filter((p) => !filesWithViolations.has(p));
+  assert.deepEqual(missed, [], `puntos de evasión sin violación detectada: ${missed.join(", ")}`);
+  assert.equal(missed.length, 0);
+  // Reporte legible: cuántos de los N puntos de evasión conocidos fallan cerrado.
+  console.log(
+    `[corpus SEC-CNS-010] ${EVASION_POINTS.length - missed.length}/${EVASION_POINTS.length} puntos de evasión fallan cerrado (${violations.length} violaciones totales).`,
+  );
+});
+
+test("corpus de evasión SEC-CNS-010: el CLI termina con código distinto de 0", () => {
+  const cliPath = join(REPO_ROOT, "tools", "guardrails", "ports-adapters", "check.ts");
+  assert.throws(() => {
+    execFileSync(process.execPath, [cliPath, fixture(EVASION_CORPUS_ROOT)], { encoding: "utf-8" });
   });
 });
