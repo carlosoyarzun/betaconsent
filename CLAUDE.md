@@ -45,6 +45,7 @@ Toda incertidumbre jurídica se marca `LEGAL DECISION` y requiere revisión huma
 ## Human gates (Carlos decide, nadie más)
 LEGAL DECISION y copy legal de producción · cambios a semántica de consentimiento/revocación/elegibilidad · excepciones a principios no negociables · cierre de DEC-BR-### y ADR-### · release con riesgo crítico aceptado · merge de ramas a `main`, deploy, borrados en Jira/Notion.
 Excepción (Carlos, 2026-09-23): `git push` de commits de docs/config a `main` no requiere confirmación; se reporta el hash. Nunca force-push.
+Límite de la excepción (Carlos, 2026-09-26): no aplica a ninguna ruta listada en `.github/CODEOWNERS` (hoy: `.github/`, `tools/guardrails/`, `tests/guardrails/`, `specs/guardrail-ports-adapters.spec.yaml`, `package.json`, `package-lock.json`, `tsconfig.json`, `.npmrc`) ni a cambios en el propio `CODEOWNERS`; esos cambios van siempre por rama + PR con revisión de Carlos, nunca por push directo a `main`.
 
 ## Contradiction Protocol (Master Plan §36)
 Contradicción spec↔code, requirement↔UX, law↔product, privacy↔analytics, security↔architecture, contract↔implementation → detener, clasificar P0/P1/P2, emitir FINDING. P0 nunca se resuelve en silencio.
