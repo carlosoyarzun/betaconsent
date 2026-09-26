@@ -1,0 +1,18 @@
+{
+  "name": "consent-app",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.13.1"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test tests/guardrails/ports-adapters/*.test.ts",
+    "guardrail:ports-adapters": "node tools/guardrails/ports-adapters/check.ts",
+    "ci": "npm run typecheck && npm run test && npm run guardrail:ports-adapters"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4",
+    "typescript": "6.0.3"
+  }
+}

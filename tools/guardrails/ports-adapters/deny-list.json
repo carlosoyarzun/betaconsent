@@ -1,0 +1,27 @@
+{
+  "$schema": "./deny-list.schema.json",
+  "version": 1,
+  "governedBy": ["ADR-001 §11", "CA-136"],
+  "status": "PROPOSED_INITIAL_LIST",
+  "note": "Lista inicial propuesta en ADR-001 §11 (rev. 7). Pendiente de revisión de lampone-security antes de fijarse como final (H21, CA-136). Cambios requieren CODEOWNERS: @carlosoyarzun + revisor humano de seguridad.",
+  "entries": [
+    { "package": "aws-sdk", "note": "AWS SDK v2 (incluye subpaths, p.ej. aws-sdk/clients/s3)" },
+    { "package": "@aws-sdk/*", "note": "AWS SDK v3, todos los paquetes con scope @aws-sdk" },
+    { "package": "@smithy/*", "note": "Runtime compartido de AWS SDK v3" },
+    { "package": "@google-cloud/*", "note": "Google Cloud client libraries" },
+    { "package": "googleapis", "note": "Google APIs Node.js client" },
+    { "package": "google-auth-library", "note": "Google auth client" },
+    { "package": "firebase-admin", "note": "Firebase Admin SDK" },
+    { "package": "@azure/*", "note": "Azure SDK, todos los paquetes con scope @azure" },
+    { "package": "@sendgrid/*", "note": "SendGrid email SDK" },
+    { "package": "mailgun.js", "note": "Mailgun email SDK" },
+    { "package": "postmark", "note": "Postmark email SDK" },
+    { "package": "resend", "note": "Resend email SDK" },
+    {
+      "package": "nodemailer",
+      "note": "Cliente SMTP/HTTP genérico. Solo admitido dentro del adaptador sink de EmailProvider (ADR-001 §11 regla 6); el guardrail lo trata igual que el resto: solo src/infra/adapters/** puede importarlo."
+    },
+    { "package": "node-vault", "note": "Cliente de HashiCorp Vault" },
+    { "package": "openid-client", "note": "Cliente OIDC de terceros" }
+  ]
+}
