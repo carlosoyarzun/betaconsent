@@ -57,6 +57,23 @@ const cases: Case[] = [
     expectFail: true,
     expectedKinds: ["CONFIG_ALIAS_NOT_SUPPORTED"],
   },
+  // SEC-CNS-010 re-verificación (corpus 2, R-01..R-03): una fixture por caso.
+  { fixture: "r01-element-access-module", expectFail: true, expectedKinds: ["FORBIDDEN_DANGEROUS_REFERENCE"] },
+  { fixture: "r01-indirect-eval", expectFail: true, expectedKinds: ["FORBIDDEN_EVAL_OR_FUNCTION"] },
+  { fixture: "r01-constructor-access", expectFail: true, expectedKinds: ["FORBIDDEN_DANGEROUS_REFERENCE"] },
+  { fixture: "r01-getbuiltin-destructure", expectFail: true, expectedKinds: ["FORBIDDEN_DANGEROUS_REFERENCE"] },
+  { fixture: "r01-destructure-createrequire", expectFail: true, expectedKinds: ["FORBIDDEN_DANGEROUS_REFERENCE"] },
+  {
+    fixture: "r01-worker-eval",
+    expectFail: true,
+    expectedKinds: ["FORBIDDEN_DANGEROUS_MODULE_IMPORT", "FORBIDDEN_EVAL_OR_FUNCTION"],
+  },
+  { fixture: "r01-load-cjs", expectFail: true, expectedKinds: ["FORBIDDEN_DANGEROUS_REFERENCE"] },
+  { fixture: "r01-reflect-apply-construct", expectFail: true, expectedKinds: ["FORBIDDEN_EVAL_OR_FUNCTION"] },
+  { fixture: "r01-binding-dlopen", expectFail: true, expectedKinds: ["FORBIDDEN_DANGEROUS_REFERENCE"] },
+  { fixture: "r02-relative-outside-src", expectFail: true, expectedKinds: ["UNRESOLVED_SPECIFIER"] },
+  { fixture: "r02-relative-into-nodemodules", expectFail: true, expectedKinds: ["UNRESOLVED_SPECIFIER"] },
+  { fixture: "r03-tsconfig-jsonc-paths", expectFail: true, expectedKinds: ["CONFIG_ALIAS_NOT_SUPPORTED"] },
 ];
 
 for (const c of cases) {
@@ -163,5 +180,43 @@ test("corpus de evasión SEC-CNS-010: el CLI termina con código distinto de 0",
   const cliPath = join(REPO_ROOT, "tools", "guardrails", "ports-adapters", "check.ts");
   assert.throws(() => {
     execFileSync(process.execPath, [cliPath, fixture(EVASION_CORPUS_ROOT)], { encoding: "utf-8" });
+  });
+});
+
+// SEC-CNS-010 re-verificación (2026-09-26): corpus 2 con los 12 casos que la primera
+// corrección de P1-01..P1-08 no cubría (R-01: referencia sin llamada, acceso computado,
+// eval indirecto, .constructor, destructuring, Reflect, worker eval, _load/binding/dlopen;
+// R-02: relativo que escapa de src/ o entra a node_modules; R-03: tsconfig JSONC con
+// "extends"). Los 12 deben fallar cerrado.
+const EVASION2_CORPUS_ROOT = "evasion2-corpus-sec-cns-010";
+const EVASION2_POINTS = [
+  "tsconfig.json",
+  "src/server/modules/f01-elem.ts",
+  "src/server/modules/f02-indirect-eval.ts",
+  "src/server/modules/f03-ctor.ts",
+  "src/server/modules/f04-getbuiltin.ts",
+  "src/server/modules/f05-destructure.ts",
+  "src/server/modules/f06-relative-nodemodules.ts",
+  "src/server/modules/f07-relative-outside-src.ts",
+  "src/server/modules/f08-worker.ts",
+  "src/server/modules/f09-load.cjs",
+  "src/server/modules/f10-reflect.ts",
+  "src/server/modules/f11-binding.ts",
+];
+
+test("corpus de evasión 2 SEC-CNS-010 (re-verificación): los 12 casos fallan cerrado", () => {
+  const { violations } = runGuardrail(fixture(EVASION2_CORPUS_ROOT));
+  const filesWithViolations = new Set(violations.map((v) => v.file).filter((f): f is string => f !== undefined));
+  const missed = EVASION2_POINTS.filter((p) => !filesWithViolations.has(p));
+  assert.deepEqual(missed, [], `puntos de evasión (corpus 2) sin violación detectada: ${missed.join(", ")}`);
+  console.log(
+    `[corpus 2 SEC-CNS-010] ${EVASION2_POINTS.length - missed.length}/${EVASION2_POINTS.length} puntos de evasión fallan cerrado (${violations.length} violaciones totales).`,
+  );
+});
+
+test("corpus de evasión 2 SEC-CNS-010: el CLI termina con código distinto de 0", () => {
+  const cliPath = join(REPO_ROOT, "tools", "guardrails", "ports-adapters", "check.ts");
+  assert.throws(() => {
+    execFileSync(process.execPath, [cliPath, fixture(EVASION2_CORPUS_ROOT)], { encoding: "utf-8" });
   });
 });
