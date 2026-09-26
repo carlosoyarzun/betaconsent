@@ -7,3 +7,8 @@
 /tools/guardrails/                          @carlosoyarzun
 /.github/                                   @carlosoyarzun
 /specs/guardrail-ports-adapters.spec.yaml   @carlosoyarzun
+/package.json                               @carlosoyarzun
+/package-lock.json                          @carlosoyarzun
+/tsconfig.json                              @carlosoyarzun
+/tests/guardrails/                          @carlosoyarzun
+/.npmrc                                     @carlosoyarzun
