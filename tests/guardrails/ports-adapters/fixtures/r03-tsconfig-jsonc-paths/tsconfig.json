@@ -1,0 +1,4 @@
+{
+  // comentario JSONC: JSON.parse fallaría, ts.readConfigFile no
+  "compilerOptions": { "paths": { "@x/*": ["src/infra/*"] } }
+}

@@ -1,0 +1,1 @@
+{ "name": "fixture", "dependencies": { "local-vendor-shim": "file:../local-vendor-shim" } }

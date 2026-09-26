@@ -1,0 +1,4 @@
+{
+  // comentario JSONC
+  "compilerOptions": { "paths": { "@x/*": ["src/infra/*"] } }
+}

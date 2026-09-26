@@ -1,0 +1,46 @@
+# Gobierna: ADR-001 §11 (Ports & Adapters, rev. 7, ACCEPTED 2026-09-26 R11-A (2));
+# ADR-003 C14/§6 (GitHub Actions, Actions fijadas por SHA, jobs de PR sin secretos);
+# CA-136 (H21, épica CA-115): requisito previo al primer commit en src/ (R9-4 C3, R11-F712).
+#
+# Job de PR/CI: sin secretos, sin credenciales de deploy (ADR-003 C14). Corre los tests
+# del guardrail Ports & Adapters y el guardrail contra el árbol del repo.
+
+name: guardrails
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  ports-adapters-guardrail:
+    name: Ports & Adapters guardrail (ADR-001 §11, CA-136)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24.21.0"
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Guardrail tests (unit + fixtures)
+        run: npm test
+
+      - name: Guardrail sobre el repo
+        # Invoca check.ts directamente (no vía script de npm): el veredicto de este paso no
+        # depende de lo que package.json defina en "scripts" (SEC-CNS-010 P1-08).
+        run: node tools/guardrails/ports-adapters/check.ts .
