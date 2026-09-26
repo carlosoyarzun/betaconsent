@@ -263,3 +263,73 @@ openItems:
   - "Resolución real de alias de import no relativos (tsconfig paths/baseUrl, package.json imports/workspaces): en vez de resolverlos, su sola presencia es una violación (CONFIG_ALIAS_NOT_SUPPORTED, RULE-GUARDRAIL-06)."
   - "Herramienta elegida: TypeScript compiler API + recorrido de archivos propio (sin ESLint ni dependency-cruiser), por minimizar dependencias (ADR-001 §5); revisar si lampone-security prefiere una herramienta dedicada."
   - "SEC-CNS-010 P1-09 (human gate de Carlos: ruleset de main, segundo code owner de seguridad, excepción de push): no es responsabilidad de este guardrail; condiciona el merge, no la apertura del PR."
+  - >
+    Este guardrail es un control contra el acoplamiento accidental a SDKs de proveedor y
+    contra las evasiones conocidas (corpus 1 y 2 de SEC-CNS-010, 40 casos entre ambos); no
+    es un analizador de flujo de datos y no puede cubrir toda ofuscación deliberada posible
+    (p.ej. reconstruir un identificador carácter por carácter, o algo como
+    `["c","o","n","s","t","r","...` concatenado). Esa evasión deliberada residual se cubre
+    con CODEOWNERS/revisión humana (SEC-CNS-010 P1-08/P1-09), la regla de manifiesto (sin el
+    SDK instalado no hay nada que cargar en runtime, RULE-GUARDRAIL-08/09) y el egress
+    deny-by-default de ADR-003 §3 (c) (aunque el código compile, el runtime no puede llamar
+    a un proveedor no listado en la allowlist del proxy de salida).
+
+reVerification:
+  - round: 1
+    date: "2026-09-26"
+    verdict: "BLOQUEADO (9 P1)"
+    resolved: [P1-01, P1-02, P1-03, P1-04, P1-05, P1-06, P1-07, P1-08]
+    deferredToCarlos: [P1-09]
+  - round: 2
+    date: "2026-09-26"
+    verdict: "BLOQUEADO (residuo de P1-01/P1-03: R-01, R-02, R-03; más P2 de gitignore y lockfile)"
+    findings:
+      - id: R-01
+        summary: >
+          El scanner original solo detectaba la LLAMADA a construcciones peligrosas, no la
+          REFERENCIA. Evasiones no cubiertas: acceso computado (`module["require"]`,
+          `getBuiltinModule("module")["createRequire"]`), eval indirecto (`(0,eval)`,
+          `globalThis.eval`, `const e = eval`), `.constructor`/`["constructor"]` como vía
+          hacia Function, destructuring (`const { createRequire: cr } = ...`),
+          `Reflect.apply`/`Reflect.construct` con eval/Function como argumento,
+          `new Worker(code, { eval: true })`, `module.constructor._load(...)`,
+          `process.binding`/`dlopen`/`_linkedBinding`.
+        fix: >
+          import-scanner.ts ahora trata `eval`/`Function`/`createRequire`/
+          `getBuiltinModule`/`_load`/`binding`/`_linkedBinding`/`dlopen`/`mainModule`/
+          `constructor` como referencias (identificador, propiedad por nombre, propiedad
+          computada con literal, BindingElement de destructuring), no solo llamadas; agrega
+          detección de `Reflect.apply`/`Reflect.construct` con estos objetivos; agrega
+          `worker_threads`/`inspector` a DANGEROUS_BUILTIN_SPECIFIERS. Ver
+          RULE-GUARDRAIL-02 actualizada.
+      - id: R-02
+        summary: >
+          classifySpecifier acotaba contra `root` completo (que incluye tools/, tests/,
+          etc.), no contra `src/`, y comparaba por prefijo de cadena, no por segmentos de
+          ruta. Un import relativo como `../../../tools/shim.ts` o
+          `../../../node_modules/@aws-sdk/client-s3/index.js` escapaba de src/ sin que se
+          detectara, y podía reexportar un SDK denegado desde un archivo fuera del árbol
+          escaneado.
+        fix: >
+          layer-rules.ts acota contra `resolve(root, "src")` con `path.relative` (no
+          `startsWith`), y además falla si la ruta resuelta contiene un segmento
+          `node_modules` en cualquier posición. Ver RULE-GUARDRAIL-05 actualizada.
+      - id: R-03
+        summary: >
+          El guardrail leía tsconfig*.json con `JSON.parse`, que no entiende JSONC
+          (comentarios, comas finales) ni sigue `extends`; un tsconfig válido para `tsc`
+          con esas construcciones, o con `paths`/`baseUrl` heredado vía `extends`, pasaba en
+          silencio (catch descartado).
+        fix: >
+          guardrail.ts usa `ts.readConfigFile` (JSONC) + `ts.parseJsonConfigFileContent`
+          (resuelve `extends`); un error de parseo o de resolución de `extends` es, en sí
+          mismo, una violación (CONFIG_ALIAS_NOT_SUPPORTED). Ver RULE-GUARDRAIL-06
+          actualizada.
+      - id: P2-gitignore
+        summary: "La negación de .gitignore usaba un glob `fixtures/**/node_modules|dist/`, que dejaría de ignorar el node_modules real de cualquier fixture futura con su propio npm install."
+        fix: "Negación acotada a las rutas exactas de los 3 stubs versionados (2 del corpus 1, 1 del corpus 2 y 1 de la fixture individual r02-relative-into-nodemodules)."
+      - id: P2-lockfile
+        summary: "manifest.ts ignoraba el campo `name` de cada entrada del lockfile (no detecta un alias npm: transitivo) y devolvía un Set vacío si no había lockfile v3 (fail-open silencioso)."
+        fix: "checkLockfile() usa `entry.name` cuando existe (antes del segmento de ruta node_modules/<segmento>) y devuelve un estado explícito \"missing\"/\"unsupported-version\" que el guardrail reporta como violación MANIFEST_LOCKFILE_MISSING_OR_UNSUPPORTED."
+    corpus2Location: "tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/ (+ fixtures individuales r01-*/r02-*/r03-*)"
+    verdictAfterFix: "Pendiente de re-revisión de lampone-security sobre esta ronda."

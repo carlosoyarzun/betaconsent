@@ -1,7 +1,8 @@
 # Guardrail Ports & Adapters
 
 Gobierna: `ADR-001 §11` (Ports & Adapters, rev. 7, ACCEPTED 2026-09-26) · Jira `CA-136` (H21) ·
-`SEC-CNS-010` (SEC-review-CA136, lampone-security: BLOQUEADO con 9 P1, corregido P1-01..P1-08).
+`SEC-CNS-010` (SEC-review-CA136, lampone-security: ronda 1 BLOQUEADO con 9 P1, corregido
+P1-01..P1-08; ronda 2 re-verificación BLOQUEADO con residuo R-01..R-03 + P2, corregido).
 Spec: `specs/guardrail-ports-adapters.spec.yaml`.
 
 Falla el build si:
@@ -16,29 +17,43 @@ Falla el build si:
    incluidos los adaptadores** — y también en `package.json`/`package-lock.json`. No hay
    ubicación válida para estos SDKs durante IT0 (email/SMS de proveedor, telemetría SaaS,
    analytics/flags, LLM SaaS: ver `deny-list.json`).
-3. **Primitivas peligrosas** (en todo `src/**`, incluidos los adaptadores): `import()`/
-   `require()`/`createRequire(...)(...)` con argumento no literal; cualquier referencia a
-   `require` que no sea `require('literal')` directo (alias, `.call`, `.apply`, paso como
-   valor), salvo `require.resolve('literal')`; cualquier `<x>.require` (`module.require`,
-   `process.mainModule.require`, `globalThis`/`global`/`window.require`, `Module._load`, o
-   cualquier otra propiedad `.require`); `eval(...)`, `Function(...)`/`new Function(...)`;
-   `import.meta.resolve(...)`. **Fuera de `src/infra/adapters/**` además**: cualquier import
-   de `module`/`vm`/`child_process` (con o sin prefijo `node:`); cualquier identificador o
-   propiedad `createRequire`, como referencia (se llame o no de inmediato).
+3. **Primitivas peligrosas, como REFERENCIA (no solo llamada)**:
+   - **En todo `src/**`, incluidos los adaptadores**: `import()`/`require()`/
+     `createRequire(...)(...)` con argumento no literal; cualquier referencia a `require`
+     que no sea `require('literal')` directo (alias, `.call`, `.apply`, paso como valor),
+     salvo `require.resolve('literal')`; cualquier propiedad `.require` de un identificador
+     distinto de `module`/`require` (p.ej. `process.mainModule.require`,
+     `globalThis.require`); `import.meta.resolve(...)`; cualquier referencia a `eval`
+     (llamada directa, `(0, eval)`, `globalThis.eval`, `const e = eval`,
+     `Reflect.apply(eval, ...)`).
+   - **Fuera de `src/infra/adapters/**` además**: cualquier import de `module`/`vm`/
+     `child_process`/`worker_threads`/`inspector` (con o sin prefijo `node:`); cualquier
+     identificador o propiedad `Function`, `createRequire`, `getBuiltinModule`, `_load`,
+     `binding`, `_linkedBinding`, `dlopen`, `mainModule` o `constructor`, como referencia
+     (identificador libre, propiedad por nombre o computada con literal, import/alias,
+     destructuring, o como primer argumento de `Reflect.apply`/`Reflect.construct`);
+     cualquier acceso a propiedad (`.x` o `[...]`) de un identificador literalmente llamado
+     `module` o `require`, sea cual sea la propiedad.
 4. **Capas — allowlist**: solo `src/server/entrypoints/**` y `src/infra/**` pueden importar
    (de forma relativa) `src/infra/**`. Cualquier otro directorio (existente o nuevo) que lo
    haga, falla.
 5. **Capas — cliente**: `src/client/**` nunca importa `src/server/**` ni `src/infra/**`.
-6. **Especificador no resoluble**: todo import que no sea relativo-y-resoluble dentro de la
-   raíz, un builtin de Node, o el nombre exacto de un paquete declarado en `package.json` →
-   falla (cubre alias de tsconfig, `#subpath` imports, rutas absolutas, `file://`, y rutas
-   "peladas" que imitan una interna como `src/infra/...`).
-7. **Configuración de alias no soportada**: cualquier `tsconfig*.json` con `paths`/`baseUrl`,
-   o `package.json` con `imports`/`workspaces` — el guardrail no los resuelve, así que su
-   sola presencia es una violación.
+6. **Especificador no resoluble**: todo import que no sea relativo-y-resoluble **dentro de
+   `src/`** (comparado por segmentos de ruta, no por prefijo de cadena), un builtin de Node,
+   o el nombre exacto de un paquete declarado en `package.json` → falla. Cubre alias de
+   tsconfig, `#subpath` imports, rutas absolutas, `file://`, rutas "peladas" que imitan una
+   interna (`src/infra/...`), y relativos que escapan de `src/` (`../../../tools/x.ts`) o
+   pasan por un segmento `node_modules` en cualquier posición.
+7. **Configuración de alias no soportada**: cualquier `tsconfig*.json` (leído como JSONC con
+   `ts.readConfigFile`, siguiendo `extends` con `ts.parseJsonConfigFileContent`) con
+   `paths`/`baseUrl` (directo o heredado), o con un error de parseo/resolución; o
+   `package.json` con `imports`/`workspaces` — el guardrail no resuelve alias, así que su
+   sola presencia (o un tsconfig que no pudo leerse) es una violación.
 8. **Manifiesto**: SDK `adapters-only` sin adaptador consumidor; alias `npm:` que resuelve a
    un SDK de la deny-list; dependencia no-registry (`file:`/`link:`/`git...`/URL); SDK
-   `forbidden` como transitivo en `package-lock.json` (lockfile v3).
+   `forbidden` como transitivo en `package-lock.json` (lockfile v3, por nombre real de cada
+   entrada); **ausencia de `package-lock.json` v3 legible** (sin él no se puede verificar el
+   árbol transitivo, así que es en sí mismo una violación).
 9. **Estructura del árbol**: cualquier symlink bajo `src/` (no se sigue); cualquier
    `node_modules`/`dist`/`build`/`coverage` bajo `src/` (se recorre igual, fail-closed); un
    error de lectura del árbol distinto de "no existe `src/`" se propaga.
@@ -97,11 +112,24 @@ Formato de una entrada:
 
 ## Corpus de evasión (SEC-CNS-010)
 
-`tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/` contiene el corpus de
-28 técnicas de evasión usado por `lampone-security` para bloquear la primera versión, más 2
-puntos estructurales (symlinks, `node_modules` vendorizado). El test
-`corpus de evasión SEC-CNS-010: todos los puntos de evasión fallan cerrado` (en
-`guardrail.test.ts`) verifica que **todos** producen al menos una violación.
+`tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/` contiene el corpus 1
+(28 técnicas de evasión + 2 puntos estructurales, symlinks y `node_modules` vendorizado).
+`tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/` contiene el corpus 2
+de la re-verificación (12 casos: referencia sin llamada a construcciones peligrosas, acceso
+computado, eval indirecto, `.constructor`, destructuring, `Reflect.apply`/`construct`,
+`new Worker({eval:true})`, `_load`/`binding`/`dlopen`, import relativo que escapa de `src/` o
+entra a `node_modules/`, tsconfig JSONC con `extends`), más una fixture individual por caso
+(`r01-*`, `r02-*`, `r03-*`) para aislar cada regla. Los tests
+`corpus de evasión SEC-CNS-010...` y `corpus de evasión 2 SEC-CNS-010...` (en
+`guardrail.test.ts`) verifican que **todos** los puntos de ambos corpus producen al menos
+una violación.
+
+**Nota sobre alcance:** este guardrail detecta evasiones conocidas por referencia estática
+(identificador, propiedad, acceso computado con literal), no por flujo de datos completo.
+No puede, por ejemplo, detectar un identificador reconstruido carácter por carácter en
+runtime. Esa evasión deliberada residual la cubren la revisión humana (CODEOWNERS), la
+regla de manifiesto (sin el SDK instalado no hay nada que cargar) y el egress
+deny-by-default de ADR-003 §3 (c).
 
 ## Dependencias
 
