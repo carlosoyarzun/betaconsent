@@ -21,3 +21,9 @@ coverage/
 __pycache__/
 *.pyc
 .venv/
+
+# Excepción: el corpus de evasión de SEC-CNS-010 (CA-136) versiona a propósito
+# directorios llamados node_modules/dist bajo src/ como fixtures negativas del
+# guardrail Ports & Adapters (deben commitearse, no son dependencias reales).
+!tests/guardrails/ports-adapters/fixtures/**/node_modules/
+!tests/guardrails/ports-adapters/fixtures/**/dist/
