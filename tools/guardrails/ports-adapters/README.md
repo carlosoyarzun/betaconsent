@@ -127,9 +127,24 @@ una violación.
 **Nota sobre alcance:** este guardrail detecta evasiones conocidas por referencia estática
 (identificador, propiedad, acceso computado con literal), no por flujo de datos completo.
 No puede, por ejemplo, detectar un identificador reconstruido carácter por carácter en
-runtime. Esa evasión deliberada residual la cubren la revisión humana (CODEOWNERS), la
-regla de manifiesto (sin el SDK instalado no hay nada que cargar) y el egress
-deny-by-default de ADR-003 §3 (c).
+runtime. Esa evasión deliberada residual la cubren, de forma parcial, la revisión humana
+(CODEOWNERS, sujeta a P1-08/P1-09) y la regla de manifiesto: "sin el SDK instalado no hay
+nada que cargar" aplica solo a los SDKs `forbidden` y a los SDKs sin adaptador consumidor,
+no a un SDK `adapters-only` ya instalado (p. ej. `nodemailer` del sink), que el dominio
+podría cargar de forma ofuscada en runtime. El egress deny-by-default de ADR-003 §3 (c)
+aún no existe en LOCAL ni en CI (se verifica en STAGING, bloqueado por H19), así que en IT0
+no compensa esta evasión.
+
+**Riesgo residual — PENDIENTE DE ACEPTACIÓN DE CARLOS (PR CA-136):**
+
+> 1. El guardrail no detecta evasión deliberada por construcción dinámica en runtime (p. ej.
+>    un identificador armado carácter por carácter) de un SDK `adapters-only` ya instalado
+>    por un adaptador; los SDKs `forbidden` y los SDKs sin adaptador no están instalados.
+> 2. Hasta que exista el ruleset de `main` (P1-09) y el egress de ADR-003 §3 (c) en STAGING,
+>    el único control es la revisión humana del PR; en IT0 el impacto se limita a datos
+>    sintéticos, sin credenciales de proveedor.
+> 3. Aceptado para IT0 LOCAL + CI; se revalúa antes de STAGING o datos reales (gate H19 /
+>    ADR-010), dueño lampone-security.
 
 ## Dependencias
 

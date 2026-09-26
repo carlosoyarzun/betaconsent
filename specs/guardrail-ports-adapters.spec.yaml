@@ -268,11 +268,27 @@ openItems:
     contra las evasiones conocidas (corpus 1 y 2 de SEC-CNS-010, 40 casos entre ambos); no
     es un analizador de flujo de datos y no puede cubrir toda ofuscación deliberada posible
     (p.ej. reconstruir un identificador carácter por carácter, o algo como
-    `["c","o","n","s","t","r","...` concatenado). Esa evasión deliberada residual se cubre
-    con CODEOWNERS/revisión humana (SEC-CNS-010 P1-08/P1-09), la regla de manifiesto (sin el
-    SDK instalado no hay nada que cargar en runtime, RULE-GUARDRAIL-08/09) y el egress
-    deny-by-default de ADR-003 §3 (c) (aunque el código compile, el runtime no puede llamar
-    a un proveedor no listado en la allowlist del proxy de salida).
+    `["c","o","n","s","t","r","...` concatenado). Esa evasión deliberada residual se cubre,
+    de forma parcial, con CODEOWNERS/revisión humana (SEC-CNS-010 P1-08/P1-09, sujeta al
+    ruleset de main pendiente en P1-09) y con la regla de manifiesto (RULE-GUARDRAIL-08/09):
+    "sin el SDK instalado no hay nada que cargar en runtime" aplica solo a los SDKs
+    `forbidden` y a los SDKs sin adaptador consumidor, NO a un SDK `adapters-only` ya
+    instalado (p.ej. `nodemailer` del sink), que el dominio podría cargar de forma ofuscada.
+    El egress deny-by-default de ADR-003 §3 (c) aún no existe en LOCAL ni en el runner de
+    CI (se verifica en STAGING, bloqueado por H19), así que en IT0 no compensa esta
+    evasión.
+
+  - >
+    RIESGO RESIDUAL — PENDIENTE DE ACEPTACIÓN DE CARLOS (PR CA-136):
+    (1) el guardrail no detecta evasión deliberada por construcción dinámica en runtime
+    (p.ej. un identificador armado carácter por carácter) de un SDK `adapters-only` ya
+    instalado por un adaptador; los SDKs `forbidden` y los SDKs sin adaptador no están
+    instalados;
+    (2) hasta que exista el ruleset de `main` (P1-09) y el egress de ADR-003 §3 (c) en
+    STAGING, el único control es la revisión humana del PR; en IT0 el impacto se limita a
+    datos sintéticos, sin credenciales de proveedor;
+    (3) aceptado para IT0 LOCAL + CI; se revalúa antes de STAGING o datos reales (gate H19 /
+    ADR-010), dueño lampone-security.
 
 reVerification:
   - round: 1
