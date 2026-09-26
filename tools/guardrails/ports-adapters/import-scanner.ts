@@ -1,18 +1,28 @@
-// Gobierna: ADR-001 §11, CA-136 (H21), SEC-CNS-010 (P1-01).
+// Gobierna: ADR-001 §11, CA-136 (H21), SEC-CNS-010 (P1-01, R-01).
 // Detecta, con el TypeScript compiler API (AST, no expresiones regulares):
 //   (a) especificadores de módulo importados de forma verificable (literal):
 //       import estático, `export ... from`, `import()` dinámico con literal, `require()`
 //       con literal y `<x>.createRequire(...)(...)` con literal;
-//   (b) usos de primitivas peligrosas que permiten evadir (a), fail-closed:
-//       - import()/require()/createRequire(...)(...) con argumento NO literal;
-//       - cualquier referencia a `require` que no sea un `require('literal')` directo
-//         (alias, `.call`, `.apply`, `.bind`, paso como valor) — excepto `require.resolve('literal')`;
-//       - `<algo>.require` (module.require, process.mainModule.require, globalThis.require,
-//         global.require, window.require, Module._load, o cualquier `<x>.require`);
-//       - `eval(...)`, `Function(...)`/`new Function(...)`;
-//       - `import.meta.resolve(...)`;
-//       - cualquier identificador o propiedad llamada `createRequire` (import, alias,
-//         destructuring, member access), como referencia (no solo la llamada encadenada).
+//   (b) usos de primitivas peligrosas que permiten evadir (a), fail-closed. Este guardrail
+//       es un control contra el acoplamiento accidental a SDKs de proveedor y contra las
+//       evasiones conocidas (ver `tests/guardrails/ports-adapters/fixtures/evasion-corpus-
+//       sec-cns-010/` y `evasion2-corpus-sec-cns-010/`); no es un analizador de flujo de
+//       datos y no puede cubrir toda ofuscación deliberada posible (p.ej. reconstruir un
+//       nombre carácter por carácter). Esa evasión deliberada residual se cubre con
+//       revisión humana vía CODEOWNERS, con la regla de manifiesto (sin el SDK instalado
+//       no hay nada que cargar en runtime) y con el egress deny-by-default de ADR-003 §3 (c).
+//
+//   Primitivas detectadas, como REFERENCIA (no solo llamada), en todo src/** salvo
+//   src/infra/adapters/**:
+//     - `require`/`eval`: en TODO src/**, incl. adaptadores (ver reglas específicas abajo).
+//     - `Function` (como valor, `new Function(...)`, o vía `.constructor`/`["constructor"]`
+//       de cualquier expresión), `createRequire`, `getBuiltinModule`, `_load`, `binding`,
+//       `_linkedBinding`, `dlopen`, `mainModule`: fuera de adaptadores.
+//     - cualquier acceso a propiedad (`.x` o `[...]`) de un identificador literalmente
+//       llamado `module` o `require`, sea cual sea la propiedad: fuera de adaptadores.
+//     - `Reflect.apply`/`Reflect.construct` cuyo primer argumento sea uno de los anteriores.
+//     - import()/require()/createRequire(...)(...) con argumento no literal.
+//     - `import.meta.resolve(...)`.
 
 import ts from "typescript";
 
@@ -35,18 +45,51 @@ export interface ModuleSpecifierFinding {
 export type PrimitiveFindingKind =
   | "non-literal-dynamic-call"
   | "forbidden-require-usage"
-  | "forbidden-global-require-access"
-  | "forbidden-eval-or-function"
+  | "forbidden-eval-reference"
   | "forbidden-import-meta-resolve"
-  | "forbidden-create-require-reference";
+  | "forbidden-dangerous-reference";
+
+export type PrimitiveScope = "everywhere" | "outside-adapters";
 
 export interface PrimitiveFinding {
   category: "primitive";
   kind: PrimitiveFindingKind;
   line: number;
+  /** Solo para "forbidden-dangerous-reference": el nombre detectado y su alcance. */
+  name?: string;
+  scope?: PrimitiveScope;
 }
 
 export type Finding = ModuleSpecifierFinding | PrimitiveFinding;
+
+/** Nombres cuya sola referencia (identificador, propiedad, elemento computado con literal,
+ * "bindingElement" de destructuring) es peligrosa fuera de src/infra/adapters/**. */
+const DANGEROUS_REFERENCE_NAMES = new Set([
+  "Function",
+  "createRequire",
+  "getBuiltinModule",
+  "_load",
+  "binding",
+  "_linkedBinding",
+  "dlopen",
+  "mainModule",
+  "constructor",
+]);
+
+/** Identificadores cuyo primer argumento a Reflect.apply/Reflect.construct es peligroso;
+ * mapeado a si la referencia correspondiente es de alcance "everywhere" u "outside-adapters". */
+const REFLECT_TARGET_SCOPE: Record<string, PrimitiveScope> = {
+  eval: "everywhere",
+  require: "everywhere",
+  Function: "outside-adapters",
+  createRequire: "outside-adapters",
+  getBuiltinModule: "outside-adapters",
+  _load: "outside-adapters",
+  binding: "outside-adapters",
+  _linkedBinding: "outside-adapters",
+  dlopen: "outside-adapters",
+  mainModule: "outside-adapters",
+};
 
 function scriptKindFor(filePath: string): ts.ScriptKind {
   if (filePath.endsWith(".tsx")) return ts.ScriptKind.TSX;
@@ -70,6 +113,25 @@ function isImportMeta(expr: ts.Node): boolean {
 /** true si `expr` es `import.meta.resolve` (el callee típico de `import.meta.resolve(...)`). */
 function isImportMetaResolve(expr: ts.Node): boolean {
   return ts.isPropertyAccessExpression(expr) && expr.name.text === "resolve" && isImportMeta(expr.expression);
+}
+
+/** Quita envolturas sintácticas transparentes (paréntesis, `as X`, `!`, `<X>`) para llegar
+ * a la expresión "real" que hay debajo, p.ej. en `(module as any)["require"]`. */
+function unwrapExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (true) {
+    if (ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+    } else if (ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
+      current = current.expression;
+    } else if (ts.isNonNullExpression(current)) {
+      current = current.expression;
+    } else if (ts.isTypeAssertionExpression(current)) {
+      current = current.expression;
+    } else {
+      return current;
+    }
+  }
 }
 
 export function scanFileForFindings(filePath: string, sourceText: string): Finding[] {
@@ -98,8 +160,12 @@ export function scanFileForFindings(filePath: string, sourceText: string): Findi
     return false;
   };
 
-  const pushPrimitive = (kind: PrimitiveFindingKind, node: ts.Node): void => {
-    findings.push({ category: "primitive", kind, line: lineOf(node) });
+  const pushPrimitive = (kind: PrimitiveFindingKind, node: ts.Node, extra?: { name?: string; scope?: PrimitiveScope }): void => {
+    findings.push({ category: "primitive", kind, line: lineOf(node), ...extra });
+  };
+
+  const pushDangerousReference = (name: string, node: ts.Node): void => {
+    pushPrimitive("forbidden-dangerous-reference", node, { name, scope: "outside-adapters" });
   };
 
   /** true si `call` es una de las formas "importadoras" que exigen argumento literal:
@@ -135,7 +201,11 @@ export function scanFileForFindings(filePath: string, sourceText: string): Findi
         specifier: node.name.text,
         line: lineOf(node),
       });
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
+    } else if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteralLike(node.argument.literal)
+    ) {
       // type T = import("pkg").Foo; — solo-tipo, se erase en runtime, pero igual se reporta
       // (fail-closed): sigue siendo una referencia auditable al SDK en el código fuente.
       findings.push({
@@ -147,8 +217,14 @@ export function scanFileForFindings(filePath: string, sourceText: string): Findi
     } else if (ts.isImportSpecifier(node)) {
       // import { createRequire } from "..."; import { createRequire as cr } from "...";
       const importedName = (node.propertyName ?? node.name).text;
-      if (importedName === "createRequire") {
-        pushPrimitive("forbidden-create-require-reference", node);
+      if (DANGEROUS_REFERENCE_NAMES.has(importedName)) {
+        pushDangerousReference(importedName, node);
+      }
+    } else if (ts.isBindingElement(node)) {
+      // const { createRequire: cr } = ...;  const { _load } = ...;
+      const nameNode = node.propertyName ?? node.name;
+      if (ts.isIdentifier(nameNode) && DANGEROUS_REFERENCE_NAMES.has(nameNode.text)) {
+        pushDangerousReference(nameNode.text, node);
       }
     } else if (ts.isCallExpression(node)) {
       const callee = node.expression;
@@ -170,21 +246,72 @@ export function scanFileForFindings(filePath: string, sourceText: string): Findi
         }
       } else if (isImportMetaResolve(callee)) {
         pushPrimitive("forbidden-import-meta-resolve", node);
-      } else if (ts.isIdentifier(callee) && (callee.text === "eval" || callee.text === "Function")) {
-        pushPrimitive("forbidden-eval-or-function", node);
+      } else if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Reflect" &&
+        (callee.name.text === "apply" || callee.name.text === "construct") &&
+        arg0 !== undefined
+      ) {
+        // Reflect.apply(eval, ...) / Reflect.construct(Function, ...)
+        const target = unwrapExpression(arg0);
+        if (ts.isIdentifier(target) && target.text in REFLECT_TARGET_SCOPE) {
+          const scope = REFLECT_TARGET_SCOPE[target.text];
+          if (target.text === "eval") {
+            pushPrimitive("forbidden-eval-reference", node);
+          } else {
+            pushPrimitive("forbidden-dangerous-reference", node, { name: target.text, scope });
+          }
+        }
       }
     } else if (ts.isNewExpression(node)) {
       if (ts.isIdentifier(node.expression) && node.expression.text === "Function") {
-        pushPrimitive("forbidden-eval-or-function", node);
+        pushDangerousReference("Function", node);
+      }
+    } else if (ts.isElementAccessExpression(node)) {
+      const base = unwrapExpression(node.expression);
+      if (ts.isIdentifier(base) && (base.text === "module" || base.text === "require")) {
+        // module["x"], require["x"] (cualquier propiedad, incl. computada).
+        pushDangerousReference(base.text, node);
+      }
+      const arg = node.argumentExpression;
+      if (ts.isStringLiteralLike(arg)) {
+        if (arg.text === "constructor" || DANGEROUS_REFERENCE_NAMES.has(arg.text)) {
+          pushDangerousReference(arg.text, node);
+        }
       }
     } else if (ts.isPropertyAccessExpression(node)) {
-      if (node.name.text === "createRequire") {
-        // <x>.createRequire (referencia, se llame o no de inmediato en esta misma expresión).
-        pushPrimitive("forbidden-create-require-reference", node);
+      const base = unwrapExpression(node.expression);
+      if (ts.isIdentifier(base) && (base.text === "module" || base.text === "require")) {
+        // module.x, require.x (cualquier propiedad; module.require y require.resolve
+        // quedan cubiertos aquí también, de forma deliberadamente amplia).
+        pushDangerousReference(base.text, node);
       } else if (node.name.text === "require") {
-        // module.require, process.mainModule.require, globalThis.require, Module._load
-        // vía require, o cualquier otra propiedad `.require`: conservador a propósito.
-        pushPrimitive("forbidden-global-require-access", node);
+        // <algo>.require donde <algo> no es literalmente `module`/`require` (p.ej.
+        // process.mainModule.require, globalThis.require): igual de peligroso.
+        pushPrimitive("forbidden-dangerous-reference", node, { name: "require", scope: "everywhere" });
+      } else if (DANGEROUS_REFERENCE_NAMES.has(node.name.text)) {
+        pushDangerousReference(node.name.text, node);
+      }
+    } else if (ts.isIdentifier(node) && node.text === "eval") {
+      // Toda referencia a `eval`, no solo la llamada directa: (0, eval)(..), globalThis.eval,
+      // const e = eval; e(..), Reflect.apply(eval, ..).
+      const parent = node.parent;
+      const isPropertyName = parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.name === node;
+      if (!isPropertyName) {
+        pushPrimitive("forbidden-eval-reference", node);
+      }
+    } else if (ts.isIdentifier(node) && DANGEROUS_REFERENCE_NAMES.has(node.text) && node.text !== "constructor") {
+      // Function, createRequire, getBuiltinModule, _load, binding, _linkedBinding, dlopen,
+      // mainModule como identificador libre (no como nombre de propiedad, ya cubierto arriba).
+      const parent = node.parent;
+      const isPropertyName = parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.name === node;
+      const isImportOrBindingName =
+        parent !== undefined &&
+        (ts.isImportSpecifier(parent) || ts.isBindingElement(parent)) &&
+        (parent.propertyName ?? parent.name) === node;
+      if (!isPropertyName && !isImportOrBindingName) {
+        pushDangerousReference(node.text, node);
       }
     } else if (ts.isIdentifier(node) && node.text === "require") {
       const parent = node.parent;
@@ -201,9 +328,12 @@ export function scanFileForFindings(filePath: string, sourceText: string): Findi
         parent.parent.arguments[0] !== undefined &&
         ts.isStringLiteralLike(parent.parent.arguments[0]);
       const isPropertyName = parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.name === node;
+      const isElementBase =
+        parent !== undefined && ts.isElementAccessExpression(parent) && unwrapExpression(parent.expression) === node;
       const isImportBinding =
-        parent !== undefined && (ts.isImportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent));
-      if (!isDirectLiteralCallCallee && !isRequireResolveLiteralCall && !isPropertyName && !isImportBinding) {
+        parent !== undefined &&
+        (ts.isImportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent));
+      if (!isDirectLiteralCallCallee && !isRequireResolveLiteralCall && !isPropertyName && !isElementBase && !isImportBinding) {
         pushPrimitive("forbidden-require-usage", node);
       }
     }

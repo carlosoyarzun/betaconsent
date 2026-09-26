@@ -5,6 +5,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import ts from "typescript";
 import type { DenyList } from "./deny-list-matcher.ts";
 import { findDenyListMatch, findDenyListMatchForPackageName } from "./deny-list-matcher.ts";
 import { scanFileForFindings, moduleSpecifierFindings, primitiveFindings } from "./import-scanner.ts";
@@ -14,7 +15,7 @@ import { classifySpecifier, isInfraTarget, isServerTarget, isClientFile, mayImpo
 import {
   declaredPackageNames,
   listResolvedDependencies,
-  lockfilePackageNames,
+  checkLockfile,
   manifestHasUnsupportedAliasFields,
 } from "./manifest.ts";
 
@@ -25,6 +26,7 @@ export type ViolationKind =
   | "MANIFEST_SDK_WITHOUT_ADAPTER"
   | "MANIFEST_FORBIDDEN_SDK"
   | "MANIFEST_FORBIDDEN_SDK_TRANSITIVE"
+  | "MANIFEST_LOCKFILE_MISSING_OR_UNSUPPORTED"
   | "MANIFEST_NPM_ALIAS_SDK"
   | "MANIFEST_NONREGISTRY_DEPENDENCY"
   | "UNRESOLVED_SPECIFIER"
@@ -33,10 +35,9 @@ export type ViolationKind =
   | "FORBIDDEN_DIR_UNDER_SRC"
   | "NON_LITERAL_DYNAMIC_CALL"
   | "FORBIDDEN_REQUIRE_USAGE"
-  | "FORBIDDEN_GLOBAL_REQUIRE_ACCESS"
   | "FORBIDDEN_EVAL_OR_FUNCTION"
   | "FORBIDDEN_IMPORT_META_RESOLVE"
-  | "FORBIDDEN_CREATE_REQUIRE_REFERENCE"
+  | "FORBIDDEN_DANGEROUS_REFERENCE"
   | "FORBIDDEN_DANGEROUS_MODULE_IMPORT";
 
 export interface Violation {
@@ -63,6 +64,10 @@ const DANGEROUS_BUILTIN_SPECIFIERS = new Set([
   "node:vm",
   "child_process",
   "node:child_process",
+  "worker_threads", // SEC-CNS-010 R-01: new Worker(code, { eval: true })
+  "node:worker_threads",
+  "inspector", // SEC-CNS-010 R-01: acceso a internals vía protocolo de depuración
+  "node:inspector",
 ]);
 
 function toRelPosix(root: string, absPath: string): string {
@@ -81,26 +86,42 @@ function loadDenyList(): DenyList {
   return JSON.parse(raw) as DenyList;
 }
 
-/** tsconfig*.json (solo nivel superior de `root`) con `paths` o `baseUrl` configurados. */
-function findTsconfigAliasFiles(root: string): string[] {
+interface TsconfigAliasHit {
+  file: string;
+  reason: string;
+}
+
+/**
+ * tsconfig*.json (solo nivel superior de `root`) con `paths` o `baseUrl` configurados,
+ * siguiendo `extends` (SEC-CNS-010 R-03: JSON.parse no entiende JSONC —comentarios,
+ * comas finales— así que un tsconfig válido para `tsc` con esas construcciones pasaba
+ * en silencio; y un `paths`/`baseUrl` heredado vía `extends` no se veía). Se usa
+ * `ts.readConfigFile` (JSONC) + `ts.parseJsonConfigFileContent` (resuelve `extends`); un
+ * error de parseo o de resolución de `extends` es, en sí mismo, una violación.
+ */
+function findTsconfigAliasFiles(root: string): TsconfigAliasHit[] {
   let entries: string[];
   try {
     entries = readdirSync(root);
   } catch {
     return [];
   }
-  const hits: string[] = [];
+  const hits: TsconfigAliasHit[] = [];
   for (const name of entries) {
     if (!/^tsconfig(\..+)?\.json$/.test(name)) continue;
-    try {
-      const raw = readFileSync(join(root, name), "utf-8");
-      const parsed = JSON.parse(raw) as { compilerOptions?: { paths?: unknown; baseUrl?: unknown } };
-      const co = parsed.compilerOptions;
-      if (co !== undefined && (co.paths !== undefined || co.baseUrl !== undefined)) {
-        hits.push(name);
-      }
-    } catch {
-      // Un tsconfig ilegible no es responsabilidad de este guardrail (typecheck lo cubre).
+    const fullPath = join(root, name);
+    const configFile = ts.readConfigFile(fullPath, ts.sys.readFile);
+    if (configFile.error !== undefined) {
+      hits.push({ file: name, reason: "no se pudo parsear (JSONC inválido)" });
+      continue;
+    }
+    const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, root, undefined, fullPath);
+    if (parsed.errors.length > 0) {
+      hits.push({ file: name, reason: "error al resolver la configuración (p.ej. \"extends\" inexistente)" });
+      continue;
+    }
+    if (parsed.options.paths !== undefined || parsed.options.baseUrl !== undefined) {
+      hits.push({ file: name, reason: '"paths" o "baseUrl" definidos (directamente o vía "extends")' });
     }
   }
   return hits;
@@ -133,11 +154,11 @@ export function runGuardrail(root: string): GuardrailResult {
   }
 
   // --- Configuración de alias no soportada (P1-03) ---
-  for (const tsconfigName of findTsconfigAliasFiles(root)) {
+  for (const hit of findTsconfigAliasFiles(root)) {
     violations.push({
       kind: "CONFIG_ALIAS_NOT_SUPPORTED",
-      file: tsconfigName,
-      message: `"${tsconfigName}" define "paths" o "baseUrl": este guardrail no resuelve alias de import, así que no puede garantizar sus reglas de capas/deny-list mientras existan (SEC-CNS-010 P1-03).`,
+      file: hit.file,
+      message: `"${hit.file}": ${hit.reason}. Este guardrail no resuelve alias de import, así que no puede garantizar sus reglas de capas/deny-list mientras existan (SEC-CNS-010 P1-03/R-03).`,
     });
   }
   if (manifestHasUnsupportedAliasFields(root)) {
@@ -165,32 +186,33 @@ export function runGuardrail(root: string): GuardrailResult {
   for (const { relPath, absPath, findings } of perFile) {
     const underAdapters = isUnderAdapters(relPath);
 
-    // --- Primitivas peligrosas (P1-01): se aplican en todo src/**, incl. adaptadores,
-    // salvo las dos marcadas explícitamente como "fuera de adaptadores" abajo. ---
+    // --- Primitivas peligrosas (P1-01, SEC-CNS-010 R-01): "everywhere" se aplica en todo
+    // src/**, incl. adaptadores; "outside-adapters" respeta la excepción de adaptadores
+    // (p.ej. module.createRequire(...)(...) con literal, patrón sancionado por ADR-001 §11
+    // regla 6 para EmailProvider). ---
     for (const p of primitiveFindings(findings)) {
-      if (p.kind === "forbidden-create-require-reference") {
-        if (!underAdapters) {
-          violations.push({
-            kind: "FORBIDDEN_CREATE_REQUIRE_REFERENCE",
-            file: relPath,
-            line: p.line,
-            message: `${relPath}:${p.line} referencia "createRequire" fuera de ${ADAPTERS_DIR}/**: permite fabricar require dinámico y evadir la deny-list (SEC-CNS-010 P1-01).`,
-          });
-        }
+      if (p.kind === "forbidden-dangerous-reference") {
+        if (p.scope === "outside-adapters" && underAdapters) continue;
+        violations.push({
+          kind: "FORBIDDEN_DANGEROUS_REFERENCE",
+          file: relPath,
+          line: p.line,
+          specifier: p.name,
+          message: `${relPath}:${p.line} referencia "${p.name}" (${p.scope === "everywhere" ? "prohibido en todo src/**" : `fuera de ${ADAPTERS_DIR}/**`}): permite reconstruir carga dinámica de módulos, acceso a internals de Node o ejecución de código a partir de una cadena, evadiendo la deny-list (SEC-CNS-010 R-01).`,
+        });
         continue;
       }
-      const kindMap: Record<Exclude<PrimitiveFindingKind, "forbidden-create-require-reference">, ViolationKind> = {
+      const kindMap: Record<Exclude<PrimitiveFindingKind, "forbidden-dangerous-reference">, ViolationKind> = {
         "non-literal-dynamic-call": "NON_LITERAL_DYNAMIC_CALL",
         "forbidden-require-usage": "FORBIDDEN_REQUIRE_USAGE",
-        "forbidden-global-require-access": "FORBIDDEN_GLOBAL_REQUIRE_ACCESS",
-        "forbidden-eval-or-function": "FORBIDDEN_EVAL_OR_FUNCTION",
+        "forbidden-eval-reference": "FORBIDDEN_EVAL_OR_FUNCTION",
         "forbidden-import-meta-resolve": "FORBIDDEN_IMPORT_META_RESOLVE",
       };
       violations.push({
         kind: kindMap[p.kind],
         file: relPath,
         line: p.line,
-        message: `${relPath}:${p.line} usa una construcción prohibida (${p.kind}); no es auditable de forma estática (SEC-CNS-010 P1-01).`,
+        message: `${relPath}:${p.line} usa una construcción prohibida (${p.kind}); no es auditable de forma estática (SEC-CNS-010 P1-01/R-01).`,
       });
     }
 
@@ -303,15 +325,31 @@ export function runGuardrail(root: string): GuardrailResult {
     }
   }
 
-  // --- package-lock.json: transitivos en modo "forbidden" (P1-05) ---
-  for (const lockedName of lockfilePackageNames(root)) {
-    const match = findDenyListMatchForPackageName(lockedName, denyList);
-    if (match !== null && match.mode === "forbidden") {
-      violations.push({
-        kind: "MANIFEST_FORBIDDEN_SDK_TRANSITIVE",
-        specifier: lockedName,
-        message: `"${lockedName}" aparece en package-lock.json (directo o transitivo) y está en modo "forbidden" (${match.category ?? "sin categoría"}); prohibido durante IT0 (SEC-CNS-010 P1-05/P1-06).`,
-      });
+  // --- package-lock.json: transitivos en modo "forbidden" (P1-05); fail-closed si no hay
+  // lockfile v3 legible (SEC-CNS-010 P2): sin él no se puede verificar el árbol transitivo. ---
+  const lockfile = checkLockfile(root);
+  if (lockfile.status === "missing") {
+    violations.push({
+      kind: "MANIFEST_LOCKFILE_MISSING_OR_UNSUPPORTED",
+      specifier: "package-lock.json",
+      message: `No hay package-lock.json en la raíz: no se puede verificar que no haya SDKs "forbidden" como dependencia transitiva (SEC-CNS-010 P2).`,
+    });
+  } else if (lockfile.status === "unsupported-version") {
+    violations.push({
+      kind: "MANIFEST_LOCKFILE_MISSING_OR_UNSUPPORTED",
+      specifier: "package-lock.json",
+      message: `package-lock.json no es lockfileVersion 3 (versión encontrada: ${lockfile.version ?? "desconocida"}): no se puede verificar el árbol transitivo (SEC-CNS-010 P2).`,
+    });
+  } else {
+    for (const lockedName of lockfile.names) {
+      const match = findDenyListMatchForPackageName(lockedName, denyList);
+      if (match !== null && match.mode === "forbidden") {
+        violations.push({
+          kind: "MANIFEST_FORBIDDEN_SDK_TRANSITIVE",
+          specifier: lockedName,
+          message: `"${lockedName}" aparece en package-lock.json (directo o transitivo, por nombre real) y está en modo "forbidden" (${match.category ?? "sin categoría"}); prohibido durante IT0 (SEC-CNS-010 P1-05/P1-06).`,
+        });
+      }
     }
   }
 
