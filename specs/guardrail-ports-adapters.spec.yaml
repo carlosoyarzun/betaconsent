@@ -1,0 +1,168 @@
+specId: SPEC-CNS-GUARDRAIL-PORTS-ADAPTERS
+title: "Guardrail CI Ports & Adapters"
+status: DRAFT
+governedBy:
+  - "ADR-001 §11 (Ports & Adapters), rev. 7, ACCEPTED 2026-09-26 (R11-A (2))"
+  - "CA-136 (H21, épica CA-115): requisito previo al primer commit en src/ (R9-4 C3, R11-F712)"
+jiraStory: CA-136
+owner: lampone-dev
+reviewers:
+  - lampone-security # revisa y fija la deny-list final antes de que deje de ser PROPOSED_INITIAL_LIST
+  - carlosoyarzun # CODEOWNERS humano de tools/guardrails/, .github/ y esta spec
+
+context: >
+  El dominio y la aplicación (src/server/modules/**, src/server/platform/**,
+  src/server/ports/**) no deben conocer SDKs de proveedor de infraestructura; solo
+  src/infra/adapters/** los implementa (ADR-001 §11). Este guardrail automatiza esa
+  regla en CI para que ningún commit la viole en silencio. Es condición previa al
+  primer commit de código de producto en src/ (R11-F712); por eso vive fuera de src/,
+  en tools/guardrails/ports-adapters/.
+
+scope:
+  included:
+    - "Detección de imports de módulos de la deny-list fuera de src/infra/adapters/**"
+    - "Reglas de límites de capa entre modules/platform/ports, infra y client"
+    - "Regla de manifiesto: SDK de proveedor en package.json sin adaptador consumidor"
+  excluded:
+    - "Resolución de alias de paquete no relativos (p.ej. tsconfig paths); solo se resuelven especificadores relativos ('./', '../'). Ver 'openItems'."
+    - "Cualquier código de dominio en src/ (CA-136 es previo a eso)"
+
+denyList:
+  location: tools/guardrails/ports-adapters/deny-list.json
+  status: PROPOSED_INITIAL_LIST
+  note: >
+    Lista inicial propuesta en ADR-001 §11 (rev. 7). lampone-security debe revisarla y
+    fijarla como versión final antes del primer commit en src/. Cambios requieren
+    CODEOWNERS (Carlos + revisor humano de seguridad; un agente IA nunca es code owner).
+  initialEntries:
+    - aws-sdk
+    - "@aws-sdk/*"
+    - "@smithy/*"
+    - "@google-cloud/*"
+    - googleapis
+    - google-auth-library
+    - firebase-admin
+    - "@azure/*"
+    - "@sendgrid/*"
+    - mailgun.js
+    - postmark
+    - resend
+    - nodemailer # solo dentro del adaptador sink de EmailProvider (ADR-001 §11 regla 6); el guardrail no distingue el sink de otros adaptadores, aplica la regla general (solo infra/adapters/**)
+    - node-vault
+    - openid-client
+
+rules:
+  - id: RULE-GUARDRAIL-01
+    name: deny-list-outside-adapters
+    description: >
+      Falla si un archivo fuera de src/infra/adapters/** importa, mediante import
+      estático, `export ... from`, `import()` con literal, `require()` o
+      `<x>.createRequire(...)(...)` con literal, un módulo cuyo nombre de paquete
+      (resuelto desde el especificador, incl. subpaths como aws-sdk/clients/s3 y
+      scopes con wildcard como @aws-sdk/*) coincide con una entrada de la deny-list.
+    detects:
+      - static-import
+      - export-from
+      - dynamic-import-literal
+      - require-literal
+      - create-require-call-literal
+    passesWhen: "el mismo import ocurre dentro de src/infra/adapters/**"
+  - id: RULE-GUARDRAIL-02
+    name: layer-boundary-modules-platform-ports-vs-infra
+    description: >
+      src/server/modules/**, src/server/platform/** y src/server/ports/** nunca
+      importan (de forma relativa) src/infra/**.
+  - id: RULE-GUARDRAIL-03
+    name: layer-boundary-client-vs-server-infra
+    description: >
+      src/client/** nunca importa (de forma relativa) src/server/** ni src/infra/**.
+  - id: RULE-GUARDRAIL-04
+    name: manifest-sdk-without-adapter
+    description: >
+      Si package.json (dependencies o devDependencies) declara un paquete que coincide
+      con la deny-list, debe existir al menos un import de ese paquete dentro de
+      src/infra/adapters/**; si no, falla (SDK "importado" solo en el manifiesto, sin
+      adaptador consumidor real).
+
+implementation:
+  language: "TypeScript, ejecutado directamente por Node LTS con type-stripping nativo (sin ts-node/tsx)"
+  entrypoint: tools/guardrails/ports-adapters/check.ts
+  library: tools/guardrails/ports-adapters/guardrail.ts (runGuardrail(root))
+  parser: "TypeScript compiler API (ts.createSourceFile + AST walk), no expresiones regulares"
+  dependencies:
+    - { name: typescript, version: "6.0.3", kind: devDependency, owner: lampone-dev }
+    - { name: "@types/node", version: "24.13.4", kind: devDependency, owner: lampone-dev }
+  constraints:
+    - "Sin scripts postinstall/preinstall en package.json"
+    - "Versiones exactas (sin rangos ^ ni ~), lockfile (package-lock.json) commiteado"
+    - "Sin dependencias de runtime nuevas; solo devDependencies"
+
+testCases:
+  location: tests/guardrails/ports-adapters/*.test.ts
+  fixtures: tests/guardrails/ports-adapters/fixtures/**
+  cases:
+    - id: TC-01
+      fixture: static-import-deny-violation
+      expect: FAIL
+      reason: "src/server/modules/** importa @aws-sdk/client-s3 con import estático"
+    - id: TC-02
+      fixture: export-from-violation
+      expect: FAIL
+      reason: "export ... from '@aws-sdk/client-s3' fuera de adapters"
+    - id: TC-03
+      fixture: dynamic-import-literal-violation
+      expect: FAIL
+      reason: "import('@aws-sdk/client-s3') dinámico con literal fuera de adapters"
+    - id: TC-04
+      fixture: require-violation
+      expect: FAIL
+      reason: "require('nodemailer') fuera de adapters"
+    - id: TC-05
+      fixture: create-require-violation
+      expect: FAIL
+      reason: "module.createRequire(...)(...) contra aws-sdk/clients/s3 fuera de adapters"
+    - id: TC-06
+      fixture: subpath-violation
+      expect: FAIL
+      reason: "import de subpath aws-sdk/clients/s3 (no el nombre exacto del paquete) fuera de adapters"
+    - id: TC-07
+      fixture: adapter-import-allowed
+      expect: PASS
+      reason: "el mismo SDK, importado desde src/infra/adapters/**, con adaptador consumidor en el manifiesto"
+    - id: TC-08
+      fixture: layer-violation-modules-import-infra
+      expect: FAIL
+      reason: "src/server/modules/** importa src/infra/adapters/** de forma relativa"
+    - id: TC-09
+      fixture: layer-violation-platform-import-infra
+      expect: FAIL
+      reason: "src/server/platform/** importa src/infra/** de forma relativa"
+    - id: TC-10
+      fixture: layer-violation-ports-import-infra
+      expect: FAIL
+      reason: "src/server/ports/** importa src/infra/** de forma relativa"
+    - id: TC-11
+      fixture: layer-violation-client-import-server
+      expect: FAIL
+      reason: "src/client/** importa src/server/** de forma relativa"
+    - id: TC-12
+      fixture: layer-violation-client-import-infra
+      expect: FAIL
+      reason: "src/client/** importa src/infra/** de forma relativa"
+    - id: TC-13
+      fixture: manifest-sdk-without-adapter
+      expect: FAIL
+      reason: "package.json declara @google-cloud/storage sin adaptador consumidor bajo src/infra/adapters/**"
+    - id: TC-14
+      fixture: clean-repo
+      expect: PASS
+      reason: "árbol completo (modules, platform, ports, client, infra/adapters) sin violaciones"
+    - id: TC-15
+      fixture: real-repo-empty-src
+      expect: PASS
+      reason: "el comando del guardrail corriendo sobre el repo real, con src/ vacío, pasa"
+
+openItems:
+  - "Lista de denegación final: pendiente de revisión de lampone-security (hoy PROPOSED_INITIAL_LIST)."
+  - "Resolución de alias de import no relativos (tsconfig paths / workspaces): fuera de alcance de esta versión; si se introducen alias internos, extender layer-rules.ts."
+  - "Herramienta elegida: TypeScript compiler API + recorrido de archivos propio (sin ESLint ni dependency-cruiser), por minimizar dependencias (ADR-001 §5); revisar si lampone-security prefiere una herramienta dedicada."
