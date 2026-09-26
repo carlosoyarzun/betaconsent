@@ -1,0 +1,9 @@
+# Gobierna: ADR-001 §11 (guardrail lint/CI y lista de denegación con CODEOWNERS
+# Carlos + lampone-security), CA-136 (H21).
+#
+# segundo code owner: revisor humano de seguridad — pendiente de designación por Carlos
+# (un agente IA nunca es code owner).
+
+/tools/guardrails/                          @carlosoyarzun
+/.github/                                   @carlosoyarzun
+/specs/guardrail-ports-adapters.spec.yaml   @carlosoyarzun
