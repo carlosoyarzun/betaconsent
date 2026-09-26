@@ -1,45 +1,30 @@
-// Gobierna: ADR-001 §11, CA-136 (H21).
-// Reglas de capas (Ports & Adapters):
-//   (1) src/server/modules/**, src/server/platform/** y src/server/ports/** nunca
-//       importan src/infra/**.
-//   (2) src/client/** nunca importa src/server/** ni src/infra/**.
+// Gobierna: ADR-001 §11, CA-136 (H21), SEC-CNS-010 (P1-03, P1-04).
+// Reglas de capas (Ports & Adapters), fail-closed:
+//   (1) ALLOWLIST: solo src/server/entrypoints/** y src/infra/** pueden resolver (import
+//       relativo) hacia src/infra/** (ADR-001 §11: "los adaptadores ... solo los importa
+//       src/server/entrypoints/**"). Cualquier otro directorio bajo src/ (modules, platform,
+//       ports, client, o uno nuevo que se cree) que importe src/infra/** de forma relativa
+//       es una violación.
+//   (2) src/client/** nunca importa src/server/** ni src/infra/** (de forma relativa).
+//   (3) Todo especificador que no sea relativo-y-resoluble dentro de la raíz, built-in de
+//       Node, o un paquete declarado en package.json → UNRESOLVED_SPECIFIER (fail-closed):
+//       cubre alias de tsconfig (`baseUrl`/`paths`), subpath imports (`#foo`), rutas
+//       absolutas, URLs `file://` y especificadores "pelados" que casualmente coinciden
+//       con una ruta interna (`src/infra/...`).
 //
 // Limitación conocida (documentada en README y en la spec): solo se resuelven
-// especificadores relativos ("./", "../"). Alias de paquete (p.ej. "@app/infra")
-// no se resuelven; si se introducen, esta regla debe extenderse (ver Open en la spec).
+// especificadores relativos ("./", "../"). tsconfig `paths`/`baseUrl` y package.json
+// `imports`/`workspaces` no se resuelven: su sola presencia en la configuración es, en
+// cambio, una violación aparte (ver `guardrail.ts`, CONFIG_ALIAS_NOT_SUPPORTED).
 
+import { builtinModules } from "node:module";
 import { dirname, resolve, sep } from "node:path";
 
-export interface LayerBoundary {
-  /** Directorio (relativo a la raíz del árbol escaneado) cuyos archivos están sujetos a la regla. */
-  guardedDir: string;
-  /** Directorios (relativos a la raíz) que guardedDir no puede alcanzar. */
-  forbiddenTargets: string[];
-  description: string;
-}
+const BUILTIN_MODULE_NAMES = new Set<string>([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
 
-export const LAYER_BOUNDARIES: LayerBoundary[] = [
-  {
-    guardedDir: "src/server/modules",
-    forbiddenTargets: ["src/infra"],
-    description: "src/server/modules/** no puede importar src/infra/** (ADR-001 §11 regla 1)",
-  },
-  {
-    guardedDir: "src/server/platform",
-    forbiddenTargets: ["src/infra"],
-    description: "src/server/platform/** no puede importar src/infra/** (ADR-001 §11 regla 1)",
-  },
-  {
-    guardedDir: "src/server/ports",
-    forbiddenTargets: ["src/infra"],
-    description: "src/server/ports/** no puede importar src/infra/** (ADR-001 §11 regla 1)",
-  },
-  {
-    guardedDir: "src/client",
-    forbiddenTargets: ["src/server", "src/infra"],
-    description: "src/client/** no puede importar src/server/** ni src/infra/** (ADR-001 §11)",
-  },
-];
+export function isNodeBuiltin(specifier: string): boolean {
+  return BUILTIN_MODULE_NAMES.has(specifier);
+}
 
 function normalize(p: string): string {
   return p.split(sep).join("/");
@@ -50,26 +35,79 @@ export function isUnder(filePath: string, dirPath: string): boolean {
   return filePath === dirPath || filePath.startsWith(`${dirPath}/`);
 }
 
+export type SpecifierClassification =
+  | { type: "relative-internal"; relTarget: string }
+  | { type: "relative-unresolved" } // relativo pero escapa de la raíz escaneada
+  | { type: "builtin" }
+  | { type: "declared-package"; packageName: string }
+  | { type: "unresolved" };
+
 /**
- * Resuelve un especificador relativo desde el archivo que lo contiene y devuelve la ruta
- * resultante relativa a `root`, normalizada con separadores "/". Devuelve null si el
- * especificador no es relativo.
+ * Clasifica un especificador visto desde `fileAbsPath` (dentro de `root`).
+ * `declaredPackageNames` son los nombres de paquete exactos declarados en package.json
+ * (dependencies/devDependencies/optionalDependencies/peerDependencies), ya usados tal cual
+ * (sin wildcard) porque package.json nunca declara subpaths.
  */
-export function resolveRelativeSpecifier(root: string, fileAbsPath: string, specifier: string): string | null {
-  if (!specifier.startsWith(".")) {
-    return null;
+export function classifySpecifier(
+  root: string,
+  fileAbsPath: string,
+  specifier: string,
+  declaredPackageNames: ReadonlySet<string>,
+): SpecifierClassification {
+  if (specifier.startsWith(".")) {
+    const resolved = resolve(dirname(fileAbsPath), specifier);
+    const rootNormalized = normalize(resolve(root));
+    const resolvedNormalized = normalize(resolved);
+    if (!resolvedNormalized.startsWith(rootNormalized)) {
+      return { type: "relative-unresolved" };
+    }
+    const rel = resolvedNormalized.slice(rootNormalized.length).replace(/^\/+/, "");
+    return { type: "relative-internal", relTarget: rel };
   }
-  const resolved = resolve(dirname(fileAbsPath), specifier);
-  const rootNormalized = normalize(resolve(root));
-  const resolvedNormalized = normalize(resolved);
-  if (!resolvedNormalized.startsWith(rootNormalized)) {
-    // Import relativo que escapa de la raíz escaneada: fuera de alcance de esta regla.
-    return null;
+  if (isNodeBuiltin(specifier)) {
+    return { type: "builtin" };
   }
-  const rel = resolvedNormalized.slice(rootNormalized.length).replace(/^\/+/, "");
-  return rel;
+  const packageName = extractBarePackageName(specifier);
+  if (packageName !== null && declaredPackageNames.has(packageName)) {
+    return { type: "declared-package", packageName };
+  }
+  return { type: "unresolved" };
 }
 
-export function findApplicableBoundaries(fileRelPath: string): LayerBoundary[] {
-  return LAYER_BOUNDARIES.filter((boundary) => isUnder(fileRelPath, boundary.guardedDir));
+/** Igual idea que deny-list-matcher.extractPackageName, sin normalizar a minúsculas (se usa
+ * para comparar contra nombres declarados en package.json tal cual están escritos). */
+function extractBarePackageName(specifier: string): string | null {
+  if (specifier.startsWith(".") || specifier.startsWith("/")) {
+    return null;
+  }
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    if (segments.length < 2) return null;
+    return `${segments[0]}/${segments[1]}`;
+  }
+  return segments[0] !== undefined && segments[0].length > 0 ? segments[0] : null;
+}
+
+const INFRA_DIR = "src/infra";
+const CLIENT_DIR = "src/client";
+const SERVER_DIR = "src/server";
+const ENTRYPOINTS_DIR = "src/server/entrypoints";
+
+/**
+ * Verdadero si `fileRelPath` tiene permiso (por allowlist) de importar dentro de src/infra/**.
+ */
+export function mayImportInfra(fileRelPath: string): boolean {
+  return isUnder(fileRelPath, ENTRYPOINTS_DIR) || isUnder(fileRelPath, INFRA_DIR);
+}
+
+export function isInfraTarget(relTarget: string): boolean {
+  return isUnder(relTarget, INFRA_DIR);
+}
+
+export function isServerTarget(relTarget: string): boolean {
+  return isUnder(relTarget, SERVER_DIR);
+}
+
+export function isClientFile(fileRelPath: string): boolean {
+  return isUnder(fileRelPath, CLIENT_DIR);
 }
