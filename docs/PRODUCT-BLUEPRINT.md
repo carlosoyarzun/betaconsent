@@ -85,7 +85,7 @@ Registro canónico: Notion "14 — Decisions & Registers / Open Decisions — Bu
 | DEC-BR-003 | DecisionMaker authority assurance | LEGAL REVIEW | Nivel de prueba de autoridad del apoderado. `LEGAL DECISION` |
 | DEC-BR-004 | Minimum Subject recognition data | OPEN | Datos mínimos que entrega el colegio |
 | DEC-BR-005 | Eligibility ownership | OPEN | — |
-| DEC-BR-006 | Revocation downstream behavior | OPEN / LEGAL REVIEW | Consecuencia exacta de la revocación en LectorPro. `LEGAL DECISION` |
+| DEC-BR-006 | Revocation downstream behavior | ACCEPTED 2026-09-23 · LEGAL REVIEW en LEGAL DECISION 1–7 y valores baseline-first (antes de G4); modificada/superseded en partes B/C por DEC-BR-017 | Consecuencia exacta de la revocación en LectorPro. `LEGAL DECISION` |
 | DEC-BR-007 | Consent App retention schedule | LEGAL REVIEW · ampliación ACEPTADA 2026-09-23 como dirección: dos capas (R5) | — (finding R5) |
 | DEC-BR-008 | Architecture stack | OPEN | — |
 | DEC-BR-009 | Evidence integrity construction | OPEN | — |
