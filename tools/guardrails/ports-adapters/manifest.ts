@@ -111,21 +111,42 @@ export function manifestHasUnsupportedAliasFields(root: string): boolean {
   return manifest.imports !== undefined || manifest.workspaces !== undefined;
 }
 
+export type LockfileCheckResult =
+  | { status: "ok"; names: Set<string> }
+  | { status: "missing" }
+  | { status: "unsupported-version"; version: number | undefined };
+
+interface LockfilePackageEntry {
+  /** Nombre real del paquete (SEC-CNS-010 P2): puede diferir del segmento de ruta
+   * node_modules/<segmento> cuando el paquete se instaló bajo un alias `npm:`. */
+  name?: string;
+}
+
 /**
  * Nombres de paquete presentes en package-lock.json (lockfile v3 con clave `packages`),
- * incluidos transitivos. Devuelve un Set vacío si no hay lockfile o no es v3.
+ * incluidos transitivos, preferentes el campo `name` de cada entrada (cubre el alias
+ * transitivo `npm:`) sobre el segmento de ruta `node_modules/<segmento>`. Fail-closed
+ * (SEC-CNS-010 P2): si no hay lockfile o no es v3, el resultado es un estado explícito de
+ * error, no un Set vacío silencioso (el guardrail lo trata como violación).
  */
-export function lockfilePackageNames(root: string): Set<string> {
+export function checkLockfile(root: string): LockfileCheckResult {
   const lockPath = join(root, "package-lock.json");
-  if (!pathExists(lockPath)) return new Set();
+  if (!pathExists(lockPath)) return { status: "missing" };
   const raw = readFileSync(lockPath, "utf-8");
-  const lock = JSON.parse(raw) as { lockfileVersion?: number; packages?: Record<string, unknown> };
-  const names = new Set<string>();
+  const lock = JSON.parse(raw) as {
+    lockfileVersion?: number;
+    packages?: Record<string, LockfilePackageEntry>;
+  };
   if (lock.lockfileVersion !== 3 || lock.packages === undefined) {
-    return names;
+    return { status: "unsupported-version", version: lock.lockfileVersion };
   }
-  for (const pkgPath of Object.keys(lock.packages)) {
+  const names = new Set<string>();
+  for (const [pkgPath, entry] of Object.entries(lock.packages)) {
     if (pkgPath === "") continue; // el paquete raíz
+    if (typeof entry.name === "string" && entry.name.length > 0) {
+      names.add(entry.name);
+      continue;
+    }
     const idx = pkgPath.lastIndexOf("node_modules/");
     if (idx === -1) continue;
     const afterNodeModules = pkgPath.slice(idx + "node_modules/".length);
@@ -133,5 +154,5 @@ export function lockfilePackageNames(root: string): Set<string> {
     const name = afterNodeModules.startsWith("@") ? `${segments[0]}/${segments[1]}` : segments[0];
     if (name !== undefined) names.add(name);
   }
-  return names;
+  return { status: "ok", names };
 }

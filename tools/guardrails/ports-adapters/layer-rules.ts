@@ -18,7 +18,7 @@
 // cambio, una violación aparte (ver `guardrail.ts`, CONFIG_ALIAS_NOT_SUPPORTED).
 
 import { builtinModules } from "node:module";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const BUILTIN_MODULE_NAMES = new Set<string>([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
 
@@ -55,14 +55,22 @@ export function classifySpecifier(
   declaredPackageNames: ReadonlySet<string>,
 ): SpecifierClassification {
   if (specifier.startsWith(".")) {
+    // SEC-CNS-010 R-02: la raíz protegida es src/, no `root` completo (root también
+    // contiene tools/, tests/, etc. fuera del árbol escaneado); y la comparación es por
+    // segmentos de ruta (path.relative), no por prefijo de cadena ingenuo (evita que
+    // "src/infra" acepte "src/infra-evil" o que ".." acabe dentro de root/node_modules
+    // sin que se note).
     const resolved = resolve(dirname(fileAbsPath), specifier);
-    const rootNormalized = normalize(resolve(root));
-    const resolvedNormalized = normalize(resolved);
-    if (!resolvedNormalized.startsWith(rootNormalized)) {
+    const srcDirAbs = resolve(root, "src");
+    const relFromSrc = normalize(relative(srcDirAbs, resolved));
+    const escapesSrc = relFromSrc === ".." || relFromSrc.startsWith("../") || isAbsolute(relFromSrc);
+    const segments = relFromSrc.split("/");
+    const passesThroughNodeModules = segments.includes("node_modules");
+    if (escapesSrc || passesThroughNodeModules) {
       return { type: "relative-unresolved" };
     }
-    const rel = resolvedNormalized.slice(rootNormalized.length).replace(/^\/+/, "");
-    return { type: "relative-internal", relTarget: rel };
+    const relTarget = relFromSrc === "" ? "src" : `src/${relFromSrc}`;
+    return { type: "relative-internal", relTarget };
   }
   if (isNodeBuiltin(specifier)) {
     return { type: "builtin" };
