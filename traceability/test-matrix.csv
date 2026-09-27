@@ -3,3 +3,5 @@ TEST-CNS-900,unit,tests/unit/framework/example.test.ts,"dedupe: quita duplicados
 TEST-CNS-900,unit,tests/unit/framework/example.test.ts,"dedupe: lista vacía devuelve lista vacía",SPEC-CNS-TEST-FRAMEWORK,ACTIVE
 TEST-CNS-901,integration,tests/integration/postgres-smoke.test.ts,"integración: el service container de PostgreSQL responde SELECT 1",SPEC-CNS-TEST-FRAMEWORK;ADR-002,ACTIVE
 TEST-CNS-902,contract,tests/contract/ports/example-port.contract.ts,"ExampleCounterPort contract (in-memory + array-log): 4 casos x 2 adaptadores",SPEC-CNS-TEST-FRAMEWORK;ADR-001 §11 regla (4),ACTIVE
+TEST-CNS-903,unit,tests/unit/framework/postgres-smoke-fail-closed.test.ts,"postgres-smoke fail-closed: sin TEST_DATABASE_URL en CI el test falla (no se omite)",SPEC-CNS-TEST-FRAMEWORK;SEC-CNS-011,ACTIVE
+TEST-CNS-903,unit,tests/unit/framework/postgres-smoke-fail-closed.test.ts,"postgres-smoke fail-closed: sin TEST_DATABASE_URL fuera de CI el test se omite (exit 0)",SPEC-CNS-TEST-FRAMEWORK;SEC-CNS-011,ACTIVE
