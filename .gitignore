@@ -13,6 +13,12 @@ agent/audit.log
 .env.*
 !.env.example
 
+# Evidencia de test runs (CA-118/H03, specs/test-framework.spec.yaml): JSON Lines por
+# corrida, generada por tools/testing/run-tests.ts en evidence/test-runs/. No se
+# commitea (evidence/README.md explica por qué); en CI se sube como artefacto de la
+# corrida, no al repo.
+evidence/test-runs/
+
 # Dependencias y builds (para cuando exista código)
 node_modules/
 dist/
