@@ -18,7 +18,13 @@
   },
   "include": [
     "tools/guardrails/ports-adapters/**/*.ts",
-    "tests/guardrails/ports-adapters/*.test.ts"
+    "tools/guardrails/dependency-allowlist-check.ts",
+    "tools/guardrails/dependency-allowlist.ts",
+    "tools/testing/**/*.ts",
+    "tests/guardrails/ports-adapters/*.test.ts",
+    "tests/unit/**/*.ts",
+    "tests/integration/**/*.ts",
+    "tests/contract/**/*.ts"
   ],
   "exclude": [
     "tests/guardrails/ports-adapters/fixtures/**"

@@ -8,11 +8,16 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --test tests/guardrails/ports-adapters/*.test.ts",
+    "test:unit": "node tools/testing/run-tests.ts unit tests/unit",
+    "test:integration": "node tools/testing/run-tests.ts integration tests/integration",
+    "test:contract": "node tools/testing/run-tests.ts contract tests/contract",
     "guardrail:ports-adapters": "node tools/guardrails/ports-adapters/check.ts",
-    "ci": "npm run typecheck && npm run test && npm run guardrail:ports-adapters"
+    "guardrail:dependency-allowlist": "node tools/guardrails/dependency-allowlist-check.ts",
+    "ci": "npm run typecheck && npm run test && npm run guardrail:ports-adapters && npm run guardrail:dependency-allowlist && npm run test:unit && npm run test:integration && npm run test:contract"
   },
   "devDependencies": {
     "@types/node": "24.13.4",
+    "pg": "8.23.0",
     "typescript": "6.0.3"
   }
 }

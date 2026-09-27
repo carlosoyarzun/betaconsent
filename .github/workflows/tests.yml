@@ -1,0 +1,181 @@
+# Gobierna: JIRA CA-118 (H03, épica CA-115); specs/test-framework.spec.yaml;
+# DEC-BR-014 E5; ADR-001 §5 (supply chain) y §11 regla (4) (contrato por puerto);
+# ADR-002 (PostgreSQL); ADR-003 C14 (GitHub Actions: Actions fijadas por SHA, jobs de
+# PR sin secretos, CODEOWNERS).
+#
+# Cuatro jobs con nombres estables (unit, integration, contract,
+# dependency-allowlist) para que el Supervisor los agregue como checks requeridos.
+# Ninguno usa GitHub Secrets ni credenciales de deploy; el job "integration" genera su
+# propia credencial efímera de PostgreSQL por corrida (no persiste, no es secreto de
+# producto, solo sirve para el service container desechable de este job).
+#
+# Alcance IT0 (DEC-BR-014 §4): LOCAL + CI, solo datos sintéticos. El service container
+# de PostgreSQL no contiene ni recibe ningún dato de dominio: solo corre
+# tests/integration/postgres-smoke.test.ts (SELECT 1).
+
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Cancela corridas obsoletas del mismo PR (no en push a main, para no perder una
+# corrida de main a mitad de camino).
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "24.21.0"
+
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Subir evidencia de la corrida (artefacto, no se commitea; evidence/README.md)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-evidence-unit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/test-runs/unit-*.jsonl
+          if-no-files-found: error
+          retention-days: 30
+
+  integration:
+    name: integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        # ADR-002 fija solo "PostgreSQL (versión mayor vigente)", no versión exacta ni
+        # digest (openItem, ver specs/test-framework.spec.yaml integrationHarness).
+        # postgres:16 (16.15) fijado por el digest del índice multi-arch resuelto el
+        # 2026-09-27; elección provisional de este job, no una decisión de ADR-002.
+        image: postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          # Credencial efímera generada por esta corrida de job (no es un secreto de
+          # GitHub ni de producto): única por run_id+run_attempt, descartada al
+          # terminar el job junto con el service container. Solo datos sintéticos.
+          POSTGRES_USER: test_ci_unit
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_DB: test_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U test_ci_unit -d test_smoke"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Integration tests (PostgreSQL service container, solo sintético)
+        env:
+          TEST_DATABASE_URL: postgresql://test_ci_unit:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/test_smoke
+        run: npm run test:integration
+
+      - name: Subir evidencia de la corrida (artefacto, no se commitea; evidence/README.md)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-evidence-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/test-runs/integration-*.jsonl
+          if-no-files-found: error
+          retention-days: 30
+
+  contract:
+    name: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Contract tests
+        run: npm run test:contract
+
+      - name: Subir evidencia de la corrida (artefacto, no se commitea; evidence/README.md)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-evidence-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/test-runs/contract-*.jsonl
+          if-no-files-found: error
+          retention-days: 30
+
+  dependency-allowlist:
+    name: dependency-allowlist
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Dependency allowlist (ADR-001 §5)
+        # Invoca el script directamente (no vía script de npm): el veredicto de este paso
+        # no depende de lo que package.json defina en "scripts" (SEC-CNS-011 P1-04, mismo
+        # estándar que SEC-CNS-010 P1-08 en guardrails.yml).
+        run: node tools/guardrails/dependency-allowlist-check.ts
