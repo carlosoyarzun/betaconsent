@@ -1,6 +1,7 @@
 # Máquina Invitation del subconjunto IT0 (H01 / CA-116), rev. 4 (R14-E: Q-18 opción A). Guards/errores/invariantes
+# rev. 4d (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — OPEN-TC-07 pasa a DECIDED (A-09, A-35, A-36) como lectura de R14-E; cita de Q-18. Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # transversales en common.spec.yaml (GRD-CM-*, ERR-CM-*, INV-CM-*). Cero PII.
-# rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de I9) y condición (iii) de GRD-TC-08 (GRD-IV-13: 404 uniforme en GET /i/; PENDING-CARLOS, OPEN-TC-07).
+# rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de I9) y condición (iii) de GRD-TC-08 (GRD-IV-13: 404 uniforme en GET /i/; OPEN-TC-07 DECIDED, DEC-BR-018).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en I9), N2-05 (GRD-TC-07 en I1/I3/I3r/I4); AUDIT-H01-rev4 M-05.
 specId: SPEC-CNS-SM-INVITATION
 title: "State machine Invitation (IT0)"
@@ -270,8 +271,8 @@ transitions:
         SUBJECT_MISMATCH_REPORTED: {source: HUMAN, actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
         CONTESTED_BY_RECIPIENT: {source: HUMAN, actorType: HUMAN, actorRole: DECISION_MAKER, enabled: false, disabledReason: "M3: credencial del enlace 'yo no hice esta decisión' y efecto sin definir (LD-01; AUDIT F-A13); ver consent-decision M3."}
         TOKEN_COMPROMISED: {source: HUMAN, actorType: HUMAN, actorRole: INVITER}
-        PARTICIPATION_CLOSED: {source: SYSTEM, actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context SP4, en la misma transacción (Q-18 opción A, R14-E); reintento por job CASCADE_CANCEL_INVITATION solo si falla (GRD-TC-08, PENDING-CARLOS OPEN-TC-07)"}
-        ENROLLMENT_CLOSED: {source: SYSTEM, actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context EN1, en la misma transacción (Q-18 opción A, R14-E); reintento por job CASCADE_CANCEL_INVITATION solo si falla (GRD-TC-08, PENDING-CARLOS OPEN-TC-07)"}
+        PARTICIPATION_CLOSED: {source: SYSTEM, actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context SP4, en la misma transacción (Q-18 opción A, R14-E); reintento por job CASCADE_CANCEL_INVITATION solo si falla (GRD-TC-08, OPEN-TC-07 DECIDED, DEC-BR-018)"}
+        ENROLLMENT_CLOSED: {source: SYSTEM, actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context EN1, en la misma transacción (Q-18 opción A, R14-E); reintento por job CASCADE_CANCEL_INVITATION solo si falla (GRD-TC-08, OPEN-TC-07 DECIDED, DEC-BR-018)"}
     routeClass: ISSUANCE_DECISION
     httpPost: true
     httpPostBySource: {HUMAN: true, SYSTEM: false}
@@ -287,7 +288,7 @@ transitions:
     emits: [INVITATION_CANCELLED]
     idempotencyKey: "(invitationRef, reasonCode)"
     errors: [ERR-IV-09, ERR-IV-10, ERR-CM-09, ERR-CM-10]
-    governedBy: ["SM-CNS-001 §2 I9, §2.1 M3, §6", "CARLOS r3 R14-E (Q-18 opción A)", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "S/PROPUESTA-Q18.md", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05"]
+    governedBy: ["SM-CNS-001 §2 I9, §2.1 M3, §6", "DEC-BR-018 R14-E (Q-18 opción A)", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "DEC-BR-018 (R14-E, Q-18 opcion A; A-09, A-19, A-35, A-36)", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05"]
     testIds: [TEST-CNS-130, TEST-CNS-317, TEST-CNS-418, TEST-CNS-419, TEST-CNS-420, TEST-CNS-428, TEST-CNS-438, TEST-CNS-444, TEST-CNS-445, TEST-CNS-449, TEST-CNS-450]
 
 guards:
@@ -342,10 +343,10 @@ guards:
     testIds: [TEST-CNS-124, TEST-CNS-134]
   - id: GRD-IV-13
     name: landing_blocked_while_cascade_pending
-    rule: "SEC-CNS-012 re-verificación rev. 4b (3)(iii): la resolución de GET /i/{token}, tras resolve_invitation y SET LOCAL, antes de crear el handle LANDING, comprueba que la participación y el Enrollment de la invitación no estén CLOSED y que no exista un ops.job CASCADE_CANCEL_INVITATION pendiente para esa invitación; si falla, 404 uniforme de ERR-IV-01 (mismo cuerpo, código y tiempo acotado que un token inexistente), sin handle, sin Set-Cookie y sin evento. El resto de fallas de GRD-CM-05 (contexto PAUSED, participación SUSPENDED) conserva el comportamiento actual (el POST I4 se rechaza con el error de GRD-CM-05). Parte de la desviación de GRD-TC-08 frente a R14-E: PENDING-CARLOS (OPEN-TC-07); el guard es más restrictivo y se aplica mientras tanto."
+    rule: "SEC-CNS-012 re-verificación rev. 4b (3)(iii): la resolución de GET /i/{token}, tras resolve_invitation y SET LOCAL, antes de crear el handle LANDING, comprueba que la participación y el Enrollment de la invitación no estén CLOSED y que no exista un ops.job CASCADE_CANCEL_INVITATION pendiente para esa invitación; si falla, 404 uniforme de ERR-IV-01 (mismo cuerpo, código y tiempo acotado que un token inexistente), sin handle, sin Set-Cookie y sin evento. El resto de fallas de GRD-CM-05 (contexto PAUSED, participación SUSPENDED) conserva el comportamiento actual (el POST I4 se rechaza con el error de GRD-CM-05). Parte de la desviación de GRD-TC-08 frente a R14-E, DECIDIDA por Carlos (OPEN-TC-07, DEC-BR-018 A-09): el guard es más restrictivo y se aplica en todo caso."
     onFail: ERR-IV-01
-    pendingDecision: OPEN-TC-07
-    governedBy: ["SEC-CNS-012 re-verificación rev. 4b (3)(iii)", "CARLOS r3 R14-E", "REQ-CNS-TBD-07 AC-07.1", "SEC-CNS-006 P-12", "INV-CM-08"]
+    decidedRef: "OPEN-TC-07 (DEC-BR-018, 2026-09-27)"
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4b (3)(iii)", "DEC-BR-018 (R14-E, OPEN-TC-07)", "REQ-CNS-TBD-07 AC-07.1", "SEC-CNS-006 P-12", "INV-CM-08"]
     testIds: [TEST-CNS-451]
   - id: GRD-IV-09
     name: channel_binding_and_single_decision_maker
