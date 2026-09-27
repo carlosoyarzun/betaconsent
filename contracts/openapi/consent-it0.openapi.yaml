@@ -45,6 +45,8 @@ info:
     - "OPEN-CT-04: rango API-CNS-100…199 propuesto; reconciliar con el registro de Notion. API-CNS-001 reservado (AuthorizationCheck del consumidor)."
     - "P-26 / SEC-CNS-006: nombres de cookie __Host- y de la cabecera CSRF son ilustrativos hasta fijarse."
     - "OPEN-CT-08 (nuevo): las specs no fijan los códigos HTTP exactos por error; los status de este borrador son propuesta."
+    - "F-CT-09 (nuevo, P2): listas de guards de las specs sin GRD-CM-06/GRD-CM-07/GRD-CM-01 en transiciones RIGHTS (RC3, RC3a, RH3, RC4-RC6; GRD-CM-01 también en RH2). El contrato declara la clase RIGHTS pero no añade guards; reconciliar en las specs (coordinar con lampone-security)."
+    - "OPEN-CT-09 (nuevo): I1 idempotencyKey (tenantRef, clientRequestId) sin clientRequestId en el body; se transcribe como cabecera Idempotency-Key. Cosign de RH3 sin schema de request propio (EmptyCommand)."
 servers:
   - url: http://localhost:8080
     description: LOCAL / CI únicamente (DEC-BR-014; ADR-003 rev. 7). Sin proveedor cloud, sin staging ni producción (NOT PROVISIONED).
@@ -335,7 +337,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, alt: "PRIVACY_LEGAL (OPEN-TC-06)", note: "nunca SYSTEM_GUARD, modelo ni agente"}
       x-guards: [GRD-CM-07, GRD-CM-10, GRD-TC-05, GRD-TC-06]
       x-idempotency: "(contextRef, sequence)"
-      x-pending: ["OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "OPEN-TC-05 / ADR-011 / DEC-BR-009 (almacén de auditoría PLATFORM; reasonCode sin enum)", "OPEN-TC-01", "OPEN-TC-03", "F-007 (transiciones de tenant/participación sin superficie HTTP)"]
+      x-pending: ["OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "OPEN-TC-05 / ADR-011 / DEC-BR-009 (almacén de auditoría PLATFORM; reasonCode sin enum)", "OPEN-TC-01", "OPEN-TC-03", "F-007 (transiciones de tenant/participación sin superficie HTTP)", "F-012 (contextRef como configuración de adapter)"]
       security: [{platformSession: []}]
       parameters: [{$ref: '#/components/parameters/ContextRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
       requestBody:
@@ -369,7 +371,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: INVITER}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11]
       x-idempotency: "(tenantRef, clientRequestId); clientRequestId = Idempotency-Key"
-      x-pending: ["LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)"]
+      x-pending: ["LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)", "F-012 (contextRef de LectorPro como configuración de adapter)"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
       requestBody:
@@ -747,7 +749,7 @@ paths:
       tags: [bearer-decision]
       summary: I9 SUBJECT_MISMATCH_REPORTED por DecisionMaker verificado (→ CANCELLED)
       x-governed-by: ["invitation.spec I9 (byReasonCode SUBJECT_MISMATCH_REPORTED)", "SM-CNS-001 §2 I9", "EXT-C / DEC-BR-004"]
-      x-state-transition: {machine: Invitation, id: I9, from: [OPENED, VERIFIED], to: CANCELLED, reasonCode: SUBJECT_MISMATCH_REPORTED}
+      x-state-transition: {machine: Invitation, id: I9, from: VERIFIED, to: CANCELLED, reasonCode: SUBJECT_MISMATCH_REPORTED, note: "precondición verificado (EXT-C)"}
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "sin fórmula para cancelar (I9 no incluye GRD-CM-05)"
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
@@ -1082,3 +1084,155 @@ paths:
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
+  # ---------------------------------------------------------------------------
+  # rights-case (RC0, RC1, RC3/RC3a, RC4/RC5/RC6). RC2 worker; RC2u y RC1c sin HTTP.
+  # ---------------------------------------------------------------------------
+  /staff/rights-reports:
+    post:
+      operationId: reportSchoolRevocationIntent
+      x-api-id: API-CNS-145
+      tags: [staff]
+      summary: RC0 — el colegio reporta intención de revocar (null → OPEN, origin SCHOOL_REPORTED)
+      description: El colegio solo reporta; no crea Revocation, no aporta ni cambia canal (DEC-BR-017 §8). Respuesta «en trámite» idéntica con 0, 1 o más cadenas GRANTED (ERR-RC-07).
+      x-governed-by: ["rights-case.spec RC0", "SM-CNS-001 §5.2 RC0", "DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.2", "SEC-CNS-006 P-35", "AUDIT F-A10", "SEC-CNS-012 P2-10"]
+      x-state-transition: {machine: RightsCase, id: RC0, from: null, to: OPEN, origin: SCHOOL_REPORTED}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke: no lee *.active de tenant, participación, matrícula ni contexto (INV-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN/INVITER vía acceso staff IT0_ONLY"}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-03]
+      x-idempotency: "(tenant_id, chainRef) — ≤1 no terminal"
+      x-pending: ["LD-03 (quién opera y con qué base)", "LD-20 / DEC-BR-005"]
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SchoolRevocationReportRequest'}
+      responses:
+        '202':
+          description: «En trámite», uniforme.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SchoolReportAck'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  /rights-case/open:
+    post:
+      operationId: openRightsCase
+      x-api-id: API-CNS-146
+      tags: [bearer-rights]
+      summary: RC1 fromHandle — abrir caso humano (null → OPEN); REQUEST_EXPIRED solo lo abre R9
+      description: Respuesta «en revisión» idéntica exista o no la cadena, o si el input se rechaza (ERR-RC-01, ERR-RC-02); nunca «denegado»; sin plazo prometido (INV-RC-03). caseContact solo en el body, solo dominios reservados en IT0.
+      x-governed-by: ["rights-case.spec RC1", "SM-CNS-001 §5.2 RC1, §5 R9", "DEC-BR-017 §3, §4", "CARLOS r3 R5-4, R6-3", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "AUDIT F-A03, F-A11"]
+      x-state-transition: {machine: RightsCase, id: RC1, from: null, to: OPEN}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {ref: UNVERIFIED_BEARER}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RC-05, GRD-RC-14]
+      x-idempotency: "(tenant_id, chainRef) — ≤1 no terminal"
+      x-uniform-response: "200 InReviewAck para éxito, caso ya abierto, cadena inexistente e input rechazado"
+      x-pending: ["F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/OpenRightsCaseRequest'}
+      responses:
+        '200':
+          description: «En revisión».
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InReviewAck'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+  /rights-case/revocation-intent:
+    post:
+      operationId: expressRevocationIntentInCase
+      x-api-id: API-CNS-147
+      tags: [bearer-rights]
+      summary: RC3/RC3a — intención expresa en la página del caso (CONTACTING → IN_VERIFICATION) + lado Revocation (RC3 null → REQUESTED | R12 adjunta)
+      description: Escrita por web desde el handle del DecisionMaker, nunca por el operador. Sin caseRef ni revocationRef del cliente (GRD-RC-14). El DecisionMaker queda probado por RH2 (P-v7-3 ACCEPTED, R14-A).
+      x-governed-by: ["rights-case.spec RC3, RC3a", "revocation.spec RC3, R12", "SM-CNS-001 §5.2 RC3, v7 RC3a, R12", "DEC-BR-017 §3, §6 (F-510)", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-H01-02"]
+      x-state-transition:
+        - {machine: RightsCase, id: RC3, from: CONTACTING, to: IN_VERIFICATION, sameLotAs: "Revocation RC3 (null → REQUESTED)"}
+        - {machine: RightsCase, id: RC3a, from: CONTACTING, to: IN_VERIFICATION, sameLotAs: "Revocation R12 (REQUESTED|VERIFIED|CONFIRMED → self)"}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (clase RIGHTS; la spec no lista GRD-CM-06 en RC3/RC3a)"
+      x-actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)"}
+      x-guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-08, GRD-RC-13, GRD-RC-14, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28]
+      x-idempotency: "(caseRef, revocationRef)"
+      x-pending: ["F-005 (actor UNVERIFIED_BEARER en RC3/R12 vs DEC-BR-017 §8 DECISION_MAKER)", "F-006 (alcance del handle /m/)", "F-002", "P-v7-5 (RC3a/R12)"]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationIntentRequest'}
+      responses:
+        '200':
+          description: «En revisión».
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InReviewAck'}
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+  /platform/rights-cases/{caseRef}/close:
+    post:
+      operationId: closeRightsCase
+      x-api-id: API-CNS-148
+      tags: [platform]
+      summary: RC4/RC5/RC6 — close_case (IN_VERIFICATION|CONTACTING → RESOLVED|WITHDRAWN)
+      description: RESOLVED solo tras R4 APPLIED; WITHDRAWN solo tras REVOCATION_FAILED WITHDRAWN_BY_REQUESTER del ciclo vigente (GRD-RC-09). Ningún timer cierra el caso.
+      x-governed-by: ["rights-case.spec RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6", "SM-CNS-001 §5.2 RC4, v7 RC5, RC6", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-A01"]
+      x-state-transition:
+        - {machine: RightsCase, id: RC4.RESOLVED, from: IN_VERIFICATION, to: RESOLVED}
+        - {machine: RightsCase, id: RC4.WITHDRAWN, from: IN_VERIFICATION, to: WITHDRAWN}
+        - {machine: RightsCase, id: RC5, from: CONTACTING, to: RESOLVED}
+        - {machine: RightsCase, id: RC6, from: CONTACTING, to: WITHDRAWN}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (clase RIGHTS)"
+      x-actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
+      x-guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+      x-idempotency: "caseRef"
+      security: [{caseSession: []}]
+      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CloseRightsCaseRequest'}
+      responses:
+        '200':
+          description: Caso cerrado.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RightsCaseClosed'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+x-not-exposed:
+  - {id: RC2u, machine: RightsCase, reason: "La spec la declara httpPost false y disparada por el retorno por /m/; un GET no puede transicionar (INV-CM-08) y no hay POST compatible. Sin superficie HTTP en este borrador.", pending: ["F-CT-01", "F-011", "F-006", "OPEN-CT-01"]}
+  - {id: RC2, machine: RightsCase, reason: "worker (primera acción; RV0 al canal ligado con trigger CASE_CONTACT/SCHOOL_REPORTED)"}
+  - {id: RC1c, machine: RightsCase, reason: "deshabilitada (R13-2; LD-03/LD-04)", pending: ["F-004", "LD-03", "LD-04"]}
+  - {id: RC1.fromR9, machine: RightsCase, reason: "interno desde R9 (REQUEST_EXPIRED)"}
+  - {id: [TN1, TN2], machine: TenantStatus, reason: "sin operación HTTP: fixture (LOCAL/CI) o migración revisada (DEC-BR-014 §5)", pending: ["F-007", "F-CT-07 (TENANT_STATUS_CHANGED sin estado destino)"]}
+  - {id: [SP1, SP2, SP3, SP4], machine: SchoolParticipation, reason: "sin operación HTTP (SP4 + I9 PARTICIPATION_CLOSED en la misma tx)", pending: ["F-007"]}
+  - {id: CX1, machine: ConsentContextReadiness, reason: "SYSTEM_GUARD; fixture o migración en IT0"}
+  - {id: [I5, I6, I7], machine: Invitation, reason: "internas: mismo lote que V3 / C3 / C5"}
+  - {id: I7u, machine: Invitation, reason: "deshabilitada (NF-03 / Q-15)"}
+  - {id: I8, machine: Invitation, reason: "worker SYSTEM_GUARD (expiración lazy + barrido)"}
+  - {id: "I9 (PARTICIPATION_CLOSED, ENROLLMENT_CLOSED, CONTESTED_BY_RECIPIENT)", machine: Invitation, reason: "internas en la tx de SP4/EN1; CONTESTED_BY_RECIPIENT deshabilitado (LD-01)"}
+  - {id: [V4, V5, V6, V6r, V6c, V6a], machine: DecisionMakerVerification, reason: "internas/worker; V6a es contabilidad del padre"}
+  - {id: [C4, C7, C8, M3], machine: ConsentDecision, reason: "deshabilitadas (F-025; EXT-E / F-023; EXT-E / Q-16; LD-01)"}
+  - {id: C6, machine: ConsentDecision, reason: "interna: mismo lote que Revocation R4"}
+  - {id: [R4, R5, R6, R7, R9], machine: Revocation, reason: "worker (APPLY_REVOCATION, consent.revoked, ACK, erasure.confirmed, TTL P-19)", pending: ["OPEN-CT-02 (firma/transporte outbox, ACK y erasure.confirmed)", "F-CT-04 (consent.revoked sin subjectRef)"]}
+  - {id: R8h, machine: Revocation, reason: "deshabilitada (R13-4; LD-03)"}
+x-pending-global:
+  - "LD-15 (retención de eventos de seguridad emitidos por V1/V2/V3/RV0)"
+  - "OPEN-CM-02 (eventTypes de seguridad sin nombre: Guard T fallido, binding M1, INTEGRITY_FAILURE)"
+  - "OPEN-CT-03 (enum bindingResult)"
+  - "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+  - "OPEN-TC-01 (enum de reasonCode), OPEN-TC-03 / Q-28 (LEFT_SCHOOL)"
