@@ -179,14 +179,10 @@ export function sendInvitation(
   return { record: sent, token };
 }
 
-/** I4: SENT -> OPENED (primer POST del portador tras el canje del token). Guards: GRD-IV-07, GRD-IV-08. */
-export function openInvitation(ports: InvitationPorts, tenantId: TenantId, token: string): InvitationRecord {
-  const tokenHash = hashToken(token);
-  const found = ports.invitationRepo.findByTokenHash(tokenHash);
-  if (!found || found.tenantId !== tenantId) {
-    // GRD-IV-07: token inexistente, o de otro tenant -> 404 uniforme (ERR-IV-01).
-    throw new DomainError("ERR-IV-01");
-  }
+/** Efecto compartido de I4 (SENT -> OPENED), sin resolver el token: ambas vías de entrada
+ * (openInvitation por token, openInvitationByRef por sesión ya resuelta en el GET de canje)
+ * terminan aquí. Guards: GRD-IV-07 (expiración), GRD-IV-08 (first_post_only, idempotente). */
+function transitionInvitationToOpened(ports: InvitationPorts, tenantId: TenantId, found: InvitationRecord): InvitationRecord {
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) {
     throw new DomainError("ERR-IV-01");
   }
@@ -211,6 +207,41 @@ export function openInvitation(ports: InvitationPorts, tenantId: TenantId, token
     idempotencyKey: `${found.invitationRef}:opened`,
   });
   return opened;
+}
+
+/** I4: SENT -> OPENED, resolviendo el token en el mismo paso. Guards: GRD-IV-07, GRD-IV-08.
+ * Uso: pruebas de dominio y cualquier llamador que aún tenga el token en mano. El flujo HTTP
+ * (P-12, GET /i/{token} + POST /invitation/open) usa `openInvitationByRef` en su lugar, porque
+ * el POST del contrato (EmptyCommand) nunca vuelve a recibir el token. */
+export function openInvitation(ports: InvitationPorts, tenantId: TenantId, token: string): InvitationRecord {
+  const tokenHash = hashToken(token);
+  const found = ports.invitationRepo.findByTokenHash(tokenHash);
+  if (!found || found.tenantId !== tenantId) {
+    // GRD-IV-07: token inexistente, o de otro tenant -> 404 uniforme (ERR-IV-01).
+    throw new DomainError("ERR-IV-01");
+  }
+  return transitionInvitationToOpened(ports, tenantId, found);
+}
+
+/** I4 vía sesión (P-12): el GET /i/{token} ya resolvió el token (GRD-IV-07), creó la sesión
+ * LANDING con (tenantId, invitationRef) y descartó el token. Este POST transiciona por esa
+ * referencia; nunca recibe ni vuelve a resolver el token (contracts/openapi EmptyCommand). */
+export function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): InvitationRecord {
+  const found = requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
+  return transitionInvitationToOpened(ports, tenantId, found);
+}
+
+/** GET /i/{token} (P-12, API-CNS-101): resuelve el token por su hash sin transicionar
+ * (INV-CM-08) ni tocar el ledger. Devuelve `null` si el hash no resuelve o si la invitación ya
+ * está expirada (GRD-IV-07); el llamador SIEMPRE trata `null` como 404 uniforme, sin distinguir
+ * el motivo. GRD-IV-13 (cascada de cancelación pendiente) sigue diferido: requiere
+ * tenant-context, fuera del alcance de este archivo (ver cabecera). */
+export function resolveInvitationForRedeem(ports: InvitationPorts, token: string): InvitationRecord | null {
+  const tokenHash = hashToken(token);
+  const found = ports.invitationRepo.findByTokenHash(tokenHash);
+  if (!found) return null;
+  if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) return null;
+  return found;
 }
 
 /** I5 (interno, disparado por otp-challenge V3): OPENED -> VERIFIED. */

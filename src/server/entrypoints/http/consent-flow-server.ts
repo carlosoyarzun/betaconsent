@@ -20,6 +20,7 @@ import type { ConsentDecisionPorts } from "../../modules/consent-decision/consen
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import {
   handleOpenInvitation,
+  handleRedeemInvitationLink,
   handleRequestOtp,
   handleSubmitDecision,
   handleSubmitOtp,
@@ -99,6 +100,14 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   if (result.setSessionCookie) {
     res.setHeader("Set-Cookie", serializeSessionCookie(config, result.setSessionCookie));
   }
+  if (result.extraHeaders) {
+    for (const [name, value] of Object.entries(result.extraHeaders)) {
+      res.setHeader(name, value);
+    }
+  }
+  if (result.location) {
+    res.setHeader("Location", result.location);
+  }
   res.writeHead(result.status, { "content-type": "application/json" });
   res.end(JSON.stringify(result.body));
 }
@@ -117,7 +126,20 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
-    const path = url.split("?", 1)[0];
+    const path = url.split("?", 1)[0] ?? "";
+
+    if (req.method === "GET" && path.startsWith("/i/") && path.length > "/i/".length) {
+      // API-CNS-101 (P-12): único GET de canje de este entrypoint IT0 (INV-CM-08, GRD-IV-07).
+      let token: string | undefined;
+      try {
+        token = decodeURIComponent(path.slice("/i/".length));
+      } catch {
+        token = undefined;
+      }
+      const result = token ? handleRedeemInvitationLink(token, ports, sessionSecret) : { status: 404 as const, body: { status: 404 } };
+      writeResult(res, config, result);
+      return;
+    }
 
     if (req.method === "GET" && path === "/__dev/otp-sink") {
       if (options.environment !== "LOCAL") {

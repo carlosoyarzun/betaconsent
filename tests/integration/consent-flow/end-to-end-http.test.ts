@@ -1,9 +1,10 @@
-// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-115, API-CNS-120, API-CNS-121,
-// API-CNS-127; specs/state-machines/invitation.spec.yaml (I1..I7), otp-challenge.spec.yaml
-// (V1, V3), consent-decision.spec.yaml (C1, C2, C3); common.spec.yaml ledgerEnvelope,
-// tenancy.isolationKey. Recorre el camino feliz completo por HTTP real (node:http en un
-// puerto efímero de localhost): invitación -> OTP (leído del sink en memoria) -> decisión, y
-// verifica la cadena del ledger (sequence consecutivo por agregado, tenant_id en cada evento).
+// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-101 (GET /i/{token}, P-12),
+// API-CNS-115, API-CNS-120, API-CNS-121, API-CNS-127; specs/state-machines/invitation.spec.yaml
+// (I1..I7), otp-challenge.spec.yaml (V1, V3), consent-decision.spec.yaml (C1, C2, C3);
+// common.spec.yaml ledgerEnvelope, tenancy.isolationKey, INV-CM-08. Recorre el camino feliz
+// completo por HTTP real (node:http en un puerto efímero de localhost): canje del enlace (GET)
+// -> invitación -> OTP (leído del sink en memoria) -> decisión, y verifica la cadena del
+// ledger (sequence consecutivo por agregado, tenant_id en cada evento).
 // TEST-CNS-507.
 
 import test from "node:test";
@@ -87,8 +88,13 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
     });
     const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-507");
 
+    // GET /i/{token} (API-CNS-101, P-12): canje sin transición (INV-CM-08), crea la sesión LANDING.
+    const redeemed = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
+    assert.equal(redeemed.status, 303);
+    const landingSession = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+
     // I4 vía HTTP.
-    const opened = await post(baseUrl, { path: "/invitation/open", ...VALID_CSRF, body: { token } });
+    const opened = await post(baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     assert.equal(opened.status, 200);
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
 
