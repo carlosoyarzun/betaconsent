@@ -41,3 +41,10 @@ TEST-CNS-479,unit,tests/unit/invitation/invitation.test.ts,"I2 sin campos obliga
 TEST-CNS-480,unit,tests/unit/invitation/invitation.test.ts,"I3 genera token opaco, solo tokenHash persiste (GRD-IV-05)",specs/state-machines/invitation.spec.yaml GRD-IV-05,ACTIVE
 TEST-CNS-481,unit,tests/unit/invitation/invitation.test.ts,"I4 con token de otro tenant o inexistente -> 404 uniforme ERR-IV-01 (GRD-IV-07)",specs/state-machines/invitation.spec.yaml GRD-IV-07,ACTIVE
 TEST-CNS-482,unit,tests/unit/invitation/invitation.test.ts,"I4 transiciona una sola vez a OPENED (GRD-IV-08, INV-IV-04)",specs/state-machines/invitation.spec.yaml GRD-IV-08;INV-IV-04,ACTIVE
+TEST-CNS-483,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"V1 emite un código al canal ligado; el ledger nunca contiene el código en claro (INV-OT-02)",specs/state-machines/otp-challenge.spec.yaml V1;INV-OT-02,ACTIVE
+TEST-CNS-484,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"V1 con channelRef distinto del ligado -> ERR-OT-08 (GRD-OT-02)",specs/state-machines/otp-challenge.spec.yaml GRD-OT-02,ACTIVE
+TEST-CNS-485,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"V1 sobre Invitation que no está OPENED/VERIFIED -> ERR-OT-01 (GRD-OT-01)",specs/state-machines/otp-challenge.spec.yaml GRD-OT-01,ACTIVE
+TEST-CNS-486,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"V3 con código correcto verifica, dispara I5 y consume una sola vez (INV-OT-07)",specs/state-machines/otp-challenge.spec.yaml V3;specs/state-machines/invitation.spec.yaml I5,ACTIVE
+TEST-CNS-487,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"V3 con código incorrecto reserva el intento antes de comparar (V2, GRD-OT-04/07)",specs/state-machines/otp-challenge.spec.yaml GRD-OT-04;GRD-OT-07,ACTIVE
+TEST-CNS-488,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"agotar intentos bloquea el challenge (V4, LOCKED, GRD-OT-04)",specs/state-machines/otp-challenge.spec.yaml V4;INV-18,ACTIVE
+TEST-CNS-489,unit,tests/unit/otp-challenge/otp-challenge.test.ts,"V3 con verificationRef de otro tenant -> 404 uniforme ERR-CM-01 (GRD-CM-02)",specs/state-machines/common.spec.yaml GRD-CM-02,ACTIVE
