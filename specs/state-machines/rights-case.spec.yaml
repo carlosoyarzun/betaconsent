@@ -1,14 +1,15 @@
-# Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3).
+# Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4d (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3; F-011 fix 2026-09-27).
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de RC1).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en RC1), N2-03 (unicidad por ciclo); AUDIT-H01-rev4 M-04.
 # No es la RightsRequest de [N-SM] §7 (A5 F-511). Sin estado de expiración ni de rechazo:
 # nunca deniega. Toda acción del operador es una función SECURITY DEFINER con actor desde su sesión.
+# rev. 4d: F-011 (auditoría CA-116, P2) — RC2u pasa a httpPost: true (POST explícito con CSRF desde /m/), corrigiendo el disparo previo por GET (INV-CM-08, DEC-BR-017 §2). Ver changeNote en la transición RC2u.
 specId: SPEC-CNS-SM-RIGHTS-CASE
 title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
 smId: SM-CNS-001
 smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
 aggregateType: RightsCase
-version: "0.4.2"
+version: "0.4.3"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -222,22 +223,24 @@ transitions:
   - id: RC2u
     from: OPEN
     to: CONTACTING
-    command: "(sistema) el solicitante vuelve con su /m/ a la página del caso"
+    command: "(sistema) el solicitante vuelve con su /m/ a la página del caso, mediante POST explícito desde esa página (F-011)"
     condition: "origin = CHANNEL_UNREACHABLE"
     actor: {actorType: SYSTEM_GUARD}
     routeClass: RIGHTS
-    httpPost: false
+    httpPost: true
+    httpPostNote: "F-011 (auditoría CA-116, P2): el GET de /m/ solo renderiza la página del caso (INV-CM-08, common.spec.yaml:340); RC2u solo transiciona con un POST explícito del solicitante desde esa página, con CSRF (GRD-CM-10). Antes disparaba con el GET de retorno, lo que un escáner de enlaces habría podido gatillar (DEC-BR-017 §2)."
     handleScope: "R13-3: el handle /m/ habilita RC2u"
-    guards: [GRD-RC-07, GRD-RC-14]
+    guards: [GRD-CM-10, GRD-RC-07, GRD-RC-14]
     effects:
       - "Sin RV0 ni envío al correo que el solicitante declara no tener (R6-3 prevalece sobre S5-13); RV0 solo si él lo pide después."
       - "La página muestra solo 'en revisión' y el paso del guion versionado (placeholder LD-02); sin plazo prometido (R7-2)."
       - "Sin /m/ no hay retorno: FLAG-overdue (LIM-RC-01)."
     emits: [RIGHTS_CASE_CONTACTING] # sin recoveryRef
     idempotencyKey: caseRef
-    errors: [ERR-RC-01]
+    errors: [ERR-RC-01, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3, R7-2", "DEC-BR-017 §3"]
     testIds: [TEST-CNS-293, TEST-CNS-399]
+    changeNote: "F-011 (auditoría de contradicciones CA-116, P2, 2026-09-27): se corrige RC2u para que solo dispare por POST explícito con CSRF (GRD-CM-10) desde la página del caso servida por /m/, siguiendo el patrón de sesión ya usado por las transiciones hermanas de rights-case iniciadas por el portador (GRD-RC-14, ya listado aquí, y GRD-CM-10 como en RC1/RC3/RC3a). Antes era SYSTEM_GUARD con httpPost: false, disparando con el simple GET de retorno, lo que contradecía INV-CM-08 (common.spec.yaml:340, 'un GET nunca transiciona') y DEC-BR-017 §2 (un escáner de enlaces que abriera /m/ habría generado RIGHTS_CASE_CONTACTING). Actor (SYSTEM_GUARD), evento emitido (RIGHTS_CASE_CONTACTING) y estado destino (CONTACTING) no cambian: sin cambio de semántica de consentimiento/revocación/elegibilidad."
   - id: RC3
     from: CONTACTING
     to: IN_VERIFICATION
@@ -375,9 +378,9 @@ guards:
     testIds: [TEST-CNS-292]
   - id: GRD-RC-07
     name: channel_unreachable_no_send
-    rule: "origin = CHANNEL_UNREACHABLE: ningún RV0 ni envío al canal ligado hasta R4 salvo pedido posterior del solicitante; transición solo cuando vuelve con su /m/."
+    rule: "origin = CHANNEL_UNREACHABLE: ningún RV0 ni envío al canal ligado hasta R4 salvo pedido posterior del solicitante; transición solo con el POST explícito del solicitante desde la página del caso servida por /m/ (F-011), nunca con el GET que solo renderiza esa página (INV-CM-08)."
     onFail: null # guard de disparo
-    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3", "SEC-CNS-005 TS-24b"]
+    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3", "SEC-CNS-005 TS-24b", "F-011"]
     testIds: [TEST-CNS-293]
   - id: GRD-RC-08
     name: intent_by_decision_maker_on_case_page

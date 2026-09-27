@@ -309,6 +309,7 @@ rights-case,RC1c,GRD-CM-10,guards,TEST-CNS-341
 rights-case,RC2,GRD-RC-06,guards,TEST-CNS-292;TEST-CNS-325
 rights-case,RC2,GRD-RV-22,guards,TEST-CNS-292;TEST-CNS-325
 rights-case,RC2,GRD-RV-17,guards,TEST-CNS-292;TEST-CNS-325
+rights-case,RC2u,GRD-CM-10,guards,TEST-CNS-293;TEST-CNS-399
 rights-case,RC2u,GRD-RC-07,guards,TEST-CNS-293;TEST-CNS-399
 rights-case,RC2u,GRD-RC-14,guards,TEST-CNS-293;TEST-CNS-399
 rights-case,RC3,GRD-CM-10,guards,TEST-CNS-294;TEST-CNS-398;TEST-CNS-408
