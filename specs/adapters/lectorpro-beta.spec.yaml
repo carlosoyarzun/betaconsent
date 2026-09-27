@@ -1,0 +1,38 @@
+# Adapter de producto — LectorPro Estudio Beta (contextRef BETA_2026_01) para el subconjunto IT0
+# (H01 / CA-116). F-012 (auditoría de contradicciones CA-116, P2, 2026-09-27): mueve aquí los
+# valores concretos de contextRef, productRef, allowPartialGrant y finalidades que estaban
+# hardcodeados en specs/state-machines/consent-decision.spec.yaml (spec genérica de máquina de
+# estado), conforme al Notion Executable Specs Index: el comportamiento específico de producto
+# vive en una spec de adapter, no en la spec genérica que gobierna.
+specId: SPEC-CNS-ADAPTER-LECTORPRO-BETA
+title: "Adapter — LectorPro Estudio Beta (contextRef BETA_2026_01, productRef LECTORPRO) para ConsentDecision IT0"
+version: "0.1.0"
+status: PROPOSED
+jiraStory: CA-116
+owner: lampone-architect
+reviewers: [lampone-security, lampone-qa, carlosoyarzun]
+humanGate: "Solo Carlos cierra esta spec; toda semántica de consentimiento es human gate."
+adapterFor:
+  - specs/state-machines/consent-decision.spec.yaml
+governedBy:
+  - "DEC-BR-001 (4 finalidades requeridas; prohibidas PRODUCT_IMPROVEMENT, AI_TRAINING, RESEARCH) — ACEPTADA"
+  - "DEC-BR-006 (RULE-CNS-025/026/027) y DEC-BR-017 E-06 (decisionChainKey; scope ALL en BETA_2026_01)"
+  - "CARLOS r3 H1, adición (b) (RULE-CNS-027 intacta), R5-1"
+  - "DEC-BR-016 §1 (AuthorizationCheck), §7 (traslado ≠ revocación)"
+  - "SM-CNS-001 R0.9; SM-CNS-001 §11 NF-05 (Notion [N-CML] actualizado por C-34)"
+
+scope:
+  it0: >
+    Único adapter activo en IT0 (subconjunto sintético). Configura ConsentDecision para el
+    Estudio Beta de LectorPro. Cualquier producto o contexto adicional futuro requiere su propio
+    adapter; consent-decision.spec.yaml no debe volver a fijar estos valores directamente.
+
+configuration:
+  contextRef: BETA_2026_01
+  productRef: LECTORPRO
+  allowPartialGrant: false
+  requiredPurposes: [STUDY_PARTICIPATION, AUDIO_RECORDING, AUTOMATED_ANALYSIS, HUMAN_REVIEW] # DEC-BR-001; R0.9
+  prohibitedPurposes: [PRODUCT_IMPROVEMENT, AI_TRAINING, RESEARCH]
+  governedBy: ["SM-CNS-001 R0.9", "DEC-BR-001", "SM-CNS-001 §11 NF-05 (Notion [N-CML] actualizado por C-34)"]
+
+changeNote: "F-012 (auditoría CA-116, P2, 2026-09-27): archivo nuevo. Valores trasladados sin cambio desde specs/state-machines/consent-decision.spec.yaml:34-41 (configuration), que ahora los referencia como parámetros tipados resueltos desde este adapter. Sin cambio de semántica de consentimiento/revocación/elegibilidad."

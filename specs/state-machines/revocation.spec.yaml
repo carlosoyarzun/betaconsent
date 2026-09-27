@@ -1,4 +1,9 @@
 # Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 4 (SM-CNS-001 v7 + R14).
+# rev. 4d (2026-09-27): SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c) — RC3
+# (lado Revocation), R12, RH2, RH2v y RH3 suman GRD-CM-01/06/07 según corresponda, con sus errors;
+# RV0 pasa de guardsByTrigger a guardsBySource (BEARER/SYSTEM, N-4c-01), alineado con la convención
+# de common.spec.yaml (guardsBySource). ERR-RC-05 huérfano en RH2/RH2v/RH3: se anota, no se borra
+# (OPEN-RV-10). Sin cambio de semántica de consentimiento/revocación/elegibilidad.
 # rev. 4c (2026-09-27): F-R14-04 (co-firmante de RH3 en el ledger: cosignedByRef en REVOCATION_CONFIRMED, INV-RV-11; derivado pendiente OPEN-RV-11).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (lado R9), N2-02 (GRD-RV-29 en R4), N2-04 (recovery token ligado a la decisión); AUDIT-H01-rev4 M-04.
 # rev. 4 (2026-09-27): SEC-CNS-012 re-verificación N-01…N-09, AUDIT-H01-rev3 y decisiones R14-A/B/C de Carlos.
@@ -13,7 +18,7 @@ title: "State machine Revocation (IT0): OTP, RECOVERY CHANNEL_LINK y RECOVERY HU
 smId: SM-CNS-001
 smSection: "§5, §5.0, §5.1, §5.2 (RC3/RC3a/R12/RH2/RH2v/RH3), §7 — v7"
 aggregateType: Revocation
-version: "0.4.2"
+version: "0.4.3"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -219,14 +224,15 @@ transitions:
     actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)", note: "P-v7-3 ACCEPTED (R14-A): el DecisionMaker queda probado por RH2"}
     routeClass: RIGHTS
     httpPost: true
-    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RC-08, GRD-RC-14]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RC-08, GRD-RC-14] # SEC-CNS-013: antepone GRD-CM-01 (GRD-RC-14 no cubre handle rotado/revocado)
     effects: ["Mismo lote atómico que la transición RC3 del RightsCase; caseRef 1:1 con la revocationRef."]
     emits: [REVOCATION_REQUESTED]
     payloadValues: {scope: ALL, authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, initiatedVia: "derivado en servidor del origin del caso (GRD-RV-25)", caseRef: required}
     idempotencyKey: "revocationRef (caseRef 1:1)"
-    errors: [ERR-RV-04, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RC3", "DEC-BR-017 §3, §6 (F-510)", "AUDIT F-H01-02"]
+    errors: [ERR-RV-04, ERR-CM-09, ERR-CM-01, ERR-RV-02, ERR-RC-09]
+    governedBy: ["SM-CNS-001 §5.2 RC3", "DEC-BR-017 §3, §6 (F-510)", "AUDIT F-H01-02", "SEC-CNS-013"]
     testIds: [TEST-CNS-294, TEST-CNS-398]
+    changeNote: "SEC-CNS-013 (P1, propuesta re-evaluada contra rev. 4c): antepone GRD-CM-01 (tenant resuelto en servidor); errors += ERR-CM-01, ERR-RV-02 (onFail de GRD-CM-01 y GRD-RV-02, GRD-RV-02 ya presente sin su error, completitud F-SEC-013-02), ERR-RC-09 (propuesta). GRD-RC-14 sigue sin cubrir handle rotado/revocado; solo GRD-CM-01 lo hace (residual anotado por la propuesta). Sin cambio de semántica."
   - id: R2
     from: REQUESTED
     to: VERIFIED
@@ -272,15 +278,16 @@ transitions:
       approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef), tercer humano"
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15] # SEC-CNS-013
     effects:
       - "Dos pasos en sesiones distintas, SERIALIZABLE; ambos con step-up (P-36) y aserción del IdP (GRD-RC-12); el efecto exige ambas aserciones ATTESTED por integrity_verifier (INV-13)."
       - "El sistema no evalúa suficiencia de la verificación: registra el guion versionado (placeholder LD-02)."
     emits: [REVOCATION_VERIFIED]
     payloadValues: {authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, caseRef: required, verifiedByRef: proposer, secondApproverRef: approver, assuranceLevel: "placeholder LD-02"}
     idempotencyKey: "(revocationRef, proposal_ref)"
-    errors: [ERR-RV-07, ERR-RV-08, ERR-RC-04, ERR-RC-05, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RH2", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
+    errors: [ERR-RV-07, ERR-RV-08, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13]
+    governedBy: ["SM-CNS-001 §5.2 RH2", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08", "SEC-CNS-013"]
+    changeNote: "SEC-CNS-013 (P2, propuesta re-evaluada contra rev. 4c): antepone GRD-CM-01/06/07 (faltaban CM-01 y CM-07); errors += ERR-CM-01, ERR-CM-10, ERR-RC-10 (onFail de GRD-RC-15, ya presente, completitud F-SEC-013-02), ERR-RV-13 (onFail de GRD-RV-28, ya presente, completitud F-SEC-013-02). ERR-RC-05 sigue en la lista: guard huérfano (GRD-RC-12 se le quitó a RH3 por OPEN-RV-10, no a RH2); no se toca aquí. Sin cambio de semántica."
     testIds: [TEST-CNS-235, TEST-CNS-309, TEST-CNS-413]
   - id: R3
     from: VERIFIED
@@ -325,7 +332,7 @@ transitions:
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
     status: "Interino IT0 DECIDIDO (R13-4, R14-B): cuatro ojos, dos RIGHTS_OPERATOR distintos, mínimo 4 personas sin reutilización entre roles. Regla definitiva de quién escribe la confirmación = LEGAL DECISION LD-03 (OPEN-RV-06)."
-    guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15] # SEC-CNS-013
     stepUp: "OPEN-RV-10: P-36 no cubre record_case_confirmation ni cosign_case_confirmation; se quitó GRD-RC-12 de RH3 hasta que Carlos lo decida"
     effects:
       - "Registra la confirmación expresa que el DecisionMaker dio en la página del caso; exige las aserciones de RH2 ATTESTED."
@@ -336,9 +343,11 @@ transitions:
     emits: [REVOCATION_CONFIRMED]
     payloadValues: {recordedByRef: required, cosignedByRef: required}
     idempotencyKey: revocationRef
-    errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 re-verificación N-04", "ADR-006 §6.3", "LD-03", "SEC-CNS-012 P1-07", "F-R14-04 (NOTION-change-package-R14)"]
+    errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-RV-20, ERR-RV-04, ERR-RC-10, ERR-CM-01, ERR-CM-10]
+    errorsNote: "ERR-RC-05 huérfano (SEC-CNS-013 P1): su guard, GRD-RC-12, se quitó de RH3 por OPEN-RV-10 (stepUp); se anota y no se borra hasta que Carlos resuelva OPEN-RV-10."
+    governedBy: ["SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 re-verificación N-04", "ADR-006 §6.3", "LD-03", "SEC-CNS-012 P1-07", "F-R14-04 (NOTION-change-package-R14)", "SEC-CNS-013"]
     testIds: [TEST-CNS-238, TEST-CNS-386, TEST-CNS-387, TEST-CNS-402, TEST-CNS-403, TEST-CNS-404, TEST-CNS-413, TEST-CNS-442, TEST-CNS-447, TEST-CNS-448]
+    changeNote: "SEC-CNS-013 (P1, propuesta re-evaluada contra rev. 4c): antepone GRD-CM-01/06/07 (faltaban); errors += ERR-RV-20 (F-014, onFail de GRD-RV-10, sigue faltando en el código: solo se anota en la spec), ERR-RV-04 (onFail de GRD-RV-07, ya presente), ERR-RC-10 (onFail de GRD-RC-15, ya presente), ERR-CM-01, ERR-CM-10 (guards nuevos). ERR-RC-05 queda como huérfano anotado (ver errorsNote), no se borra (OPEN-RV-10). Sin cambio de semántica."
   - id: R4
     from: CONFIRMED
     to: APPLIED
@@ -513,7 +522,7 @@ transitions:
     actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)", note: "P-v7-3 ACCEPTED (R14-A)"}
     routeClass: RIGHTS
     httpPost: true
-    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28, GRD-RC-08, GRD-RC-14]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28, GRD-RC-08, GRD-RC-14] # SEC-CNS-013: antepone GRD-CM-01
     effects:
       - "R13-1: agrega REVOCATION_REQUESTED sobre la misma revocationRef con authPath RECOVERY / HUMAN_ASSISTED y caseRef (1:1); el estado de la Revocation no cambia (INV-16)."
       - "P-v7-1 ACCEPTED (R14-A): registra la vía adjunta HUMAN_ASSISTED sin sobrescribir el authPath proyectado; R2 (OTP) sigue admitido; el authPath efectivo lo fija GRD-RV-28."
@@ -523,9 +532,10 @@ transitions:
     emits: [REVOCATION_REQUESTED]
     payloadValues: {scope: ALL, authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, initiatedVia: "derivado en servidor (GRD-RV-25)", caseRef: required}
     idempotencyKey: "(revocationRef, caseRef)"
-    errors: [ERR-RV-19, ERR-CM-09]
-    governedBy: ["SM-CNS-001 v7 §5.2 R12, RC3a", "CARLOS r3 R13-1", "AUDIT F-H01-02"]
+    errors: [ERR-RV-19, ERR-CM-09, ERR-CM-01]
+    governedBy: ["SM-CNS-001 v7 §5.2 R12, RC3a", "CARLOS r3 R13-1", "AUDIT F-H01-02", "SEC-CNS-013"]
     testIds: [TEST-CNS-382, TEST-CNS-389, TEST-CNS-398, TEST-CNS-401, TEST-CNS-411]
+    changeNote: "SEC-CNS-013 (P1, propuesta re-evaluada contra rev. 4c): antepone GRD-CM-01 (tenant resuelto en servidor); errors += ERR-CM-01 (onFail de GRD-CM-01, completitud F-SEC-013-02). Sin cambio de semántica."
   - id: RH2v
     from: VERIFIED
     to: VERIFIED
@@ -538,31 +548,35 @@ transitions:
       approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef), tercer humano"
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15] # SEC-CNS-013
     effects:
       - "R13-1: mismos dos pasos, step-up y tres humanos que RH2; verificación adicional sin retroceso (INV-16); luego RH3 con cuatro ojos."
     emits: [REVOCATION_VERIFIED]
     payloadValues: {authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, caseRef: required, verifiedByRef: proposer, secondApproverRef: approver, assuranceLevel: "placeholder LD-02"}
     idempotencyKey: "(revocationRef, proposal_ref)"
-    errors: [ERR-RV-07, ERR-RV-08, ERR-RV-19, ERR-RC-04, ERR-RC-05, ERR-CM-09]
-    governedBy: ["SM-CNS-001 v7 §5.2 RH2v", "CARLOS r3 R13-1", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38"]
+    errors: [ERR-RV-07, ERR-RV-08, ERR-RV-19, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13]
+    governedBy: ["SM-CNS-001 v7 §5.2 RH2v", "CARLOS r3 R13-1", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38", "SEC-CNS-013"]
+    changeNote: "SEC-CNS-013 (P2, propuesta re-evaluada contra rev. 4c): mismo fix que RH2 (GRD-CM-01/07 nuevos); errors += ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13 (completitud F-SEC-013-02). Sin cambio de semántica."
     testIds: [TEST-CNS-383]
   - id: RV0
     kind: EMISSION # operación sin cambio de estado de la Revocation
     from: null
     to: null
     command: IssueRecoveryLink
-    actor: {actorType: SYSTEM_GUARD}
+    actor:
+      bySource:
+        BEARER: {ref: UNVERIFIED_BEARER, note: "POST explícito desde el handle MANAGE_ENTRY; triggers REQUESTER_ASKED, LIMIT_REACHED"}
+        SYSTEM: {actorType: SYSTEM_GUARD, note: "sin POST, credencial ni handle; dentro de la tx que dispara el trigger (RC2 → CASE_CONTACT, SCHOOL_REPORTED); SEC-CNS-013 N-4c-01"}
     triggers: [REQUESTER_ASKED, LIMIT_REACHED, CASE_CONTACT, SCHOOL_REPORTED]
+    triggersBySource: {BEARER: [REQUESTER_ASKED, LIMIT_REACHED], SYSTEM: [CASE_CONTACT, SCHOOL_REPORTED]}
     routeClass: RIGHTS
-    httpPost: false
-    httpPostNote: "Con triggers de portador lo solicita un POST desde el handle MANAGE_ENTRY, que lleva GRD-CM-10; con triggers de sistema no hay POST."
-    guards: [GRD-CM-06, GRD-RV-02, GRD-RV-17]
-    guardsByTrigger: # SEC-CNS-012 P1-03 / AUDIT F-A09
-      REQUESTER_ASKED: [GRD-RV-20, GRD-CM-10]
-      LIMIT_REACHED: [GRD-RV-20, GRD-CM-10]
-      CASE_CONTACT: [GRD-RV-22]
-      SCHOOL_REPORTED: [GRD-RV-22]
+    httpPost: true
+    httpPostBySource: {BEARER: true, SYSTEM: false}
+    httpPostNote: "SEC-CNS-013 N-4c-01: fuente BEARER es un POST explícito desde el handle MANAGE_ENTRY (GRD-CM-10); fuente SYSTEM no tiene POST, credencial ni handle, y se deriva de la identidad de ejecución (GRD-CM-15), nunca de un campo de la request."
+    guards: [GRD-CM-06, GRD-RV-02, GRD-RV-17] # comunes a ambas fuentes
+    guardsBySource: # SEC-CNS-013 N-4c-01 (reemplaza guardsByTrigger, SEC-CNS-012 P1-03 / AUDIT F-A09): misma clase de defecto que N3-01 en RC1 — guardsByTrigger no distinguía fuente ni exigía GRD-CM-15 en SYSTEM
+      BEARER: [GRD-CM-01, GRD-CM-07, GRD-CM-10, GRD-RV-20]
+      SYSTEM: [GRD-RV-22, GRD-CM-15]
     effects:
       - "Crea tenant_resolve.recovery_token(token_hash, tenant_id, chain_ref, revoked_decision_ref, recovery_ref, expires_at, consumed_at): token P-31, TTL P-15, purpose REVOCATION_RECOVERY; envío SOLO al channelRef ya ligado. SEC N2-04: revoked_decision_ref (NOT NULL) = decisión GRANTED vigente de la cadena al emitir (GRD-RV-02) o, con trigger de sistema, el revokedDecisionRef del caso."
       - "K vigentes por cadena (P-16); una emisión nueva no invalida las vigentes; al llegar a K rige la ventana P-17. Los límites se cuentan aparte de la idempotencia. Un token ligado a una decisión de un ciclo anterior no es vigente para el ciclo nuevo."
@@ -570,9 +584,10 @@ transitions:
       - "Un /r/ expirado no crea handle: 'pedir otro' (AC-03.3) se realiza desde el handle de /m/ con trigger REQUESTER_ASKED (alcance del handle según erratum R13-3)."
     emits: [RECOVERY_TOKEN_ISSUED]
     idempotencyKey: "clave por request: (tenant_id, chainRef, trigger, requestRef) — requestRef = Idempotency-Key del POST (portador) o caseRef (sistema); SEC P1-03"
-    errors: [ERR-RV-12, ERR-RV-02, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.1 RV0", "DEC-BR-017 §2, §9", "SEC-CNS-006 P-15, P-16, P-17, P-31", "CARLOS r3 R7-3, R14-C", "SEC-CNS-012 P1-03", "SEC-CNS-012 re-verificación rev. 4 N2-04", "AUDIT F-A09"]
-    testIds: [TEST-CNS-245, TEST-CNS-325, TEST-CNS-326, TEST-CNS-435]
+    errors: [ERR-RV-12, ERR-RV-02, ERR-CM-09, ERR-CM-01, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §5.1 RV0", "DEC-BR-017 §2, §9", "SEC-CNS-006 P-15, P-16, P-17, P-31", "CARLOS r3 R7-3, R14-C", "SEC-CNS-012 P1-03", "SEC-CNS-012 re-verificación rev. 4 N2-04", "AUDIT F-A09", "SEC-CNS-013 N-4c-01"]
+    testIds: [TEST-CNS-245, TEST-CNS-325, TEST-CNS-326, TEST-CNS-435, TEST-CNS-444, TEST-CNS-445]
+    changeNote: "SEC-CNS-013 N-4c-01 (P2, gap nuevo tras rev. 4c, misma clase que N3-01): guardsByTrigger no distinguía fuente (BEARER/SYSTEM) ni exigía GRD-CM-15 en la rama SYSTEM (CASE_CONTACT, SCHOOL_REPORTED), quedando fuera del checker de guardsBySource y de la lista cerrada de funciones SECURITY DEFINER de GRD-CM-15. Se reemplaza por guardsBySource siguiendo la convención de common.spec.yaml (guardsBySource) y se suma RV0-sistema a la lista de funciones de GRD-CM-15 y a TEST-CNS-444/445 (ver common.spec.yaml). errors += ERR-CM-01, ERR-CM-10 (onFail de los guards nuevos). Actor bySource: BEARER = UNVERIFIED_BEARER (ya podía disparar RV0 por handle); SYSTEM = SYSTEM_GUARD (sin cambio de comportamiento, solo de modelado explícito). Sin cambio de semántica de consentimiento/revocación/elegibilidad."
 
 managementLink: # §5.0: entrada única a toda ruta RIGHTS del titular (no es una máquina aparte)
   id: CFG-RV-MANAGEMENT-LINK
@@ -1061,3 +1076,15 @@ openItems:
   - {id: NF-20, item: "Actor DECISION_MAKER en CONSENT_REVOKED solo con verificación probada previa (GRD-RV-28).", owner: Carlos, status: "DECIDED (R14-A)"}
   - {id: NF-22, item: "Re-consentimiento y unicidad de la revocación: por decisión revocada (= OPEN-RV-09).", owner: Carlos, status: "DECIDED (R14-C)"}
   - {id: OPEN-RV-08, item: "'Yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0, rights-case RC1c); destino = LEGAL DECISION LD-03/LD-04. AC-05.3 de REQ-REC queda diferido en IT0 por R13-2.", owner: Carlos, status: "DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04)", blocksDataReal: true}
+  - id: OPEN-RV-12
+    item: "F-SEC-013-02 (P2, SEC-CNS-013): errors[] de una transición no es sistemáticamente el cierre de onFail(guards); ejemplos previos a este fix: RH3 (:328/:339 en rev. 4c) y RC3 (:250/:254 en rev. 4c, rights-case). Se corrigió puntualmente en las transiciones tocadas por SEC-CNS-013 (RC1/RC2/RC2u/RC3/RC3a/RC4/RC5/RC6/RV0/R12/RH2/RH2v/RH3, TN1/TN2/SP1-4); falta un checker genérico que lo exija en todas. NO aplicado en esta ronda: solo se registra."
+    owner: "lampone-security → lampone-architect"
+    status: OPEN
+    refs: ["SEC-CNS-013"]
+    blocksDataReal: false
+  - id: OPEN-RV-13
+    item: "F-SEC-013-03 (P2, SEC-CNS-013, fuera de alcance de esta ronda): R1r, R10, R11 sin GRD-CM-07 (actor derivado y permitido); R2, R3 sin GRD-CM-01 (tenant resuelto en servidor). Mismo patrón que N-4c-03 (RC1 BEARER) pero no aplicado aquí: requiere revisión propia de lampone-security/lampone-architect."
+    owner: "lampone-security → lampone-architect"
+    status: OPEN
+    refs: ["SEC-CNS-013"]
+    blocksDataReal: false
