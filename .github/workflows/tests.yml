@@ -165,4 +165,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Dependency allowlist (ADR-001 §5)
-        run: npm run guardrail:dependency-allowlist
+        # Invoca el script directamente (no vía script de npm): el veredicto de este paso
+        # no depende de lo que package.json defina en "scripts" (SEC-CNS-011 P1-04, mismo
+        # estándar que SEC-CNS-010 P1-08 en guardrails.yml).
+        run: node tools/guardrails/dependency-allowlist-check.ts
