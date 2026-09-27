@@ -1,10 +1,13 @@
 // Gobierna: specs/state-machines/rights-case.spec.yaml (RC1 fuente BEARER, RC2u, RC3, RC3a,
 // RC4/RC5/RC6), specs/state-machines/revocation.spec.yaml (RC3 lado Revocation, R12).
 // Alcance IT0 de este archivo (subconjunto mínimo, ver traceability/test-matrix.csv
-// TEST-CNS-458..462, TEST-CNS-464..465): resolución del caso desde el handle del portador
-// (GRD-CM-01, GRD-RC-14) y el cierre del caso (RC4/RC5/RC6), sin las demás ramas de la spec
+// TEST-CNS-458..462, TEST-CNS-464..465, TEST-CNS-468..470): resolución del caso desde el
+// handle del portador (GRD-CM-01, GRD-RC-14), RC2u (confirmCaseReturnViaHandle, CA-116
+// CA-116-rc2u-http) y el cierre del caso (RC4/RC5/RC6), sin las demás ramas de la spec
 // completa (SLA, case_contact, escalamiento por sistema, etc.), que quedan fuera de este
-// slice y se implementan en historias posteriores.
+// slice y se implementan en historias posteriores. GRD-CM-10 (CSRF/Origin) se aplica en el
+// entrypoint HTTP (src/server/entrypoints/http/**), no aquí: esta capa nunca ve la request
+// cruda (ADR-001 §11).
 
 import { DomainError } from "../common/errors.ts";
 import { resolveHandleOrReject } from "../common/guards.ts";
@@ -112,6 +115,52 @@ export function expressRevocationIntentInCase(
     idempotencyKey: `${existing.revocationRef}:r12:${rightsCase.caseRef}`,
   });
   return { rightsCase, revocation: existing };
+}
+
+/**
+ * RC2u (rights-case.spec.yaml): ConfirmCaseReturnViaHandle — POST explícito del solicitante
+ * desde la página del caso servida por /m/, tras GRD-CM-10 (CSRF/Origin, aplicado por el
+ * entrypoint HTTP antes de llamar esta función). El caso se resuelve SIEMPRE del handle
+ * (GRD-RC-14, vía resolveCaseForHandle); nunca de un caseRef del cliente. GRD-RC-07: solo
+ * transiciona si origin = CHANNEL_UNREACHABLE; si no, respuesta uniforme ERR-RC-01 sin evento
+ * (TEST-CNS-399). Idempotente por caseRef (idempotencyKey: caseRef): con el caso ya en
+ * CONTACTING, un reintento devuelve el mismo resultado sin reemitir RIGHTS_CASE_CONTACTING ni
+ * consumir el handle (TEST-CNS-470); el handle de /m/ nunca se rota ni invalida aquí.
+ */
+export function confirmCaseReturnViaHandle(
+  ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger">,
+  handle: string,
+): RightsCaseRecord {
+  const rightsCase = resolveCaseForHandle(ports, handle);
+
+  if (rightsCase.status === "CONTACTING") {
+    // Reintento tras un POST previo ya aplicado: mismo resultado, sin nuevo evento
+    // (idempotencyKey: caseRef; TEST-CNS-470).
+    return rightsCase;
+  }
+
+  if (rightsCase.status !== "OPEN") {
+    throw new DomainError("ERR-CM-06");
+  }
+
+  if (rightsCase.origin !== "CHANNEL_UNREACHABLE") {
+    // GRD-RC-07 onFail: respuesta uniforme ERR-RC-01, sin evento (SEC-CNS-013).
+    throw new DomainError("ERR-RC-01");
+  }
+
+  const updated: RightsCaseRecord = { ...rightsCase, status: "CONTACTING" };
+  ports.rightsCaseRepo.save(updated);
+  ports.ledger.append({
+    eventType: "RIGHTS_CASE_CONTACTING",
+    tenantId: rightsCase.tenantId,
+    aggregateType: "RightsCase",
+    aggregateId: rightsCase.caseRef,
+    actorType: UNVERIFIED_BEARER_ACTOR.actorType,
+    actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
+    payload: {},
+    idempotencyKey: rightsCase.caseRef,
+  });
+  return updated;
 }
 
 export type CaseCloseOutcome = "RESOLVED" | "WITHDRAWN";
