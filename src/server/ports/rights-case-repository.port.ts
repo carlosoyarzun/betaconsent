@@ -7,6 +7,14 @@ import type { ChainRef, TenantId } from "../modules/common/types.ts";
 
 export type RightsCaseStatus = "OPEN" | "CONTACTING" | "IN_VERIFICATION" | "RESOLVED" | "WITHDRAWN";
 
+/** vocabulary.origin (rights-case.spec.yaml) = escalationReason (DEC-BR-017 §6). */
+export type RightsCaseOrigin =
+  | "LIMIT_REACHED"
+  | "CHANNEL_UNREACHABLE"
+  | "REQUESTER_ASKED"
+  | "SCHOOL_REPORTED"
+  | "REQUEST_EXPIRED";
+
 export interface RightsCaseRecord {
   caseRef: string;
   tenantId: TenantId;
@@ -14,6 +22,8 @@ export interface RightsCaseRecord {
   revokedDecisionRef: string;
   status: RightsCaseStatus;
   revocationRef?: string;
+  /** GRD-RC-07 (RC2u): origin = CHANNEL_UNREACHABLE es la única condición que habilita RC2u. */
+  origin?: RightsCaseOrigin;
 }
 
 export interface RightsCaseRepositoryPort {

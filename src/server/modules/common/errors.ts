@@ -6,6 +6,7 @@ export type DomainErrorCode =
   | "ERR-CM-06" // INVALID_TRANSITION
   | "ERR-CM-09" // CSRF_REJECTED
   | "ERR-CM-10" // ACTOR_NOT_ALLOWED
+  | "ERR-RC-01" // GRD-RC-07 onFail (origin != CHANNEL_UNREACHABLE) — respuesta uniforme sin evento
   | "ERR-RC-09" // CASE_NOT_BOUND_TO_HANDLE — respuesta uniforme sin efecto
   | "ERR-RV-20"; // GRD-RV-10 onFail (RH3 sin RH2/RH2v ATTESTED previa)
 

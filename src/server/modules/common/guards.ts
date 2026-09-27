@@ -53,3 +53,44 @@ export function assertExecutionSourceIn(ctx: ExecutionContext, allowed: readonly
     throw new DomainError("ERR-CM-10");
   }
 }
+
+/** Entrada que el entrypoint HTTP construye del lado servidor a partir de la request cruda
+ * (cabeceras Origin/X-CSRF-Token y la cookie CSRF), nunca de un campo del cuerpo. */
+export interface CsrfAndOriginInput {
+  /** Cabecera Origin de la request, o undefined si el cliente no la envió. */
+  readonly originHeader: string | undefined;
+  /**
+   * Origen permitido, inyectado por configuración del entrypoint (nunca hardcodeado a un
+   * dominio real; distinto por entorno/consola). La comparación es por igualdad EXACTA de
+   * cadena: un origen de otra consola o con un sufijo parecido (p.ej. un dominio que solo
+   * contiene el permitido como substring) nunca compara igual.
+   */
+  readonly allowedOrigin: string;
+  /** Cabecera X-CSRF-Token de la request. */
+  readonly csrfHeaderToken: string | undefined;
+  /** Token CSRF de la cookie de sesión del portador (double-submit), fijado por el servidor. */
+  readonly csrfCookieToken: string | undefined;
+}
+
+/**
+ * GRD-CM-10 (csrf_and_origin): "Todo POST (httpPost: true) exige token CSRF y Origin/Host por
+ * igualdad exacta". Aquí: (1) Origin debe ser IDÉNTICO al configurado (nunca prefijo/sufijo ni
+ * substring, lo que cubre 'Origin de otra consola o con sufijo parecido', ERR-CM-09 según su
+ * propia definición en common.spec.yaml); (2) el token CSRF de la cabecera debe coincidir
+ * exactamente con el de la cookie (double-submit). onFail: ERR-CM-09 (CSRF_REJECTED), sin
+ * efecto ni evento (common.spec.yaml ERR-CM-09).
+ */
+export function assertCsrfAndOrigin(input: CsrfAndOriginInput): void {
+  const { originHeader, allowedOrigin, csrfHeaderToken, csrfCookieToken } = input;
+  if (originHeader === undefined || originHeader !== allowedOrigin) {
+    throw new DomainError("ERR-CM-09");
+  }
+  if (
+    csrfHeaderToken === undefined ||
+    csrfCookieToken === undefined ||
+    csrfHeaderToken.length === 0 ||
+    csrfHeaderToken !== csrfCookieToken
+  ) {
+    throw new DomainError("ERR-CM-09");
+  }
+}
