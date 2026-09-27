@@ -1,11 +1,12 @@
 # §6 de SM-CNS-001 (contexto de tenant) modelado SOLO en lo que afecta a las cinco máquinas IT0
 # (decisión del Supervisor sobre AUDIT F-A14, 2026-09-27). H01 / CA-116, rev. 4 (R14-E, R14-F; AUDIT-H01-rev3 N-12/N-13). Cero PII.
+# rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (locks de la cascada Q-18, GRD-TC-07/08), N2-06 (GRD-CM-14), N2-01 (guardsBySource en EN0/EN1).
 # Lo que §6 no aplica a IT0 se lista en coverage.notCovered y no se declara cubierto.
 specId: SPEC-CNS-SM-TENANT-CONTEXT
 title: "Contexto de tenant (Tenant status, SchoolParticipation, Enrollment, readiness de ConsentContext): efectos sobre las máquinas IT0"
 smId: SM-CNS-001
 smSection: "§6 (D1, F-211), R0.4–R0.6"
-version: "0.4.0"
+version: "0.4.1"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -65,7 +66,7 @@ submachines:
         actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "fixture (solo LOCAL/CI, R14-F, GRD-CM-13) o migración revisada, sin UI (DEC-BR-014 §5, :84); en STAGING solo migración revisada"}
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-01]
+        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-01]
         effects: ["Desde el append: GRD-CM-05 da false en I1–I4, V1 DECISION y C1–C5 del tenant; las rutas RIGHTS siguen resolviendo (GRD-CM-06, AC-02.3)."]
         emits: [TENANT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, sequence)"
@@ -79,7 +80,7 @@ submachines:
         actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada, sin UI (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-01]
+        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-01]
         effects: ["Rehabilita ISSUANCE/DECISION del tenant; no reactiva nada terminal."]
         emits: [TENANT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, sequence)"
@@ -122,7 +123,7 @@ submachines:
         actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84); segundo aprobador Privacy Legal: pregunta abierta F-313"}
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-02]
+        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-02]
         effects: ["Guard P empieza a cumplirse para el tenant; habilita I1–I4/C1–C5 si el resto de la fórmula se cumple. La IA nunca la otorga ni la infiere."]
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
@@ -136,7 +137,7 @@ submachines:
         actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13]
+        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14]
         effects: ["Guard P falla: I3/I4/C1–C5 del tenant se rechazan con INVITER_NOT_PARTICIPATING/CONTEXT_NOT_ACTIVE sin volver nada terminal (INV-IV-07); revocación y derechos intactos (INV-6)."]
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
@@ -150,7 +151,7 @@ submachines:
         actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-02]
+        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-02]
         effects: ["Guard P vuelve a cumplirse; las invitaciones no terminales continúan."]
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
@@ -164,16 +165,17 @@ submachines:
         actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13]
+        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-08]
         effects:
-          - "R14-E (Q-18 opción A): en la misma transacción, invitation I9 PARTICIPATION_CLOSED sobre todas las invitaciones no terminales del tenant en esa participación."
+          - "R14-E (Q-18 opción A): en la misma transacción, invitation I9 PARTICIPATION_CLOSED (fuente SYSTEM) sobre todas las invitaciones no terminales del tenant en esa participación."
+          - "SEC N2-05 (GRD-TC-08): toma FOR UPDATE la fila de la participación y luego, en orden de invitationRef, las invitaciones no terminales; relee bajo lock; salta de forma idempotente las que ya son terminales; la cascada nunca aborta el cierre."
           - "Cierre en cascada de Enrollments con motivo PARTICIPATION_CLOSED: no especificado en SM §6 como efecto automático (OPEN-TC-02); Guard P ya bloquea el tratamiento."
           - "Ninguna transición de ConsentDecision ni consent.revoked (INV-7)."
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10]
-        governedBy: ["SM-CNS-001 v7 §6 (SM:172)", "DEC-BR-016 §4", "CARLOS r3 R14-E", "DEC-BR-017 E-04 (sin condición, derivado D-17)"]
-        testIds: [TEST-CNS-361, TEST-CNS-418]
+        governedBy: ["SM-CNS-001 v7 §6 (SM:172)", "DEC-BR-016 §4", "CARLOS r3 R14-E", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "SEC-CNS-012 re-verificación rev. 4 N2-05"]
+        testIds: [TEST-CNS-361, TEST-CNS-418, TEST-CNS-436, TEST-CNS-438]
   - machine: Enrollment
     aggregateType: Enrollment
     table: "app.enrollment (ADR-006 §2); UNIQUE parcial (tenant_id, subject_ref, participation_ref) WHERE status = 'ACTIVE'"
@@ -195,34 +197,49 @@ submachines:
         from: null
         to: ACTIVE
         command: OpenEnrollment
-        actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN (DEC-BR-016 §4 'abre y cierra Enrollments'); en IT0 también por fixture (DEC-BR-014 §1)"}
+        actor:
+          bySource:
+            STAFF: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN en la consola STAFF (DEC-BR-016 §4 'abre y cierra Enrollments')"}
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1; R14-F; GRD-CM-14)"}
         routeClass: STAFF_ADMIN # AUDIT-H01-rev3 N-13: no evalúa la fórmula de elegibilidad
-        httpPost: true # consola STAFF cuando no es fixture
-        guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-03]
+        httpPost: true # consola STAFF
+        httpPostBySource: {STAFF: true, FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-03] # comunes
+        guardsBySource: # SEC N2-01 (mismo defecto): el seed no tiene credencial ni POST
+          STAFF: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
+          FIXTURE: [GRD-CM-14]
         effects: ["Guard E empieza a cumplirse para el subjectRef en esa participación."]
         emits: [ENROLLMENT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, subject_ref, participation_ref)"
         errors: [ERR-CM-09, ERR-CM-10, ERR-TC-03]
-        governedBy: ["DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2"]
-        testIds: [TEST-CNS-364]
+        governedBy: ["DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-06"]
+        testIds: [TEST-CNS-364, TEST-CNS-429]
       - id: EN1
         from: ACTIVE
         to: CLOSED
         command: CloseEnrollment
-        actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo (DEC-BR-016 §4); fixture solo en LOCAL/CI (R14-F)"}
+        actor:
+          bySource:
+            STAFF: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo en la consola STAFF (DEC-BR-016 §4)"}
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (R14-F; GRD-CM-14)"}
         routeClass: STAFF_ADMIN # AUDIT-H01-rev3 N-13
         httpPost: true
-        guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-04]
+        httpPostBySource: {STAFF: true, FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-04, GRD-TC-08] # comunes
+        guardsBySource: # SEC N2-01 (mismo defecto): el seed no tiene credencial ni POST
+          STAFF: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
+          FIXTURE: [GRD-CM-14]
         effects:
-          - "Guard E falla: I3/I4/C1–C5 del subjectRef se rechazan; en la misma transacción, invitation I9 ENROLLMENT_CLOSED sobre sus invitaciones no terminales (R14-E, Q-18 opción A)."
+          - "Guard E falla: I3/I4/C1–C5 del subjectRef se rechazan; en la misma transacción, invitation I9 ENROLLMENT_CLOSED (fuente SYSTEM) sobre sus invitaciones no terminales (R14-E, Q-18 opción A)."
+          - "SEC N2-05 (GRD-TC-08): toma FOR KEY SHARE la participación, FOR UPDATE el Enrollment y luego, en orden de invitationRef, las invitaciones no terminales del subjectRef; relee bajo lock; salta las terminales; la cascada nunca aborta el cierre."
           - "API-CNS-001 responde NOT_AUTHORIZED (RULE-CNS-013); el motivo interno ENROLLMENT_NOT_ACTIVE queda solo en AuthorizationCheck (F-323)."
           - "TRANSFERRED ≠ revocación: sin consent.revoked, sin transición de ConsentDecision, sin supresión; histórico conservado (LD-12). El DecisionMaker conserva consulta, revocación y derechos (INV-6)."
           - "eligibility.changed no se emite (E-10 PROPOSED, Q-18)."
         emits: [ENROLLMENT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, enrollment_ref, sequence)"
         errors: [ERR-CM-09, ERR-CM-10, ERR-TC-04]
-        governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06"]
-        testIds: [TEST-CNS-365, TEST-CNS-419]
+        governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05, N2-06"]
+        testIds: [TEST-CNS-365, TEST-CNS-419, TEST-CNS-429, TEST-CNS-437, TEST-CNS-438]
   - machine: ConsentContextReadiness
     aggregateType: ConsentContext
     partial: true
@@ -316,6 +333,18 @@ guards:
     onFail: ERR-CM-10
     governedBy: ["[N-SM] §1 PAUSED → ACTIVE (ACCEPTED 2026-09-23)"]
     testIds: [TEST-CNS-376]
+  - id: GRD-TC-07
+    name: eligibility_rows_locked_in_tx
+    rule: "SEC N2-05 (write skew frente a SP4/EN1): toda transición que crea una credencial o una decisión final bajo la fórmula de elegibilidad (invitation I1, I3, I3r, I4; consent-decision C3, C5) toma, en la misma tx del append y en este orden fijo, FOR SHARE la fila de la SchoolParticipation, FOR SHARE la del Enrollment y FOR UPDATE la de la invitación, y evalúa GRD-CM-03/04/05 DESPUÉS de tomar los locks (alternativa equivalente: SERIALIZABLE con reintento). Así, o la transición confirma antes que SP4/EN1 (y la cascada ve la invitación ya terminal o la cancela), o espera y relee CLOSED y se rechaza con el error de GRD-CM-05. Conflicto o deadlock: reintento; agotado, rechazo fail-closed (ERR-CM-06), nunca efecto parcial."
+    onFail: null # disciplina de locks: el rechazo lo da GRD-CM-03/04/05 tras releer bajo lock
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4 N2-05", "CARLOS r3 R14-E", "SM-CNS-001 v7 §6 (SM:172, SM:173), §4.2", "DEC-BR-016 §8"]
+    testIds: [TEST-CNS-436, TEST-CNS-437, TEST-CNS-443]
+  - id: GRD-TC-08
+    name: closure_cascade_never_aborts
+    rule: "SEC N2-05 (R14-E): SP4 y EN1 toman FOR UPDATE la fila de la participación / del Enrollment (EN1: antes FOR KEY SHARE la participación, mismo orden que GRD-TC-07) y luego, en orden de invitationRef, FOR UPDATE las invitaciones no terminales afectadas; cada I9 (fuente SYSTEM) se aplica bajo SAVEPOINT con el tenant_id del registro cerrado. Una invitación que al releer ya es terminal se salta de forma idempotente. Una falla propia de una invitación revierte solo su SAVEPOINT, registra alerta y deja un ops.job durable de reintento de esa cancelación; nunca aborta el cierre (Guard P/E ya la bloquean: fail-closed). Solo una falla común al propio cierre (ledger o integridad no disponible, evaluador caído) revierte todo: nada queda confirmado y el acto humano se reintenta."
+    onFail: null # la cascada no tiene error propio: nunca aborta SP4/EN1
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4 N2-05", "CARLOS r3 R14-E", "SM-CNS-001 v7 §6 (SM:172: 'en la misma transacción que el cierre')", "INV-7"]
+    testIds: [TEST-CNS-428, TEST-CNS-436, TEST-CNS-437, TEST-CNS-438]
 
 errors:
   - id: ERR-TC-01

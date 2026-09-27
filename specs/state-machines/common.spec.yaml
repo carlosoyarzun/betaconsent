@@ -1,4 +1,5 @@
 # Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14-A, R14-F).
+# rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (convención guardsBySource), N2-02 (rejectsOnIntegrity), N2-06 (FIXTURE: CHECK de DB, environment de catálogo, canal de seed).
 # rev. 2 (2026-09-27): correcciones de SEC-CNS-012 (SEC-review-CA116) y AUDIT-H01.
 # Las demás specs referencian por ID los guards (GRD-CM-*), errores (ERR-CM-*),
 # invariantes (INV-CM-*, INV-3, INV-12) y el actor UNVERIFIED_BEARER declarados aquí. Cero PII.
@@ -6,7 +7,7 @@ specId: SPEC-CNS-SM-COMMON
 title: "State machines IT0 — reglas transversales (tenancy, clases de ruta, ledger, actor, fail-closed)"
 smId: SM-CNS-001
 smSection: "§0, §1, §7 (el §6 se modela en tenant-context.spec.yaml, solo en lo que afecta a las cinco máquinas)"
-version: "0.4.0"
+version: "0.4.1"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -79,8 +80,10 @@ actorModel:
   actorRole: [DECISION_MAKER, INVITER, CONTEXT_OWNER, PLATFORM_ADMIN, RIGHTS_OPERATOR, UNVERIFIED_BEARER] # UNVERIFIED_BEARER: R13-5 (SM v7 R0.2)
   approverRoles: [PRIVACY_LEGAL, SECURITY] # aprobadores de grants y de RH2 (R6-5); roles de plataforma, no de ledger
   fixture:
-    rule: "R14-F: actorType FIXTURE permitido exclusivamente en LOCAL y CI, para seed sintético; rechazado en DEV, STAGING y PRODUCTION. CI corre con environment = LOCAL (el enum de ADR-002 §2 no tiene CI; OPEN-CM-07). Un CHECK rechaza actores IA. Contradice el literal de DEC-BR-014 §6 ('solo en staging'): derivado pendiente P-01 (S/R14-derivados.md), OPEN-CM-08."
+    rule: "R14-F: actorType FIXTURE permitido exclusivamente en LOCAL y CI, para seed sintético; rechazado en DEV, STAGING y PRODUCTION. CI corre con environment = LOCAL (el enum de ADR-002 §2 no tiene CI; OPEN-CM-07). SEC N2-06, defensa en profundidad: (1) CHECK de DB en integrity.audit_event (ledgerEnvelope.checks); (2) environment fijado en el catálogo de la DB al aprovisionar, nunca por configuración (GRD-CM-11, GRD-CM-13); (3) rol/credencial de seed creado solo por el bootstrap LOCAL, más lista blanca de transiciones FIXTURE (GRD-CM-14). Un CHECK rechaza actores IA. Contradice el literal de DEC-BR-014 §6 ('solo en staging'): derivado pendiente P-01 (S/R14-derivados.md), OPEN-CM-08."
     guard: GRD-CM-13
+    seedGuard: GRD-CM-14
+    allowlist: [TN1, TN2, SP1, SP2, SP3, SP4, EN0, EN1] # únicas transiciones con origen FIXTURE (GRD-CM-14)
   unverifiedBearer:
     id: UNVERIFIED_BEARER
     definition: >
@@ -102,6 +105,13 @@ actorModel:
   transitionConventions:
     httpPost: "Toda transición declara httpPost. Si es true, lleva GRD-CM-10 (CSRF + Origin); el checker lo exige (SEC P2-12)."
     actorRef: "actor: {ref: UNVERIFIED_BEARER} referencia la definición única de arriba (R13-5)."
+    guardsBySource: >
+      SEC-CNS-012 re-verificación rev. 4 N2-01: una transición con más de una fuente de disparo (actor.bySource, o
+      actor.byReasonCode con 'source') declara guardsBySource y httpPostBySource con las mismas fuentes. 'guards' lista
+      solo los comunes a todas; una fuente sin POST (SYSTEM, FIXTURE) nunca exige handle, credencial ni CSRF
+      (GRD-CM-01, GRD-CM-10, GRD-RC-14, GRD-RV-06, GRD-RV-18, GRD-RV-20) y resuelve el tenant desde el registro
+      del agregado que la dispara, en la misma tx. El checker lo exige.
+    acceptsIntegrityFailure: "Transición que INV-RV-07 obliga a aceptar con falla de clave/integridad (R4): ninguno de sus guards puede tener rejectsOnIntegrity (SEC N2-02); el checker lo exige."
 
 ledgerEnvelope:
   table: integrity.audit_event
@@ -112,6 +122,8 @@ ledgerEnvelope:
     - "CHECK (evidentiary = false OR environment = 'PRODUCTION') (ADR-002 §2)"
     - "CHECK (data_class = 'SYNTHETIC') con DEFAULT; roles runtime sin grant de columna (ADR-002 §8)"
     - "UNIQUE (tenant_id, aggregate_id, sequence) (ADR-002 §2)"
+    - "CHECK (actor_type <> 'FIXTURE' OR environment = 'LOCAL') (R14-F, SEC N2-06); CI corre como LOCAL (OPEN-CM-07): si ADR-002 §2 agrega CI al enum, pasa a environment IN ('LOCAL','CI')"
+    - "environment de cada fila = DEFAULT del catálogo de la DB fijado al aprovisionar (como data_class, ADR-002 §8); los roles runtime no tienen grant de columna sobre environment (SEC N2-06)"
   concurrency: "Toda transición de un agregado se aplica con expectedSequence (sequence esperado del agregado); el conflicto se reintenta o se rechaza con el error de la transición."
   payloadPolicy: >
     Lista blanca por eventType con test de CI; fuente única en contracts/ (H02 / CA-117).
@@ -196,6 +208,7 @@ guards:
   - id: GRD-CM-09
     name: integrity_and_keys_available
     rule: "Clave de firma/cifrado presente e integridad del ledger verificable; si no, la operación se rechaza (salvo R4 de revocación, LD-05)."
+    rejectsOnIntegrity: true # prohibido en transiciones acceptsIntegrityFailure (R4)
     onFail: ERR-CM-08
     governedBy: ["SM-CNS-001 R0.3, §4.1", "MP §29", "[N-SM] §1 P16"]
     testIds: [TEST-CNS-118]
@@ -207,10 +220,10 @@ guards:
     testIds: [TEST-CNS-119]
   - id: GRD-CM-11
     name: synthetic_only_environment
-    rule: "data_class = 'SYNTHETIC', environment ∈ {LOCAL, DEV, STAGING}, evidentiary = false; si el catálogo no lo garantiza el servicio no arranca (chequeo de arranque, no de transición)."
+    rule: "data_class = 'SYNTHETIC', environment ∈ {LOCAL, DEV, STAGING}, evidentiary = false; si el catálogo no lo garantiza el servicio no arranca (chequeo de arranque, no de transición). SEC N2-06: el environment efectivo es el del catálogo de la DB (fijado al aprovisionar), no el de la configuración; si la configuración declara otro valor, el servicio no arranca."
     onFail: ERR-CM-11
-    governedBy: ["DEC-BR-014 §4", "ADR-002 §2, §8", "ADR-001 §10"]
-    testIds: [TEST-CNS-104]
+    governedBy: ["DEC-BR-014 §4", "ADR-002 §2, §8", "ADR-001 §10", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    testIds: [TEST-CNS-104, TEST-CNS-440]
   - id: GRD-CM-12
     name: server_time_only
     rule: "Toda comparación temporal (expiresAt, TTL, SLA) usa la hora del servidor; nunca el reloj del cliente ni del consumidor. Reloj según P-40."
@@ -219,10 +232,16 @@ guards:
     testIds: [TEST-CNS-310]
   - id: GRD-CM-13
     name: fixture_actor_environment
-    rule: "R14-F: actorType FIXTURE solo con environment = LOCAL (incluye las corridas de CI); en DEV, STAGING y PRODUCTION se rechaza (ERR-CM-10)."
+    rule: "R14-F: actorType FIXTURE solo con environment = LOCAL (incluye las corridas de CI); en DEV, STAGING y PRODUCTION se rechaza (ERR-CM-10). SEC N2-06: el environment comparado es el del catálogo de la DB, nunca la configuración (un STAGING mal etiquetado LOCAL por configuración no habilita FIXTURE), y además lo impone el CHECK de DB de ledgerEnvelope.checks, de modo que el guard solo no es la única barrera."
     onFail: ERR-CM-10
-    governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §6 (literal contradicho: derivado P-01)", "DEC-BR-014 §5 (DEC-BR-014:84: SchoolParticipation y tenant.active por fixture o migración revisada)"]
-    testIds: [TEST-CNS-311, TEST-CNS-421]
+    governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §6 (literal contradicho: derivado P-01)", "DEC-BR-014 §5 (DEC-BR-014:84: SchoolParticipation y tenant.active por fixture o migración revisada)", "ADR-002 §2, §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    testIds: [TEST-CNS-311, TEST-CNS-421, TEST-CNS-439, TEST-CNS-440]
+  - id: GRD-CM-14
+    name: fixture_seed_channel
+    rule: "SEC N2-06: el origen FIXTURE solo existe por el rol/credencial de seed que crea el bootstrap LOCAL (el aprovisionamiento de DEV, STAGING y PRODUCTION no lo crea) y solo para actorModel.fixture.allowlist (TN1, TN2, SP1–SP4, EN0, EN1); cualquier otra transición con origen FIXTURE se rechaza. En la fuente FIXTURE el tenant_id sale del manifiesto de seed con SET LOCAL app.tenant_id y relectura bajo RLS: sin credencial de portador, sin POST ni CSRF. Sin origen FIXTURE, el guard no aplica."
+    onFail: ERR-CM-10
+    governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §1, §5, §6", "ADR-002 §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    testIds: [TEST-CNS-429, TEST-CNS-441]
 
 errors:
   - id: ERR-CM-01
@@ -282,10 +301,10 @@ errors:
     testIds: [TEST-CNS-119]
   - id: ERR-CM-10
     code: ACTOR_NOT_ALLOWED
-    response: "Rechazo determinista (rol no autorizado para la transición, actor IA, identidad de servicio o FIXTURE fuera de STAGING)"
+    response: "Rechazo determinista (rol no autorizado para la transición, actor IA, identidad de servicio, FIXTURE fuera de LOCAL/CI según R14-F o fuera de la lista blanca de GRD-CM-14)"
     emitsEvent: none
-    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6"]
-    testIds: [TEST-CNS-106, TEST-CNS-311]
+    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6", "CARLOS r3 R14-F", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    testIds: [TEST-CNS-106, TEST-CNS-311, TEST-CNS-441]
   - id: ERR-CM-11
     code: STARTUP_REFUSED_NON_SYNTHETIC
     response: "El servicio no arranca (chequeo de catálogo)"

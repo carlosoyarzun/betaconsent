@@ -65,7 +65,7 @@ revocation,open_item,NF-22,DECIDED (R14-C),Carlos,false,Re-consentimiento y unic
 revocation,open_item,OPEN-RV-08,DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04),Carlos,true,"'Yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0, rights-case RC1c); destino = LEGAL DECISION LD-03/LD-04. AC-05.3 de REQ-REC queda diferido en "
 revocation,known_conflict,OPEN-RV-05,DECIDED,Carlos,false,Alcance del handle MANAGE_ENTRY (SEC-CNS-012 P1-04)
 rights-case,known_limitation,LIM-RC-01,KNOWN LIMITATION,Carlos,true,"Caso R5-4 abierto sin /m/ (solo /r/, o /m/ perdido por rotación V6c) no tiene vía de retorno: queda overdue, nunca FAILED; la página del caso no promete plazo. "
-rights-case,known_limitation,LIM-RC-02,KNOWN LIMITATION,Carlos,true,"Con 3 humanos, si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, solo un cuarto apro"
+rights-case,known_limitation,LIM-RC-02,KNOWN LIMITATION,Carlos,true,"Con 2 aprobadores (mínimo R14-B), si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, "
 rights-case,known_limitation,LIM-RC-03,KNOWN LIMITATION,Carlos,false,"DECIDIDO R14-B: mínimo 4 personas reales (2 RIGHTS_OPERATOR + 2 aprobadores, sin reutilización entre roles; GRD-RC-15). Con menos, RH2/RH2v/RH3 no son ejecutabl"
 rights-case,known_limitation,LIM-RC-04,KNOWN LIMITATION,Carlos,true,NF-21 (R14-G): un caso CHANNEL_UNREACHABLE en OPEN cuya revocación termina fuera del caso no cierra hasta que el solicitante vuelve por /m/ (RC2u → RC5/RC6); qu
 rights-case,legal_decision,LD-02,LEGAL DECISION,Carlos,true,Guion versionado de verificación y assuranceLevel (placeholder IT0)
