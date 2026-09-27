@@ -1,5 +1,10 @@
 # §6 de SM-CNS-001 (contexto de tenant) modelado SOLO en lo que afecta a las cinco máquinas IT0
 # (decisión del Supervisor sobre AUDIT F-A14, 2026-09-27). H01 / CA-116, rev. 4 (R14-E, R14-F; AUDIT-H01-rev3 N-12/N-13). Cero PII.
+# rev. 4d (2026-09-27): SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c, "Modificado
+# (residual tras 4b/4c)"): TN1, TN2, SP1–SP4 pasan a actor.bySource {FIXTURE, MIGRATION} siguiendo la
+# convención de guardsBySource de common.spec.yaml (common:109-116), igual que EN0/EN1; MIGRATION queda
+# deshabilitada (DECISION CARLOS pendiente: actorType de "migración revisada", DEC-BR-014 §5). GRD-TC-01
+# admite explícitamente la fuente FIXTURE. Sin cambio de semántica.
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente FIXTURE de EN0/EN1) y condiciones (i)–(iii) de GRD-TC-08 (PENDING-CARLOS, OPEN-TC-07).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (locks de la cascada Q-18, GRD-TC-07/08), N2-06 (GRD-CM-14), N2-01 (guardsBySource en EN0/EN1).
 # Lo que §6 no aplica a IT0 se lista en coverage.notCovered y no se declara cubierto.
@@ -7,7 +12,7 @@ specId: SPEC-CNS-SM-TENANT-CONTEXT
 title: "Contexto de tenant (Tenant status, SchoolParticipation, Enrollment, readiness de ConsentContext): efectos sobre las máquinas IT0"
 smId: SM-CNS-001
 smSection: "§6 (D1, F-211), R0.4–R0.6"
-version: "0.4.2"
+version: "0.4.3"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -64,30 +69,50 @@ submachines:
         from: ACTIVE
         to: SUSPENDED
         command: SuspendTenant
-        actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "fixture (solo LOCAL/CI, R14-F, GRD-CM-13) o migración revisada, sin UI (DEC-BR-014 §5, :84); en STAGING solo migración revisada"}
+        actor:
+          bySource: # SEC-CNS-013 (residual 4b/4c): antes actorType HUMAN cubría ambos canales sin bySource ni GRD-CM-15
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1, §5, §6; R14-F; GRD-CM-14)"}
+            MIGRATION:
+              enabled: false
+              actorRole: PLATFORM_ADMIN
+              disabledReason: "SEC-CNS-013 residual (4b/4c): actorType de 'migración revisada' sin decidir (DEC-BR-014 §5, :84); DECISION CARLOS pendiente. Hasta entonces la única fuente ejecutable de TN1/TN2/SP1–SP4 es FIXTURE (LOCAL/CI); en STAGING solo migración revisada, también deshabilitada por ahora."
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-01]
+        httpPostBySource: {FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-01] # comunes
+        guardsBySource:
+          FIXTURE: [GRD-CM-14, GRD-CM-15]
         effects: ["Desde el append: GRD-CM-05 da false en I1–I4, V1 DECISION y C1–C5 del tenant; las rutas RIGHTS siguen resolviendo (GRD-CM-06, AC-02.3)."]
         emits: [TENANT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, sequence)"
         errors: [ERR-CM-10, ERR-TC-01]
-        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "DEC-BR-014 §5"]
+        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "DEC-BR-014 §5", "SEC-CNS-013"]
         testIds: [TEST-CNS-352]
+        changeNote: "SEC-CNS-013 (P1, residual tras 4b/4c): actor pasa a bySource {FIXTURE, MIGRATION} siguiendo la convención de guardsBySource de common.spec.yaml (common:109-116), igual que EN0/EN1; MIGRATION queda deshabilitada (DECISION CARLOS pendiente). guardsBySource FIXTURE suma GRD-CM-15 (fuente por identidad de ejecución). errors sin cambio: GRD-CM-14/15 ya tienen onFail ERR-CM-10, presente. Sin cambio de semántica."
       - id: TN2
         from: SUSPENDED
         to: ACTIVE
         command: ReactivateTenant
-        actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada, sin UI (DEC-BR-014:84)"}
+        actor:
+          bySource: # SEC-CNS-013 (residual 4b/4c)
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1, §6; R14-F; GRD-CM-14)"}
+            MIGRATION:
+              enabled: false
+              actorRole: PLATFORM_ADMIN
+              disabledReason: "SEC-CNS-013 residual (4b/4c): actorType de 'migración revisada' sin decidir (DEC-BR-014 §5, :84); DECISION CARLOS pendiente. Hasta entonces la única fuente ejecutable de TN1/TN2/SP1–SP4 es FIXTURE (LOCAL/CI)."
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-01]
+        httpPostBySource: {FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-01] # comunes
+        guardsBySource:
+          FIXTURE: [GRD-CM-14, GRD-CM-15]
         effects: ["Rehabilita ISSUANCE/DECISION del tenant; no reactiva nada terminal."]
         emits: [TENANT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, sequence)"
         errors: [ERR-CM-10, ERR-TC-01]
-        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12"]
+        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "SEC-CNS-013"]
         testIds: [TEST-CNS-353]
+        changeNote: "SEC-CNS-013 (P1, residual tras 4b/4c): mismo fix que TN1. Sin cambio de semántica."
   - machine: SchoolParticipation
     aggregateType: SchoolParticipation
     table: "app.school_participation (ADR-006 §2); UNIQUE parcial (tenant_id, context_ref) WHERE status <> 'CLOSED'"
@@ -121,52 +146,91 @@ submachines:
         from: PENDING_AUTHORIZATION
         to: ACTIVE
         command: AuthorizeSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84); segundo aprobador Privacy Legal: pregunta abierta F-313"}
+        actor:
+          bySource: # SEC-CNS-013 (residual 4b/4c)
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1, §6; R14-F; GRD-CM-14)"}
+            MIGRATION:
+              enabled: false
+              actorRole: CONTEXT_OWNER
+              disabledReason: "SEC-CNS-013 residual (4b/4c): actorType de 'migración revisada' sin decidir (DEC-BR-014 §5, :84); DECISION CARLOS pendiente. Hasta entonces la única fuente ejecutable de TN1/TN2/SP1–SP4 es FIXTURE (LOCAL/CI). Segundo aprobador Privacy Legal (F-313) sigue abierto, sin efecto en esta fuente."
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-02]
+        httpPostBySource: {FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-02] # comunes
+        guardsBySource:
+          FIXTURE: [GRD-CM-14, GRD-CM-15]
         effects: ["Guard P empieza a cumplirse para el tenant; habilita I1–I4/C1–C5 si el resto de la fórmula se cumple. La IA nunca la otorga ni la infiere."]
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10, ERR-TC-02]
-        governedBy: ["SM-CNS-001 §6 (SM:172)", "DEC-BR-016 §1, §4", "ADR-006 §2"]
+        governedBy: ["SM-CNS-001 §6 (SM:172)", "DEC-BR-016 §1, §4", "ADR-006 §2", "SEC-CNS-013"]
         testIds: [TEST-CNS-358]
+        changeNote: "SEC-CNS-013 (P1, residual tras 4b/4c): mismo fix que TN1. Sin cambio de semántica."
       - id: SP2
         from: ACTIVE
         to: SUSPENDED
         command: SuspendSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
+        actor:
+          bySource: # SEC-CNS-013 (residual 4b/4c)
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1, §6; R14-F; GRD-CM-14)"}
+            MIGRATION:
+              enabled: false
+              actorRole: CONTEXT_OWNER
+              disabledReason: "SEC-CNS-013 residual (4b/4c): actorType de 'migración revisada' sin decidir (DEC-BR-014 §5, :84); DECISION CARLOS pendiente. Hasta entonces la única fuente ejecutable de TN1/TN2/SP1–SP4 es FIXTURE (LOCAL/CI)."
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14]
+        httpPostBySource: {FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13] # comunes
+        guardsBySource:
+          FIXTURE: [GRD-CM-14, GRD-CM-15]
         effects: ["Guard P falla: I3/I4/C1–C5 del tenant se rechazan con INVITER_NOT_PARTICIPATING/CONTEXT_NOT_ACTIVE sin volver nada terminal (INV-IV-07); revocación y derechos intactos (INV-6)."]
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10]
-        governedBy: ["SM-CNS-001 §6 (SM:172)", "DEC-BR-016 §4"]
+        governedBy: ["SM-CNS-001 §6 (SM:172)", "DEC-BR-016 §4", "SEC-CNS-013"]
         testIds: [TEST-CNS-359]
+        changeNote: "SEC-CNS-013 (P1, residual tras 4b/4c): mismo fix que TN1. Sin cambio de semántica."
       - id: SP3
         from: SUSPENDED
         to: ACTIVE
         command: ReactivateSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
+        actor:
+          bySource: # SEC-CNS-013 (residual 4b/4c)
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1, §6; R14-F; GRD-CM-14)"}
+            MIGRATION:
+              enabled: false
+              actorRole: CONTEXT_OWNER
+              disabledReason: "SEC-CNS-013 residual (4b/4c): actorType de 'migración revisada' sin decidir (DEC-BR-014 §5, :84); DECISION CARLOS pendiente. Hasta entonces la única fuente ejecutable de TN1/TN2/SP1–SP4 es FIXTURE (LOCAL/CI)."
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-02]
+        httpPostBySource: {FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-02] # comunes
+        guardsBySource:
+          FIXTURE: [GRD-CM-14, GRD-CM-15]
         effects: ["Guard P vuelve a cumplirse; las invitaciones no terminales continúan."]
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10, ERR-TC-02]
-        governedBy: ["SM-CNS-001 §6 (SM:172: 'ACTIVE ↔ SUSPENDED')"]
+        governedBy: ["SM-CNS-001 §6 (SM:172: 'ACTIVE ↔ SUSPENDED')", "SEC-CNS-013"]
         testIds: [TEST-CNS-360]
+        changeNote: "SEC-CNS-013 (P1, residual tras 4b/4c): mismo fix que TN1. Sin cambio de semántica."
       - id: SP4
         from: [ACTIVE, SUSPENDED]
         to: CLOSED
         command: CloseSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
+        actor:
+          bySource: # SEC-CNS-013 (residual 4b/4c)
+            FIXTURE: {actorType: FIXTURE, note: "seed sintético, solo LOCAL/CI (DEC-BR-014 §1, §6; R14-F; GRD-CM-14)"}
+            MIGRATION:
+              enabled: false
+              actorRole: CONTEXT_OWNER
+              disabledReason: "SEC-CNS-013 residual (4b/4c): actorType de 'migración revisada' sin decidir (DEC-BR-014 §5, :84); DECISION CARLOS pendiente. Hasta entonces la única fuente ejecutable de TN1/TN2/SP1–SP4 es FIXTURE (LOCAL/CI)."
         routeClass: PLATFORM
         httpPost: false
-        guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-08]
+        httpPostBySource: {FIXTURE: false}
+        guards: [GRD-CM-07, GRD-CM-13, GRD-TC-08] # comunes
+        guardsBySource:
+          FIXTURE: [GRD-CM-14, GRD-CM-15]
         effects:
           - "R14-E (Q-18 opción A): en la misma transacción, invitation I9 PARTICIPATION_CLOSED (fuente SYSTEM) sobre todas las invitaciones no terminales del tenant en esa participación."
           - "SEC N2-05 (GRD-TC-08): toma FOR UPDATE la fila de la participación y luego, en orden de invitationRef, las invitaciones no terminales; relee bajo lock; salta de forma idempotente las que ya son terminales; la cascada nunca aborta el cierre. Falla propia de una invitación: reintento dentro de la tx y, si persiste, job CASCADE_CANCEL_INVITATION (condiciones (i)–(iii), PENDING-CARLOS, OPEN-TC-07)."
@@ -175,8 +239,9 @@ submachines:
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10]
-        governedBy: ["SM-CNS-001 v7 §6 (SM:172)", "DEC-BR-016 §4", "CARLOS r3 R14-E", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "SEC-CNS-012 re-verificación rev. 4 N2-05"]
+        governedBy: ["SM-CNS-001 v7 §6 (SM:172)", "DEC-BR-016 §4", "CARLOS r3 R14-E", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "SEC-CNS-012 re-verificación rev. 4 N2-05", "SEC-CNS-013"]
         testIds: [TEST-CNS-361, TEST-CNS-418, TEST-CNS-436, TEST-CNS-438, TEST-CNS-449, TEST-CNS-450]
+        changeNote: "SEC-CNS-013 (P1, residual tras 4b/4c): mismo fix que TN1. Sin cambio de semántica."
   - machine: Enrollment
     aggregateType: Enrollment
     table: "app.enrollment (ADR-006 §2); UNIQUE parcial (tenant_id, subject_ref, participation_ref) WHERE status = 'ACTIVE'"
@@ -300,9 +365,9 @@ submachines:
 guards:
   - id: GRD-TC-01
     name: tenant_status_reason_code
-    rule: "Cambio de tenant.active solo por acto humano de plataforma (PLATFORM_ADMIN con MFA) registrado en ledger con reasonCode; ningún webhook ni billing_admin escribe app.tenant_status. Enum de reasonCode: OPEN-TC-01."
+    rule: "Cambio de tenant.active solo por acto humano de plataforma (PLATFORM_ADMIN con MFA) registrado en ledger con reasonCode, o fuente FIXTURE (GRD-CM-14/15) en LOCAL/CI para seed sintético (SEC-CNS-013); ningún webhook ni billing_admin escribe app.tenant_status. Enum de reasonCode: OPEN-TC-01."
     onFail: ERR-TC-01
-    governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "DEC-BR-016 §4, §5"]
+    governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "DEC-BR-016 §4, §5", "SEC-CNS-013"]
     testIds: [TEST-CNS-371]
   - id: GRD-TC-02
     name: participation_authorization_evidence
