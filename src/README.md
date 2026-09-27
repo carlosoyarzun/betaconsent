@@ -12,5 +12,6 @@ historia correspondiente). Capas: `server/modules` (dominio), `server/ports` (in
 ## Servidor de desarrollo (LOCAL)
 
 `CNS_ENVIRONMENT=LOCAL node src/server/entrypoints/dev.ts` (PORT opcional, default 3000; aborta
-fuera de LOCAL, GRD-CM-13). Imprime la invitación sintética y cómo leer el OTP. Solo en LOCAL
-expone `GET /__dev/otp-sink` (sink en memoria, cero PII, dominios `example.invalid`).
+fuera de LOCAL, GRD-CM-13). Imprime el enlace de invitación sintético (`GET /i/{token}`,
+API-CNS-101) y cómo leer el OTP. Solo en LOCAL expone `GET /__dev/otp-sink` (sink en memoria,
+cero PII, dominios `example.invalid`).
