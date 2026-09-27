@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/invitation.schema.json",
+  "title": "Invitation (proyección IT0)",
+  "x-api-id": "API-CNS-186",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/invitation.spec.yaml",
+    "SM-CNS-001 §2, §2.1, §2.2"
+  ],
+  "x-states": [
+    "DRAFT",
+    "READY",
+    "SENT",
+    "OPENED",
+    "VERIFIED",
+    "COMPLETED",
+    "DECLINED",
+    "EXPIRED",
+    "CANCELLED"
+  ],
+  "x-transitions": [
+    {
+      "id": "I1",
+      "from": null,
+      "to": "DRAFT",
+      "via": "POST /staff/invitations"
+    },
+    {
+      "id": "I2",
+      "from": "DRAFT",
+      "to": "READY",
+      "via": "POST /staff/invitations/{invitationRef}/ready"
+    },
+    {
+      "id": "I3",
+      "from": "READY",
+      "to": "SENT",
+      "via": "POST /staff/invitations/{invitationRef}/send"
+    },
+    {
+      "id": "I3r",
+      "from": "SENT",
+      "to": "SENT",
+      "via": "POST /staff/invitations/{invitationRef}/resend"
+    },
+    {
+      "id": "I4",
+      "from": "SENT",
+      "to": "OPENED",
+      "via": "POST /invitation/open"
+    },
+    {
+      "id": "I5",
+      "from": "OPENED",
+      "to": "VERIFIED",
+      "via": "interno: efecto de POST /otp/submit (V3 scope DECISION)"
+    },
+    {
+      "id": "I6",
+      "from": "VERIFIED",
+      "to": "COMPLETED",
+      "via": "interno: mismo lote que C3 (POST /decision/submit)"
+    },
+    {
+      "id": "I7",
+      "from": "VERIFIED",
+      "to": "DECLINED",
+      "via": "interno: mismo lote que C5 (POST /decision/submit)"
+    },
+    {
+      "id": "I7u",
+      "from": "OPENED",
+      "to": "DECLINED",
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "NF-03 / Q-15"
+    },
+    {
+      "id": "I8",
+      "from": [
+        "READY",
+        "SENT",
+        "OPENED",
+        "VERIFIED"
+      ],
+      "to": "EXPIRED",
+      "via": "worker (SYSTEM_GUARD): expiración lazy + barrido"
+    },
+    {
+      "id": "I9",
+      "from": [
+        "DRAFT",
+        "READY",
+        "SENT",
+        "OPENED",
+        "VERIFIED"
+      ],
+      "to": "CANCELLED",
+      "via": "POST /staff/invitations/{invitationRef}/cancel; POST /decision/subject-mismatch; interno en la tx de SP4/EN1"
+    }
+  ],
+  "$defs": {
+    "Invitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "enrollmentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "productRef": {
+          "$ref": "common.schema.json#/$defs/ProductRef"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "enum": [
+            "DRAFT",
+            "READY",
+            "SENT",
+            "OPENED",
+            "VERIFIED",
+            "COMPLETED",
+            "DECLINED",
+            "EXPIRED",
+            "CANCELLED"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "recipientBinding": {
+          "enum": [
+            "RECIPIENT_CHANNEL",
+            "UNBOUND"
+          ]
+        },
+        "recipientChannelRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "boundDecisionMakerRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "reissueOfRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "invitationMode": {
+          "const": "INSTITUTION_MEDIATED",
+          "description": "INV-IV-08; DEC-BR-013"
+        },
+        "issuerActor": {
+          "enum": [
+            "INSTITUTION_OPERATOR",
+            "PLATFORM_ON_BEHALF"
+          ],
+          "x-pending": [
+            "EXT-B / F-014"
+          ]
+        },
+        "deliveryChannel": {
+          "enum": [
+            "SCHOOL_CHANNEL",
+            "CONSENT_APP_EMAIL"
+          ],
+          "x-pending": [
+            "EXT-B / F-014"
+          ]
+        },
+        "otpExhausted": {
+          "type": "boolean",
+          "description": "Marca de V6a (contabilidad del padre)."
+        }
+      },
+      "required": [
+        "invitationRef",
+        "tenantRef",
+        "participationRef",
+        "enrollmentRef",
+        "productRef",
+        "contextRef",
+        "subjectRef",
+        "state",
+        "sequence"
+      ],
+      "description": "Proyección del agregado. tokenHash no forma parte del contrato: vive solo en tenant_resolve.invitation_token (INV-IV-03)."
+    }
+  }
+}

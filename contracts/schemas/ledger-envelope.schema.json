@@ -1,0 +1,887 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/ledger-envelope.schema.json",
+  "title": "Consent App IT0 — sobre de eventos del ledger",
+  "x-api-id": "API-CNS-182",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "common.spec.yaml ledgerEnvelope, INV-CM-01, INV-CM-04, GRD-CM-13",
+    "ADR-002 §2, §8",
+    "DEC-BR-014 §4, §6"
+  ],
+  "$defs": {
+    "AuditEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "eventType": {
+          "enum": [
+            "INVITATION_CREATED",
+            "INVITATION_READY",
+            "INVITATION_SENT",
+            "INVITATION_TOKEN_ROTATED",
+            "INVITATION_OPENED",
+            "INVITATION_VERIFIED",
+            "INVITATION_COMPLETED",
+            "INVITATION_DECLINED",
+            "INVITATION_EXPIRED",
+            "INVITATION_CANCELLED",
+            "DECISION_MAKER_CHANNEL_VERIFIED",
+            "CONTEXT_INFORMATION_VIEWED",
+            "CONSENT_VERSION_VIEWED",
+            "DECISION_MAKER_AUTHORITY_DECLARED",
+            "SUBJECT_CONFIRMED",
+            "PURPOSE_DECISION_RECORDED",
+            "CONSENT_GRANTED",
+            "CONSENT_DECLINED",
+            "RECEIPT_CREATED",
+            "CONSENT_REVOKED",
+            "REVOCATION_REQUESTED",
+            "REVOCATION_VERIFIED",
+            "REVOCATION_CONFIRMED",
+            "REVOCATION_DOWNSTREAM_EMITTED",
+            "REVOCATION_DELIVERED",
+            "DOWNSTREAM_ERASURE_ATTESTED",
+            "REVOCATION_FAILED",
+            "REVOCATION_ESCALATED",
+            "RIGHTS_CASE_OPENED",
+            "RIGHTS_CASE_CONTACTING",
+            "RIGHTS_CASE_CLOSED",
+            "TENANT_STATUS_CHANGED",
+            "SCHOOL_PARTICIPATION_STATUS_CHANGED",
+            "ENROLLMENT_STATUS_CHANGED"
+          ]
+        },
+        "schemaVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "ruleVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "productRef": {
+          "$ref": "common.schema.json#/$defs/ProductRef"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "aggregateType": {
+          "enum": [
+            "Invitation",
+            "DecisionMakerVerification",
+            "ConsentDecision",
+            "Revocation",
+            "RightsCase",
+            "TenantStatus",
+            "SchoolParticipation",
+            "Enrollment"
+          ]
+        },
+        "aggregateId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "occurredAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "payloadHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        },
+        "previousEventHash": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Sha256Hex"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eventHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        },
+        "idempotencyKeyHash": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Sha256Hex"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment": {
+          "$ref": "common.schema.json#/$defs/Environment"
+        },
+        "evidentiary": {
+          "const": false,
+          "description": "CHECK (evidentiary = false OR environment = PRODUCTION); en IT0 siempre false (ADR-002 §2; INV-CM-04)."
+        },
+        "dataClass": {
+          "$ref": "common.schema.json#/$defs/DataClass"
+        }
+      },
+      "required": [
+        "eventId",
+        "eventType",
+        "schemaVersion",
+        "ruleVersion",
+        "tenantRef",
+        "productRef",
+        "contextRef",
+        "aggregateType",
+        "aggregateId",
+        "sequence",
+        "occurredAt",
+        "actor",
+        "payload",
+        "payloadHash",
+        "previousEventHash",
+        "eventHash",
+        "idempotencyKeyHash",
+        "environment",
+        "evidentiary",
+        "dataClass"
+      ],
+      "description": "Sobre de integrity.audit_event (common.spec ledgerEnvelope). UNIQUE (tenant_id, aggregate_id, sequence). Cadena SHA-256 por tenant en IT0. La última regla de allOf aplica GRD-CM-13 (R14-F): actorType FIXTURE solo con environment LOCAL (incluye CI).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_CREATED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_CREATED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_READY"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_READY"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_SENT"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_SENT"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_TOKEN_ROTATED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_TOKEN_ROTATED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_OPENED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_OPENED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_VERIFIED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_VERIFIED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_COMPLETED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_COMPLETED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_DECLINED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_DECLINED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_EXPIRED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_EXPIRED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "INVITATION_CANCELLED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/INVITATION_CANCELLED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "DECISION_MAKER_CHANNEL_VERIFIED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/DECISION_MAKER_CHANNEL_VERIFIED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CONTEXT_INFORMATION_VIEWED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/CONTEXT_INFORMATION_VIEWED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CONSENT_VERSION_VIEWED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/CONSENT_VERSION_VIEWED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "DECISION_MAKER_AUTHORITY_DECLARED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/DECISION_MAKER_AUTHORITY_DECLARED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "SUBJECT_CONFIRMED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/SUBJECT_CONFIRMED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "PURPOSE_DECISION_RECORDED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/PURPOSE_DECISION_RECORDED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CONSENT_GRANTED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/CONSENT_GRANTED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CONSENT_DECLINED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/CONSENT_DECLINED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "RECEIPT_CREATED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/RECEIPT_CREATED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CONSENT_REVOKED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/CONSENT_REVOKED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_REQUESTED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_REQUESTED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_VERIFIED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_VERIFIED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_CONFIRMED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_CONFIRMED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_DOWNSTREAM_EMITTED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_DOWNSTREAM_EMITTED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_DELIVERED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_DELIVERED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "DOWNSTREAM_ERASURE_ATTESTED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/DOWNSTREAM_ERASURE_ATTESTED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_FAILED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_FAILED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_ESCALATED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_ESCALATED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "RIGHTS_CASE_OPENED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_OPENED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "RIGHTS_CASE_CONTACTING"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_CONTACTING"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "RIGHTS_CASE_CLOSED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_CLOSED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "TENANT_STATUS_CHANGED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/TENANT_STATUS_CHANGED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "SCHOOL_PARTICIPATION_STATUS_CHANGED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/SCHOOL_PARTICIPATION_STATUS_CHANGED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "ENROLLMENT_STATUS_CHANGED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/ENROLLMENT_STATUS_CHANGED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "actor": {
+                "properties": {
+                  "actorType": {
+                    "const": "FIXTURE"
+                  }
+                },
+                "required": [
+                  "actorType"
+                ]
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "LOCAL"
+              }
+            }
+          },
+          "x-pending": [
+            "F-007 (FIXTURE en LOCAL/CI vs DEC-BR-014 §6 solo staging; OPEN-CM-08)"
+          ]
+        }
+      ],
+      "x-pending": [
+        "ADR-011 / DEC-BR-009 (HMAC y ancla del ledger; hasta entonces NON-EVIDENTIARY)"
+      ]
+    },
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actorType": {
+          "$ref": "common.schema.json#/$defs/ActorType"
+        },
+        "actorRole": {
+          "$ref": "common.schema.json#/$defs/ActorRole"
+        },
+        "actorRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "recordedByRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "actorType"
+      ],
+      "description": "Derivado de la identidad autenticada en servidor, nunca de un campo del cliente (SM R0.2). SYSTEM_GUARD = evaluador determinista versionado, nunca un modelo (INV-CM-07).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "actorType": {
+                "const": "HUMAN"
+              }
+            },
+            "required": [
+              "actorType"
+            ]
+          },
+          "then": {
+            "required": [
+              "actorRole"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,1082 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/api-payloads.schema.json",
+  "title": "Consent App IT0 — cuerpos de request/response de la API",
+  "x-api-id": "API-CNS-181",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/*.spec.yaml (transiciones con httpPost: true)",
+    "SM-CNS-001 v6/v7",
+    "DEC-BR-014 §4",
+    "DEC-BR-017 §6, §8"
+  ],
+  "$defs": {
+    "EmptyCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "Comando sin campos: todo dato se deriva en servidor de la sesión/handle y del agregado."
+    },
+    "CreateInvitationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "enrollmentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "reissueOfRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "subjectRef",
+        "enrollmentRef",
+        "participationRef",
+        "contextRef"
+      ],
+      "description": "I1. Sin tenantRef ni organizationRef: el tenant del inviter se resuelve en servidor (GRD-CM-01); additionalProperties=false rechaza cualquier clave de tenant enviada por el cliente.",
+      "x-pending": [
+        "LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)"
+      ]
+    },
+    "InvitationCreated": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "const": "DRAFT"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "invitationRef",
+        "state",
+        "sequence"
+      ]
+    },
+    "MarkInvitationReadyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "recipientBinding": {
+          "enum": [
+            "RECIPIENT_CHANNEL",
+            "UNBOUND"
+          ]
+        },
+        "recipientChannelRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "consentVersion",
+        "recipientBinding"
+      ],
+      "description": "I2. expiresAt NO se acepta del cliente: lo fija el servidor según P-10 (GRD-IV-12; FINDING F-CT-05). recipientChannelRef obligatorio si y solo si RECIPIENT_CHANNEL (GRD-IV-03).",
+      "if": {
+        "properties": {
+          "recipientBinding": {
+            "const": "RECIPIENT_CHANNEL"
+          }
+        },
+        "required": [
+          "recipientBinding"
+        ]
+      },
+      "then": {
+        "required": [
+          "recipientChannelRef"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "recipientChannelRef"
+          ]
+        }
+      },
+      "x-pending": [
+        "EXT-B / DEC-BR-002 / LD-21 (registro del canal esperado del colegio y obtención de recipientChannelRef)"
+      ]
+    },
+    "InvitationReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "READY"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "state",
+        "sequence"
+      ]
+    },
+    "InvitationSent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "SENT"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "rotationNo": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "state",
+        "sequence",
+        "expiresAt"
+      ],
+      "description": "I3/I3r. Nunca incluye el token: se entrega solo por el adaptador de email IT0 (sink/allowlist, DEC-BR-014 §4.2; sin SMTP externo) y solo persiste tokenHash (INV-IV-03)."
+    },
+    "CancelInvitationByStaffRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reasonCode": {
+          "enum": [
+            "INVITER_WITHDRAWN",
+            "TOKEN_COMPROMISED"
+          ]
+        }
+      },
+      "required": [
+        "reasonCode"
+      ],
+      "description": "I9 por INVITER. SUBJECT_MISMATCH_REPORTED va por reportSubjectMismatch; PARTICIPATION_CLOSED/ENROLLMENT_CLOSED son internos (SYSTEM_GUARD, tx de SP4/EN1); CONTESTED_BY_RECIPIENT deshabilitado (LD-01)."
+    },
+    "InvitationCancelled": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "CANCELLED"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "state",
+        "sequence"
+      ]
+    },
+    "OpenEnrollmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "subjectRef",
+        "participationRef"
+      ],
+      "description": "EN0 (STAFF_ADMIN; no evalúa la fórmula de elegibilidad)."
+    },
+    "EnrollmentOpened": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enrollmentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "const": "ACTIVE"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "enrollmentRef",
+        "state",
+        "sequence"
+      ]
+    },
+    "CloseEnrollmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "closeReason": {
+          "enum": [
+            "TRANSFERRED",
+            "LEFT_SCHOOL",
+            "PARTICIPATION_CLOSED"
+          ],
+          "x-pending": [
+            "OPEN-TC-03 / Q-28 (nombre LEFT_SCHOOL)"
+          ]
+        }
+      },
+      "required": [
+        "closeReason"
+      ],
+      "description": "EN1. Ningún motivo es retiro de consentimiento: sin consent.revoked ni transición de ConsentDecision (INV-7)."
+    },
+    "EnrollmentClosed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "CLOSED"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "state",
+        "sequence"
+      ]
+    },
+    "SchoolRevocationReportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "subjectRef"
+      ],
+      "description": "RC0. El colegio solo reporta; no crea Revocation, no aporta ni cambia canal (DEC-BR-017 §8)."
+    },
+    "SchoolReportAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "const": "IN_PROCESS"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "description": "«En trámite», idéntico con 0, 1 o más cadenas GRANTED (ERR-RC-07 no revela cuántos apoderados hay; LD-20)."
+    },
+    "InvitationOpenedAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "const": "OPENED"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "description": "I4: acuse sin menor, colegio, finalidades ni estado (UNVERIFIED_BEARER.mayNot)."
+    },
+    "RequestOtpRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "description": "V1. Sin canal ni padre en el body: el código va SOLO al channelRef ligado (GRD-OT-02) y el padre se resuelve en servidor desde el handle (GRD-OT-01)."
+    },
+    "SubmitOtpRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "pattern": "^[0-9A-Za-z]+$",
+          "writeOnly": true,
+          "x-sensitive": "OTP: nunca se registra, loguea ni persiste en claro (INV-OT-02); formato según P-01 (SEC-CNS-006), no fijado aquí"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    "OtpVerified": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "const": "VERIFIED"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        }
+      },
+      "required": [
+        "result",
+        "scope"
+      ],
+      "description": "V3. Rota el ID de sesión (P-30). Verificar no es consentir (INV-OT-01; INV-IV-05)."
+    },
+    "OtpRejected": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "OTP_CODE_REJECTED",
+            "OTP_EXPIRED_OR_CONSUMED",
+            "OTP_LOCKED",
+            "OTP_BUDGET_EXHAUSTED_DECISION",
+            "OTP_BUDGET_EXHAUSTED_RIGHTS",
+            "OTP_SCOPE_MISUSE"
+          ]
+        },
+        "status": {
+          "const": 422
+        },
+        "correlationId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "rightsPathsAvailable": {
+          "$ref": "common.schema.json#/$defs/RightsPaths"
+        }
+      },
+      "required": [
+        "code",
+        "status",
+        "correlationId"
+      ],
+      "description": "V2, V4, V5, V6, V6r, V6c. Sin intentos restantes ni estado del presupuesto. En scope REVOCATION/MANAGE lleva rightsPathsAvailable: nunca «denegado» (ERR-OT-07).",
+      "x-pending": [
+        "OPEN-OT-02 (forma exacta de la respuesta de V2)"
+      ]
+    },
+    "DecisionStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "const": "PENDING"
+        }
+      },
+      "required": [
+        "consentId",
+        "state"
+      ]
+    },
+    "DecisionStepRequest": {
+      "description": "C2 (RecordDecisionStep).",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stepKind": {
+              "const": "CONTEXT_INFORMATION_VIEWED"
+            }
+          },
+          "required": [
+            "stepKind"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stepKind": {
+              "const": "CONSENT_VERSION_VIEWED"
+            }
+          },
+          "required": [
+            "stepKind"
+          ],
+          "description": "El servidor sirve el texto de la versión en vigor y calcula consentTextHash sobre los bytes canónicos servidos (GRD-CD-03; LD-06)."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stepKind": {
+              "const": "DECISION_MAKER_AUTHORITY_DECLARED"
+            },
+            "relationshipRef": {
+              "type": "string",
+              "pattern": "^[A-Z_]{1,40}$",
+              "x-pending": [
+                "DEC-BR-003 / EXT-A / LD-01 (enum de relación y suficiencia de la declaración)"
+              ]
+            },
+            "authorityDeclared": {
+              "const": true,
+              "description": "Declaración explícita; sin preselección (P06; GRD-CD-04)."
+            }
+          },
+          "required": [
+            "stepKind",
+            "relationshipRef",
+            "authorityDeclared"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stepKind": {
+              "const": "SUBJECT_CONFIRMED"
+            },
+            "subjectConfirmed": {
+              "const": true,
+              "description": "Confirmación explícita del sujeto."
+            }
+          },
+          "required": [
+            "stepKind",
+            "subjectConfirmed"
+          ],
+          "description": "Datos mínimos del sujeto: EXT-C (DEC-BR-004), pendiente.",
+          "x-pending": [
+            "DEC-BR-004 / EXT-C"
+          ]
+        }
+      ]
+    },
+    "ServedConsentVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "privacyNoticeVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "consentTextHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        },
+        "text": {
+          "type": "string",
+          "description": "Texto canónico de la versión en vigor; el hash se calcula en servidor sobre estos bytes."
+        }
+      },
+      "required": [
+        "consentVersion",
+        "privacyNoticeVersion",
+        "consentTextHash",
+        "text"
+      ],
+      "x-pending": [
+        "LD-06 (LEGAL DECISION: consentTextHash como prueba de lo mostrado)"
+      ]
+    },
+    "DecisionStepRecorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stepKind": {
+          "enum": [
+            "CONTEXT_INFORMATION_VIEWED",
+            "CONSENT_VERSION_VIEWED",
+            "DECISION_MAKER_AUTHORITY_DECLARED",
+            "SUBJECT_CONFIRMED"
+          ]
+        },
+        "state": {
+          "const": "PENDING"
+        },
+        "servedVersion": {
+          "$ref": "#/$defs/ServedConsentVersion"
+        }
+      },
+      "required": [
+        "stepKind",
+        "state"
+      ],
+      "if": {
+        "properties": {
+          "stepKind": {
+            "const": "CONSENT_VERSION_VIEWED"
+          }
+        },
+        "required": [
+          "stepKind"
+        ]
+      },
+      "then": {
+        "required": [
+          "servedVersion"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "servedVersion"
+          ]
+        }
+      }
+    },
+    "PurposeDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "purpose": {
+          "$ref": "common.schema.json#/$defs/Purpose"
+        },
+        "choice": {
+          "$ref": "common.schema.json#/$defs/PurposeChoice"
+        }
+      },
+      "required": [
+        "purpose",
+        "choice"
+      ]
+    },
+    "SubmitDecisionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentTextHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        },
+        "purposes": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/PurposeDecision"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "purpose": {
+                    "const": "STUDY_PARTICIPATION"
+                  }
+                }
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "purpose": {
+                    "const": "AUDIO_RECORDING"
+                  }
+                }
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "purpose": {
+                    "const": "AUTOMATED_ANALYSIS"
+                  }
+                }
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "purpose": {
+                    "const": "HUMAN_REVIEW"
+                  }
+                }
+              }
+            }
+          ],
+          "description": "Elección explícita por cada finalidad requerida, exactamente una vez cada una (GRD-CD-06/07). Todas GRANT: C3 GRANTED; al menos una DECLINE: C5 DECLINED. C4 (parcial) no existe en BETA_2026_01."
+        }
+      },
+      "required": [
+        "consentTextHash",
+        "purposes"
+      ],
+      "description": "C3/C5 (SubmitDecision). El resultado lo fija el guard determinista sobre la elección explícita del DecisionMaker; ningún modelo lo infiere (INV-CM-07)."
+    },
+    "DecisionRecorded": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "enum": [
+            "GRANTED",
+            "DECLINED"
+          ]
+        },
+        "receiptRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "consentId",
+        "state",
+        "receiptRef"
+      ],
+      "description": "Nunca incluye el enlace de gestión: el management_token se envía SOLO al canal ligado (C3; revocation.managementLink). Receipt con marca de agua IT0."
+    },
+    "SubjectMismatchAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "const": "INVITATION_CANCELLED"
+        }
+      },
+      "required": [
+        "result"
+      ]
+    },
+    "RequestRevocationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "originPurposeRef": {
+          "$ref": "common.schema.json#/$defs/OriginPurposeRef"
+        },
+        "revokeIntent": {
+          "const": true,
+          "description": "POST explícito «quiero revocar» (GRD-RV-01)."
+        }
+      },
+      "required": [
+        "originPurposeRef",
+        "revokeIntent"
+      ],
+      "description": "R1. Sin chainRef, consentId, revokedDecisionRef ni initiatedVia del cliente: se derivan en servidor (GRD-RV-02, GRD-RV-25). scope = ALL siempre.",
+      "x-pending": [
+        "F-002 (unicidad de la revocación abierta por revokedDecisionRef vs decisionChainKey)"
+      ]
+    },
+    "RevocationAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "enum": [
+            "REQUESTED",
+            "VERIFIED",
+            "CONFIRMED",
+            "FAILED"
+          ]
+        }
+      },
+      "required": [
+        "revocationRef",
+        "state"
+      ]
+    },
+    "ConfirmRevocationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "confirmTotalWithdrawal": {
+          "const": true,
+          "description": "Confirmación explícita de retiro total: en BETA_2026_01 revocar cualquier finalidad es retiro total (GRD-RV-07)."
+        }
+      },
+      "required": [
+        "confirmTotalWithdrawal"
+      ]
+    },
+    "WithdrawRevocationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "confirmWithdrawal": {
+          "const": true,
+          "description": "Retiro explícito del solicitante (GRD-RV-15)."
+        }
+      },
+      "required": [
+        "confirmWithdrawal"
+      ]
+    },
+    "IssueRecoveryLinkRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trigger": {
+          "enum": [
+            "REQUESTER_ASKED",
+            "LIMIT_REACHED"
+          ]
+        }
+      },
+      "required": [
+        "trigger"
+      ],
+      "description": "RV0 con trigger del portador (GRD-RV-20). CASE_CONTACT y SCHOOL_REPORTED son de sistema (RC2), sin HTTP. Sin canal en el body: envío SOLO al channelRef ligado (GRD-RV-17)."
+    },
+    "RecoveryRevokeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "confirmTotalWithdrawal": {
+          "const": true,
+          "description": "R3r: confirmación explícita en el mismo POST."
+        }
+      },
+      "required": [
+        "confirmTotalWithdrawal"
+      ],
+      "description": "Único POST con handle RECOVERY: R1r+R2r+R3r, o R10+R3r, o R11 (sin efecto)."
+    },
+    "RecoveryRevokeResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revocationRef": {
+              "$ref": "common.schema.json#/$defs/Ref"
+            },
+            "state": {
+              "const": "CONFIRMED"
+            },
+            "receiptDelivery": {
+              "const": "BOUND_CHANNEL"
+            }
+          },
+          "required": [
+            "revocationRef",
+            "state",
+            "receiptDelivery"
+          ],
+          "description": "Acuse inmediato con revocationRef; el recibo va al canal ligado (REQ-CNS-033)."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "result": {
+              "const": "IN_PROGRESS"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "description": "R11: revocación ya CONFIRMED; no consume el token ni emite evento (SEC N-05)."
+        }
+      ]
+    },
+    "OpenRightsCaseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "enum": [
+            "LIMIT_REACHED",
+            "CHANNEL_UNREACHABLE",
+            "REQUESTER_ASKED"
+          ]
+        },
+        "caseContact": {
+          "type": "string",
+          "maxLength": 254,
+          "pattern": "^([^@\\s]+@([A-Za-z0-9-]+\\.)*(example\\.(com|net|org)|[A-Za-z0-9-]+\\.(example|invalid|test|localhost))|.*\\[SYN\\].*)$",
+          "description": "Opcional y solo con origin = CHANNEL_UNREACHABLE (GRD-RC-05). IT0: solo dominio reservado RFC 2606/6761 o patrón [SYN]; no verificado; nunca canal de OTP, RV0 ni envío (INV-11). Viaja solo en el body."
+        }
+      },
+      "required": [
+        "origin"
+      ],
+      "description": "RC1 fromHandle. REQUEST_EXPIRED solo lo abre R9 (sistema).",
+      "if": {
+        "properties": {
+          "origin": {
+            "const": "CHANNEL_UNREACHABLE"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "then": true,
+      "else": {
+        "not": {
+          "required": [
+            "caseContact"
+          ]
+        }
+      },
+      "x-pending": [
+        "F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"
+      ]
+    },
+    "InReviewAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "const": "IN_REVIEW"
+        },
+        "rightsPathsAvailable": {
+          "$ref": "common.schema.json#/$defs/RightsPaths"
+        }
+      },
+      "required": [
+        "result",
+        "rightsPathsAvailable"
+      ],
+      "description": "«En revisión», nunca «denegado»; sin plazo prometido (INV-RC-03)."
+    },
+    "RevocationIntentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revokeIntent": {
+          "const": true,
+          "description": "Intención expresa del DecisionMaker en la página del caso (GRD-RC-08)."
+        }
+      },
+      "required": [
+        "revokeIntent"
+      ],
+      "description": "RC3/RC3a. Sin caseRef ni revocationRef del cliente: el caso se resuelve desde la cadena del handle (GRD-RC-14).",
+      "x-pending": [
+        "F-005 (actor UNVERIFIED_BEARER en RC3/R12 vs DEC-BR-017 §8 DECISION_MAKER)",
+        "F-006 (alcance del handle /m/)",
+        "F-002 (revocación abierta por revokedDecisionRef)"
+      ]
+    },
+    "StepUpAssertion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "writeOnly": true,
+      "description": "Aserción del IdP para step-up (P-36) con nonce por acción; solo persiste el hash + claims verificados (INV-13).",
+      "x-pending": [
+        "APR-IDP (parámetros del IdP: PENDING — Carlos / studio)"
+      ],
+      "x-sensitive": "credencial; nunca se loguea"
+    },
+    "ProposeCaseVerificationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationScriptVersion": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,32}$",
+          "x-pending": [
+            "LD-02 (guion versionado y assuranceLevel: placeholder IT0)"
+          ]
+        },
+        "stepUpAssertion": {
+          "$ref": "#/$defs/StepUpAssertion"
+        }
+      },
+      "required": [
+        "verificationScriptVersion",
+        "stepUpAssertion"
+      ],
+      "description": "RH2/RH2v paso 1 (propose_case_verification). El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02). Proponente = RIGHTS_OPERATOR desde su sesión CASE, nunca de un parámetro."
+    },
+    "ProposalAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proposalRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "attestation": {
+          "enum": [
+            "PENDING",
+            "ATTESTED"
+          ]
+        }
+      },
+      "required": [
+        "proposalRef",
+        "attestation"
+      ]
+    },
+    "ApproveCaseVerificationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stepUpAssertion": {
+          "$ref": "#/$defs/StepUpAssertion"
+        }
+      },
+      "required": [
+        "stepUpAssertion"
+      ],
+      "description": "RH2/RH2v paso 2 (approve_case_verification) por PRIVACY_LEGAL o SECURITY, tercer humano (GRD-RV-09)."
+    },
+    "ApprovalAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "attestation": {
+          "enum": [
+            "PENDING",
+            "ATTESTED"
+          ]
+        },
+        "revocationState": {
+          "enum": [
+            "REQUESTED",
+            "VERIFIED"
+          ]
+        }
+      },
+      "required": [
+        "attestation",
+        "revocationState"
+      ],
+      "description": "REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto."
+    },
+    "RecordCaseConfirmationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "confirmationGivenOnCasePage": {
+          "const": true,
+          "description": "Registra la confirmación expresa que el DecisionMaker dio en la página del caso (RH3). El operador no decide la revocación."
+        }
+      },
+      "required": [
+        "confirmationGivenOnCasePage"
+      ],
+      "x-pending": [
+        "F-003 (RH3 con 4 personas y co-firma)",
+        "OPEN-RV-10 (step-up de record/cosign)",
+        "LD-03 (regla definitiva de quién escribe la confirmación)"
+      ]
+    },
+    "CaseConfirmationAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cosign": {
+          "enum": [
+            "AWAITING_COSIGN",
+            "COSIGNED"
+          ]
+        },
+        "revocationState": {
+          "enum": [
+            "VERIFIED",
+            "CONFIRMED"
+          ]
+        }
+      },
+      "required": [
+        "cosign",
+        "revocationState"
+      ],
+      "description": "Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17).",
+      "x-pending": [
+        "F-003"
+      ]
+    },
+    "CloseRightsCaseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "$ref": "common.schema.json#/$defs/CaseOutcome"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "description": "close_case. RESOLVED solo tras R4 APPLIED; WITHDRAWN solo tras REVOCATION_FAILED WITHDRAWN_BY_REQUESTER de la revocación del ciclo vigente (GRD-RC-09). Ningún timer cierra el caso."
+    },
+    "RightsCaseClosed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "$ref": "common.schema.json#/$defs/CaseOutcome"
+        }
+      },
+      "required": [
+        "caseRef",
+        "state"
+      ]
+    },
+    "ReactivateContextRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "incidentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "description": "CX2 PAUSED a ACTIVE, solo HUMAN (GRD-TC-06).",
+      "x-pending": [
+        "OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)",
+        "OPEN-TC-05 / ADR-011 (almacén de auditoría PLATFORM; reasonCode sin enum)"
+      ]
+    },
+    "ContextReactivated": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "state": {
+          "const": "ACTIVE"
+        }
+      },
+      "required": [
+        "contextRef",
+        "state"
+      ]
+    }
+  }
+}
