@@ -1,4 +1,5 @@
 # Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14-A, R14-F).
+# rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (fuente SYSTEM/FIXTURE desde la identidad de ejecución: GRD-CM-15, INV-CM-11).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (convención guardsBySource), N2-02 (rejectsOnIntegrity), N2-06 (FIXTURE: CHECK de DB, environment de catálogo, canal de seed).
 # rev. 2 (2026-09-27): correcciones de SEC-CNS-012 (SEC-review-CA116) y AUDIT-H01.
 # Las demás specs referencian por ID los guards (GRD-CM-*), errores (ERR-CM-*),
@@ -7,7 +8,7 @@ specId: SPEC-CNS-SM-COMMON
 title: "State machines IT0 — reglas transversales (tenancy, clases de ruta, ledger, actor, fail-closed)"
 smId: SM-CNS-001
 smSection: "§0, §1, §7 (el §6 se modela en tenant-context.spec.yaml, solo en lo que afecta a las cinco máquinas)"
-version: "0.4.1"
+version: "0.4.2"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -110,7 +111,9 @@ actorModel:
       actor.byReasonCode con 'source') declara guardsBySource y httpPostBySource con las mismas fuentes. 'guards' lista
       solo los comunes a todas; una fuente sin POST (SYSTEM, FIXTURE) nunca exige handle, credencial ni CSRF
       (GRD-CM-01, GRD-CM-10, GRD-RC-14, GRD-RV-06, GRD-RV-18, GRD-RV-20) y resuelve el tenant desde el registro
-      del agregado que la dispara, en la misma tx. El checker lo exige.
+      del agregado que la dispara, en la misma tx. SEC N3-01: la fuente se deriva de la identidad de ejecución
+      (rol de DB de la conexión + entrypoint del proceso), nunca de un campo de la request; toda fuente sin POST
+      lleva GRD-CM-15. El checker lo exige.
     acceptsIntegrityFailure: "Transición que INV-RV-07 obliga a aceptar con falla de clave/integridad (R4): ninguno de sus guards puede tener rejectsOnIntegrity (SEC N2-02); el checker lo exige."
 
 ledgerEnvelope:
@@ -242,6 +245,16 @@ guards:
     onFail: ERR-CM-10
     governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §1, §5, §6", "ADR-002 §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
     testIds: [TEST-CNS-429, TEST-CNS-441]
+  - id: GRD-CM-15
+    name: source_from_execution_identity
+    rule: "SEC N3-01: la fuente de guardsBySource se deriva de la identidad de ejecución (rol de DB de la conexión + entrypoint del proceso), nunca de un campo, header, parámetro, reasonCode, origin ni actorType enviado en la request. BEARER/STAFF/HUMAN = entrypoint web con app_rw (consola PLATFORM: platform_rw) y sesión resuelta por session_hash. SYSTEM = rol worker, solo dentro de la tx de la transición que la dispara (R9 → RC1; SP4/EN1 → I9) o en el job durable de kind cerrado que la reintenta (ops.claim_due_jobs; GRD-TC-08). FIXTURE = rol de seed del bootstrap LOCAL (GRD-CM-14). Las funciones de las ramas SYSTEM y FIXTURE (RC1 desde R9, cascada I9 y su job, EN0/EN1 por seed; nombres en H02 / ADR-006 §6) son SECURITY DEFINER con REVOKE EXECUTE FROM PUBLIC y sin EXECUTE para app_rw ni platform_rw (chequeo de catálogo, igual que CONTEXT_READINESS en GRD-TC-05). Una request HTTP que declare origin REQUEST_EXPIRED, reasonCode PARTICIPATION_CLOSED/ENROLLMENT_CLOSED, actorType SYSTEM_GUARD/FIXTURE o una marca de fuente se rechaza sin efecto ni evento; la base rechaza la llamada con permission denied si el código la intentara."
+    onFail: ERR-CM-10
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4b N3-01", "SM-CNS-001 R0.2 (actor derivado en servidor)", "ADR-002 §5 (roles app_rw, worker, platform_rw)", "ADR-006 §2 (EXECUTE por job_kind), §6 (allowlist SECURITY DEFINER)", "CARLOS r3 R14-F"]
+    testIds: [TEST-CNS-444, TEST-CNS-445, TEST-CNS-446]
+    testNotes:
+      TEST-CNS-444: "Catálogo: las funciones de las ramas SYSTEM (RC1 desde R9, cascada I9 y job CASCADE_CANCEL_INVITATION) y FIXTURE (EN0/EN1 por seed) no tienen EXECUTE para PUBLIC, app_rw ni platform_rw; llamarlas con esas conexiones da permission denied y no deja fila ni evento."
+      TEST-CNS-445: "HTTP intenta la rama SYSTEM: POST RC1 con handle válido y origin=REQUEST_EXPIRED / actorType=SYSTEM_GUARD / marca de fuente, y POST I9 en la consola STAFF con reasonCode PARTICIPATION_CLOSED o ENROLLMENT_CLOSED → rechazo (ERR-CM-10 o ERR-RC-02) sin caso, sin cancelación y sin evento; el ledger nunca registra SYSTEM_GUARD desde el entrypoint web."
+      TEST-CNS-446: "HTTP intenta la rama FIXTURE: POST EN0/EN1 en la consola STAFF con actorType=FIXTURE o marca de seed, en LOCAL y en DEV → se evalúa como STAFF (sin credencial: 404/CSRF) o se rechaza con ERR-CM-10; nunca actor FIXTURE en el ledger; el proceso web no tiene la credencial del rol de seed."
 
 errors:
   - id: ERR-CM-01
@@ -367,6 +380,10 @@ invariants:
     statement: "Ningún portador no verificado queda registrado como DECISION_MAKER; su actorRole es UNVERIFIED_BEARER y solo ejecuta las transiciones de actorModel.unverifiedBearer.may (= SM v7 INV-19)."
     governedBy: ["SM-CNS-001 v7 R0.2, §7 INV-19", "CARLOS r3 R13-5", "AUDIT F-A03"]
     testIds: [TEST-CNS-313]
+  - id: INV-CM-11
+    statement: "Ninguna request HTTP ejecuta una rama SYSTEM ni FIXTURE de una transición: la fuente la fija la identidad de ejecución (GRD-CM-15) y app_rw y platform_rw no tienen EXECUTE sobre las funciones de esas ramas."
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4b N3-01", "SM-CNS-001 R0.2", "ADR-006 §6"]
+    testIds: [TEST-CNS-444, TEST-CNS-445, TEST-CNS-446]
 
 events: [] # esta spec no emite eventos propios; define el sobre común (ledgerEnvelope)
 

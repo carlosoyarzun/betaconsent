@@ -1,4 +1,5 @@
 # Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3).
+# rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de RC1).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en RC1), N2-03 (unicidad por ciclo); AUDIT-H01-rev4 M-04.
 # No es la RightsRequest de [N-SM] §7 (A5 F-511). Sin estado de expiración ni de rechazo:
 # nunca deniega. Toda acción del operador es una función SECURITY DEFINER con actor desde su sesión.
@@ -7,7 +8,7 @@ title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
 smId: SM-CNS-001
 smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
 aggregateType: RightsCase
-version: "0.4.1"
+version: "0.4.2"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -167,7 +168,7 @@ transitions:
     guards: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04] # comunes a ambas fuentes
     guardsBySource: # SEC-CNS-012 re-verificación rev. 4 N2-01: una lista plana hacía fallar la fuente SYSTEM (sin credencial, CSRF ni handle)
       BEARER: [GRD-CM-01, GRD-CM-10, GRD-RC-05, GRD-RC-14]
-      SYSTEM: [GRD-RV-16, GRD-RC-16]
+      SYSTEM: [GRD-RV-16, GRD-RC-16, GRD-CM-15] # N3-01: fuente = rol worker dentro de la tx de R9, nunca un campo de la request
     handleScope: "R13-3 (erratum SM v7 §5.0 / ADR-006 §6.1): el handle /m/ habilita RC1"
     effects:
       - "Desde handle: POST con CSRF, no consume el token, no muestra datos, idempotente por cadena; desde /r/ se ofrece antes revocar con ese enlace."
@@ -182,7 +183,7 @@ transitions:
     idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
     errors: [ERR-RC-01, ERR-RC-02, ERR-RC-11, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "RULE-CNS-TBD-02", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01"]
-    testIds: [TEST-CNS-291, TEST-CNS-344, TEST-CNS-397, TEST-CNS-425, TEST-CNS-426, TEST-CNS-427]
+    testIds: [TEST-CNS-291, TEST-CNS-344, TEST-CNS-397, TEST-CNS-425, TEST-CNS-426, TEST-CNS-427, TEST-CNS-444, TEST-CNS-445]
   - id: RC1c
     from: null
     to: OPEN

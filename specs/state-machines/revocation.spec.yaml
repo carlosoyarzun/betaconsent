@@ -1,4 +1,5 @@
 # Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 4 (SM-CNS-001 v7 + R14).
+# rev. 4c (2026-09-27): F-R14-04 (co-firmante de RH3 en el ledger: cosignedByRef en REVOCATION_CONFIRMED, INV-RV-11; derivado pendiente OPEN-RV-11).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (lado R9), N2-02 (GRD-RV-29 en R4), N2-04 (recovery token ligado a la decisión); AUDIT-H01-rev4 M-04.
 # rev. 4 (2026-09-27): SEC-CNS-012 re-verificación N-01…N-09, AUDIT-H01-rev3 y decisiones R14-A/B/C de Carlos.
 # rev. 3 (2026-09-27): decisiones de Carlos R13-1…R13-5 y R13-7 aplicadas (R10, R11, R12, RH2v, R9 sin re-escalar, R8h y RH3 con R13-4, erratum R13-3).
@@ -12,7 +13,7 @@ title: "State machine Revocation (IT0): OTP, RECOVERY CHANNEL_LINK y RECOVERY HU
 smId: SM-CNS-001
 smSection: "§5, §5.0, §5.1, §5.2 (RC3/RC3a/R12/RH2/RH2v/RH3), §7 — v7"
 aggregateType: Revocation
-version: "0.4.1"
+version: "0.4.2"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -320,7 +321,7 @@ transitions:
     command: "record_case_confirmation + cosign_case_confirmation (funciones SECURITY DEFINER; R14-B)"
     authPath: RECOVERY
     recoveryMethod: HUMAN_ASSISTED
-    actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE"}
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE"} # el co-firmante va en payload.cosignedByRef (F-R14-04), no en el sobre del actor
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
     status: "Interino IT0 DECIDIDO (R13-4, R14-B): cuatro ojos, dos RIGHTS_OPERATOR distintos, mínimo 4 personas sin reutilización entre roles. Regla definitiva de quién escribe la confirmación = LEGAL DECISION LD-03 (OPEN-RV-06)."
@@ -331,12 +332,13 @@ transitions:
       - "Solo tras una RH2/RH2v ATTESTED de la misma (revocationRef, caseRef), posterior al último RC3/RC3a (GRD-RV-10; SEC N-04)."
       - "Cuatro ojos (R13-4, R14-B): la registra un RIGHTS_OPERATOR y la co-firma otro RIGHTS_OPERATOR distinto con cosign_case_confirmation (cualquiera de los dos puede ser el proponente de RH2; SM:157 no ata el registro al proponente, AUDIT-H01-rev4 M-04); el grant del co-firmante se revalida en la tx de RH3; ninguno de los dos es aprobador de la RH2/RH2v ni de un grant del caso; sin co-firma no hay efecto."
       - "En la misma tx se encola APPLY_REVOCATION (GRD-RV-24)."
+      - "F-R14-04: REVOCATION_CONFIRMED registra en el ledger recordedByRef y cosignedByRef (refs opacas del principal de plataforma, sin PII), iguales a recorded_by_ref / cosigned_by_ref de la confirmación y distintas entre sí; sin cosignedByRef el append falla y no hay efecto (INV-RV-11)."
     emits: [REVOCATION_CONFIRMED]
-    payloadValues: {recordedByRef: required}
+    payloadValues: {recordedByRef: required, cosignedByRef: required}
     idempotencyKey: revocationRef
     errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 re-verificación N-04", "ADR-006 §6.3", "LD-03", "SEC-CNS-012 P1-07"]
-    testIds: [TEST-CNS-238, TEST-CNS-386, TEST-CNS-387, TEST-CNS-402, TEST-CNS-403, TEST-CNS-404, TEST-CNS-413, TEST-CNS-442]
+    governedBy: ["SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 re-verificación N-04", "ADR-006 §6.3", "LD-03", "SEC-CNS-012 P1-07", "F-R14-04 (NOTION-change-package-R14)"]
+    testIds: [TEST-CNS-238, TEST-CNS-386, TEST-CNS-387, TEST-CNS-402, TEST-CNS-403, TEST-CNS-404, TEST-CNS-413, TEST-CNS-442, TEST-CNS-447, TEST-CNS-448]
   - id: R4
     from: CONFIRMED
     to: APPLIED
@@ -890,9 +892,9 @@ events:
   - id: REVOCATION_CONFIRMED
     stream: LEDGER
     emittedBy: [R3, R3r, RH3]
-    payload: [revocationRef, recordedByRef] # recordedByRef? solo HUMAN_ASSISTED
-    governedBy: ["DEC-BR-017 §6"]
-    testIds: [TEST-CNS-236, TEST-CNS-237, TEST-CNS-238]
+    payload: [revocationRef, recordedByRef, cosignedByRef] # recordedByRef? y cosignedByRef? solo HUMAN_ASSISTED (RH3); cosignedByRef = campo nuevo de DEC-BR-017 §6 (F-R14-04, derivado pendiente OPEN-RV-11)
+    governedBy: ["DEC-BR-017 §6", "CARLOS r3 R14-B (co-firma)", "F-R14-04"]
+    testIds: [TEST-CNS-236, TEST-CNS-237, TEST-CNS-238, TEST-CNS-447, TEST-CNS-448]
   - id: REVOCATION_DOWNSTREAM_EMITTED
     stream: LEDGER
     emittedBy: [R5]
@@ -996,6 +998,13 @@ invariants:
     statement: "R14-C: re-consentir sobre la misma decisionChainKey y revocar la decisión nueva siempre llega a APPLIED, aunque la revocación del ciclo anterior siga en APPLIED, DOWNSTREAM_PENDING (incluido deliveryFailed) o DELIVERED; cada Revocation revoca solo su revokedDecisionRef."
     governedBy: ["CARLOS r3 R14-C", "SM-CNS-001 v7 §5, §7 (NF-22)", "RULE-CNS-TBD-02", "AUDIT-H01-rev3 N-01"]
     testIds: [TEST-CNS-414, TEST-CNS-415, TEST-CNS-416, TEST-CNS-417]
+  - id: INV-RV-11
+    statement: "F-R14-04: todo REVOCATION_CONFIRMED de RH3 lleva recordedByRef y cosignedByRef (refs opacas UUIDv4 del principal de plataforma; nunca email, nombre ni el sub del IdP), distintos entre sí e iguales a recorded_by_ref / cosigned_by_ref de la confirmación; los cuatro ojos constan en la evidencia del ledger, no solo en una columna. Un append de RH3 sin cosignedByRef o con cosignedByRef = recordedByRef falla (sin CONFIRMED ni job); R3 y R3r no llevan ninguno de los dos (lista blanca)."
+    governedBy: ["F-R14-04", "CARLOS r3 R14-B", "SM-CNS-001 v7 §5.2 RH3, INV-17 (derivado pendiente OPEN-RV-11)", "DEC-BR-017 §6 (derivado pendiente)", "INV-CM-05"]
+    testIds: [TEST-CNS-447, TEST-CNS-448]
+    testNotes:
+      TEST-CNS-447: "RH3 completa: el REVOCATION_CONFIRMED del ledger trae recordedByRef y cosignedByRef UUIDv4, distintos, iguales a las columnas de la confirmación, sin PII (escáner); el verificador del ledger reconstruye los cuatro ojos solo desde el evento."
+      TEST-CNS-448: "Append de RH3 sin cosignedByRef o con cosignedByRef = recordedByRef → falla sin CONFIRMED ni job APPLY_REVOCATION; R3/R3r con cosignedByRef o recordedByRef → rechazo por lista blanca (INV-CM-05)."
   - id: INV-RV-09
     statement: "Toda Revocation CONFIRMED tiene un job APPLY_REVOCATION pendiente o ya aplicado; no existe CONFIRMED huérfano, y una caída entre la confirmación y R4 termina en APPLIED al reanudar el worker."
     governedBy: ["SEC-CNS-012 P1-01 (técnico)", "SM-CNS-001 R0.1"]
@@ -1038,6 +1047,12 @@ openItems:
     status: DECIDED
     blocksDataReal: false
   - {id: OPEN-RV-10, item: "Step-up de record_case_confirmation y cosign_case_confirmation (RH3): P-36 no lo cubre; decidir si se agrega a P-36 (cambio de parámetro, vuelve a Carlos) (AUDIT-H01-rev3 N-07).", owner: "lampone-security → Carlos", status: OPEN, blocksDataReal: true}
+  - id: OPEN-RV-11
+    item: "F-R14-04 (P2, security↔architecture): la spec agrega cosignedByRef al payload de REVOCATION_CONFIRMED (RH3) para que el co-firmante conste en el ledger. Es un campo nuevo de la lista blanca de DEC-BR-017 §6 (como P-02) y cambia el payload de SM v7 §5.2 RH3 (SM:157 'REVOCATION_CONFIRMED {revocationRef, recordedByRef}'): ambos derivados quedan pendientes, no aplicados. Cierre: lampone-security + Carlos."
+    owner: "lampone-architect + lampone-security → Carlos"
+    status: PENDING-CARLOS
+    refs: ["F-R14-04", "CARLOS r3 R14-B", "INV-RV-11"]
+    blocksDataReal: false
   - {id: P-v7-1, item: "RC3a/R12: vía adjunta sin sobrescribir el authPath proyectado; authPath efectivo = el de la verificación previa a la confirmación (GRD-RV-28).", owner: Carlos, status: "ACCEPTED (R14-A)"}
   - {id: P-v7-2, item: "Un adjunto nunca hace retroceder el estado, no reinicia requestedAt ni limpia flags (GRD-RV-27, INV-16).", owner: Carlos, status: "ACCEPTED (R14-A)"}
   - {id: P-v7-4, item: "Cuatro ojos en RH3 = dos RIGHTS_OPERATOR distintos; mínimo 4 personas (GRD-RV-26, GRD-RC-15).", owner: Carlos, status: "ACCEPTED (R14-A, R14-B)"}

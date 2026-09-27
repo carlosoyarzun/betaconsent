@@ -1,12 +1,13 @@
 # §6 de SM-CNS-001 (contexto de tenant) modelado SOLO en lo que afecta a las cinco máquinas IT0
 # (decisión del Supervisor sobre AUDIT F-A14, 2026-09-27). H01 / CA-116, rev. 4 (R14-E, R14-F; AUDIT-H01-rev3 N-12/N-13). Cero PII.
+# rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente FIXTURE de EN0/EN1) y condiciones (i)–(iii) de GRD-TC-08 (PENDING-CARLOS, OPEN-TC-07).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (locks de la cascada Q-18, GRD-TC-07/08), N2-06 (GRD-CM-14), N2-01 (guardsBySource en EN0/EN1).
 # Lo que §6 no aplica a IT0 se lista en coverage.notCovered y no se declara cubierto.
 specId: SPEC-CNS-SM-TENANT-CONTEXT
 title: "Contexto de tenant (Tenant status, SchoolParticipation, Enrollment, readiness de ConsentContext): efectos sobre las máquinas IT0"
 smId: SM-CNS-001
 smSection: "§6 (D1, F-211), R0.4–R0.6"
-version: "0.4.1"
+version: "0.4.2"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -168,14 +169,14 @@ submachines:
         guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-TC-08]
         effects:
           - "R14-E (Q-18 opción A): en la misma transacción, invitation I9 PARTICIPATION_CLOSED (fuente SYSTEM) sobre todas las invitaciones no terminales del tenant en esa participación."
-          - "SEC N2-05 (GRD-TC-08): toma FOR UPDATE la fila de la participación y luego, en orden de invitationRef, las invitaciones no terminales; relee bajo lock; salta de forma idempotente las que ya son terminales; la cascada nunca aborta el cierre."
+          - "SEC N2-05 (GRD-TC-08): toma FOR UPDATE la fila de la participación y luego, en orden de invitationRef, las invitaciones no terminales; relee bajo lock; salta de forma idempotente las que ya son terminales; la cascada nunca aborta el cierre. Falla propia de una invitación: reintento dentro de la tx y, si persiste, job CASCADE_CANCEL_INVITATION (condiciones (i)–(iii), PENDING-CARLOS, OPEN-TC-07)."
           - "Cierre en cascada de Enrollments con motivo PARTICIPATION_CLOSED: no especificado en SM §6 como efecto automático (OPEN-TC-02); Guard P ya bloquea el tratamiento."
           - "Ninguna transición de ConsentDecision ni consent.revoked (INV-7)."
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10]
         governedBy: ["SM-CNS-001 v7 §6 (SM:172)", "DEC-BR-016 §4", "CARLOS r3 R14-E", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "SEC-CNS-012 re-verificación rev. 4 N2-05"]
-        testIds: [TEST-CNS-361, TEST-CNS-418, TEST-CNS-436, TEST-CNS-438]
+        testIds: [TEST-CNS-361, TEST-CNS-418, TEST-CNS-436, TEST-CNS-438, TEST-CNS-449, TEST-CNS-450]
   - machine: Enrollment
     aggregateType: Enrollment
     table: "app.enrollment (ADR-006 §2); UNIQUE parcial (tenant_id, subject_ref, participation_ref) WHERE status = 'ACTIVE'"
@@ -207,13 +208,13 @@ submachines:
         guards: [GRD-CM-07, GRD-CM-13, GRD-TC-03] # comunes
         guardsBySource: # SEC N2-01 (mismo defecto): el seed no tiene credencial ni POST
           STAFF: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
-          FIXTURE: [GRD-CM-14]
+          FIXTURE: [GRD-CM-14, GRD-CM-15] # N3-01: fuente = rol de seed, nunca un campo de la request
         effects: ["Guard E empieza a cumplirse para el subjectRef en esa participación."]
         emits: [ENROLLMENT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, subject_ref, participation_ref)"
         errors: [ERR-CM-09, ERR-CM-10, ERR-TC-03]
         governedBy: ["DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-06"]
-        testIds: [TEST-CNS-364, TEST-CNS-429]
+        testIds: [TEST-CNS-364, TEST-CNS-429, TEST-CNS-444, TEST-CNS-446]
       - id: EN1
         from: ACTIVE
         to: CLOSED
@@ -228,10 +229,10 @@ submachines:
         guards: [GRD-CM-07, GRD-CM-13, GRD-TC-04, GRD-TC-08] # comunes
         guardsBySource: # SEC N2-01 (mismo defecto): el seed no tiene credencial ni POST
           STAFF: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
-          FIXTURE: [GRD-CM-14]
+          FIXTURE: [GRD-CM-14, GRD-CM-15] # N3-01
         effects:
           - "Guard E falla: I3/I4/C1–C5 del subjectRef se rechazan; en la misma transacción, invitation I9 ENROLLMENT_CLOSED (fuente SYSTEM) sobre sus invitaciones no terminales (R14-E, Q-18 opción A)."
-          - "SEC N2-05 (GRD-TC-08): toma FOR KEY SHARE la participación, FOR UPDATE el Enrollment y luego, en orden de invitationRef, las invitaciones no terminales del subjectRef; relee bajo lock; salta las terminales; la cascada nunca aborta el cierre."
+          - "SEC N2-05 (GRD-TC-08): toma FOR KEY SHARE la participación, FOR UPDATE el Enrollment y luego, en orden de invitationRef, las invitaciones no terminales del subjectRef; relee bajo lock; salta las terminales; la cascada nunca aborta el cierre. Falla propia de una invitación: reintento dentro de la tx y, si persiste, job CASCADE_CANCEL_INVITATION (condiciones (i)–(iii), PENDING-CARLOS, OPEN-TC-07)."
           - "API-CNS-001 responde NOT_AUTHORIZED (RULE-CNS-013); el motivo interno ENROLLMENT_NOT_ACTIVE queda solo en AuthorizationCheck (F-323)."
           - "TRANSFERRED ≠ revocación: sin consent.revoked, sin transición de ConsentDecision, sin supresión; histórico conservado (LD-12). El DecisionMaker conserva consulta, revocación y derechos (INV-6)."
           - "eligibility.changed no se emite (E-10 PROPOSED, Q-18)."
@@ -239,7 +240,7 @@ submachines:
         idempotencyKey: "(tenant_id, enrollment_ref, sequence)"
         errors: [ERR-CM-09, ERR-CM-10, ERR-TC-04]
         governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05, N2-06"]
-        testIds: [TEST-CNS-365, TEST-CNS-419, TEST-CNS-429, TEST-CNS-437, TEST-CNS-438]
+        testIds: [TEST-CNS-365, TEST-CNS-419, TEST-CNS-429, TEST-CNS-437, TEST-CNS-438, TEST-CNS-444, TEST-CNS-446, TEST-CNS-449, TEST-CNS-450]
   - machine: ConsentContextReadiness
     aggregateType: ConsentContext
     partial: true
@@ -341,10 +342,15 @@ guards:
     testIds: [TEST-CNS-436, TEST-CNS-437, TEST-CNS-443]
   - id: GRD-TC-08
     name: closure_cascade_never_aborts
-    rule: "SEC N2-05 (R14-E): SP4 y EN1 toman FOR UPDATE la fila de la participación / del Enrollment (EN1: antes FOR KEY SHARE la participación, mismo orden que GRD-TC-07) y luego, en orden de invitationRef, FOR UPDATE las invitaciones no terminales afectadas; cada I9 (fuente SYSTEM) se aplica bajo SAVEPOINT con el tenant_id del registro cerrado. Una invitación que al releer ya es terminal se salta de forma idempotente. Una falla propia de una invitación revierte solo su SAVEPOINT, registra alerta y deja un ops.job durable de reintento de esa cancelación; nunca aborta el cierre (Guard P/E ya la bloquean: fail-closed). Solo una falla común al propio cierre (ledger o integridad no disponible, evaluador caído) revierte todo: nada queda confirmado y el acto humano se reintenta."
+    rule: "SEC N2-05 (R14-E): SP4 y EN1 toman FOR UPDATE la fila de la participación / del Enrollment (EN1: antes FOR KEY SHARE la participación, mismo orden que GRD-TC-07) y luego, en orden de invitationRef, FOR UPDATE las invitaciones no terminales afectadas; cada I9 (fuente SYSTEM, GRD-CM-15) se aplica bajo SAVEPOINT con el tenant_id del registro cerrado. Una invitación que al releer ya es terminal se salta de forma idempotente. Nunca aborta el cierre por una invitación (Guard P/E ya la bloquean: fail-closed). Condiciones SEC rev. 4b (3), PENDING-CARLOS (OPEN-TC-07): (i) lista CERRADA de fallas propias que revierten solo el SAVEPOINT de esa invitación: (a) error de append del agregado Invitation (lista blanca de payload, CHECK o UNIQUE de su sequence); (b) conflicto de expectedSequence no resuelto tras el reintento dentro de la tx; (c) lock timeout o deadlock sobre la fila de esa invitación: primero se reintenta DENTRO de la tx (ROLLBACK TO SAVEPOINT y nuevo intento con lock_timeout acotado) y solo si persiste tras el tope se revierte su SAVEPOINT. Cualquier otra falla (ledger o integridad no disponible, evaluador caído, falla sobre la fila del cierre o error no enumerado) revierte toda la tx: nada queda confirmado y el acto humano se reintenta. (ii) Al revertir un SAVEPOINT, en la misma tx del cierre se encola ops.job(kind = CASCADE_CANCEL_INVITATION, invitationRef, reasonCode) con UNIQUE (tenant_id, kind, invitation_ref) y alerta; el job lo ejecuta solo el rol worker (GRD-CM-15), relee el registro cerrado y la invitación bajo SET LOCAL y lock, salta sin evento si ya es terminal y, si no, aplica I9 con el mismo reasonCode (idempotencyKey (invitationRef, reasonCode): un solo INVITATION_CANCELLED); reintentos acotados con backoff (tope y backoff = parámetro nuevo de SEC-CNS-006, PENDING-CARLOS; esta spec no fija valores) y alerta humana al agotarse. Agotado, la invitación sigue no terminal pero bloqueada (GRD-CM-03/04/05 bajo GRD-TC-07 y GRD-IV-13) hasta que I8 la expira en P-10; nunca toca ConsentDecision ni Revocation (INV-7). (iii) Mientras el job esté pendiente (o la participación / el Enrollment de la invitación esté CLOSED), GET /i/{token} de esa invitación responde el 404 uniforme sin crear handle LANDING (GRD-IV-13)."
     onFail: null # la cascada no tiene error propio: nunca aborta SP4/EN1
-    governedBy: ["SEC-CNS-012 re-verificación rev. 4 N2-05", "CARLOS r3 R14-E", "SM-CNS-001 v7 §6 (SM:172: 'en la misma transacción que el cierre')", "INV-7"]
-    testIds: [TEST-CNS-428, TEST-CNS-436, TEST-CNS-437, TEST-CNS-438]
+    pendingDecision: OPEN-TC-07 # desviación de R14-E ("misma transacción") con condiciones (i)–(iii): confirmación de Carlos
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4 N2-05", "SEC-CNS-012 re-verificación rev. 4b (3) condiciones (i)–(iii)", "CARLOS r3 R14-E", "SM-CNS-001 v7 §6 (SM:172: 'en la misma transacción que el cierre')", "INV-7", "ADR-006 §2 (job_kind cerrado)"]
+    testIds: [TEST-CNS-428, TEST-CNS-436, TEST-CNS-437, TEST-CNS-438, TEST-CNS-449, TEST-CNS-450, TEST-CNS-451]
+    testNotes:
+      TEST-CNS-449: "Inyección de fallas en la cascada de SP4/EN1: (a) error de append de una Invitation y (b) conflicto de sequence persistente → solo su SAVEPOINT se revierte, el cierre confirma, se encola el job y hay alerta; (c) lock timeout transitorio → se reintenta dentro de la tx y la invitación se cancela en la misma tx sin job; (d) ledger/integridad no disponible, evaluador caído o error no enumerado → se revierte toda la tx (participación/Enrollment sin cambio)."
+      TEST-CNS-450: "Job CASCADE_CANCEL_INVITATION: dos ejecuciones → un solo INVITATION_CANCELLED; invitación ya terminal → termina sin evento; UNIQUE (tenant_id, kind, invitation_ref); tope de reintentos con alerta al agotarse; agotado, la invitación sigue bloqueada (I1/I3/I3r/I4/C3/C5 rechazadas) y I8 la expira; ninguna ConsentDecision ni Revocation cambia; solo lo ejecuta el rol worker con el tenant del registro cerrado."
+      TEST-CNS-451: "Con el job pendiente (y con participación/Enrollment CLOSED), GET /i/{token} de esa invitación → 404 uniforme (mismo cuerpo, código y tiempo acotado que un token inexistente), sin handle LANDING, sin Set-Cookie y sin evento."
 
 errors:
   - id: ERR-TC-01
@@ -437,4 +443,10 @@ openItems:
   - {id: OPEN-TC-03, item: "Q-28: nombre LEFT_SCHOOL y 'la revocación no cierra el Enrollment'.", owner: Carlos, status: OPEN}
   - {id: OPEN-TC-04, item: "F-313: si el Context Owner autoriza la SchoolParticipation con Privacy Legal como segundo aprobador.", owner: Carlos, status: OPEN}
   - {id: OPEN-TC-06, item: "PRIVACY_LEGAL puede reactivar el contexto ([N-SM] §1) pero no está en el enum actorRole (SM v7 R0.2); agregarlo o registrarlo como actorRole CONTEXT_OWNER con rol de plataforma (AUDIT-H01-rev3 N-13).", owner: Carlos, status: OPEN}
+  - id: OPEN-TC-07
+    item: "Desviación spec↔decisión P2 (SEC-CNS-012 re-verificación rev. 4b (3)): R14-E dice 'I9 en la misma transacción que SP4/EN1'; GRD-TC-08 admite que la cancelación de una invitación concreta que falla se reintente por job CASCADE_CANCEL_INVITATION para no abortar el cierre (abortarlo dejaría la participación ACTIVE: fail-open para la emisión). Condiciones aplicadas en la spec: (i) lista cerrada de fallas que revierten el SAVEPOINT y lock timeout reintentado primero dentro de la tx; (ii) job idempotente, reintentos acotados y alerta; (iii) GET /i/ con 404 uniforme sin handle LANDING mientras quede pendiente (GRD-IV-13). Falta: que Carlos confirme la desviación o la registre como lectura de R14-E, y el parámetro de tope/backoff en SEC-CNS-006. No bloquea IT0."
+    owner: Carlos
+    status: PENDING-CARLOS
+    refs: ["GRD-TC-08", "GRD-IV-13", "CARLOS r3 R14-E"]
+    blocksDataReal: false
   - {id: OPEN-TC-05, item: "Nombres de SCHOOL_PARTICIPATION_STATUS_CHANGED, ENROLLMENT_STATUS_CHANGED y CONSENT_CONTEXT_STATUS_CHANGED, y almacén de la auditoría PLATFORM (ADR-011).", owner: "gaona-measure / lampone-architect; cierre Carlos", status: OPEN}
