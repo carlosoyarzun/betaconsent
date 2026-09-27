@@ -1,28 +1,32 @@
-// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-115 (POST /invitation/open),
-// API-CNS-120 (POST /otp/request), API-CNS-121 (POST /otp/submit) y API-CNS-127 (POST
-// /decision/submit, consolida C1/C2/C3/C5 en un solo endpoint IT0 — ver x-scope-note más
-// abajo); specs/state-machines/invitation.spec.yaml I4, otp-challenge.spec.yaml V1/V3,
-// consent-decision.spec.yaml C1/C2/C3/C5; common.spec.yaml GRD-CM-10 (D1).
-// TEST-CNS-498..TEST-CNS-50x (traceability/test-matrix.csv).
+// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-101 (GET /i/{token}),
+// API-CNS-115 (POST /invitation/open), API-CNS-120 (POST /otp/request), API-CNS-121 (POST
+// /otp/submit) y API-CNS-127 (POST /decision/submit, consolida C1/C2/C3/C5 en un solo
+// endpoint IT0 — ver x-scope-note más abajo); specs/state-machines/invitation.spec.yaml I4
+// (efecto de canje + efecto de apertura), specs/state-machines/common.spec.yaml INV-CM-08,
+// otp-challenge.spec.yaml V1/V3, consent-decision.spec.yaml C1/C2/C3/C5; common.spec.yaml
+// GRD-CM-10 (D1). TEST-CNS-498..TEST-CNS-51x (traceability/test-matrix.csv).
 //
-// x-scope-note (reportado a Carlos): el contrato modela /invitation/open, /otp/request y
-// /otp/submit atados a una sesión de handle creada por GET /i/{token} (P-12) y separa
-// /decision/start, /decision/steps y /decision/submit en tres POST. Esta tarea (CA-116 HTTP,
-// slices 1-2) no implementa el redemption GET (fuera del alcance pedido); en su lugar,
-// /invitation/open recibe el token en el body y abre directamente una sesión propia (D5). Por
-// la misma razón de alcance, C1 (start) y C2 (steps) se ejecutan internamente dentro de este
-// mismo POST /decision/submit en vez de exponerse como rutas separadas. GET nunca transiciona
-// en ningún caso (INV-CM-08): no hay ningún GET en este archivo.
+// x-scope-note (reportado a Carlos): el contrato separa /decision/start, /decision/steps y
+// /decision/submit en tres POST; esta tarea (CA-116 HTTP) ejecuta C1 (start) y C2 (steps)
+// internamente dentro de este mismo POST /decision/submit en vez de exponerse como rutas
+// separadas, por alcance. GET /i/{token} (P-12) sí está implementado: crea la sesión LANDING
+// (tenantId, invitationRef) sin transicionar Invitation (INV-CM-08); la transición I4
+// (SENT -> OPENED) ocurre solo en el POST /invitation/open subsiguiente, que ahora toma la
+// invitación de esa sesión y no de un token en el body (contract EmptyCommand).
 //
 // decisionMakerRef y tenantId SIEMPRE se derivan de la sesión (consent-session.ts, D5) o del
 // propio dominio (invitation.recipientChannelRef tras V3); un `decisionMakerRef` en el body de
 // /decision/submit se ignora por completo (nunca se lee del payload, SM R0.2).
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
-import { hashInvitationToken, openInvitation, type InvitationPorts } from "../../modules/invitation/invitation.ts";
+import {
+  openInvitationByRef,
+  resolveInvitationForRedeem,
+  type InvitationPorts,
+} from "../../modules/invitation/invitation.ts";
 import { requestOtp, submitOtp, type OtpChallengePorts } from "../../modules/otp-challenge/otp-challenge.ts";
 import {
   recordRequiredSteps,
@@ -49,10 +53,16 @@ export interface RawConsentRequest {
 }
 
 export interface HttpResult {
-  readonly status: 200 | 202 | 403 | 404 | 409 | 422;
+  readonly status: 200 | 202 | 303 | 403 | 404 | 409 | 422;
   readonly body: Readonly<Record<string, unknown>>;
   /** Si está presente, el transporte (server.ts) debe fijar esta cookie de sesión (D5). */
   readonly setSessionCookie?: string;
+  /** Solo 303 (RedeemSeeOther): ruta relativa sin token (contracts/openapi Location header). */
+  readonly location?: string;
+  /** Cabeceras adicionales exigidas por el contrato para esta respuesta (p. ej. RedemptionToken
+   * x-sensitive: "Referrer-Policy no-referrer"); nunca content-type ni Set-Cookie, esas las
+   * fija siempre el transporte. */
+  readonly extraHeaders?: Readonly<Record<string, string>>;
 }
 
 function csrfRejected(): HttpResult {
@@ -100,7 +110,37 @@ function deriveDecisionMakerRef(channelRef: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// POST /invitation/open (I4). API-CNS-115 (x-scope-note: token en el body, no en cookie).
+// GET /i/{token} (API-CNS-101, P-12). Canje: crea la sesión LANDING (tenantId, invitationRef)
+// y redirige sin token (INV-CM-08: no transiciona). TEST-CNS-509..511.
+// ---------------------------------------------------------------------------
+
+/** Ruta sin token a la que redirige el canje (contracts/openapi Location, pattern ^/[a-z-]+$). */
+const LANDING_ROUTE = "/welcome";
+
+export function handleRedeemInvitationLink(
+  token: string,
+  ports: Pick<ConsentFlowPorts, "invitation">,
+  sessionSecret: Buffer,
+): HttpResult {
+  const found = resolveInvitationForRedeem(ports.invitation, token);
+  if (!found) return uniformNotFound();
+
+  const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
+  return {
+    status: 303,
+    body: {},
+    location: LANDING_ROUTE,
+    setSessionCookie: encodeSession(sessionSecret, session),
+    // RedemptionToken (contracts/openapi parameters.RedemptionToken): "nunca se reenvía a
+    // terceros (Referrer-Policy no-referrer)"; Cache-Control evita que un proxy/navegador
+    // reintente esta respuesta ligada a un token de un solo canje.
+    extraHeaders: { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// POST /invitation/open (I4). API-CNS-115: EmptyCommand; la invitación se toma de la sesión
+// LANDING creada por GET /i/{token}, nunca de un token en el body.
 // ---------------------------------------------------------------------------
 export function handleOpenInvitation(
   request: RawConsentRequest,
@@ -111,20 +151,16 @@ export function handleOpenInvitation(
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
-  const token = typeof (request.body as { token?: unknown } | null)?.token === "string" ? (request.body as { token: string }).token : "";
-  if (!token) return uniformNotFound();
-
-  const tokenHash = hashInvitationToken(token);
-  const found = ports.invitation.invitationRepo.findByTokenHash(tokenHash);
-  if (!found) return uniformNotFound();
+  const session = readSession(request, config, sessionSecret);
+  if (!session) return uniformNotFound();
 
   try {
-    const opened = openInvitation(ports.invitation, found.tenantId, token);
-    const session: ConsentSessionPayload = { tenantId: opened.tenantId, invitationRef: opened.invitationRef };
+    const opened = openInvitationByRef(ports.invitation, session.tenantId, session.invitationRef);
+    const nextSession: ConsentSessionPayload = { tenantId: opened.tenantId, invitationRef: opened.invitationRef };
     return {
       status: 200,
       body: { invitationRef: opened.invitationRef, state: opened.state },
-      setSessionCookie: encodeSession(sessionSecret, session),
+      setSessionCookie: encodeSession(sessionSecret, nextSession),
     };
   } catch (err) {
     if (err instanceof DomainError) {

@@ -1,7 +1,9 @@
-// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-115 (POST /invitation/open),
-// API-CNS-120 (POST /otp/request), API-CNS-121 (POST /otp/submit); specs/state-machines/
-// invitation.spec.yaml I4, otp-challenge.spec.yaml V1/V3; common.spec.yaml GRD-CM-10
-// (x-scope-note en consent-flow.handler.ts: token en el body, no en cookie de handle GET).
+// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-101 (GET /i/{token}, P-12),
+// API-CNS-115 (POST /invitation/open), API-CNS-120 (POST /otp/request), API-CNS-121 (POST
+// /otp/submit); specs/state-machines/invitation.spec.yaml I4, otp-challenge.spec.yaml V1/V3;
+// common.spec.yaml GRD-CM-10, INV-CM-08. El canje del token ocurre en el GET /i/{token}
+// (redeemInvitationLink); /invitation/open ya no recibe el token en el body, toma la
+// invitación de la sesión LANDING creada por ese GET (contract EmptyCommand).
 // TEST-CNS-498..TEST-CNS-503 (traceability/test-matrix.csv).
 //
 // Levanta el servidor HTTP real (node:http) en un puerto efímero de localhost con adapters
@@ -100,11 +102,19 @@ async function post(baseUrl: string, opts: PostOpts): Promise<Response> {
 
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
+/** Canjea el token vía GET /i/{token} (P-12) y devuelve la cookie de sesión LANDING que fija
+ * ese GET (INV-CM-08: no transiciona). `undefined` si el canje no fija cookie (token inválido). */
+async function redeem(baseUrl: string, token: string): Promise<string | undefined> {
+  const res = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
+  return parseSetCookie(res)[SESSION_COOKIE_NAME];
+}
+
 test("TEST-CNS-498: POST /invitation/open sin CSRF (Origin ausente) -> ERR-CM-09 (403), sin transición", async () => {
   const harness = await startServer();
   try {
     const token = seedSentInvitation(harness.ports, "inv-498", "subject-498@example.invalid");
-    const res = await post(harness.baseUrl, { path: "/invitation/open", body: { token } });
+    const landingSession = await redeem(harness.baseUrl, token);
+    const res = await post(harness.baseUrl, { path: "/invitation/open", sessionCookie: landingSession });
     assert.equal(res.status, 403);
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "CSRF_REJECTED");
@@ -114,10 +124,10 @@ test("TEST-CNS-498: POST /invitation/open sin CSRF (Origin ausente) -> ERR-CM-09
   }
 });
 
-test("TEST-CNS-499: POST /invitation/open con token inexistente -> 404 uniforme (ERR-IV-01), sin transición", async () => {
+test("TEST-CNS-499: POST /invitation/open sin sesión LANDING previa (sin canjear /i/{token}) -> 404 uniforme (ERR-IV-01), sin transición", async () => {
   const harness = await startServer();
   try {
-    const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, body: { token: "no-such-token" } });
+    const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF });
     assert.equal(res.status, 404);
   } finally {
     await harness.close();
@@ -128,7 +138,8 @@ test("TEST-CNS-500: I4 vía HTTP transiciona SENT -> OPENED y fija la cookie de 
   const harness = await startServer();
   try {
     const token = seedSentInvitation(harness.ports, "inv-500", "subject-500@example.invalid");
-    const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, body: { token } });
+    const landingSession = await redeem(harness.baseUrl, token);
+    const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     assert.equal(res.status, 200);
     const cookies = parseSetCookie(res);
     assert.ok(cookies[SESSION_COOKIE_NAME], "debe fijar __Host-cns-session");
@@ -138,7 +149,7 @@ test("TEST-CNS-500: I4 vía HTTP transiciona SENT -> OPENED y fija la cookie de 
   }
 });
 
-test("TEST-CNS-501: GET nunca transiciona (INV-CM-08) — este entrypoint no expone ningún GET", async () => {
+test("TEST-CNS-501: GET /invitation/open no existe (404); el único GET de este entrypoint es /i/{token} (P-12), que no transiciona (INV-CM-08, ver invitation-redeem-http.test.ts)", async () => {
   const harness = await startServer();
   try {
     const res = await fetch(`${harness.baseUrl}/invitation/open`, { method: "GET" });
@@ -152,7 +163,8 @@ test("TEST-CNS-502: V1/V3 vía HTTP — /otp/request emite el código al sink y 
   const harness = await startServer();
   try {
     const token = seedSentInvitation(harness.ports, "inv-502", "subject-502@example.invalid");
-    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, body: { token } });
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
 
     const requested = await post(harness.baseUrl, {
@@ -188,7 +200,8 @@ test("TEST-CNS-503: código incorrecto en /otp/submit -> 422 uniforme, sin filtr
   const harness = await startServer();
   try {
     const token = seedSentInvitation(harness.ports, "inv-503", "subject-503@example.invalid");
-    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, body: { token } });
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
     const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
     const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME];

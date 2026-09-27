@@ -1,7 +1,8 @@
 // Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-127 (POST /decision/submit,
 // consolida C1/C2/C3/C5 en un solo POST IT0, ver x-scope-note en consent-flow.handler.ts);
 // specs/state-machines/consent-decision.spec.yaml C1/C2/C3/C5; SM-CNS-001 R0.2 (actor/refs
-// derivados de la sesión, nunca del body).
+// derivados de la sesión, nunca del body). `bringToVerifiedSession` recorre GET /i/{token}
+// (API-CNS-101, P-12) -> POST /invitation/open -> V1 -> V3.
 // TEST-CNS-504..TEST-CNS-506 (traceability/test-matrix.csv).
 
 import test from "node:test";
@@ -98,7 +99,9 @@ async function bringToVerifiedSession(harness: Harness, invitationRef: string, s
   });
   const { token } = sendInvitation(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef);
 
-  const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, body: { token } });
+  const redeemed = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
+  const landingSession = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+  const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
   const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
   const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
   const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME];
