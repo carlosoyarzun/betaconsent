@@ -637,3 +637,448 @@ paths:
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/CsrfRejected'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
+  # ---------------------------------------------------------------------------
+  # consent-decision (C1, C2, C3/C5) + I9 SUBJECT_MISMATCH_REPORTED.
+  # C4, C7, C8, M3 deshabilitadas; C6 interna (R4): x-not-exposed.
+  # ---------------------------------------------------------------------------
+  /decision/start:
+    post:
+      operationId: startDecision
+      x-api-id: API-CNS-125
+      tags: [bearer-decision]
+      summary: C1 — iniciar decisión (null → PENDING) con sesión verificada scope DECISION
+      x-governed-by: ["consent-decision.spec C1", "SM-CNS-001 §4 C1", "ADR-002 §10", "SEC-CNS-012 P2-12"]
+      x-state-transition: {machine: ConsentDecision, id: C1, from: null, to: PENDING}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-CD-01, GRD-CD-02]
+      x-idempotency: "(tenantRef, invitationRef, verificationRef)"
+      security: [{landingHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '201':
+          description: ConsentDecision PENDING.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/DecisionStarted'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /decision/steps:
+    post:
+      operationId: recordDecisionStep
+      x-api-id: API-CNS-126
+      tags: [bearer-decision]
+      summary: C2 — registrar paso (PENDING → PENDING); CONSENT_VERSION_VIEWED sirve el texto y su hash
+      description: El servidor sirve el texto de la versión en vigor y calcula consentTextHash sobre los bytes canónicos servidos (GRD-CD-03).
+      x-governed-by: ["consent-decision.spec C2", "SM-CNS-001 §4 C2", "ADR-001 §4", "EXT-A (P06)", "EXT-C (DEC-BR-004)"]
+      x-state-transition: {machine: ConsentDecision, id: C2, from: PENDING, to: PENDING}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+      x-guards: [GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-04]
+      x-idempotency: "(consentId, stepKind, sequence)"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01 (enum de relación y suficiencia de la declaración de autoridad)", "DEC-BR-004 / EXT-C", "LD-06 (consentTextHash como prueba de lo mostrado)"]
+      security: [{landingHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/DecisionStepRequest'}
+      responses:
+        '200':
+          description: Paso registrado.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/DecisionStepRecorded'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /decision/submit:
+    post:
+      operationId: submitDecision
+      x-api-id: API-CNS-127
+      tags: [bearer-decision]
+      summary: C3/C5 — registrar decisión (PENDING → GRANTED | DECLINED); I6/I7 en el mismo lote
+      description: |
+        El resultado lo fija el guard determinista sobre la elección explícita del DecisionMaker;
+        ningún modelo lo infiere (INV-CM-07). La respuesta nunca incluye el enlace de gestión:
+        el management_token va SOLO al canal ligado (C3). Receipt con marca de agua IT0.
+        allowPartialGrant = false: C4 deshabilitada (F-025).
+      x-governed-by: ["consent-decision.spec C3, C5", "SM-CNS-001 §4 C3, C5, §4.1, §5.0", "DEC-BR-001", "RULE-CNS-022", "SEC-CNS-006 P-13, P-31", "EXT-D"]
+      x-state-transition:
+        - {machine: ConsentDecision, id: C3, from: PENDING, to: GRANTED, sideEffects: ["invitation I6 (VERIFIED → COMPLETED)", "outbox consent.granted", "management_token al canal ligado"]}
+        - {machine: ConsentDecision, id: C5, from: PENDING, to: DECLINED, sideEffects: ["invitation I7 (VERIFIED → DECLINED)"]}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+      x-guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-07, GRD-CD-08, GRD-CD-11, GRD-CD-12]
+      x-idempotency: "Idempotency-Key + consentId + payloadHash"
+      x-pending: ["Q-13 (detalle por finalidad del DECLINED)", "LD-06"]
+      security: [{landingHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SubmitDecisionRequest'}
+      responses:
+        '200':
+          description: Decisión registrada (GRANTED o DECLINED).
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/DecisionRecorded'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /decision/subject-mismatch:
+    post:
+      operationId: reportSubjectMismatch
+      x-api-id: API-CNS-128
+      tags: [bearer-decision]
+      summary: I9 SUBJECT_MISMATCH_REPORTED por DecisionMaker verificado (→ CANCELLED)
+      x-governed-by: ["invitation.spec I9 (byReasonCode SUBJECT_MISMATCH_REPORTED)", "SM-CNS-001 §2 I9", "EXT-C / DEC-BR-004"]
+      x-state-transition: {machine: Invitation, id: I9, from: [OPENED, VERIFIED], to: CANCELLED, reasonCode: SUBJECT_MISMATCH_REPORTED}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "sin fórmula para cancelar (I9 no incluye GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-IV-10]
+      x-idempotency: "(invitationRef, reasonCode)"
+      x-pending: ["DEC-BR-004 / EXT-C"]
+      security: [{landingHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Acuse.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SubjectMismatchAck'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  # ---------------------------------------------------------------------------
+  # revocation (R1, R2, R3, R8, RV0 portador, R1r/R2r/R3r/R10/R11, RH2/RH2v, RH3).
+  # R4–R7, R9 worker; R8h deshabilitada: x-not-exposed. Actor siempre DECISION_MAKER (DEC-BR-017 §8).
+  # ---------------------------------------------------------------------------
+  /manage/revocation:
+    post:
+      operationId: requestRevocation
+      x-api-id: API-CNS-130
+      tags: [bearer-rights]
+      summary: R1 — solicitud explícita de revocación (null → REQUESTED) con sesión MANAGE verificada
+      description: Abrir una página no crea solicitud (GRD-RV-01). chainRef, consentId, revokedDecisionRef e initiatedVia se derivan en servidor (GRD-RV-02, GRD-RV-25). scope = ALL siempre.
+      x-governed-by: ["revocation.spec R1", "SM-CNS-001 §5 R1", "DEC-BR-017 §1 (S4-06c)", "REQ-CNS-TBD-02 AC-02.1", "SEC-CNS-012 P1-05"]
+      x-state-transition: {machine: Revocation, id: R1, from: null, to: REQUESTED}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06): solo existencia del tenant y chainRef; nunca *.active"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: OTP}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-01, GRD-RV-02, GRD-RV-04, GRD-RV-08, GRD-RV-19, GRD-RV-21, GRD-RV-23]
+      x-idempotency: "revocationRef"
+      x-pending: ["F-002 (unicidad de la revocación abierta por revokedDecisionRef vs decisionChainKey)"]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RequestRevocationRequest'}
+      responses:
+        '200':
+          description: Revocation REQUESTED.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /manage/revocation/verify:
+    post:
+      operationId: verifyRevocationOtp
+      x-api-id: API-CNS-131
+      tags: [bearer-rights]
+      summary: R2 — verificar la solicitud con OTP fresco scope REVOCATION (REQUESTED → VERIFIED)
+      x-governed-by: ["revocation.spec R2", "SM-CNS-001 §5 R2", "DEC-BR-017 §0.1 (a), §1", "CARLOS r3 R5-3", "REQ-CNS-TBD-02 AC-02.4", "SEC-CNS-012 P1-05"]
+      x-state-transition: {machine: Revocation, id: R2, from: REQUESTED, to: VERIFIED}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: OTP}
+      x-guards: [GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-05, GRD-RV-08, GRD-RV-19, GRD-RV-21, GRD-RV-23]
+      x-idempotency: "revocationRef"
+      x-pending: ["LD-02 (assuranceLevel placeholder)"]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Revocation VERIFIED.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /manage/revocation/confirm:
+    post:
+      operationId: confirmRevocation
+      x-api-id: API-CNS-132
+      tags: [bearer-rights]
+      summary: R3 — confirmar retiro total (VERIFIED → CONFIRMED); encola APPLY_REVOCATION (R4) en la misma tx
+      x-governed-by: ["revocation.spec R3", "SM-CNS-001 §5 R3", "DEC-BR-017 §1", "SEC-CNS-012 P1-01, P1-05"]
+      x-state-transition: {machine: Revocation, id: R3, from: VERIFIED, to: CONFIRMED, sideEffects: ["job durable APPLY_REVOCATION (R4 + consent-decision C6)"]}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: OTP}
+      x-guards: [GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-08, GRD-RV-21, GRD-RV-23, GRD-RV-24]
+      x-idempotency: "revocationRef"
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ConfirmRevocationRequest'}
+      responses:
+        '200':
+          description: Revocation CONFIRMED.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /manage/revocation/withdraw:
+    post:
+      operationId: withdrawRevocationRequest
+      x-api-id: API-CNS-133
+      tags: [bearer-rights]
+      summary: R8 — retiro explícito de la solicitud (REQUESTED|VERIFIED|CONFIRMED → FAILED, WITHDRAWN_BY_REQUESTER)
+      x-governed-by: ["revocation.spec R8", "SM-CNS-001 §5 R8", "DEC-BR-017 §0.3, §5", "REQ-CNS-TBD-06 AC-06.2", "SEC-CNS-012 P1-05, P1-06"]
+      x-state-transition: {machine: Revocation, id: R8, from: [REQUESTED, VERIFIED, CONFIRMED], to: FAILED, reasonCode: WITHDRAWN_BY_REQUESTER}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-08, GRD-RV-15, GRD-RV-19, GRD-RV-21, GRD-RV-23]
+      x-idempotency: "revocationRef"
+      x-pending: ["LD-03 (R8h, retiro sin sesión RIGHTS vigente, deshabilitado)"]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/WithdrawRevocationRequest'}
+      responses:
+        '200':
+          description: Revocation FAILED (WITHDRAWN_BY_REQUESTER).
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /manage/recovery-link:
+    post:
+      operationId: issueRecoveryLink
+      x-api-id: API-CNS-134
+      tags: [bearer-rights]
+      summary: RV0 con trigger del portador — emitir enlace de recuperación SOLO al canal ligado (emisión, sin transición)
+      description: Sin canal en el body (GRD-RV-17). CASE_CONTACT y SCHOOL_REPORTED son triggers de sistema (RC2), sin HTTP. Respuesta uniforme (ERR-RV-02, ERR-RV-12).
+      x-governed-by: ["revocation.spec RV0", "CFG-RV-MANAGEMENT-LINK", "GRD-RV-20", "DEC-BR-017 §2"]
+      x-state-transition: {machine: Revocation, id: RV0, kind: EMISSION}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: SYSTEM_GUARD, triggeredBy: "portador del handle MANAGE_ENTRY"}
+      x-guards: [GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-17, GRD-RV-20]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/IssueRecoveryLinkRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+  /recovery/revoke:
+    post:
+      operationId: revokeWithRecoveryLink
+      x-api-id: API-CNS-135
+      tags: [bearer-rights]
+      summary: Único POST con handle RECOVERY — R1r+R2r+R3r, o R10+R3r, o R11 (sin efecto)
+      description: |
+        Consume el recoveryRef una vez y lo adjunta a la única revocación abierta de la cadena (N:1).
+        Replay solo con la misma Idempotency-Key y el mismo handle dentro de P-18; cualquier otro uso
+        de un token consumido da la respuesta uniforme de ERR-RV-05, nunca la revocationRef (SEC P2-06).
+        initiatedVia se deriva en servidor (SEC P2-17).
+      x-governed-by: ["revocation.spec R1r, R2r, R3r, R10, R11", "SM-CNS-001 v7 §5.1", "DEC-BR-017 §2, §6", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "ADR-006 §6.2", "SEC-CNS-012 P2-06, P2-17, N-02, N-05", "CARLOS r3 R13-1"]
+      x-state-transition:
+        - {machine: Revocation, id: R1r, from: [null, REQUESTED], to: REQUESTED}
+        - {machine: Revocation, id: R2r, from: REQUESTED, to: VERIFIED}
+        - {machine: Revocation, id: R10, from: VERIFIED, to: VERIFIED}
+        - {machine: Revocation, id: R3r, from: VERIFIED, to: CONFIRMED, sideEffects: ["job durable APPLY_REVOCATION"]}
+        - {machine: Revocation, id: R11, from: CONFIRMED, to: CONFIRMED, kind: NOOP}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: RECOVERY, credential: "portador del handle RECOVERY (P-18)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-06, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-25, GRD-RV-27]
+      x-idempotency: "Idempotency-Key + handle RECOVERY (recoveryRef N:1 hacia la revocationRef abierta)"
+      x-pending: ["F-002"]
+      security: [{recoveryHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RecoveryRevokeRequest'}
+      responses:
+        '200':
+          description: CONFIRMED con revocationRef, o IN_PROGRESS (R11).
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RecoveryRevokeResult'}
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /platform/rights-cases/{caseRef}/verification-proposals:
+    post:
+      operationId: proposeCaseVerification
+      x-api-id: API-CNS-136
+      tags: [platform]
+      summary: RH2/RH2v paso 1 — propose_case_verification (RIGHTS_OPERATOR, sesión CASE, step-up)
+      description: El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02; INV-CM-07). Sin efecto sobre Revocation hasta la aprobación.
+      x-governed-by: ["revocation.spec RH2, RH2v", "SM-CNS-001 §5.2 RH2, v7 RH2v", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5, R13-1", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
+      x-state-transition: {machine: Revocation, id: [RH2, RH2v], step: propose, effect: none}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, proposer: "RIGHTS_OPERATOR con sesión CASE del caso (verifiedByRef)"}
+      x-guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
+      x-idempotency: "(revocationRef, proposal_ref)"
+      x-pending: ["LD-02 (suficiencia de la verificación humana)", "APR-IDP (PENDING — Carlos / studio)"]
+      security: [{caseSession: []}]
+      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ProposeCaseVerificationRequest'}
+      responses:
+        '201':
+          description: Propuesta registrada.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ProposalAck'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/approval:
+    post:
+      operationId: approveCaseVerification
+      x-api-id: API-CNS-137
+      tags: [platform]
+      summary: RH2/RH2v paso 2 — approve_case_verification (PRIVACY_LEGAL o SECURITY, tercer humano) → REQUESTED|VERIFIED → VERIFIED
+      description: REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto.
+      x-governed-by: ["revocation.spec RH2, RH2v", "GRD-RV-09", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38"]
+      x-state-transition:
+        - {machine: Revocation, id: RH2, from: REQUESTED, to: VERIFIED}
+        - {machine: Revocation, id: RH2v, from: VERIFIED, to: VERIFIED}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef)"}
+      x-guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
+      x-idempotency: "(revocationRef, proposal_ref)"
+      x-pending: ["APR-IDP", "OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "LD-02"]
+      security: [{platformSession: []}]
+      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/ProposalRef'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ApproveCaseVerificationRequest'}
+      responses:
+        '200':
+          description: Aprobación registrada; revocationState informa si hubo efecto.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ApprovalAck'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /platform/rights-cases/{caseRef}/confirmation:
+    post:
+      operationId: recordCaseConfirmation
+      x-api-id: API-CNS-138
+      tags: [platform]
+      summary: RH3 paso 1 — record_case_confirmation (RIGHTS_OPERATOR, sesión CASE); sin efecto sin co-firma
+      description: Interino IT0 (R13-4, R14-B) — cuatro ojos, dos RIGHTS_OPERATOR distintos, mínimo 4 personas sin reutilización entre roles. La regla definitiva es LEGAL DECISION LD-03.
+      x-governed-by: ["revocation.spec RH3", "SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 N-04, P1-07", "ADR-006 §6.3", "LD-03"]
+      x-state-transition: {machine: Revocation, id: RH3, step: record, effect: none}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06 implícito por clase RIGHTS; la spec no lo lista en RH3)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE"}
+      x-guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+      x-idempotency: "revocationRef"
+      x-pending: ["F-003 (RH3 con 4 personas y co-firma)", "OPEN-RV-10 (step-up de record/cosign; GRD-RC-12 retirado)", "LD-03 (LEGAL DECISION: quién escribe la confirmación)"]
+      security: [{caseSession: []}]
+      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RecordCaseConfirmationRequest'}
+      responses:
+        '200':
+          description: Registro sin efecto hasta co-firma.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
+  /platform/rights-cases/{caseRef}/confirmation/cosign:
+    post:
+      operationId: cosignCaseConfirmation
+      x-api-id: API-CNS-139
+      tags: [platform]
+      summary: RH3 paso 2 — cosign_case_confirmation por un segundo RIGHTS_OPERATOR distinto (VERIFIED → CONFIRMED)
+      description: Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Encola APPLY_REVOCATION en la misma tx.
+      x-governed-by: ["revocation.spec RH3", "CARLOS r3 R14-B", "INV-17", "LD-03"]
+      x-state-transition: {machine: Revocation, id: RH3, from: VERIFIED, to: CONFIRMED, step: cosign, sideEffects: ["job durable APPLY_REVOCATION"]}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, cosignedByRef: "segundo RIGHTS_OPERATOR distinto, sesión CASE propia"}
+      x-guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+      x-idempotency: "revocationRef"
+      x-pending: ["F-003", "F-CT-06 (co-firma RH3 fuera de la lista blanca de eventos del ledger)", "OPEN-RV-10", "LD-03"]
+      security: [{caseSession: []}]
+      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Co-firma registrada; revocationState = CONFIRMED si se cumplen los cuatro ojos.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
