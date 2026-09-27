@@ -1,0 +1,1040 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/ledger-event-payloads.schema.json",
+  "title": "Consent App IT0 — lista blanca de payloads del ledger (integrity.audit_event)",
+  "x-api-id": "API-CNS-183",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "description": "Fuente única de la lista blanca por eventType (INV-CM-05). additionalProperties=false: un campo fuera de lista o un valor fuera de enum hace fallar el append. Prohibidos: email, nombre, RUT, token, OTP, IP, HMAC y texto libre. Excluidos por estar deshabilitados en IT0: CONSENT_EXPIRED (C7), CONSENT_SUPERSEDED (C8), DECISION_CONTESTED (M3).",
+  "x-governed-by": [
+    "common.spec.yaml ledgerEnvelope.payloadPolicy, INV-CM-05",
+    "*.spec.yaml events (stream: LEDGER)",
+    "DEC-BR-017 §6",
+    "ADR-002 §10, §11"
+  ],
+  "x-disabled-in-it0": [
+    "CONSENT_EXPIRED",
+    "CONSENT_SUPERSEDED",
+    "DECISION_CONTESTED"
+  ],
+  "$defs": {
+    "INVITATION_CREATED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "enrollmentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "reissueOfRef": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "invitationRef",
+        "participationRef",
+        "enrollmentRef",
+        "subjectRef",
+        "reissueOfRef"
+      ]
+    },
+    "INVITATION_READY": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "recipientBinding": {
+          "enum": [
+            "RECIPIENT_CHANNEL",
+            "UNBOUND"
+          ]
+        }
+      },
+      "required": [
+        "invitationRef",
+        "consentVersion",
+        "expiresAt",
+        "recipientBinding"
+      ]
+    },
+    "INVITATION_SENT": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "deliveryChannel": {
+          "enum": [
+            "SCHOOL_CHANNEL",
+            "CONSENT_APP_EMAIL"
+          ],
+          "x-pending": [
+            "EXT-B / F-014 (DEC-BR-014 §7): valor sin fijar"
+          ]
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "invitationRef",
+        "deliveryChannel",
+        "expiresAt"
+      ],
+      "description": "Sin token (INV-IV-03)."
+    },
+    "INVITATION_TOKEN_ROTATED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "rotationNo": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "invitationRef",
+        "rotationNo"
+      ]
+    },
+    "INVITATION_OPENED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "invitationRef"
+      ]
+    },
+    "INVITATION_VERIFIED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "decisionMakerRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "bindingResult": {
+          "type": "string",
+          "pattern": "^[A-Z_]{1,40}$",
+          "x-pending": [
+            "OPEN-CT-03 (enum de bindingResult no definido en la spec)"
+          ]
+        }
+      },
+      "required": [
+        "invitationRef",
+        "verificationRef",
+        "decisionMakerRef",
+        "bindingResult"
+      ]
+    },
+    "INVITATION_COMPLETED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "invitationRef",
+        "consentId"
+      ]
+    },
+    "INVITATION_DECLINED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "invitationRef",
+        "consentId"
+      ]
+    },
+    "INVITATION_EXPIRED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "invitationRef"
+      ]
+    },
+    "INVITATION_CANCELLED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "reasonCode": {
+          "enum": [
+            "INVITER_WITHDRAWN",
+            "SUBJECT_MISMATCH_REPORTED",
+            "TOKEN_COMPROMISED",
+            "PARTICIPATION_CLOSED",
+            "ENROLLMENT_CLOSED"
+          ],
+          "description": "CONTESTED_BY_RECIPIENT excluido: deshabilitado en IT0 (LD-01)."
+        }
+      },
+      "required": [
+        "invitationRef",
+        "reasonCode"
+      ]
+    },
+    "DECISION_MAKER_CHANNEL_VERIFIED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "parentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "decisionMakerRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        },
+        "method": {
+          "const": "EMAIL_OTP"
+        },
+        "bindingResult": {
+          "type": "string",
+          "pattern": "^[A-Z_]{1,40}$",
+          "x-pending": [
+            "OPEN-CT-03 (enum de bindingResult no definido en la spec)"
+          ]
+        }
+      },
+      "required": [
+        "verificationRef",
+        "parentRef",
+        "decisionMakerRef",
+        "scope",
+        "method",
+        "bindingResult"
+      ]
+    },
+    "CONTEXT_INFORMATION_VIEWED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "consentId"
+      ]
+    },
+    "CONSENT_VERSION_VIEWED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "consentTextHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        },
+        "privacyNoticeVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        }
+      },
+      "required": [
+        "consentId",
+        "consentVersion",
+        "consentTextHash",
+        "privacyNoticeVersion"
+      ]
+    },
+    "DECISION_MAKER_AUTHORITY_DECLARED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "relationshipRef": {
+          "type": "string",
+          "pattern": "^[A-Z_]{1,40}$",
+          "x-pending": [
+            "DEC-BR-003 / EXT-A / LD-01"
+          ]
+        }
+      },
+      "required": [
+        "consentId",
+        "relationshipRef"
+      ]
+    },
+    "SUBJECT_CONFIRMED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "consentId",
+        "subjectRef"
+      ],
+      "x-pending": [
+        "DEC-BR-004 / EXT-C"
+      ]
+    },
+    "PURPOSE_DECISION_RECORDED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "purpose": {
+          "$ref": "common.schema.json#/$defs/Purpose"
+        },
+        "choice": {
+          "$ref": "common.schema.json#/$defs/PurposeChoice"
+        }
+      },
+      "required": [
+        "consentId",
+        "purpose",
+        "choice"
+      ]
+    },
+    "CONSENT_GRANTED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "chainRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "consentTextHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        }
+      },
+      "required": [
+        "consentId",
+        "chainRef",
+        "consentVersion",
+        "consentTextHash"
+      ]
+    },
+    "CONSENT_DECLINED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "chainRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "consentTextHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        }
+      },
+      "required": [
+        "consentId",
+        "chainRef",
+        "consentVersion",
+        "consentTextHash"
+      ]
+    },
+    "RECEIPT_CREATED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receiptRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "managementLinkIssued": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "receiptRef",
+        "managementLinkIssued"
+      ]
+    },
+    "CONSENT_REVOKED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "revokedDecisionRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "x-pending": [
+            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          ]
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/RevocationScope"
+        },
+        "effectiveAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "authPath": {
+          "$ref": "common.schema.json#/$defs/AuthPath"
+        },
+        "recoveryMethod": {
+          "$ref": "common.schema.json#/$defs/RecoveryMethod"
+        },
+        "originPurposeRef": {
+          "$ref": "common.schema.json#/$defs/OriginPurposeRef"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "revokedDecisionRef",
+        "scope",
+        "effectiveAt",
+        "authPath",
+        "originPurposeRef"
+      ],
+      "description": "effectiveAt = hora del append (RULE-CNS-025). authPath/recoveryMethod = los del REVOCATION_VERIFIED previo a la confirmación (GRD-RV-28). Validez con falla de clave: LD-05.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "authPath": {
+                "const": "RECOVERY"
+              }
+            },
+            "required": [
+              "authPath"
+            ]
+          },
+          "then": {
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "recoveryMethod"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "REVOCATION_REQUESTED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "revokedDecisionRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "x-pending": [
+            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          ]
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/RevocationScope"
+        },
+        "authPath": {
+          "$ref": "common.schema.json#/$defs/AuthPath"
+        },
+        "recoveryMethod": {
+          "$ref": "common.schema.json#/$defs/RecoveryMethod"
+        },
+        "originPurposeRef": {
+          "$ref": "common.schema.json#/$defs/OriginPurposeRef"
+        },
+        "initiatedVia": {
+          "$ref": "common.schema.json#/$defs/InitiatedVia"
+        },
+        "recoveryRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "revokedDecisionRef",
+        "scope",
+        "authPath",
+        "originPurposeRef",
+        "initiatedVia"
+      ],
+      "description": "initiatedVia derivado en servidor (GRD-RV-25).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "authPath": {
+                "const": "RECOVERY"
+              }
+            },
+            "required": [
+              "authPath"
+            ]
+          },
+          "then": {
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "recoveryMethod"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recoveryMethod": {
+                "const": "CHANNEL_LINK"
+              }
+            },
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "then": {
+            "required": [
+              "recoveryRef"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recoveryMethod": {
+                "const": "HUMAN_ASSISTED"
+              }
+            },
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "then": {
+            "required": [
+              "caseRef"
+            ]
+          }
+        }
+      ]
+    },
+    "REVOCATION_VERIFIED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "authPath": {
+          "$ref": "common.schema.json#/$defs/AuthPath"
+        },
+        "recoveryMethod": {
+          "$ref": "common.schema.json#/$defs/RecoveryMethod"
+        },
+        "assuranceLevel": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,32}$",
+          "x-pending": [
+            "LD-02 / OPEN-RV-01 (valores de assuranceLevel; placeholder versionado)"
+          ]
+        },
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "recoveryRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "verifiedByRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "secondApproverRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "authPath",
+        "assuranceLevel"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "authPath": {
+                "const": "RECOVERY"
+              }
+            },
+            "required": [
+              "authPath"
+            ]
+          },
+          "then": {
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "recoveryMethod"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "authPath": {
+                "const": "OTP"
+              }
+            },
+            "required": [
+              "authPath"
+            ]
+          },
+          "then": {
+            "required": [
+              "verificationRef"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recoveryMethod": {
+                "const": "CHANNEL_LINK"
+              }
+            },
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "then": {
+            "required": [
+              "recoveryRef"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recoveryMethod": {
+                "const": "HUMAN_ASSISTED"
+              }
+            },
+            "required": [
+              "recoveryMethod"
+            ]
+          },
+          "then": {
+            "required": [
+              "caseRef",
+              "verifiedByRef",
+              "secondApproverRef"
+            ]
+          }
+        }
+      ]
+    },
+    "REVOCATION_CONFIRMED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "recordedByRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "revocationRef"
+      ],
+      "description": "recordedByRef solo en HUMAN_ASSISTED (RH3). La co-firma no está en la lista blanca de la spec (FINDING F-CT-06).",
+      "x-pending": [
+        "F-003"
+      ]
+    },
+    "REVOCATION_DOWNSTREAM_EMITTED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "subscriptionRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Ref"
+          },
+          "uniqueItems": true,
+          "description": "Destinos congelados en R5 (SEC P2-08)."
+        }
+      },
+      "required": [
+        "revocationRef",
+        "subscriptionRefs"
+      ]
+    },
+    "REVOCATION_DELIVERED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "ackRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "ackRef"
+      ]
+    },
+    "DOWNSTREAM_ERASURE_ATTESTED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "revocationRef"
+      ]
+    },
+    "REVOCATION_FAILED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "reasonCode": {
+          "const": "WITHDRAWN_BY_REQUESTER"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "reasonCode"
+      ]
+    },
+    "REVOCATION_ESCALATED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "reasonCode": {
+          "$ref": "common.schema.json#/$defs/EscalationReason"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "caseRef",
+        "reasonCode"
+      ]
+    },
+    "RIGHTS_CASE_OPENED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "reasonCode": {
+          "$ref": "common.schema.json#/$defs/EscalationReason"
+        },
+        "initiatedVia": {
+          "$ref": "common.schema.json#/$defs/InitiatedVia"
+        }
+      },
+      "required": [
+        "caseRef",
+        "reasonCode",
+        "initiatedVia"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reasonCode": {
+                "const": "SCHOOL_REPORTED"
+              }
+            },
+            "required": [
+              "reasonCode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "initiatedVia": {
+                "const": "SCHOOL_REPORT"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "initiatedVia": {
+                "const": "DECISION_MAKER"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "RIGHTS_CASE_CONTACTING": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "recoveryRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "caseRef"
+      ],
+      "description": "recoveryRef ausente si origin = CHANNEL_UNREACHABLE (RC2u)."
+    },
+    "RIGHTS_CASE_CLOSED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "outcome": {
+          "$ref": "common.schema.json#/$defs/CaseOutcome"
+        }
+      },
+      "required": [
+        "caseRef",
+        "outcome"
+      ]
+    },
+    "TENANT_STATUS_CHANGED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reasonCode": {
+          "type": "string",
+          "pattern": "^[A-Z_]{1,40}$",
+          "x-pending": [
+            "OPEN-TC-01 (enum de reasonCode)"
+          ]
+        }
+      },
+      "required": [
+        "reasonCode"
+      ],
+      "description": "Literal SM §6 (SM:170). No lleva estado destino (FINDING F-CT-07)."
+    },
+    "SCHOOL_PARTICIPATION_STATUS_CHANGED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "fromStatus": {
+          "enum": [
+            "PENDING_AUTHORIZATION",
+            "ACTIVE",
+            "SUSPENDED"
+          ]
+        },
+        "toStatus": {
+          "enum": [
+            "ACTIVE",
+            "SUSPENDED",
+            "CLOSED"
+          ]
+        },
+        "authorizationEvidenceRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "participationRef",
+        "fromStatus",
+        "toStatus"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "toStatus": {
+                "const": "ACTIVE"
+              }
+            },
+            "required": [
+              "toStatus"
+            ]
+          },
+          "then": {
+            "required": [
+              "authorizationEvidenceRef"
+            ]
+          }
+        }
+      ],
+      "x-pending": [
+        "OPEN-TC-05 (nombre del evento)"
+      ]
+    },
+    "ENROLLMENT_STATUS_CHANGED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enrollmentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "toStatus": {
+          "enum": [
+            "ACTIVE",
+            "CLOSED"
+          ]
+        },
+        "closeReason": {
+          "enum": [
+            "TRANSFERRED",
+            "LEFT_SCHOOL",
+            "PARTICIPATION_CLOSED"
+          ]
+        }
+      },
+      "required": [
+        "enrollmentRef",
+        "participationRef",
+        "subjectRef",
+        "toStatus"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "toStatus": {
+                "const": "CLOSED"
+              }
+            },
+            "required": [
+              "toStatus"
+            ]
+          },
+          "then": {
+            "required": [
+              "closeReason"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "closeReason"
+              ]
+            }
+          }
+        }
+      ],
+      "x-pending": [
+        "OPEN-TC-05 (nombre del evento)",
+        "OPEN-TC-03 / Q-28 (LEFT_SCHOOL)"
+      ]
+    }
+  }
+}

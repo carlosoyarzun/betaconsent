@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/decision-maker-verification.schema.json",
+  "title": "DecisionMakerVerification / OTP challenge (proyección IT0)",
+  "x-api-id": "API-CNS-187",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/otp-challenge.spec.yaml",
+    "SM-CNS-001 §3, §3.1, R0.7"
+  ],
+  "x-states": [
+    "NOT_STARTED",
+    "CODE_SENT",
+    "VERIFIED",
+    "EXPIRED",
+    "LOCKED",
+    "FAILED"
+  ],
+  "x-transitions": [
+    {
+      "id": "V1",
+      "from": "NOT_STARTED",
+      "to": "CODE_SENT",
+      "via": "POST /otp/request"
+    },
+    {
+      "id": "V2",
+      "from": "CODE_SENT",
+      "to": "CODE_SENT",
+      "via": "POST /otp/submit (código incorrecto)"
+    },
+    {
+      "id": "V2r",
+      "from": "CODE_SENT",
+      "to": "CODE_SENT",
+      "via": "POST /otp/resend"
+    },
+    {
+      "id": "V3",
+      "from": "CODE_SENT",
+      "to": "VERIFIED",
+      "via": "POST /otp/submit (código correcto)"
+    },
+    {
+      "id": "V4",
+      "from": "CODE_SENT",
+      "to": "LOCKED",
+      "via": "interno en POST /otp/submit"
+    },
+    {
+      "id": "V5",
+      "from": "CODE_SENT",
+      "to": "EXPIRED",
+      "via": "worker o lazy"
+    },
+    {
+      "id": "V6",
+      "from": "CODE_SENT",
+      "to": "FAILED",
+      "via": "interno (DECISION)"
+    },
+    {
+      "id": "V6r",
+      "from": "CODE_SENT",
+      "to": "FAILED",
+      "via": "interno (RIGHTS)"
+    },
+    {
+      "id": "V6c",
+      "from": "CODE_SENT",
+      "to": "FAILED",
+      "via": "interno (RIGHTS; tope DAYS_30 + rotación de /m/)"
+    },
+    {
+      "id": "V6a",
+      "from": null,
+      "to": null,
+      "via": "contabilidad del padre (Invitation.otpExhausted)",
+      "kind": "ACCOUNTING"
+    }
+  ],
+  "$defs": {
+    "DecisionMakerVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        },
+        "scopeClass": {
+          "$ref": "common.schema.json#/$defs/OtpScopeClass"
+        },
+        "parentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "channelRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "enum": [
+            "NOT_STARTED",
+            "CODE_SENT",
+            "VERIFIED",
+            "EXPIRED",
+            "LOCKED",
+            "FAILED"
+          ]
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resendCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "consumedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "verificationRef",
+        "tenantRef",
+        "scope",
+        "scopeClass",
+        "parentRef",
+        "channelRef",
+        "state",
+        "attempts"
+      ],
+      "description": "codeHmac y requestedByHandleRef no forman parte del contrato (solo persistencia; INV-OT-02). scopeClass derivado: DECISION a DECISION; REVOCATION o MANAGE a RIGHTS. La comparación del código es código determinista, no un juicio (INV-CM-07)."
+    }
+  }
+}

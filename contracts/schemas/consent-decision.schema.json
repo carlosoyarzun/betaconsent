@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/consent-decision.schema.json",
+  "title": "ConsentDecision (proyección IT0)",
+  "x-api-id": "API-CNS-188",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/consent-decision.spec.yaml",
+    "SM-CNS-001 §4",
+    "DEC-BR-001"
+  ],
+  "x-states": [
+    "PENDING",
+    "GRANTED",
+    "PARTIALLY_GRANTED",
+    "DECLINED",
+    "REVOKED",
+    "EXPIRED",
+    "SUPERSEDED"
+  ],
+  "x-transitions": [
+    {
+      "id": "C1",
+      "from": null,
+      "to": "PENDING",
+      "via": "POST /decision/start"
+    },
+    {
+      "id": "C2",
+      "from": "PENDING",
+      "to": "PENDING",
+      "via": "POST /decision/steps"
+    },
+    {
+      "id": "C3",
+      "from": "PENDING",
+      "to": "GRANTED",
+      "via": "POST /decision/submit (todas GRANT)"
+    },
+    {
+      "id": "C4",
+      "from": "PENDING",
+      "to": "PARTIALLY_GRANTED",
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "allowPartialGrant = false (F-025)"
+    },
+    {
+      "id": "C5",
+      "from": "PENDING",
+      "to": "DECLINED",
+      "via": "POST /decision/submit (al menos una DECLINE)"
+    },
+    {
+      "id": "C6",
+      "from": [
+        "GRANTED",
+        "PARTIALLY_GRANTED"
+      ],
+      "to": "REVOKED",
+      "via": "interno: mismo lote que revocation R4 (worker APPLY_REVOCATION)"
+    },
+    {
+      "id": "C7",
+      "from": [
+        "GRANTED",
+        "PARTIALLY_GRANTED"
+      ],
+      "to": "EXPIRED",
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "EXT-E / F-023"
+    },
+    {
+      "id": "C8",
+      "from": [
+        "GRANTED",
+        "PARTIALLY_GRANTED"
+      ],
+      "to": "SUPERSEDED",
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "EXT-E / Q-16 (OPEN-CD-01)"
+    },
+    {
+      "id": "M3",
+      "from": [
+        "GRANTED",
+        "DECLINED"
+      ],
+      "to": [
+        "GRANTED",
+        "DECLINED"
+      ],
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "LD-01 (LEGAL DECISION)"
+    }
+  ],
+  "$defs": {
+    "ConsentDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "productRef": {
+          "$ref": "common.schema.json#/$defs/ProductRef"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "decisionMakerRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "relationshipRef": {
+          "type": "string",
+          "pattern": "^[A-Z_]{1,40}$",
+          "x-pending": [
+            "DEC-BR-003 / EXT-A / LD-01"
+          ]
+        },
+        "consentVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "privacyNoticeVersion": {
+          "$ref": "common.schema.json#/$defs/Version"
+        },
+        "consentTextHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Hex"
+        },
+        "purposes": {
+          "type": "array",
+          "items": {
+            "$ref": "api-payloads.schema.json#/$defs/PurposeDecision"
+          },
+          "maxItems": 4
+        },
+        "authorityDeclaration": {
+          "type": "boolean"
+        },
+        "decidedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "revokedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "chainRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "abandoned": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "PENDING",
+            "GRANTED",
+            "PARTIALLY_GRANTED",
+            "DECLINED",
+            "REVOKED",
+            "EXPIRED",
+            "SUPERSEDED"
+          ],
+          "description": "PARTIALLY_GRANTED, EXPIRED y SUPERSEDED son inalcanzables en BETA_2026_01."
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "consentId",
+        "tenantRef",
+        "productRef",
+        "contextRef",
+        "subjectRef",
+        "decisionMakerRef",
+        "chainRef",
+        "state",
+        "sequence"
+      ],
+      "description": "La existencia y aceptación del consentimiento las fijan guards deterministas sobre hechos registrados; ningún modelo las decide (MP §32)."
+    }
+  }
+}

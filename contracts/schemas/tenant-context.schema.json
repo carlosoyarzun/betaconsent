@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/tenant-context.schema.json",
+  "title": "Contexto de tenant (TenantStatus, SchoolParticipation, Enrollment, readiness de ConsentContext)",
+  "x-api-id": "API-CNS-191",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/tenant-context.spec.yaml",
+    "SM-CNS-001 §6",
+    "ADR-006 §2, §12"
+  ],
+  "x-states": {
+    "TenantStatus": [
+      "ACTIVE",
+      "SUSPENDED"
+    ],
+    "SchoolParticipation": [
+      "PENDING_AUTHORIZATION",
+      "ACTIVE",
+      "SUSPENDED",
+      "CLOSED"
+    ],
+    "Enrollment": [
+      "ACTIVE",
+      "CLOSED"
+    ],
+    "ConsentContextReadiness": [
+      "READY",
+      "ACTIVE",
+      "PAUSED"
+    ]
+  },
+  "x-transitions": [
+    {
+      "id": "TN1",
+      "from": "ACTIVE",
+      "to": "SUSPENDED",
+      "via": "sin operación HTTP: fixture (LOCAL/CI) o migración revisada (DEC-BR-014 §5)",
+      "pending": [
+        "F-007"
+      ]
+    },
+    {
+      "id": "TN2",
+      "from": "SUSPENDED",
+      "to": "ACTIVE",
+      "via": "sin operación HTTP: fixture o migración revisada",
+      "pending": [
+        "F-007"
+      ]
+    },
+    {
+      "id": "SP1",
+      "from": "PENDING_AUTHORIZATION",
+      "to": "ACTIVE",
+      "via": "sin operación HTTP: fixture o migración revisada",
+      "pending": [
+        "F-007"
+      ]
+    },
+    {
+      "id": "SP2",
+      "from": "ACTIVE",
+      "to": "SUSPENDED",
+      "via": "sin operación HTTP"
+    },
+    {
+      "id": "SP3",
+      "from": "SUSPENDED",
+      "to": "ACTIVE",
+      "via": "sin operación HTTP"
+    },
+    {
+      "id": "SP4",
+      "from": [
+        "ACTIVE",
+        "SUSPENDED"
+      ],
+      "to": "CLOSED",
+      "via": "sin operación HTTP (+ I9 PARTICIPATION_CLOSED en la misma tx)"
+    },
+    {
+      "id": "EN0",
+      "from": null,
+      "to": "ACTIVE",
+      "via": "POST /staff/enrollments"
+    },
+    {
+      "id": "EN1",
+      "from": "ACTIVE",
+      "to": "CLOSED",
+      "via": "POST /staff/enrollments/{enrollmentRef}/close"
+    },
+    {
+      "id": "CX1",
+      "from": "READY",
+      "to": "ACTIVE",
+      "via": "sin operación HTTP (SYSTEM_GUARD; fixture o migración en IT0)"
+    },
+    {
+      "id": "CX2",
+      "from": "PAUSED",
+      "to": "ACTIVE",
+      "via": "POST /platform/consent-contexts/{contextRef}/reactivate"
+    }
+  ],
+  "$defs": {
+    "TenantStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "state": {
+          "enum": [
+            "ACTIVE",
+            "SUSPENDED"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "tenantRef",
+        "state",
+        "sequence"
+      ],
+      "description": "tenant.active solo alimenta eligibility_to_participate (GRD-CM-05); nunca eligibility_to_revoke (INV-TC-01)."
+    },
+    "SchoolParticipation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "productRef": {
+          "$ref": "common.schema.json#/$defs/ProductRef"
+        },
+        "state": {
+          "enum": [
+            "PENDING_AUTHORIZATION",
+            "ACTIVE",
+            "SUSPENDED",
+            "CLOSED"
+          ]
+        },
+        "authorizationEvidenceRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "participationRef",
+        "tenantRef",
+        "contextRef",
+        "productRef",
+        "state",
+        "sequence"
+      ]
+    },
+    "Enrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enrollmentRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "participationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "state": {
+          "enum": [
+            "ACTIVE",
+            "CLOSED"
+          ]
+        },
+        "closeReason": {
+          "enum": [
+            "TRANSFERRED",
+            "LEFT_SCHOOL",
+            "PARTICIPATION_CLOSED"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "enrollmentRef",
+        "tenantRef",
+        "subjectRef",
+        "participationRef",
+        "state",
+        "sequence"
+      ]
+    },
+    "ConsentContextReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "state": {
+          "enum": [
+            "READY",
+            "ACTIVE",
+            "PAUSED"
+          ]
+        }
+      },
+      "required": [
+        "contextRef",
+        "state"
+      ],
+      "description": "Parcial: solo CX1/CX2 (guard (d), R7-1)."
+    }
+  }
+}

@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/revocation.schema.json",
+  "title": "Revocation (proyección IT0, clase RIGHTS)",
+  "x-api-id": "API-CNS-189",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/revocation.spec.yaml",
+    "SM-CNS-001 §5, §5.0 a §5.2 (v7)",
+    "DEC-BR-017 §6"
+  ],
+  "x-states": [
+    "REQUESTED",
+    "VERIFIED",
+    "CONFIRMED",
+    "APPLIED",
+    "DOWNSTREAM_PENDING",
+    "DELIVERED",
+    "COMPLETED",
+    "FAILED"
+  ],
+  "x-transitions": [
+    {
+      "id": "R1",
+      "from": null,
+      "to": "REQUESTED",
+      "via": "POST /manage/revocation"
+    },
+    {
+      "id": "R1r",
+      "from": [
+        null,
+        "REQUESTED"
+      ],
+      "to": "REQUESTED",
+      "via": "POST /recovery/revoke"
+    },
+    {
+      "id": "RC3",
+      "from": null,
+      "to": "REQUESTED",
+      "via": "POST /rights-case/revocation-intent (sin Revocation abierta)",
+      "pending": [
+        "F-005",
+        "F-006"
+      ]
+    },
+    {
+      "id": "R2",
+      "from": "REQUESTED",
+      "to": "VERIFIED",
+      "via": "POST /manage/revocation/verify"
+    },
+    {
+      "id": "R2r",
+      "from": "REQUESTED",
+      "to": "VERIFIED",
+      "via": "POST /recovery/revoke (mismo POST)"
+    },
+    {
+      "id": "RH2",
+      "from": "REQUESTED",
+      "to": "VERIFIED",
+      "via": "POST /platform/rights-cases/{caseRef}/verification-proposals y .../{proposalRef}/approval"
+    },
+    {
+      "id": "R3",
+      "from": "VERIFIED",
+      "to": "CONFIRMED",
+      "via": "POST /manage/revocation/confirm"
+    },
+    {
+      "id": "R3r",
+      "from": "VERIFIED",
+      "to": "CONFIRMED",
+      "via": "POST /recovery/revoke (mismo POST)"
+    },
+    {
+      "id": "RH3",
+      "from": "VERIFIED",
+      "to": "CONFIRMED",
+      "via": "POST /platform/rights-cases/{caseRef}/confirmation y .../confirmation/cosign",
+      "pending": [
+        "F-003"
+      ]
+    },
+    {
+      "id": "R4",
+      "from": "CONFIRMED",
+      "to": "APPLIED",
+      "via": "worker APPLY_REVOCATION (job durable)"
+    },
+    {
+      "id": "R5",
+      "from": "APPLIED",
+      "to": "DOWNSTREAM_PENDING",
+      "via": "worker"
+    },
+    {
+      "id": "R6",
+      "from": "DOWNSTREAM_PENDING",
+      "to": "DELIVERED",
+      "via": "worker (ACK firmado; transporte OPEN-CT-02)"
+    },
+    {
+      "id": "R7",
+      "from": "DELIVERED",
+      "to": "COMPLETED",
+      "via": "worker (erasure.confirmed; transporte OPEN-CT-02)"
+    },
+    {
+      "id": "R8",
+      "from": [
+        "REQUESTED",
+        "VERIFIED",
+        "CONFIRMED"
+      ],
+      "to": "FAILED",
+      "via": "POST /manage/revocation/withdraw"
+    },
+    {
+      "id": "R8h",
+      "from": [
+        "REQUESTED",
+        "VERIFIED",
+        "CONFIRMED"
+      ],
+      "to": "FAILED",
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "R13-4; LD-03"
+    },
+    {
+      "id": "R9",
+      "from": [
+        "REQUESTED",
+        "VERIFIED",
+        "CONFIRMED"
+      ],
+      "to": "(self)",
+      "via": "worker (TTL P-19) y rights-case RC1 REQUEST_EXPIRED"
+    },
+    {
+      "id": "R10",
+      "from": "VERIFIED",
+      "to": "VERIFIED",
+      "via": "POST /recovery/revoke"
+    },
+    {
+      "id": "R11",
+      "from": "CONFIRMED",
+      "to": "CONFIRMED",
+      "via": "POST /recovery/revoke (NOOP)"
+    },
+    {
+      "id": "R12",
+      "from": [
+        "REQUESTED",
+        "VERIFIED",
+        "CONFIRMED"
+      ],
+      "to": "(self)",
+      "via": "POST /rights-case/revocation-intent (Revocation abierta)",
+      "pending": [
+        "F-005",
+        "F-006",
+        "P-v7-5"
+      ]
+    },
+    {
+      "id": "RH2v",
+      "from": "VERIFIED",
+      "to": "VERIFIED",
+      "via": "POST /platform/rights-cases/{caseRef}/verification-proposals y approval"
+    },
+    {
+      "id": "RV0",
+      "from": null,
+      "to": null,
+      "via": "POST /manage/recovery-link (trigger portador); interno RC2 (trigger sistema)",
+      "kind": "EMISSION"
+    }
+  ],
+  "$defs": {
+    "Revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "chainRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "revokedDecisionRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "x-pending": [
+            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          ]
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/RevocationScope"
+        },
+        "authPath": {
+          "$ref": "common.schema.json#/$defs/AuthPath"
+        },
+        "recoveryMethod": {
+          "$ref": "common.schema.json#/$defs/RecoveryMethod"
+        },
+        "originPurposeRef": {
+          "$ref": "common.schema.json#/$defs/OriginPurposeRef"
+        },
+        "initiatedVia": {
+          "$ref": "common.schema.json#/$defs/InitiatedVia"
+        },
+        "recoveryRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "effectiveAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "requestedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "state": {
+          "enum": [
+            "REQUESTED",
+            "VERIFIED",
+            "CONFIRMED",
+            "APPLIED",
+            "DOWNSTREAM_PENDING",
+            "DELIVERED",
+            "COMPLETED",
+            "FAILED"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "flags": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deliveryFailed": {
+              "type": "boolean"
+            },
+            "overdue": {
+              "type": "boolean"
+            },
+            "escalated": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "required": [
+        "revocationRef",
+        "tenantRef",
+        "chainRef",
+        "revokedDecisionRef",
+        "scope",
+        "authPath",
+        "originPurposeRef",
+        "initiatedVia",
+        "state",
+        "sequence"
+      ],
+      "description": "Disponible en cualquier estado de tenant, Study, SchoolParticipation, Enrollment, ConsentContext y BillingSubscription: solo exige tenant existente y cadena del titular (eligibility_to_revoke; INV-6). Ningún modelo decide la revocación ni la suficiencia de RECOVERY (LD-02, LD-03)."
+    }
+  }
+}
