@@ -7,7 +7,7 @@ info:
   x-status: DRAFT
   x-it0-only: true
   x-data-class: SYNTHETIC_ONLY
-  x-spec-source: specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)
+  x-spec-source: specs/state-machines/*.spec.yaml rev. 4c–4e + specs/adapters/lectorpro-beta.spec.yaml (CA-116; origin/fix/CA-116-f011-f012 @ dfd6e5e, PR #6)
   x-governed-by:
     - specs/state-machines/common.spec.yaml (routeClasses, GRD-CM-*, INV-CM-*)
     - specs de las 6 máquinas (transiciones con httpPost true)

@@ -5,7 +5,7 @@
   "x-api-id": "API-CNS-189",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4e + specs/adapters/lectorpro-beta.spec.yaml (CA-116; origin/fix/CA-116-f011-f012 @ dfd6e5e, PR #6)",
   "x-governed-by": [
     "specs/state-machines/revocation.spec.yaml",
     "SM-CNS-001 §5, §5.0 a §5.2 (v7)",
