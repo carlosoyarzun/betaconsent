@@ -1,4 +1,5 @@
 # Máquina DecisionMakerVerification / OTP challenge del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + SEC-CNS-012 re-verificación N-09).
+# rev. 4b (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — citas CARLOS r3 R13-7 puras pasan a DEC-BR-018 (R13-7). Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # Parámetros SOLO por referencia a SEC-CNS-006 (P-xx aprobados); ningún valor se fija aquí.
 # El sistema no decide la validez del OTP como juicio: la comparación es código determinista.
 specId: SPEC-CNS-SM-OTP-CHALLENGE
@@ -93,7 +94,7 @@ states:
     terminal: true
     terminalNote: "R13-7 (opción A de SEC): LOCKED no tiene transiciones de salida; '3 LOCKED' y los presupuestos se cuentan en el padre (V6a)."
     description: "attempts = N (P-03)."
-    governedBy: ["SM-CNS-001 v7 §3 V4, V6a", "CARLOS r3 R13-7", "SEC-CNS-006 P-03"]
+    governedBy: ["SM-CNS-001 v7 §3 V4, V6a", "DEC-BR-018 R13-7", "SEC-CNS-006 P-03"]
     testIds: [TEST-CNS-154]
   - id: FAILED
     initial: false
@@ -253,7 +254,7 @@ transitions:
     emits: [OTP_BUDGET_EXHAUSTED]
     idempotencyKey: "(tenantRef, invitationRef)"
     errors: []
-    governedBy: ["SM-CNS-001 v7 §3 V6a", "CARLOS r3 R13-7", "SEC-CNS-006 P-07", "SEC-CNS-012 P2-01 (opción A)"]
+    governedBy: ["SM-CNS-001 v7 §3 V6a", "DEC-BR-018 R13-7", "SEC-CNS-006 P-07", "SEC-CNS-012 P2-01 (opción A)"]
     testIds: [TEST-CNS-393, TEST-CNS-394]
   - id: V6c
     from: CODE_SENT
@@ -353,7 +354,7 @@ guards:
     name: parent_not_otp_exhausted
     rule: "V1 scope DECISION se rechaza con la respuesta genérica si la invitación padre tiene otpExhausted (V6a), evaluado bajo el mismo lock de la fila de la invitación que V6a (SEC N-09); la vía es reemitir la invitación."
     onFail: ERR-OT-06
-    governedBy: ["SM-CNS-001 v7 §3 V6a", "CARLOS r3 R13-7", "SEC-CNS-012 re-verificación N-09"]
+    governedBy: ["SM-CNS-001 v7 §3 V6a", "DEC-BR-018 R13-7", "SEC-CNS-012 re-verificación N-09"]
     testIds: [TEST-CNS-395, TEST-CNS-410]
   - id: GRD-OT-13
     name: challenge_bound_to_request_handle
@@ -502,7 +503,7 @@ invariants:
     testIds: [TEST-CNS-165]
   - id: INV-18
     statement: "Un challenge LOCKED no tiene transiciones de salida; '3 LOCKED' y los presupuestos se cuentan en el padre (V6a)."
-    governedBy: ["SM-CNS-001 v7 §7 INV-18", "CARLOS r3 R13-7"]
+    governedBy: ["SM-CNS-001 v7 §7 INV-18", "DEC-BR-018 R13-7"]
     testIds: [TEST-CNS-394]
   - id: INV-OT-08
     statement: "El security stream no es ledger de consentimiento: solo refs (channelRef, signalRef), RLS por tenant; la señal de red vive como HMAC en pii.network_signal."
