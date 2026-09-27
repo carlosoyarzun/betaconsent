@@ -1,13 +1,17 @@
-# Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 4 (R14-C: revokedDecisionRef).
+# Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 4c (R14-C: revokedDecisionRef; F-012 fix 2026-09-27).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (GRD-TC-07 en C3 y C5: locks frente a SP4/EN1).
 # La existencia y aceptación del consentimiento NO las decide ningún modelo: los guards
 # verifican hechos registrados (eventos previos, hash servido, elección explícita por finalidad).
+# rev. 4c: F-012 (auditoría CA-116, P2) — contextRef, productRef, allowPartialGrant, requiredPurposes
+# y prohibitedPurposes dejan de ser valores concretos hardcodeados aquí; se declaran como parámetros
+# tipados resueltos desde specs/adapters/lectorpro-beta.spec.yaml (Notion Executable Specs Index:
+# comportamiento de producto va en una spec de adapter). Ver changeNote en el bloque `configuration`.
 specId: SPEC-CNS-SM-CONSENT-DECISION
-title: "State machine ConsentDecision (IT0, contexto BETA_2026_01)"
+title: "State machine ConsentDecision (IT0; contextRef/productRef y finalidades vía adapter, ver specs/adapters/lectorpro-beta.spec.yaml)"
 smId: SM-CNS-001
 smSection: "§4, §4.1, §4.2, §7"
 aggregateType: ConsentDecision
-version: "0.4.1"
+version: "0.4.2"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -25,21 +29,23 @@ governedBy:
   - "SEC-CNS-005 T-12, T-13, T-14; SEC-CNS-006 P-27, P-33"
 
 scope:
-  it0: "Contexto BETA_2026_01, allowPartialGrant = false, 4 finalidades requeridas; GRANTED / DECLINED por el DecisionMaker verificado; REVOKED solo vía Revocation R4."
+  it0: "Adapter activo en IT0: specs/adapters/lectorpro-beta.spec.yaml resuelve contextRef, productRef, allowPartialGrant = false y las 4 finalidades requeridas (F-012); GRANTED / DECLINED por el DecisionMaker verificado; REVOKED solo vía Revocation R4."
   notInIt0:
-    - "C4 PENDING → PARTIALLY_GRANTED: inválida en BETA_2026_01 (F-025)"
-    - "C7 → EXPIRED: deshabilitada en BETA_2026_01 (EXT-E, F-023)"
+    - "C4 PENDING → PARTIALLY_GRANTED: inválida mientras el adapter activo fije allowPartialGrant = false (F-025)"
+    - "C7 → EXPIRED: deshabilitada en el adapter activo de IT0 (EXT-E, F-023)"
     - "C8 → SUPERSEDED: depende de EXT-E (DEC nueva: ConsentVersion nueva); OPEN (Q-16)"
     - "Contextos con finalidades opcionales (RULE-CNS-027 parcial): no modelados"
 
 configuration:
-  contextRef: BETA_2026_01
-  productRef: LECTORPRO
-  allowPartialGrant: false
-  requiredPurposes: [STUDY_PARTICIPATION, AUDIO_RECORDING, AUTOMATED_ANALYSIS, HUMAN_REVIEW] # DEC-BR-001; R0.9
-  prohibitedPurposes: [PRODUCT_IMPROVEMENT, AI_TRAINING, RESEARCH]
-  purposeChoice: [GRANT, DECLINE] # sin valor por defecto ni preselección (P06)
+  contextRef: {type: string, resolvedFrom: "adapter.contextRef"}
+  productRef: {type: string, resolvedFrom: "adapter.productRef"}
+  allowPartialGrant: {type: boolean, resolvedFrom: "adapter.allowPartialGrant"}
+  requiredPurposes: {type: "string[]", resolvedFrom: "adapter.requiredPurposes"} # DEC-BR-001; R0.9
+  prohibitedPurposes: {type: "string[]", resolvedFrom: "adapter.prohibitedPurposes"}
+  purposeChoice: [GRANT, DECLINE] # vocabulario genérico de la máquina (no de producto/contexto); sin valor por defecto ni preselección (P06)
+  adapter: specs/adapters/lectorpro-beta.spec.yaml # F-012: única fuente de contextRef, productRef, allowPartialGrant, requiredPurposes y prohibitedPurposes para IT0
   governedBy: ["SM-CNS-001 R0.9", "DEC-BR-001", "SM-CNS-001 §11 NF-05 (Notion [N-CML] actualizado por C-34)"]
+  changeNote: "F-012 (auditoría de contradicciones CA-116, P2, 2026-09-27): contextRef, productRef, allowPartialGrant, requiredPurposes y prohibitedPurposes eran valores concretos de LECTORPRO/BETA_2026_01 hardcodeados en esta spec genérica de máquina de estado, contradiciendo el Notion Executable Specs Index (el comportamiento específico de producto va en una spec de adapter). Se movieron a specs/adapters/lectorpro-beta.spec.yaml; esta spec los declara ahora como parámetros tipados resueltos desde ese adapter. purposeChoice no se movió: es vocabulario genérico de la máquina (GRANT/DECLINE), no un valor de producto. Sin cambio de semántica de consentimiento/revocación/elegibilidad."
 
 attributes:
   - consentId
