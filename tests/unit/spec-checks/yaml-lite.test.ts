@@ -75,3 +75,75 @@ e: >
   assert.equal(data.d, 42);
   assert.equal(data.e, "línea uno línea dos");
 });
+
+test("TEST-CNS-906 yaml-lite: ítem de secuencia como mapeo flow inline ('- {id: X, ...}', legalDecisions/openItems reales)", () => {
+  const data = parseYaml(`
+legalDecisions:
+  - {id: LD-05, topic: "Validez de una revocación (excepción P16)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-04, topic: "'suspended' no existe en IT0", owner: Carlos, blocksDataReal: true}
+`) as Record<string, unknown>;
+  assert.deepEqual(data.legalDecisions, [
+    { id: "LD-05", topic: "Validez de una revocación (excepción P16)", owner: "Carlos", blocksDataReal: true },
+    { id: "LD-04", topic: "'suspended' no existe en IT0", owner: "Carlos", blocksDataReal: true },
+  ]);
+});
+
+test("TEST-CNS-906 yaml-lite: ítem de secuencia como lista flow inline ('- [a, b]')", () => {
+  const data = parseYaml(`
+groups:
+  - [GRD-A, GRD-B]
+  - [GRD-C]
+`) as Record<string, unknown>;
+  assert.deepEqual(data.groups, [["GRD-A", "GRD-B"], ["GRD-C"]]);
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2c, fail-closed): lista flow sin ']' de cierre lanza error", () => {
+  assert.throws(() => parseYaml("guards: [GRD-A, GRD-B\n"), /sin '\]' de cierre/);
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2c, fail-closed): mapeo flow sin '}' de cierre lanza error", () => {
+  assert.throws(() => parseYaml("item: {id: LD-05, owner: Carlos\n"), /sin '\}' de cierre/);
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2c, fail-closed): texto sobrante tras el cierre de un flow lanza error", () => {
+  assert.throws(() => parseYaml("guards: [GRD-A, GRD-B] basura\n"), /texto sobrante tras el valor flow/);
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2d, fail-closed): clave duplicada en un mapeo flow lanza error", () => {
+  assert.throws(() => parseYaml("item: {id: LD-05, id: LD-06}\n"), /clave duplicada "id"/);
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2d, fail-closed): clave duplicada en un mapeo por indentación lanza error", () => {
+  assert.throws(
+    () =>
+      parseYaml(`
+a: 1
+b: 2
+a: 3
+`),
+    /clave duplicada "a"/,
+  );
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2d, fail-closed): clave duplicada en un ítem de secuencia inline lanza error", () => {
+  assert.throws(
+    () =>
+      parseYaml(`
+states:
+  - id: A
+    id: B
+`),
+    /clave duplicada "id"/,
+  );
+});
+
+test("TEST-CNS-906 yaml-lite (SEC-CNS-014 P2a, fail-closed): línea top-level sin consumir al terminar el documento lanza error", () => {
+  assert.throws(
+    () =>
+      parseYaml(`
+a: 1
+  b: 2
+`),
+    /sin consumir al terminar el documento/,
+  );
+});

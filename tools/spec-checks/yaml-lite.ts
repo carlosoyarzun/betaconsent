@@ -2,7 +2,9 @@
 // allowlist, ADR-001 §5). Parser YAML MÍNIMO, escrito a mano, sin dependencias externas, para el
 // subconjunto de sintaxis usado en specs/state-machines/*.spec.yaml y specs/adapters/*.spec.yaml:
 //   - mapeos y secuencias por indentación (2 espacios)
-//   - secuencias y mapeos "flow" en una línea: [a, b] / {a: b, c: d} (con anidación)
+//   - secuencias y mapeos "flow" en una línea: [a, b] / {a: b, c: d} (con anidación), incluidos
+//     ítems de secuencia que SON un flow map/list ("- {id: X, ...}", "- [a, b]"; legalDecisions y
+//     openItems reales usan este patrón)
 //   - escalares planos, con comillas simples/dobles (incluida una cadena entre comillas dobles que
 //     cruza varias líneas, único caso observado hoy en rights-case.spec.yaml)
 //   - escalares de bloque '>' (folded) y '|' (literal), plegados a una sola línea (no se necesita el
@@ -12,6 +14,10 @@
 // NO implementa: anclas/alias, tags explícitos, multi-documento, claves complejas. Si un spec real
 // usara alguna de esas construcciones, este parser debe fallar de forma visible (excepción), no en
 // silencio: se prefiere un error de parseo a una lectura parcial incorrecta de una spec de gobierno.
+// Fail-closed (SEC-CNS-014 P2), todo con throw explícito, nunca un valor parcial silencioso: línea
+// top-level sin consumir al terminar el documento; flow list/map sin ']'/'}' de cierre; texto
+// sobrante tras cerrar un flow; clave duplicada en un mapeo (por indentación, flow, o ítem de
+// secuencia inline).
 
 export type YamlValue = string | number | boolean | null | YamlValue[] | { [key: string]: YamlValue };
 
@@ -116,6 +122,18 @@ class FlowParser {
     this.s = s;
   }
 
+  // Parsea un valor flow completo (top-level) y exige que no quede texto sobrante tras cerrar el
+  // último ']'/'}' (fail-closed, SEC-CNS-014 P2c: "trae texto sobrante tras ]/}").
+  static parseTopLevel(s: string): YamlValue {
+    const parser = new FlowParser(s);
+    const value = parser.parseValue();
+    parser.skipSpaces();
+    if (parser.pos !== parser.s.length) {
+      throw new Error(`yaml-lite: texto sobrante tras el valor flow: "${parser.s.slice(parser.pos)}" (en "${s}")`);
+    }
+    return value;
+  }
+
   private peek(offset = 0): string {
     return charAt(this.s, this.pos + offset);
   }
@@ -152,7 +170,12 @@ class FlowParser {
       }
       break;
     }
-    if (this.peek() === "]") this.pos++;
+    // Fail-closed (SEC-CNS-014 P2c): una lista flow sin ']' de cierre es un error de sintaxis, no un
+    // final silencioso.
+    if (this.peek() !== "]") {
+      throw new Error(`yaml-lite: lista flow sin ']' de cierre (posición ${this.pos} de "${this.s}")`);
+    }
+    this.pos++;
     return items;
   }
 
@@ -171,6 +194,10 @@ class FlowParser {
       if (this.peek() === ":") this.pos++;
       this.skipSpaces();
       const value = this.parseValue();
+      // Fail-closed (SEC-CNS-014 P2d): clave duplicada dentro del mismo mapeo flow.
+      if (Object.prototype.hasOwnProperty.call(map, key)) {
+        throw new Error(`yaml-lite: clave duplicada "${key}" en mapeo flow ("${this.s}")`);
+      }
       map[key] = value;
       this.skipSpaces();
       if (this.peek() === ",") {
@@ -179,7 +206,11 @@ class FlowParser {
       }
       break;
     }
-    if (this.peek() === "}") this.pos++;
+    // Fail-closed (SEC-CNS-014 P2c): un mapeo flow sin '}' de cierre es un error de sintaxis.
+    if (this.peek() !== "}") {
+      throw new Error(`yaml-lite: mapeo flow sin '}' de cierre (posición ${this.pos} de "${this.s}")`);
+    }
+    this.pos++;
     return map;
   }
 
@@ -235,7 +266,7 @@ class FlowParser {
 function parseFlowOrScalar(raw: string): YamlValue {
   const trimmed = raw.trim();
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-    return new FlowParser(trimmed).parseValue();
+    return FlowParser.parseTopLevel(trimmed);
   }
   return parseScalar(trimmed);
 }
@@ -286,7 +317,13 @@ class BlockParser {
   }
 
   parseDocument(): YamlValue {
-    const [value] = this.parseBlock(0, 0);
+    const [value, next] = this.parseBlock(0, 0);
+    // Fail-closed (SEC-CNS-014 P2a): si queda una línea top-level sin consumir, el documento tiene
+    // una estructura que este parser no entendió (p. ej. una indentación irregular); mejor un error
+    // visible que devolver un valor parcial silenciosamente.
+    if (next < this.lines.length) {
+      throw new Error(`yaml-lite: línea ${this.lineAt(next).lineNo} sin consumir al terminar el documento: "${this.lineAt(next).content}"`);
+    }
     return value ?? {};
   }
 
@@ -311,6 +348,15 @@ class BlockParser {
         } else {
           items.push(null);
         }
+        continue;
+      }
+      // Ítem de secuencia que es un flow map/list en la misma línea: "- {id: X, ...}" / "- [a, b]"
+      // (p. ej. legalDecisions/openItems de las specs reales). Se parsea como flow ANTES de intentar
+      // "clave: valor": si no, splitKeyValue corta en el primer ":" dentro de las llaves y genera una
+      // clave basura como "{id" (bug reportado, SEC-CNS-014 yaml-lite P2).
+      if (rest.startsWith("{") || rest.startsWith("[")) {
+        items.push(this.parseScalarField(rest));
+        i++;
         continue;
       }
       const kv = splitKeyValue(rest);
@@ -342,6 +388,10 @@ class BlockParser {
     let kv: { key: string; rest: string } | null = firstKv;
     let firstLine = true;
     while (kv) {
+      // Fail-closed (SEC-CNS-014 P2d): clave duplicada dentro del mismo mapeo por indentación.
+      if (Object.prototype.hasOwnProperty.call(map, kv.key)) {
+        throw new Error(`yaml-lite: clave duplicada "${kv.key}" en línea ${this.lineAt(idx).lineNo}`);
+      }
       idx++;
       if (kv.rest === "") {
         if (idx < this.lines.length && this.lineAt(idx).indent > virtualIndent) {
@@ -377,6 +427,10 @@ class BlockParser {
       const kv = splitKeyValue(this.lineAt(idx).content);
       if (!kv) {
         throw new Error(`yaml-lite: línea ${this.lineAt(idx).lineNo} no parece "clave: valor": "${this.lineAt(idx).content}"`);
+      }
+      // Fail-closed (SEC-CNS-014 P2d): clave duplicada dentro del mismo mapeo por indentación.
+      if (Object.prototype.hasOwnProperty.call(map, kv.key)) {
+        throw new Error(`yaml-lite: clave duplicada "${kv.key}" en línea ${this.lineAt(idx).lineNo}`);
       }
       idx++;
       if (kv.rest === "") {
