@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/security-event-payloads.schema.json",
+  "title": "Consent App IT0 — eventos del security stream",
+  "x-api-id": "API-CNS-184",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "otp-challenge.spec.yaml events (stream: SECURITY)",
+    "revocation.spec.yaml RECOVERY_TOKEN_ISSUED",
+    "DEC-BR-017 §6 (fuera del ledger)",
+    "ADR-002 §3"
+  ],
+  "$defs": {
+    "OTP_ISSUED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        },
+        "channelRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "verificationRef",
+        "scope",
+        "channelRef"
+      ]
+    },
+    "OTP_FAILED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        }
+      },
+      "required": [
+        "verificationRef",
+        "scope"
+      ]
+    },
+    "OTP_LOCKED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        }
+      },
+      "required": [
+        "verificationRef",
+        "scope"
+      ]
+    },
+    "OTP_EXPIRED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/OtpScope"
+        }
+      },
+      "required": [
+        "verificationRef",
+        "scope"
+      ]
+    },
+    "OTP_BUDGET_EXHAUSTED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scopeClass": {
+          "$ref": "common.schema.json#/$defs/OtpScopeClass"
+        },
+        "keyKind": {
+          "enum": [
+            "CHANNEL",
+            "INVITATION",
+            "CHAIN"
+          ]
+        },
+        "windowKind": {
+          "enum": [
+            "DAY_1",
+            "DAYS_30"
+          ]
+        }
+      },
+      "required": [
+        "verificationRef",
+        "scopeClass",
+        "keyKind",
+        "windowKind"
+      ],
+      "description": "CFG-OT-BUDGET: INVITATION solo en DECISION, CHAIN solo en RIGHTS, DAYS_30 solo en (RIGHTS, CHAIN).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "keyKind": {
+                "const": "INVITATION"
+              }
+            },
+            "required": [
+              "keyKind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scopeClass": {
+                "const": "DECISION"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "keyKind": {
+                "const": "CHAIN"
+              }
+            },
+            "required": [
+              "keyKind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scopeClass": {
+                "const": "RIGHTS"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "windowKind": {
+                "const": "DAYS_30"
+              }
+            },
+            "required": [
+              "windowKind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scopeClass": {
+                "const": "RIGHTS"
+              },
+              "keyKind": {
+                "const": "CHAIN"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "MANAGEMENT_TOKEN_ROTATED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chainRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "trigger": {
+          "enum": [
+            "RECEIPT_REISSUED",
+            "FAILURE_CAP"
+          ]
+        }
+      },
+      "required": [
+        "chainRef",
+        "trigger"
+      ]
+    },
+    "RECOVERY_TOKEN_ISSUED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recoveryRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "trigger": {
+          "enum": [
+            "REQUESTER_ASKED",
+            "LIMIT_REACHED",
+            "CASE_CONTACT",
+            "SCHOOL_REPORTED"
+          ]
+        }
+      },
+      "required": [
+        "recoveryRef",
+        "trigger"
+      ]
+    },
+    "SecurityEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "eventType": {
+          "enum": [
+            "OTP_ISSUED",
+            "OTP_FAILED",
+            "OTP_LOCKED",
+            "OTP_EXPIRED",
+            "OTP_BUDGET_EXHAUSTED",
+            "MANAGEMENT_TOKEN_ROTATED",
+            "RECOVERY_TOKEN_ISSUED"
+          ]
+        },
+        "schemaVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "occurredAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "environment": {
+          "$ref": "common.schema.json#/$defs/Environment"
+        },
+        "dataClass": {
+          "$ref": "common.schema.json#/$defs/DataClass"
+        }
+      },
+      "required": [
+        "eventId",
+        "eventType",
+        "schemaVersion",
+        "tenantRef",
+        "occurredAt",
+        "payload",
+        "environment",
+        "dataClass"
+      ],
+      "description": "ops.security_event: RLS por tenant, solo refs; NO es ledger de consentimiento (SEC F03; INV-OT-08). Sobre mínimo propuesto: la spec no define el sobre del security stream.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "OTP_ISSUED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/OTP_ISSUED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "OTP_FAILED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/OTP_FAILED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "OTP_LOCKED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/OTP_LOCKED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "OTP_EXPIRED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/OTP_EXPIRED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "OTP_BUDGET_EXHAUSTED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/OTP_BUDGET_EXHAUSTED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "MANAGEMENT_TOKEN_ROTATED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/MANAGEMENT_TOKEN_ROTATED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "RECOVERY_TOKEN_ISSUED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/RECOVERY_TOKEN_ISSUED"
+              }
+            }
+          }
+        }
+      ],
+      "x-pending": [
+        "OPEN-CM-02 (eventTypes de seguridad sin nombre: Guard T fallido, binding M1, INTEGRITY_FAILURE)",
+        "LD-15 (retención)"
+      ]
+    }
+  }
+}

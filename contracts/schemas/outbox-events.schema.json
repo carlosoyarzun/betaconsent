@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/outbox-events.schema.json",
+  "title": "Consent App IT0 — eventos de outbox hacia el consumidor (stub interno en IT0)",
+  "x-api-id": "API-CNS-185",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "description": "AsyncAPI no se usa: las specs solo exigen outbox transaccional con entrega firmada al stub interno (R5-1) y no definen canales de broker.",
+  "x-governed-by": [
+    "consent-decision.spec.yaml events consent.granted, consent.revoked",
+    "revocation.spec.yaml R5",
+    "DEC-BR-006",
+    "DEC-BR-017 §7",
+    "CARLOS r3 R5-1",
+    "Master Plan §38 (sobre)"
+  ],
+  "$defs": {
+    "consent.granted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consentId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "productRef": {
+          "$ref": "common.schema.json#/$defs/ProductRef"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "consentId",
+        "tenantRef",
+        "productRef",
+        "contextRef",
+        "subjectRef"
+      ]
+    },
+    "consent.revoked": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revocationRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "scope": {
+          "$ref": "common.schema.json#/$defs/RevocationScope"
+        },
+        "effectiveAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "revocationRef",
+        "scope",
+        "effectiveAt"
+      ],
+      "description": "Se entrega a TODA EventSubscription del tenant aunque tenant.active = false (R5; eligibility_to_revoke)."
+    },
+    "OutboxEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "eventType": {
+          "enum": [
+            "consent.granted",
+            "consent.revoked"
+          ]
+        },
+        "schemaVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "contextRef": {
+          "$ref": "common.schema.json#/$defs/ContextRef"
+        },
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "occurredAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "environment": {
+          "$ref": "common.schema.json#/$defs/Environment"
+        },
+        "dataClass": {
+          "$ref": "common.schema.json#/$defs/DataClass"
+        }
+      },
+      "required": [
+        "eventId",
+        "eventType",
+        "schemaVersion",
+        "tenantRef",
+        "contextRef",
+        "subjectRef",
+        "occurredAt",
+        "payload",
+        "environment",
+        "dataClass"
+      ],
+      "description": "Evento downstream (outbox at-least-once, dedupe por eventId). Sobre según MP §38 con organizationRef reemplazado por tenantRef (DEC-BR-015 §1; ADR-006 §1), studyRef por contextRef y studentRef por subjectRef (MP §37, nota DEC-BR-001). Sin datos del apoderado. consent.changed (C8) excluido: deshabilitado en IT0.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "consent.granted"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/consent.granted"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "consent.revoked"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/consent.revoked"
+              }
+            }
+          }
+        }
+      ],
+      "x-pending": [
+        "OPEN-CT-02 (firma, anti-replay y transporte de ACK/erasure.confirmed de R6/R7)",
+        "F-CT-04 (sobre con subjectRef: la spec no lo lista en consent.revoked)"
+      ]
+    }
+  }
+}

@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/common.schema.json",
+  "title": "Consent App IT0 — tipos comunes",
+  "x-api-id": "API-CNS-180",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/common.spec.yaml (tenancy, actorModel, ledgerEnvelope, errors)",
+    "DEC-BR-001",
+    "DEC-BR-015 §1",
+    "DEC-BR-017 §6",
+    "ADR-002 §2, §3, §8",
+    "ADR-006 §1"
+  ],
+  "x-forbidden-keys": [
+    "organization_*",
+    "organizationRef",
+    "billing_subscription*",
+    "rbd"
+  ],
+  "$defs": {
+    "Ref": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "Referencia opaca UUIDv4 aleatoria, sin semántica ni PII (INV-CM-09; ADR-002 §3).",
+      "examples": [
+        "3f9a1c2e-5b7d-4e8f-9a1b-2c3d4e5f6a7b"
+      ]
+    },
+    "TenantRef": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "tenantRef = nombre de contrato de tenant_id (ADR-006 §1), única clave de aislamiento (DEC-BR-015 §1). Se resuelve SIEMPRE en servidor; ningún request lo acepta (common.spec tenancy.resolution).",
+      "examples": [
+        "0b7e6f5a-1c2d-4e3f-8a9b-0c1d2e3f4a5b"
+      ]
+    },
+    "ProductRef": {
+      "const": "LECTORPRO",
+      "description": "Valor de consent-decision.spec configuration.",
+      "x-pending": [
+        "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+      ]
+    },
+    "ContextRef": {
+      "const": "BETA_2026_01",
+      "description": "Único contexto IT0 (consent-decision.spec configuration). Código de catálogo, no PII.",
+      "x-pending": [
+        "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+      ]
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Hora de servidor (GRD-CM-12); nunca del cliente."
+    },
+    "Version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,32}$"
+    },
+    "Purpose": {
+      "enum": [
+        "STUDY_PARTICIPATION",
+        "AUDIO_RECORDING",
+        "AUTOMATED_ANALYSIS",
+        "HUMAN_REVIEW"
+      ],
+      "description": "Finalidades requeridas (DEC-BR-001; R0.9). PRODUCT_IMPROVEMENT, AI_TRAINING y RESEARCH están prohibidas y no forman parte del enum."
+    },
+    "PurposeChoice": {
+      "enum": [
+        "GRANT",
+        "DECLINE"
+      ],
+      "description": "Sin valor por defecto ni preselección (P06)."
+    },
+    "OriginPurposeRef": {
+      "enum": [
+        "STUDY_PARTICIPATION",
+        "AUDIO_RECORDING",
+        "AUTOMATED_ANALYSIS",
+        "HUMAN_REVIEW",
+        "ALL"
+      ],
+      "description": "Nunca nulo (DEC-BR-017 §6)."
+    },
+    "RevocationScope": {
+      "const": "ALL",
+      "description": "BETA_2026_01: toda revocación es retiro total (CARLOS r3 H1; INV-CD-02)."
+    },
+    "AuthPath": {
+      "enum": [
+        "OTP",
+        "RECOVERY"
+      ]
+    },
+    "RecoveryMethod": {
+      "enum": [
+        "CHANNEL_LINK",
+        "HUMAN_ASSISTED"
+      ]
+    },
+    "InitiatedVia": {
+      "enum": [
+        "DECISION_MAKER",
+        "SCHOOL_REPORT"
+      ]
+    },
+    "EscalationReason": {
+      "enum": [
+        "LIMIT_REACHED",
+        "CHANNEL_UNREACHABLE",
+        "REQUESTER_ASKED",
+        "SCHOOL_REPORTED",
+        "REQUEST_EXPIRED"
+      ]
+    },
+    "CaseOutcome": {
+      "enum": [
+        "RESOLVED",
+        "WITHDRAWN"
+      ]
+    },
+    "OtpScope": {
+      "enum": [
+        "DECISION",
+        "REVOCATION",
+        "MANAGE"
+      ]
+    },
+    "OtpScopeClass": {
+      "enum": [
+        "DECISION",
+        "RIGHTS"
+      ]
+    },
+    "Environment": {
+      "enum": [
+        "LOCAL",
+        "DEV",
+        "STAGING"
+      ],
+      "description": "PRODUCTION existe en el enum de ADR-002 §2 pero está NOT PROVISIONED (ADR-003 rev. 7): los contratos IT0 lo excluyen. CI corre como LOCAL (OPEN-CM-07)."
+    },
+    "DataClass": {
+      "const": "SYNTHETIC",
+      "description": "IT0 solo sintético (DEC-BR-014 §4; ADR-002 §8)."
+    },
+    "ActorType": {
+      "enum": [
+        "HUMAN",
+        "SYSTEM_GUARD",
+        "FIXTURE"
+      ],
+      "description": "Sin valor para IA: un actor IA se rechaza por CHECK (INV-12; GRD-CM-07)."
+    },
+    "ActorRole": {
+      "enum": [
+        "DECISION_MAKER",
+        "INVITER",
+        "CONTEXT_OWNER",
+        "PLATFORM_ADMIN",
+        "RIGHTS_OPERATOR",
+        "UNVERIFIED_BEARER"
+      ],
+      "description": "SM-CNS-001 v7 R0.2. PRIVACY_LEGAL/SECURITY son approverRoles de plataforma, no actorRole de ledger (OPEN-TC-06)."
+    },
+    "IdempotencyKey": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$",
+      "description": "Se almacena solo como hash, ligada a (tenantRef, principal, operación), TTL P-33 (GRD-CM-08). Nunca contiene PII."
+    },
+    "ErrorCode": {
+      "enum": [
+        "ACTOR_NOT_ALLOWED",
+        "ALREADY_DECIDED",
+        "ASSERTION_NOT_ATTESTED",
+        "CANCEL_REASON_INVALID",
+        "CASE_CLOSE_PRECONDITION_FAILED",
+        "CHAIN_REVOKED_RECONFIRM",
+        "CONTEXT_NOT_ACTIVE",
+        "CONTEXT_NOT_READY",
+        "CSRF_REJECTED",
+        "DECISION_SESSION_INVALID",
+        "DECISION_STEPS_INCOMPLETE",
+        "DECISION_TERMINAL",
+        "ENROLLMENT_ALREADY_ACTIVE",
+        "ENROLLMENT_CLOSE_REASON_INVALID",
+        "ENROLLMENT_NOT_ACTIVE",
+        "FRESH_REVOCATION_OTP_REQUIRED",
+        "GENERIC_VERIFICATION_RESPONSE",
+        "GUARD_EVALUATOR_UNAVAILABLE",
+        "IDEMPOTENCY_CONFLICT",
+        "INTEGRITY_FAILURE",
+        "INVALID_TRANSITION",
+        "INVITATION_ALREADY_ACTIVE",
+        "INVITATION_NOT_READY",
+        "INVITATION_TERMINAL",
+        "INVITER_NOT_PARTICIPATING",
+        "INVITER_TENANT_MISMATCH",
+        "LEDGER_VOCABULARY_VIOLATION",
+        "OPERATOR_NOT_AUTHORIZED",
+        "OTP_BUDGET_EXHAUSTED_DECISION",
+        "OTP_BUDGET_EXHAUSTED_RIGHTS",
+        "OTP_CODE_REJECTED",
+        "OTP_EXPIRED_OR_CONSUMED",
+        "OTP_LOCKED",
+        "OTP_RESEND_LIMIT",
+        "OTP_SCOPE_MISUSE",
+        "PURPOSE_SELECTION_INVALID",
+        "RECOVERY_TOKEN_SCOPE_VIOLATION",
+        "REISSUE_LIMIT_REACHED",
+        "REVOCATION_ACTOR_NOT_ALLOWED",
+        "REVOCATION_ALREADY_APPLYING",
+        "REVOCATION_FAIL_NOT_ALLOWED",
+        "REVOCATION_REQUEST_NOT_EXPLICIT",
+        "RH2_SEPARATION_OF_DUTIES_VIOLATION",
+        "RH3_FOUR_EYES_REQUIRED",
+        "RH3_NOT_BOUND_TO_RH2",
+        "RIGHTS_SESSION_CHAIN_MISMATCH",
+        "ROSTER_INSUFFICIENT",
+        "ROTATION_LIMIT_REACHED",
+        "SCHOOL_CANNOT_EXECUTE_REVOCATION",
+        "STEP_UP_OR_ASSERTION_INVALID",
+        "TRANSITION_DISABLED_IN_CONTEXT",
+        "VERSION_CHANGED",
+        "VERSION_OR_MODE_GUARD_FAILED"
+      ],
+      "x-error-ids": {
+        "ERR-CM-02": "INVITER_TENANT_MISMATCH",
+        "ERR-CM-03": "INVITER_NOT_PARTICIPATING",
+        "ERR-CM-04": "ENROLLMENT_NOT_ACTIVE",
+        "ERR-CM-05": "CONTEXT_NOT_ACTIVE",
+        "ERR-CM-06": "INVALID_TRANSITION",
+        "ERR-CM-07": "IDEMPOTENCY_CONFLICT",
+        "ERR-CM-08": "INTEGRITY_FAILURE",
+        "ERR-CM-09": "CSRF_REJECTED",
+        "ERR-CM-10": "ACTOR_NOT_ALLOWED",
+        "ERR-CM-12": "GUARD_EVALUATOR_UNAVAILABLE",
+        "ERR-TC-03": "ENROLLMENT_ALREADY_ACTIVE",
+        "ERR-TC-04": "ENROLLMENT_CLOSE_REASON_INVALID",
+        "ERR-TC-05": "CONTEXT_NOT_READY",
+        "ERR-IV-02": "INVITATION_ALREADY_ACTIVE",
+        "ERR-IV-03": "INVITATION_NOT_READY",
+        "ERR-IV-04": "VERSION_OR_MODE_GUARD_FAILED",
+        "ERR-IV-05": "ROTATION_LIMIT_REACHED",
+        "ERR-IV-06": "GENERIC_VERIFICATION_RESPONSE",
+        "ERR-IV-07": "REISSUE_LIMIT_REACHED",
+        "ERR-IV-09": "CANCEL_REASON_INVALID",
+        "ERR-IV-10": "INVITATION_TERMINAL",
+        "ERR-OT-02": "OTP_CODE_REJECTED",
+        "ERR-OT-03": "OTP_EXPIRED_OR_CONSUMED",
+        "ERR-OT-04": "OTP_LOCKED",
+        "ERR-OT-05": "OTP_SCOPE_MISUSE",
+        "ERR-OT-06": "OTP_BUDGET_EXHAUSTED_DECISION",
+        "ERR-OT-07": "OTP_BUDGET_EXHAUSTED_RIGHTS",
+        "ERR-OT-09": "OTP_RESEND_LIMIT",
+        "ERR-CD-01": "ALREADY_DECIDED",
+        "ERR-CD-02": "PURPOSE_SELECTION_INVALID",
+        "ERR-CD-03": "VERSION_CHANGED",
+        "ERR-CD-04": "DECISION_STEPS_INCOMPLETE",
+        "ERR-CD-05": "CHAIN_REVOKED_RECONFIRM",
+        "ERR-CD-06": "TRANSITION_DISABLED_IN_CONTEXT",
+        "ERR-CD-07": "DECISION_SESSION_INVALID",
+        "ERR-CD-08": "DECISION_TERMINAL",
+        "ERR-RV-01": "REVOCATION_REQUEST_NOT_EXPLICIT",
+        "ERR-RV-03": "FRESH_REVOCATION_OTP_REQUIRED",
+        "ERR-RV-04": "REVOCATION_ACTOR_NOT_ALLOWED",
+        "ERR-RV-06": "RECOVERY_TOKEN_SCOPE_VIOLATION",
+        "ERR-RV-07": "RH2_SEPARATION_OF_DUTIES_VIOLATION",
+        "ERR-RV-08": "ASSERTION_NOT_ATTESTED",
+        "ERR-RV-11": "REVOCATION_FAIL_NOT_ALLOWED",
+        "ERR-RV-13": "LEDGER_VOCABULARY_VIOLATION",
+        "ERR-RV-14": "RIGHTS_SESSION_CHAIN_MISMATCH",
+        "ERR-RV-15": "REVOCATION_ALREADY_APPLYING",
+        "ERR-RV-18": "RH3_FOUR_EYES_REQUIRED",
+        "ERR-RV-20": "RH3_NOT_BOUND_TO_RH2",
+        "ERR-RC-03": "CASE_CLOSE_PRECONDITION_FAILED",
+        "ERR-RC-04": "OPERATOR_NOT_AUTHORIZED",
+        "ERR-RC-05": "STEP_UP_OR_ASSERTION_INVALID",
+        "ERR-RC-06": "SCHOOL_CANNOT_EXECUTE_REVOCATION",
+        "ERR-RC-10": "ROSTER_INSUFFICIENT"
+      },
+      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-TC-01 y ERR-TC-02 son de worker o fixture."
+    },
+    "RightsPaths": {
+      "const": [
+        "OTP",
+        "RECOVERY_LINK",
+        "HUMAN_CASE"
+      ],
+      "description": "Constante: toda respuesta RIGHTS ofrece siempre las tres vías (OTP, enlace, caso humano) y nunca revela cuál está disponible (RULE-CNS-TBD-02; INV-RV-05; INV-OT-06)."
+    },
+    "Problem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 400,
+          "maximum": 599
+        },
+        "correlationId": {
+          "$ref": "#/$defs/Ref"
+        },
+        "rightsPathsAvailable": {
+          "$ref": "#/$defs/RightsPaths"
+        }
+      },
+      "required": [
+        "code",
+        "status",
+        "correlationId"
+      ],
+      "description": "application/problem+json sin texto libre (cero PII; INV-CM-05). En operaciones RIGHTS incluye rightsPathsAvailable: nunca «denegado»."
+    },
+    "UniformNotFound": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": 404
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "description": "404 uniforme: mismo cuerpo, código y tiempo acotado para token inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01; REQ-CNS-TBD-07 AC-07.1)."
+    },
+    "UniformAccepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "const": "RECEIVED"
+        },
+        "rightsPathsAvailable": {
+          "$ref": "#/$defs/RightsPaths"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "description": "Respuesta genérica idéntica exista o no el canal, la cadena, el caso o el límite (ERR-OT-01, ERR-OT-07, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-09). En rutas RIGHTS lleva rightsPathsAvailable."
+    }
+  }
+}

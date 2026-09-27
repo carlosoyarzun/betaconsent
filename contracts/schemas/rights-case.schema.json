@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.consent-app.invalid/it0/schemas/rights-case.schema.json",
+  "title": "RightsCase (proyección IT0)",
+  "x-api-id": "API-CNS-190",
+  "status": "DRAFT",
+  "x-it0-only": true,
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-governed-by": [
+    "specs/state-machines/rights-case.spec.yaml",
+    "SM-CNS-001 §5.2 (v7)",
+    "ADR-002 §10"
+  ],
+  "x-states": [
+    "OPEN",
+    "CONTACTING",
+    "IN_VERIFICATION",
+    "RESOLVED",
+    "WITHDRAWN"
+  ],
+  "x-transitions": [
+    {
+      "id": "RC0",
+      "from": null,
+      "to": "OPEN",
+      "via": "POST /staff/rights-reports"
+    },
+    {
+      "id": "RC1",
+      "from": null,
+      "to": "OPEN",
+      "via": "POST /rights-case/open; interno desde R9",
+      "pending": [
+        "F-006"
+      ]
+    },
+    {
+      "id": "RC1c",
+      "from": null,
+      "to": "OPEN",
+      "via": "sin operación",
+      "enabled": false,
+      "reason": "R13-2; LD-03/LD-04",
+      "pending": [
+        "F-004"
+      ]
+    },
+    {
+      "id": "RC2",
+      "from": "OPEN",
+      "to": "CONTACTING",
+      "via": "worker (primera acción; RV0 al canal ligado)"
+    },
+    {
+      "id": "RC2u",
+      "from": "OPEN",
+      "to": "CONTACTING",
+      "via": "SIN OPERACIÓN en este borrador: la spec la declara httpPost false y disparada por el retorno por /m/, lo que no tiene superficie HTTP compatible con INV-CM-08 (FINDING F-CT-01)",
+      "pending": [
+        "F-011",
+        "F-006",
+        "OPEN-CT-01"
+      ]
+    },
+    {
+      "id": "RC3",
+      "from": "CONTACTING",
+      "to": "IN_VERIFICATION",
+      "via": "POST /rights-case/revocation-intent",
+      "pending": [
+        "F-005",
+        "F-006"
+      ]
+    },
+    {
+      "id": "RC3a",
+      "from": "CONTACTING",
+      "to": "IN_VERIFICATION",
+      "via": "POST /rights-case/revocation-intent (Revocation abierta)",
+      "pending": [
+        "F-005",
+        "F-006",
+        "P-v7-5"
+      ]
+    },
+    {
+      "id": "RC4.RESOLVED",
+      "from": "IN_VERIFICATION",
+      "to": "RESOLVED",
+      "via": "POST /platform/rights-cases/{caseRef}/close"
+    },
+    {
+      "id": "RC4.WITHDRAWN",
+      "from": "IN_VERIFICATION",
+      "to": "WITHDRAWN",
+      "via": "POST /platform/rights-cases/{caseRef}/close"
+    },
+    {
+      "id": "RC5",
+      "from": "CONTACTING",
+      "to": "RESOLVED",
+      "via": "POST /platform/rights-cases/{caseRef}/close"
+    },
+    {
+      "id": "RC6",
+      "from": "CONTACTING",
+      "to": "WITHDRAWN",
+      "via": "POST /platform/rights-cases/{caseRef}/close"
+    }
+  ],
+  "$defs": {
+    "RightsCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "tenantRef": {
+          "$ref": "common.schema.json#/$defs/TenantRef"
+        },
+        "chainRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "revocationRef": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "$ref": "common.schema.json#/$defs/EscalationReason"
+        },
+        "initiatedVia": {
+          "$ref": "common.schema.json#/$defs/InitiatedVia"
+        },
+        "state": {
+          "enum": [
+            "OPEN",
+            "CONTACTING",
+            "IN_VERIFICATION",
+            "RESOLVED",
+            "WITHDRAWN"
+          ]
+        },
+        "slaDueAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "overdue": {
+          "type": "boolean"
+        },
+        "openedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "closedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "caseRef",
+        "tenantRef",
+        "chainRef",
+        "origin",
+        "initiatedVia",
+        "state",
+        "sequence"
+      ],
+      "description": "Sin estado de expiración ni de rechazo; nunca deniega (INV-RC-01). PARKED no existe (LD-04). case_contact vive solo en pii.case_contact y no forma parte de la proyección."
+    }
+  }
+}
