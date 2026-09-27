@@ -5,11 +5,12 @@
   "x-api-id": "API-CNS-190",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4e + specs/adapters/lectorpro-beta.spec.yaml (CA-116; origin/fix/CA-116-f011-f012 @ dfd6e5e, PR #6)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "x-governed-by": [
     "specs/state-machines/rights-case.spec.yaml",
     "SM-CNS-001 §5.2 (v7)",
-    "ADR-002 §10"
+    "ADR-002 §10",
+    "DEC-BR-018 (ACCEPTED 2026-09-27)"
   ],
   "x-states": [
     "OPEN",
@@ -29,10 +30,7 @@
       "id": "RC1",
       "from": null,
       "to": "OPEN",
-      "via": "POST /rights-case/open (fuente BEARER); fuente SYSTEM desde R9 en la misma tx, sin HTTP (GRD-RC-16, GRD-CM-15)",
-      "pending": [
-        "F-006"
-      ]
+      "via": "POST /rights-case/open (fuente BEARER); fuente SYSTEM desde R9 en la misma tx, sin HTTP (GRD-RC-16, GRD-CM-15)"
     },
     {
       "id": "RC1c",
@@ -40,10 +38,7 @@
       "to": "OPEN",
       "via": "sin operación",
       "enabled": false,
-      "reason": "R13-2; LD-03/LD-04",
-      "pending": [
-        "F-004"
-      ]
+      "reason": "R13-2; LD-03/LD-04"
     },
     {
       "id": "RC2",
@@ -56,21 +51,20 @@
       "from": "OPEN",
       "to": "CONTACTING",
       "via": "POST /rights-case/resume (POST explícito con CSRF desde la página del caso servida por /m/; el GET no transiciona, F-011)",
-      "pending": [
-        "F-005 / DEC-BR-018 (actor)",
-        "F-CT-10",
-        "F-006"
+      "actor": {
+        "ref": "UNVERIFIED_BEARER"
+      },
+      "command": "ConfirmCaseReturnViaHandle",
+      "governedBy": [
+        "rights-case.spec RC2u rev. 4f (F-CT-10, Carlos 2026-09-27)",
+        "DEC-BR-018 (F-005, R13-5)"
       ]
     },
     {
       "id": "RC3",
       "from": "CONTACTING",
       "to": "IN_VERIFICATION",
-      "via": "POST /rights-case/revocation-intent",
-      "pending": [
-        "F-005",
-        "F-006"
-      ]
+      "via": "POST /rights-case/revocation-intent"
     },
     {
       "id": "RC3a",
@@ -78,8 +72,6 @@
       "to": "IN_VERIFICATION",
       "via": "POST /rights-case/revocation-intent (Revocation abierta)",
       "pending": [
-        "F-005",
-        "F-006",
         "P-v7-5"
       ]
     },
@@ -87,37 +79,25 @@
       "id": "RC4.RESOLVED",
       "from": "IN_VERIFICATION",
       "to": "RESOLVED",
-      "via": "POST /platform/rights-cases/{caseRef}/close",
-      "pending": [
-        "F-CT-11"
-      ]
+      "via": "POST /platform/rights-cases/{caseRef}/close"
     },
     {
       "id": "RC4.WITHDRAWN",
       "from": "IN_VERIFICATION",
       "to": "WITHDRAWN",
-      "via": "POST /platform/rights-cases/{caseRef}/close",
-      "pending": [
-        "F-CT-11"
-      ]
+      "via": "POST /platform/rights-cases/{caseRef}/close"
     },
     {
       "id": "RC5",
       "from": "CONTACTING",
       "to": "RESOLVED",
-      "via": "POST /platform/rights-cases/{caseRef}/close",
-      "pending": [
-        "F-CT-11"
-      ]
+      "via": "POST /platform/rights-cases/{caseRef}/close"
     },
     {
       "id": "RC6",
       "from": "CONTACTING",
       "to": "WITHDRAWN",
-      "via": "POST /platform/rights-cases/{caseRef}/close",
-      "pending": [
-        "F-CT-11"
-      ]
+      "via": "POST /platform/rights-cases/{caseRef}/close"
     }
   ],
   "$defs": {
@@ -137,8 +117,8 @@
         "revokedDecisionRef": {
           "$ref": "common.schema.json#/$defs/Ref",
           "description": "Decisión del ciclo del caso, fijada en servidor al abrir (GRD-RC-02) y nunca modificada (R14-C, SEC N2-03). UNIQUE parcial (tenant_id, chain_ref, revoked_decision_ref) de casos no terminales.",
-          "x-pending": [
-            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          "x-governed-by": [
+            "DEC-BR-018 R14-C (A-08, A-25, A-26: ≤1 revocación abierta por decisión revocada)"
           ]
         },
         "revocationRef": {

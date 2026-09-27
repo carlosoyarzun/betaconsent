@@ -5,13 +5,14 @@
   "x-api-id": "API-CNS-183",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4e + specs/adapters/lectorpro-beta.spec.yaml (CA-116; origin/fix/CA-116-f011-f012 @ dfd6e5e, PR #6)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "description": "Fuente única de la lista blanca por eventType (INV-CM-05). additionalProperties=false: un campo fuera de lista o un valor fuera de enum hace fallar el append. Prohibidos: email, nombre, RUT, token, OTP, IP, HMAC y texto libre. Excluidos por estar deshabilitados en IT0: CONSENT_EXPIRED (C7), CONSENT_SUPERSEDED (C8), DECISION_CONTESTED (M3).",
   "x-governed-by": [
     "common.spec.yaml ledgerEnvelope.payloadPolicy, INV-CM-05",
     "*.spec.yaml events (stream: LEDGER)",
     "DEC-BR-017 §6",
-    "ADR-002 §10, §11"
+    "ADR-002 §10, §11",
+    "DEC-BR-018 (ACCEPTED 2026-09-27)"
   ],
   "x-disabled-in-it0": [
     "CONSENT_EXPIRED",
@@ -436,8 +437,8 @@
         },
         "revokedDecisionRef": {
           "$ref": "common.schema.json#/$defs/Ref",
-          "x-pending": [
-            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          "x-governed-by": [
+            "DEC-BR-018 R14-C, P-02 (A-50, A-51)"
           ]
         },
         "scope": {
@@ -501,8 +502,8 @@
         },
         "revokedDecisionRef": {
           "$ref": "common.schema.json#/$defs/Ref",
-          "x-pending": [
-            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          "x-governed-by": [
+            "DEC-BR-018 R14-C, P-02 (A-50, A-51)"
           ]
         },
         "scope": {
@@ -737,10 +738,6 @@
         "revocationRef"
       ],
       "description": "recordedByRef y cosignedByRef solo en HUMAN_ASSISTED (RH3), ambos o ninguno; R3 y R3r no llevan ninguno (lista blanca, INV-CM-05). cosignedByRef ≠ recordedByRef (CHECK de DB, INV-RV-11; no expresable en JSON Schema): un append de RH3 sin cosignedByRef o con ambos iguales falla sin CONFIRMED ni job.",
-      "x-pending": [
-        "F-003",
-        "OPEN-RV-11 (PENDING-CARLOS: cosignedByRef como campo nuevo de DEC-BR-017 §6 y del payload de SM v7 §5.2 RH3)"
-      ],
       "dependentRequired": {
         "recordedByRef": [
           "cosignedByRef"
@@ -753,7 +750,8 @@
         "revocation.spec REVOCATION_CONFIRMED, INV-RV-11",
         "F-R14-04",
         "CARLOS r3 R14-B",
-        "DEC-BR-017 §6"
+        "DEC-BR-017 §6",
+        "DEC-BR-018 OPEN-RV-11 (A-57, A-58)"
       ]
     },
     "REVOCATION_DOWNSTREAM_EMITTED": {

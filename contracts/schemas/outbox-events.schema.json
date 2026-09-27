@@ -5,7 +5,7 @@
   "x-api-id": "API-CNS-185",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4e + specs/adapters/lectorpro-beta.spec.yaml (CA-116; origin/fix/CA-116-f011-f012 @ dfd6e5e, PR #6)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "description": "AsyncAPI no se usa: las specs solo exigen outbox transaccional con entrega firmada al stub interno (R5-1) y no definen canales de broker.",
   "x-governed-by": [
     "consent-decision.spec.yaml events consent.granted, consent.revoked",

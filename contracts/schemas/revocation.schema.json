@@ -5,11 +5,12 @@
   "x-api-id": "API-CNS-189",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4e + specs/adapters/lectorpro-beta.spec.yaml (CA-116; origin/fix/CA-116-f011-f012 @ dfd6e5e, PR #6)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "x-governed-by": [
     "specs/state-machines/revocation.spec.yaml",
     "SM-CNS-001 §5, §5.0 a §5.2 (v7)",
-    "DEC-BR-017 §6"
+    "DEC-BR-017 §6",
+    "DEC-BR-018 (ACCEPTED 2026-09-27)"
   ],
   "x-states": [
     "REQUESTED",
@@ -41,11 +42,7 @@
       "id": "RC3",
       "from": null,
       "to": "REQUESTED",
-      "via": "POST /rights-case/revocation-intent (sin Revocation abierta)",
-      "pending": [
-        "F-005",
-        "F-006"
-      ]
+      "via": "POST /rights-case/revocation-intent (sin Revocation abierta)"
     },
     {
       "id": "R2",
@@ -83,8 +80,6 @@
       "to": "CONFIRMED",
       "via": "POST /platform/rights-cases/{caseRef}/confirmation y .../confirmation/cosign",
       "pending": [
-        "F-003",
-        "OPEN-RV-11",
         "OPEN-RV-10",
         "LD-03"
       ]
@@ -167,8 +162,6 @@
       "to": "(self)",
       "via": "POST /rights-case/revocation-intent (Revocation abierta)",
       "pending": [
-        "F-005",
-        "F-006",
         "P-v7-5"
       ]
     },
@@ -205,8 +198,8 @@
         },
         "revokedDecisionRef": {
           "$ref": "common.schema.json#/$defs/Ref",
-          "x-pending": [
-            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          "x-governed-by": [
+            "DEC-BR-018 R14-C (A-08, A-25, A-26: ≤1 revocación abierta por decisión revocada)"
           ]
         },
         "scope": {
