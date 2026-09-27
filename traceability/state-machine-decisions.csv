@@ -55,6 +55,7 @@ revocation,open_item,OPEN-RV-06,DECIDED interino (R13-4); definitivo LEGAL DECIS
 revocation,open_item,OPEN-RV-07,DECIDED interino (R13-4); definitivo LEGAL DECISION (LD-03),Carlos,true,R8h: interino IT0 DECIDIDO R13-4 (enabled: false); regla definitiva = LEGAL DECISION LD-03.
 revocation,open_item,OPEN-RV-09,DECIDED,Carlos,false,Re-consentimiento sobre la misma decisionChainKey (AUDIT-H01-rev3 N-01): DECIDIDO R14-C — cada Revocation se liga a la decisión GRANTED que revoca (revokedDecis
 revocation,open_item,OPEN-RV-10,OPEN,lampone-security → Carlos,true,"Step-up de record_case_confirmation y cosign_case_confirmation (RH3): P-36 no lo cubre; decidir si se agrega a P-36 (cambio de parámetro, vuelve a Carlos) (AUDI"
+revocation,open_item,OPEN-RV-11,PENDING-CARLOS,lampone-architect + lampone-security → Carlos,false,"F-R14-04 (P2, security↔architecture): la spec agrega cosignedByRef al payload de REVOCATION_CONFIRMED (RH3) para que el co-firmante conste en el ledger. Es un c"
 revocation,open_item,P-v7-1,ACCEPTED (R14-A),Carlos,false,RC3a/R12: vía adjunta sin sobrescribir el authPath proyectado; authPath efectivo = el de la verificación previa a la confirmación (GRD-RV-28).
 revocation,open_item,P-v7-2,ACCEPTED (R14-A),Carlos,false,"Un adjunto nunca hace retroceder el estado, no reinicia requestedAt ni limpia flags (GRD-RV-27, INV-16)."
 revocation,open_item,P-v7-4,"ACCEPTED (R14-A, R14-B)",Carlos,false,"Cuatro ojos en RH3 = dos RIGHTS_OPERATOR distintos; mínimo 4 personas (GRD-RV-26, GRD-RC-15)."
@@ -65,7 +66,7 @@ revocation,open_item,NF-22,DECIDED (R14-C),Carlos,false,Re-consentimiento y unic
 revocation,open_item,OPEN-RV-08,DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04),Carlos,true,"'Yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0, rights-case RC1c); destino = LEGAL DECISION LD-03/LD-04. AC-05.3 de REQ-REC queda diferido en "
 revocation,known_conflict,OPEN-RV-05,DECIDED,Carlos,false,Alcance del handle MANAGE_ENTRY (SEC-CNS-012 P1-04)
 rights-case,known_limitation,LIM-RC-01,KNOWN LIMITATION,Carlos,true,"Caso R5-4 abierto sin /m/ (solo /r/, o /m/ perdido por rotación V6c) no tiene vía de retorno: queda overdue, nunca FAILED; la página del caso no promete plazo. "
-rights-case,known_limitation,LIM-RC-02,KNOWN LIMITATION,Carlos,true,"Con 3 humanos, si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, solo un cuarto apro"
+rights-case,known_limitation,LIM-RC-02,KNOWN LIMITATION,Carlos,true,"Con 2 aprobadores (mínimo R14-B), si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, "
 rights-case,known_limitation,LIM-RC-03,KNOWN LIMITATION,Carlos,false,"DECIDIDO R14-B: mínimo 4 personas reales (2 RIGHTS_OPERATOR + 2 aprobadores, sin reutilización entre roles; GRD-RC-15). Con menos, RH2/RH2v/RH3 no son ejecutabl"
 rights-case,known_limitation,LIM-RC-04,KNOWN LIMITATION,Carlos,true,NF-21 (R14-G): un caso CHANNEL_UNREACHABLE en OPEN cuya revocación termina fuera del caso no cierra hasta que el solicitante vuelve por /m/ (RC2u → RC5/RC6); qu
 rights-case,legal_decision,LD-02,LEGAL DECISION,Carlos,true,Guion versionado de verificación y assuranceLevel (placeholder IT0)
@@ -88,4 +89,5 @@ tenant-context,open_item,OPEN-TC-02,OPEN,Carlos,false,Si SP4 (participación CLO
 tenant-context,open_item,OPEN-TC-03,OPEN,Carlos,false,Q-28: nombre LEFT_SCHOOL y 'la revocación no cierra el Enrollment'.
 tenant-context,open_item,OPEN-TC-04,OPEN,Carlos,false,F-313: si el Context Owner autoriza la SchoolParticipation con Privacy Legal como segundo aprobador.
 tenant-context,open_item,OPEN-TC-06,OPEN,Carlos,false,PRIVACY_LEGAL puede reactivar el contexto ([N-SM] §1) pero no está en el enum actorRole (SM v7 R0.2); agregarlo o registrarlo como actorRole CONTEXT_OWNER con r
+tenant-context,open_item,OPEN-TC-07,PENDING-CARLOS,Carlos,false,Desviación spec↔decisión P2 (SEC-CNS-012 re-verificación rev. 4b (3)): R14-E dice 'I9 en la misma transacción que SP4/EN1'; GRD-TC-08 admite que la cancelación 
 tenant-context,open_item,OPEN-TC-05,OPEN,gaona-measure / lampone-architect; cierre Carlos,false,"Nombres de SCHOOL_PARTICIPATION_STATUS_CHANGED, ENROLLMENT_STATUS_CHANGED y CONSENT_CONTEXT_STATUS_CHANGED, y almacén de la auditoría PLATFORM (ADR-011)."
