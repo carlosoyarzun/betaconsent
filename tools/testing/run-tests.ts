@@ -52,6 +52,19 @@ function main(): void {
 
   const files = roots.flatMap((r) => findTestFiles(resolve(REPO_ROOT, r)));
   if (files.length === 0) {
+    const inCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
+    if (inCI) {
+      // Fail-closed (SEC-CNS-011 P1-02): en CI una capa sin archivos no puede dejar su
+      // check requerido verde sin haber probado nada (p. ej. si se retiran o mueven los
+      // tests de una capa por error). Fuera de CI se mantiene el aviso sin bloquear,
+      // porque una capa puede legítimamente no tener tests todavía en desarrollo local.
+      console.error(
+        `[run-tests] capa "${layer}": sin archivos *.test.ts bajo ${roots.join(", ")}. En CI esto es un fallo ` +
+          `(fail-closed, SEC-CNS-011 P1-02); si la capa ya no debe ser un check requerido, retirar su job de ` +
+          `.github/workflows/tests.yml en vez de dejarlo vacío.`,
+      );
+      process.exit(1);
+    }
     console.log(`[run-tests] capa "${layer}": sin archivos *.test.ts bajo ${roots.join(", ")}; nada que correr.`);
     process.exit(0);
   }
