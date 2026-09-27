@@ -1,4 +1,5 @@
 # Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 4 (R14-C: revokedDecisionRef).
+# rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (GRD-TC-07 en C3 y C5: locks frente a SP4/EN1).
 # La existencia y aceptación del consentimiento NO las decide ningún modelo: los guards
 # verifican hechos registrados (eventos previos, hash servido, elección explícita por finalidad).
 specId: SPEC-CNS-SM-CONSENT-DECISION
@@ -6,7 +7,7 @@ title: "State machine ConsentDecision (IT0, contexto BETA_2026_01)"
 smId: SM-CNS-001
 smSection: "§4, §4.1, §4.2, §7"
 aggregateType: ConsentDecision
-version: "0.4.0"
+version: "0.4.1"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -145,7 +146,7 @@ transitions:
     actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
     routeClass: ISSUANCE_DECISION
     httpPost: true
-    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-08, GRD-CD-11, GRD-CD-12]
+    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-08, GRD-CD-11, GRD-CD-12, GRD-TC-07]
     effects:
       - "Lote atómico: n× PURPOSE_DECISION_RECORDED + CONSENT_GRANTED + RECEIPT_CREATED + INVITATION_COMPLETED (I6) + outbox consent.granted."
       - "Emite el enlace de gestión (management_token, P-31/P-13) SOLO al canal ligado (revocation §managementLink)."
@@ -156,7 +157,7 @@ transitions:
     idempotencyKey: "Idempotency-Key + consentId + payloadHash"
     errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
     governedBy: ["SM-CNS-001 §4 C3, §4.1, §5.0", "DEC-BR-001", "RULE-CNS-022", "SEC-CNS-006 P-13, P-31"]
-    testIds: [TEST-CNS-192]
+    testIds: [TEST-CNS-192, TEST-CNS-436]
   - id: C4
     from: PENDING
     to: PARTIALLY_GRANTED
@@ -182,7 +183,7 @@ transitions:
     actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
     routeClass: ISSUANCE_DECISION
     httpPost: true
-    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-07, GRD-CD-11, GRD-CD-12]
+    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-07, GRD-CD-11, GRD-CD-12, GRD-TC-07]
     effects:
       - "Lote atómico: n× PURPOSE_DECISION_RECORDED + CONSENT_DECLINED + RECEIPT_CREATED + INVITATION_DECLINED (I7)."
       - "Downstream de DECLINED: EXT-D (DEC-BR-005, LD-20); en IT0 sin evento de outbox definido."
@@ -191,7 +192,7 @@ transitions:
     idempotencyKey: "Idempotency-Key + consentId + payloadHash"
     errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
     governedBy: ["SM-CNS-001 §4 C5", "EXT-D", "Q-13 (detalle por finalidad del DECLINED, abierta)"]
-    testIds: [TEST-CNS-194]
+    testIds: [TEST-CNS-194, TEST-CNS-436]
   - id: C6
     from: [GRANTED, PARTIALLY_GRANTED]
     to: REVOKED

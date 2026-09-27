@@ -1,4 +1,6 @@
 # Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3).
+# rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de RC1).
+# rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en RC1), N2-03 (unicidad por ciclo); AUDIT-H01-rev4 M-04.
 # No es la RightsRequest de [N-SM] §7 (A5 F-511). Sin estado de expiración ni de rechazo:
 # nunca deniega. Toda acción del operador es una función SECURITY DEFINER con actor desde su sesión.
 specId: SPEC-CNS-SM-RIGHTS-CASE
@@ -6,7 +8,7 @@ title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
 smId: SM-CNS-001
 smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
 aggregateType: RightsCase
-version: "0.4.0"
+version: "0.4.2"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -29,7 +31,7 @@ scope:
     Todo caso tiene chainRef (cadena conocida): se abre desde un handle /m/ o /r/ (incluido el
     portador que declara no tener acceso al correo, R5-4), por disparador del sistema (R9) o por
     reporte del colegio sobre un subjectRef de su tenant. Operador RIGHTS_OPERATOR de plataforma,
-    case-scoped, IT0_ONLY con MFA; tres humanos distintos en HUMAN_ASSISTED.
+    case-scoped, IT0_ONLY con MFA; mínimo 4 personas distintas en HUMAN_ASSISTED (R14-B, GRD-RC-15).
   notInIt0:
     - "Intake humano sin enlace (DEFERRED, adición r3 (a)): no hay caso sin chainRef, ni rights_intake, ni función de match"
     - "Estado PARKED (S4-06a): propuesta no activa hasta que Carlos decida (LD-04)"
@@ -43,7 +45,7 @@ scope:
     - id: LIM-RC-02
       blocksDataReal: true # se reevalúa antes de datos reales (R7-2 / R7-6)
       testIds: [TEST-CNS-346]
-      text: "Con 3 humanos, si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, solo un cuarto aprobador lo destraba (ADR-006 §6.3; R-15 aceptado IT0, R7-6)."
+      text: "Con 2 aprobadores (mínimo R14-B), si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, solo un tercer aprobador distinto lo destraba (ADR-006 §6.3; R-15 aceptado IT0, R7-6)."
       governedBy: ["ADR-006 §6.3", "CARLOS r3 R7-5, R7-6"]
     - id: LIM-RC-03
       testIds: [TEST-CNS-413]
@@ -52,7 +54,7 @@ scope:
       blocksDataReal: false
     - id: LIM-RC-04
       testIds: [TEST-CNS-424]
-      text: "NF-21 (R14-G): un caso CHANNEL_UNREACHABLE en OPEN cuya revocación termina fuera del caso no cierra hasta que el solicitante vuelve por /m/ (RC2u → RC5/RC6); queda overdue, nunca FAILED. Limitación conocida de IT0, distinta de R7-2; se reevalúa antes de habilitar datos reales."
+      text: "NF-21 (R14-G): un caso CHANNEL_UNREACHABLE en OPEN cuya revocación termina fuera del caso no cierra hasta que el solicitante vuelve por /m/ (RC2u → RC5/RC6); queda overdue, nunca FAILED. Si entretanto la cadena re-consiente, ese caso es de un ciclo anterior (GRD-RC-02 por revokedDecisionRef) y el handle ya no lo resuelve (GRD-RC-14): solo lo cierra el operador por GRD-RC-09 o queda overdue. Limitación conocida de IT0, distinta de R7-2; se reevalúa antes de habilitar datos reales."
       governedBy: ["CARLOS r3 R14-G", "SM-CNS-001 v7 §11 NF-21"]
       blocksDataReal: true
 
@@ -68,6 +70,7 @@ attributes: # app.rights_case (ADR-002 §10)
   - caseRef
   - tenantRef
   - chainRef # NOT NULL
+  - revokedDecisionRef # NOT NULL (R14-C, SEC N2-03): decisión del ciclo del caso, fijada en servidor al abrir por GRD-RC-02 (regla de derivación) y nunca modificada
   - revocationRef # NULL hasta RC3 (o la Revocation abierta adjunta)
   - origin
   - initiatedVia
@@ -145,7 +148,7 @@ transitions:
       - "Tope y alerta por tenant (P-35), sin pausa automática."
     emits: [RIGHTS_CASE_OPENED]
     payloadValues: {reasonCode: SCHOOL_REPORTED, initiatedVia: SCHOOL_REPORT}
-    idempotencyKey: "(tenant_id, chainRef) — ≤1 no terminal"
+    idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
     errors: [ERR-RC-06, ERR-RC-07, ERR-CM-09, ERR-CM-10]
     governedBy: ["SM-CNS-001 §5.2 RC0", "DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.2", "SEC-CNS-006 P-35", "LD-03", "AUDIT F-A10", "SEC-CNS-012 P2-10"]
     testIds: [TEST-CNS-290, TEST-CNS-342, TEST-CNS-343]
@@ -155,26 +158,32 @@ transitions:
     command: OpenRightsCase
     origin: [LIMIT_REACHED, CHANNEL_UNREACHABLE, REQUESTER_ASKED, REQUEST_EXPIRED]
     actor:
-      fromHandle: {ref: UNVERIFIED_BEARER, note: "R13-5 (SM v7 R0.2): actorRole UNVERIFIED_BEARER"}
-      fromR9: {actorType: SYSTEM_GUARD}
+      bySource:
+        BEARER: {ref: UNVERIFIED_BEARER, note: "R13-5 (SM v7 R0.2): actorRole UNVERIFIED_BEARER; POST desde el handle /m/ o /r/"}
+        SYSTEM: {actorType: SYSTEM_GUARD, note: "solo cuando lo abre R9 (SM:152), en la misma tx que R9; sin handle, credencial ni POST"}
     routeClass: RIGHTS
     httpPost: true
-    httpPostNote: "Desde handle; la apertura fromR9 es interna."
-    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RC-05, GRD-RC-14]
+    httpPostBySource: {BEARER: true, SYSTEM: false}
+    httpPostNote: "Solo la fuente BEARER es un POST; la apertura SYSTEM (R9) es interna (SEC N2-01)."
+    guards: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04] # comunes a ambas fuentes
+    guardsBySource: # SEC-CNS-012 re-verificación rev. 4 N2-01: una lista plana hacía fallar la fuente SYSTEM (sin credencial, CSRF ni handle)
+      BEARER: [GRD-CM-01, GRD-CM-10, GRD-RC-05, GRD-RC-14]
+      SYSTEM: [GRD-RV-16, GRD-RC-16, GRD-CM-15] # N3-01: fuente = rol worker dentro de la tx de R9, nunca un campo de la request
     handleScope: "R13-3 (erratum SM v7 §5.0 / ADR-006 §6.1): el handle /m/ habilita RC1"
     effects:
       - "Desde handle: POST con CSRF, no consume el token, no muestra datos, idempotente por cadena; desde /r/ se ofrece antes revocar con ese enlace."
       - "CHANNEL_UNREACHABLE (declarado, R5-4): puede aportar case_contact opcional (GRD-RC-05)."
-      - "Desde handle con Revocation abierta: marca FLAG-escalated y emite REVOCATION_ESCALATED {reasonCode = origin}. fromR9: no la emite (ya la emitió R9; AUDIT F-A11)."
+      - "Desde handle con Revocation abierta: marca FLAG-escalated y emite REVOCATION_ESCALATED {reasonCode = origin}. Fuente SYSTEM (R9): no la emite (ya la emitió R9; AUDIT F-A11)."
+      - "Fuente SYSTEM (N2-01): tenant_id, chainRef y revokedDecisionRef salen del registro de la Revocation expirada, leído en la misma tx de R9 (GRD-RC-16); si RC1 no puede ejecutarse, R9 y RC1 se revierten juntos y el job se reintenta con alerta al superar el umbral operativo: nunca FAILED, nunca cierre, nunca 'denegado' (ERR-RC-11)."
       - "Alerta a RIGHTS_OPERATOR; el solicitante ve 'en revisión', nunca 'denegado'."
       - "REQUESTER_ASKED abierto tras R4 ('yo no hice esto') no pasa por aquí: es RC1c, enabled: false."
     emits: [RIGHTS_CASE_OPENED, REVOCATION_ESCALATED]
-    emitsCondition: {REVOCATION_ESCALATED: "solo fromHandle con Revocation abierta de la cadena"}
+    emitsCondition: {REVOCATION_ESCALATED: "solo fuente BEARER con Revocation abierta de la decisión del ciclo"}
     payloadValues: {reasonCode: "origin", initiatedVia: DECISION_MAKER}
-    idempotencyKey: "(tenant_id, chainRef) — ≤1 no terminal"
-    errors: [ERR-RC-01, ERR-RC-02, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RC1, §5 R9", "DEC-BR-017 §3, §4", "CARLOS r3 R5-4, R6-3", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "AUDIT F-A03, F-A11"]
-    testIds: [TEST-CNS-291, TEST-CNS-344, TEST-CNS-397]
+    idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
+    errors: [ERR-RC-01, ERR-RC-02, ERR-RC-11, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "RULE-CNS-TBD-02", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01"]
+    testIds: [TEST-CNS-291, TEST-CNS-344, TEST-CNS-397, TEST-CNS-425, TEST-CNS-426, TEST-CNS-427, TEST-CNS-444, TEST-CNS-445]
   - id: RC1c
     from: null
     to: OPEN
@@ -336,10 +345,10 @@ guards:
     testIds: [TEST-CNS-301]
   - id: GRD-RC-02
     name: single_open_case_per_chain
-    rule: "≤1 RightsCase no terminal por (tenant_id, chainRef) (UNIQUE parcial); una segunda apertura devuelve el caseRef existente."
+    rule: "SEC N2-03 / R14-C: ≤1 RightsCase no terminal por ciclo, UNIQUE parcial (tenant_id, chain_ref, revoked_decision_ref) WHERE status NOT IN ('RESOLVED','WITHDRAWN'); una segunda apertura del mismo ciclo devuelve el caseRef existente. revokedDecisionRef (NOT NULL) se deriva en servidor al abrir: fuente SYSTEM (R9) = revokedDecisionRef de la Revocation expirada; resto = la decisión GRANTED/PARTIALLY_GRANTED vigente de la cadena (la misma de GRD-RV-02) o, si no hay, la última decisión de la cadena. Nunca rechaza la apertura por esta derivación. Un caso de un ciclo anterior (p. ej. atascado en OPEN, LIM-RC-01/LIM-RC-04) no captura las aperturas del ciclo nuevo."
     onFail: null # idempotente, no error
-    governedBy: ["SM-CNS-001 §5.2", "ADR-002 §10", "REQ-CNS-TBD-06 AC-06.1"]
-    testIds: [TEST-CNS-291, TEST-CNS-300]
+    governedBy: ["SM-CNS-001 §5.2", "ADR-002 §10", "REQ-CNS-TBD-06 AC-06.1", "CARLOS r3 R14-C", "SEC-CNS-012 re-verificación rev. 4 N2-03"]
+    testIds: [TEST-CNS-291, TEST-CNS-300, TEST-CNS-432]
   - id: GRD-RC-03
     name: school_report_boundaries
     rule: "Reporta un HUMAN INVITER/TENANT_ADMIN del tenant resuelto sobre un subjectRef de su tenant con exactamente una cadena GRANTED; no crea Revocation, no aporta ni cambia canal, solo recibe 'en trámite'; alerta por tenant según P-35."
@@ -402,10 +411,16 @@ guards:
     testIds: [TEST-CNS-390]
   - id: GRD-RC-14
     name: case_bound_to_handle_chain
-    rule: "El caso se resuelve SIEMPRE en servidor desde el (tenant_id, chainRef) del handle (/m/ o /r/) de la request; un caseRef enviado por el cliente se ignora. Aplica a RC1, RC2u, RC3, RC3a y, del lado Revocation, a RC3 y R12. El portador de la cadena A nunca opera sobre el caso ni la revocación de la cadena B del mismo tenant."
+    rule: "El caso se resuelve SIEMPRE en servidor desde el (tenant_id, chainRef) del handle (/m/ o /r/) de la request y la decisión del ciclo vigente (misma derivación que GRD-RC-02; SEC N2-03): (tenant_id, chainRef, revokedDecisionRef); un caseRef enviado por el cliente se ignora. Aplica a la fuente BEARER de RC1, a RC2u, RC3, RC3a y, del lado Revocation, a RC3 y R12. El portador de la cadena A nunca opera sobre el caso ni la revocación de la cadena B del mismo tenant, ni sobre un caso de un ciclo anterior de su propia cadena."
     onFail: ERR-RC-09
-    governedBy: ["SEC-CNS-012 re-verificación N-01", "SM-CNS-001 v7 §5.2 (v7b)", "SM-CNS-001 R0.4 (resolución en servidor)"]
-    testIds: [TEST-CNS-397, TEST-CNS-398, TEST-CNS-399]
+    governedBy: ["SEC-CNS-012 re-verificación N-01", "SEC-CNS-012 re-verificación rev. 4 N2-03", "SM-CNS-001 v7 §5.2 (v7b)", "SM-CNS-001 R0.4 (resolución en servidor)"]
+    testIds: [TEST-CNS-397, TEST-CNS-398, TEST-CNS-399, TEST-CNS-433]
+  - id: GRD-RC-16
+    name: system_open_from_expired_revocation
+    rule: "Fuente SYSTEM de RC1 (N2-01; análogo a GRD-RV-22): el llamador es SYSTEM_GUARD (worker) ejecutando R9 sobre una Revocation no terminal previa a APPLIED; tenant_id, chainRef y revokedDecisionRef se leen del registro de esa Revocation dentro de la misma tx (SET LOCAL app.tenant_id y relectura bajo RLS; nunca de credencial, handle ni parámetro); origin = REQUEST_EXPIRED; sin handle, sin POST, sin CSRF. Un llamador SYSTEM sin Revocation expirada de la misma (tenant_id, chainRef, revokedDecisionRef), o con otra cadena, no abre caso. Fail-closed sin denegar: si el guard falla o no puede evaluarse, R9 + RC1 se revierten juntos (sin flag ni evento), el job se reintenta y, al superar el umbral operativo, alerta humana; la Revocation conserva su estado; nunca FAILED ni cierre."
+    onFail: ERR-RC-11
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4 N2-01", "SM-CNS-001 v7 §5.2 RC1 (SM:152: 'SYSTEM_GUARD solo cuando lo abre R9'), §5 R9", "DEC-BR-017 §5", "RULE-CNS-TBD-02", "ADR-006 §6"]
+    testIds: [TEST-CNS-425, TEST-CNS-426]
   - id: GRD-RC-15
     name: nominal_roster_minimum
     rule: "R14-B: la lista nominal atestada tiene ≥2 RIGHTS_OPERATOR distintos y ≥2 aprobadores distintos, sin que una misma persona (sub atestado) ocupe dos de esos roles en el caso; si no, RH2, RH2v y RH3 no son ejecutables (fail-closed; el caso queda abierto; X4 no ejecutado)."
@@ -475,6 +490,12 @@ errors:
     emitsEvent: none
     governedBy: ["CARLOS r3 R14-B"]
     testIds: [TEST-CNS-413]
+  - id: ERR-RC-11
+    code: SYSTEM_ESCALATION_RETRY
+    response: "Sin efecto en esta corrida y sin respuesta a ningún portador (no hay request): R9 y RC1 se revierten juntos, el job se reintenta y alerta al superar el umbral operativo; la Revocation conserva su estado; nunca FAILED ni cierre"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4 N2-01", "DEC-BR-017 §5", "RULE-CNS-TBD-02"]
+    testIds: [TEST-CNS-426]
   - id: ERR-RC-08
     code: TRANSITION_DISABLED_IN_IT0
     response: "Rechazo determinista sin evento (RC1c en IT0)"
