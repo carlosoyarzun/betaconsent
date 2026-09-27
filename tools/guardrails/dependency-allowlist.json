@@ -1,0 +1,50 @@
+{
+  "_comment": [
+    "Gobierna: ADR-001 §5 (allowlist de dependencias directas con owner, aplicado igual",
+    "a devDependencies y toolchain) y ADR-001 §11 nota final ('SDK de proveedor en el",
+    "manifiesto exige entrada en la allowlist de §5 con owner y el adaptador que lo",
+    "usa'). JIRA CA-118 (H03): implementa el openItem de CA-136/SEC-CNS-010 diferido a",
+    "H03 ('Allowlist de dependencias con owner... no implementada en esta versión del",
+    "guardrail').",
+    "",
+    "Alcance: dependencias DIRECTAS declaradas en package.json (dependencies +",
+    "devDependencies), no transitivas (las transitivas de SDKs 'forbidden' ya las cubre",
+    "tools/guardrails/ports-adapters/deny-list.json vía package-lock.json).",
+    "",
+    "Cada entrada exige version EXACTA (sin ^ ni ~, ADR-001 §5), owner HUMANO (ningún",
+    "agente IA es owner ni code owner, ADR-001 §11) y motivo. Toda dependencia propuesta",
+    "por un agente IA (proposedBy) requiere revisión humana antes de aprobarse (ADR-001",
+    "§5: riesgo de typosquatting); ese gate es el CODEOWNERS de este archivo (Carlos +",
+    "revisor humano de seguridad pendiente de designar, igual que",
+    "tools/guardrails/ports-adapters/), no el checker automático."
+  ],
+  "entries": [
+    {
+      "name": "typescript",
+      "version": "6.0.3",
+      "kind": "devDependency",
+      "owner": "carlosoyarzun",
+      "proposedBy": "lampone-dev",
+      "status": "pending-human-review",
+      "reason": "Compilador/typecheck del repo (tsc --noEmit) y ejecución con type-stripping nativo de los .ts de tools/ y tests/ (ADR-001 §6.1, §11 implementation). Ya presente desde CA-136."
+    },
+    {
+      "name": "@types/node",
+      "version": "24.13.4",
+      "kind": "devDependency",
+      "owner": "carlosoyarzun",
+      "proposedBy": "lampone-dev",
+      "status": "pending-human-review",
+      "reason": "Tipos de Node para el toolchain (guardrail, runner de tests, reporter de evidencia). Ya presente desde CA-136."
+    },
+    {
+      "name": "pg",
+      "version": "8.23.0",
+      "kind": "devDependency",
+      "owner": "carlosoyarzun",
+      "proposedBy": "lampone-dev",
+      "status": "pending-human-review",
+      "reason": "Cliente PostgreSQL puro JS (sin compilación nativa, sin scripts de ciclo de vida) usado solo por el smoke test de integración (tests/integration/postgres-smoke.test.ts, CA-118/H03) contra el service container de CI. No se usa en src/: no prejuzga el driver final de platform/db que fije ADR-002/ADR-001 §9 para producción. Publicado 2026-08-08 (>7 días, ADR-001 §5)."
+    }
+  ]
+}
