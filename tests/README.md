@@ -22,7 +22,10 @@ Cada capa corre con `node --test` nativo (sin frameworks de test adicionales, AD
 archivos `*.test.ts` recorriendo el árbol (no glob de shell), corre `node --test` con
 el reporter `spec` en stdout y el reporter de evidencia
 (`tools/testing/evidence-reporter.ts`) hacia `evidence/test-runs/`, y termina con éxito
-si la capa no tiene archivos (no bloquea `npm run ci` mientras una capa esté vacía).
+si la capa no tiene archivos SOLO fuera de CI (no bloquea desarrollo local mientras una
+capa esté vacía). En CI (`CI`/`GITHUB_ACTIONS="true"`) una capa sin archivos falla
+(fail-closed, SEC-CNS-011 P1-02): un check requerido no puede quedar verde si sus tests
+se retiraron o movieron por error.
 
 Convención de nombre de test: el primer argumento de `test()` empieza con el ID
 gobernante exacto (`TEST-CNS-###`, o `TEST-CNS-9NN` para tests del propio marco, ver
@@ -36,9 +39,11 @@ para el patrón (`<puerto>.ts` interfaz, `<puerto>.contract.ts` casos reutilizab
 hasta que exista el primer puerto real en `src/server/ports/**`.
 
 Integración con PostgreSQL: `tests/integration/postgres-smoke.test.ts` se omite (skip,
-no falla) si `TEST_DATABASE_URL` no está definida. En CI, el job `integration` la
-define contra un service container efímero. En LOCAL, con Docker disponible, exportar
-`TEST_DATABASE_URL` antes de `npm run test:integration`; ver
+no falla) si `TEST_DATABASE_URL` no está definida FUERA de CI. En CI, el job
+`integration` siempre define la variable contra un service container efímero; si
+llegara a faltar (`CI`/`GITHUB_ACTIONS="true"` sin `TEST_DATABASE_URL`), el test FALLA
+en vez de omitirse (fail-closed, SEC-CNS-011 P1-01). En LOCAL, con Docker disponible,
+exportar `TEST_DATABASE_URL` antes de `npm run test:integration`; ver
 `specs/test-framework.spec.yaml` (`integrationHarness`) para el detalle y el openItem
 sobre la versión/digest de PostgreSQL (ADR-002 no la fija de forma exacta).
 

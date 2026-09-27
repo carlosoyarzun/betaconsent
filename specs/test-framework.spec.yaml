@@ -55,7 +55,12 @@ layers:
     runner: "node --test nativo, vía tools/testing/run-tests.ts integration tests/integration"
     npmScript: "test:integration"
     ciJob: integration
-    example: "tests/integration/postgres-smoke.test.ts: se omite (skip, no falla) si TEST_DATABASE_URL no está definida"
+    example: >
+      tests/integration/postgres-smoke.test.ts: se omite (skip, no falla) si
+      TEST_DATABASE_URL no está definida FUERA de CI; en CI (CI/GITHUB_ACTIONS="true")
+      sin la variable el test FALLA (fail-closed, SEC-CNS-011 P1-01) en vez de omitirse,
+      para que el check requerido "integration" no pueda quedar verde sin haber probado
+      nada.
   - id: contract
     location: "tests/contract/**/*.test.ts"
     purpose: "Una suite de casos por puerto (ADR-001 §11) que corre, sin cambios, contra cada adaptador del puerto (ADR-001 §11 regla 4: 'cada puerto tiene una suite de contrato que pasan todos sus adaptadores')."
@@ -90,7 +95,10 @@ runner:
     portable) buscando "*.test.ts" (también admite .mts/.mjs/.js por si algún test no
     necesita TypeScript), ignora "fixtures/" y "node_modules/", no sigue symlinks
     (fail-closed, igual que tools/guardrails/ports-adapters), y si no hay archivos
-    termina en éxito con un aviso (no bloquea CI si una capa aún no tiene tests).
+    termina en éxito con un aviso SOLO fuera de CI (para no bloquear desarrollo local
+    mientras una capa aún no tiene tests). En CI (CI/GITHUB_ACTIONS="true") una capa sin
+    archivos termina en fallo (fail-closed, SEC-CNS-011 P1-02): un check requerido no
+    puede quedar verde si sus tests se retiraron o movieron por error.
   reporters: >
     Cada capa corre con dos reporters de node:test en paralelo (soportado de forma
     nativa con pares --test-reporter/--test-reporter-destination): "spec" hacia stdout
@@ -144,7 +152,13 @@ evidenceFormat:
     datos, y así debe seguir siendo cuando lleguen tests de dominio: ningún test de
     dominio debe volcar valores reales al nombre del test ni al mensaje de error que
     termina en evidencia — esa disciplina es responsabilidad de quien escriba el test,
-    lampone-qa la revisa).
+    lampone-qa la revisa). NOTA (SEC-CNS-011 P2-03): hoy los mensajes de `assert` de
+    node:test pueden incluir los valores actual/esperado del propio código del test
+    (aceptable ahora porque todo dato en este spec es sintético e infraestructural, sin
+    PII). Antes de que existan tests de dominio con datos sintéticos "realistas" (email,
+    nombres), quien los escriba debe sanear el mensaje del assert (comparar solo
+    clases/formas de error, no los valores) para que ese hábito no se traslade a
+    evidence/test-runs/*.jsonl ni a los logs de Actions (openItem, lampone-qa).
   appendOnly: >
     Cada corrida escribe un archivo nuevo (nombrado por runId, único por definición);
     ningún proceso reabre ni reescribe un archivo de una corrida anterior. La propiedad
@@ -182,14 +196,21 @@ integrationHarness:
       propio job como variables efímeras del step (no secrets de GitHub, no hay nada
       que proteger: es una instancia desechable, solo para el smoke test, sin red hacia
       ningún otro entorno). Nunca corre en el mismo job que sube artefactos con
-      credenciales de despliegue (ADR-003 C14).
+      credenciales de despliegue (ADR-003 C14). `ports: 5432:5432` publica el puerto en
+      todas las interfaces del runner; esto solo es aceptable en runners alojados por
+      GitHub (efímeros, sin ingress externo, ADR-003 C14 ya prohíbe runner
+      autoalojado) — si este job alguna vez corriera en un runner compartido o
+      autoalojado, ese binding queda prohibido (SEC-CNS-011 P2-05).
     smokeTest: "tests/integration/postgres-smoke.test.ts: SELECT 1, una sola verificación (conectividad + que el servidor responde), sin esquema ni fixtures."
     localDev: >
       Si hay Docker disponible, el desarrollador levanta un Postgres local (docker
       compose de infra/ una vez exista, o `docker run postgres:16`) y exporta
-      TEST_DATABASE_URL antes de `npm run test:integration`; sin la variable, el test
-      se omite (skip), no falla, así que `npm run ci` sigue pasando en un clon limpio
-      sin Docker.
+      TEST_DATABASE_URL antes de `npm run test:integration`; sin la variable y FUERA de
+      CI, el test se omite (skip), no falla, así que `npm run ci` sigue pasando en un
+      clon limpio sin Docker. Esta omisión es exclusiva de fuera de CI: si
+      CI/GITHUB_ACTIONS="true" y falta la variable, el test falla (fail-closed,
+      SEC-CNS-011 P1-01; ver runner.discovery para la misma regla aplicada a capas
+      vacías).
   openItems:
     - >
       ADR-002 fija "PostgreSQL (versión mayor vigente)", no una versión exacta ni un
@@ -210,8 +231,20 @@ contractHarness:
 dependencyAllowlist:
   location: "tools/guardrails/dependency-allowlist.json"
   governedBy: "ADR-001 §5, ADR-001 §11 nota final; openItem diferido de CA-136/SEC-CNS-010 ('Allowlist de dependencias con owner... diferida a H03')"
-  scope: "Dependencias DIRECTAS de package.json (dependencies + devDependencies); no resuelve transitivos (eso ya lo cubre tools/guardrails/ports-adapters/manifest.ts para SDKs 'forbidden')"
-  check: "tools/guardrails/dependency-allowlist-check.ts (script npm guardrail:dependency-allowlist): falla si package.json o package-lock.json (packages[\"\"]) declaran una dependencia directa ausente del allowlist, o con una versión distinta de la fijada en el allowlist."
+  scope: >
+    Dependencias DIRECTAS de package.json: dependencies, devDependencies,
+    optionalDependencies y peerDependencies (las cuatro se tratan igual, SEC-CNS-011
+    P2-01); no resuelve transitivos (eso ya lo cubre
+    tools/guardrails/ports-adapters/manifest.ts para SDKs "forbidden"). Si package.json
+    declara "bundleDependencies" u "overrides", el checker falla explícitamente (no los
+    resuelve todavía; son vías de evasión del allowlist) en vez de ignorarlos.
+  entryValidation: >
+    Cada entrada del allowlist debe tener "version" en formato exacto "X.Y.Z" (sin "^",
+    "~" ni rangos) y "owner" no vacío y humano: el checker falla si el owner coincide
+    con el nombre de un agente IA de docs/agentic/model-routing.md (ADR-001 §11:
+    "ningún agente IA es owner"). Probado en
+    tests/unit/framework/dependency-allowlist-check.test.ts (SEC-CNS-011 P2-01).
+  check: "tools/guardrails/dependency-allowlist-check.ts (CLI; lógica pura en tools/guardrails/dependency-allowlist.ts) invocado directo en CI, no vía script de npm (SEC-CNS-011 P1-04): falla si package.json o package-lock.json (packages[\"\"]) declaran una dependencia directa ausente del allowlist, con una versión distinta de la fijada, o si el allowlist mismo no cumple entryValidation."
   humanReviewGate: >
     El checker automático NO decide si una dependencia es aceptable: solo verifica que
     lo declarado coincida con el allowlist. La aprobación humana (ADR-001 §5: "toda
@@ -234,8 +267,13 @@ ciJobs:
     - { name: unit, description: "npm ci --ignore-scripts, typecheck, test:unit" }
     - { name: integration, description: "npm ci --ignore-scripts, service container postgres:16@sha256:..., credenciales efímeras del step, test:integration con TEST_DATABASE_URL" }
     - { name: contract, description: "npm ci --ignore-scripts, test:contract" }
-    - { name: dependency-allowlist, description: "npm ci --ignore-scripts, guardrail:dependency-allowlist" }
-  conventions: "Actions fijadas por SHA, permissions: contents: read, sin secretos, npm ci --ignore-scripts, Node 24.21.0 (mismo patrón que .github/workflows/guardrails.yml de CA-136)."
+    - { name: dependency-allowlist, description: "npm ci --ignore-scripts, node tools/guardrails/dependency-allowlist-check.ts (invocado directo, no vía npm run; SEC-CNS-011 P1-04)" }
+  conventions: >
+    Actions fijadas por SHA, permissions: contents: read, sin secretos, npm ci
+    --ignore-scripts, Node 24.21.0 (mismo patrón que .github/workflows/guardrails.yml de
+    CA-136); concurrency por ref con cancel-in-progress en pull_request; runs-on:
+    ubuntu-24.04 y timeout-minutes por job; artefactos con if-no-files-found: error y
+    retention-days: 30 (SEC-CNS-011 P2-02/P2-04).
 
 testCases:
   - id: TC-FRAMEWORK-01
@@ -246,21 +284,30 @@ testCases:
   - id: TC-FRAMEWORK-02
     layer: integration
     file: "tests/integration/postgres-smoke.test.ts"
-    expect: "PASS (con TEST_DATABASE_URL) o SKIP (sin ella)"
-    reason: "El job de integración de CI siempre tiene TEST_DATABASE_URL (service container); local sin Docker se omite sin romper npm run ci."
+    expect: "PASS (con TEST_DATABASE_URL) o SKIP fuera de CI sin ella; FAIL si falta en CI (fail-closed, SEC-CNS-011 P1-01)"
+    reason: "El job de integración de CI siempre tiene TEST_DATABASE_URL (service container); local sin Docker se omite sin romper npm run ci; si CI la pierde, el test debe fallar, no quedar en skip vacuo."
   - id: TC-FRAMEWORK-03
     layer: contract
     file: "tests/contract/ports/example-port.test.ts"
     expect: PASS
     reason: "La misma suite de 4 casos corre contra 2 adaptadores distintos (8 tests), demostrando ADR-001 §11 regla (4)."
+  - id: TC-FRAMEWORK-05
+    layer: unit
+    file: "tests/unit/framework/postgres-smoke-fail-closed.test.ts"
+    expect: "El smoke test hijo (subproceso) sale con código distinto de 0 con CI=true y sin TEST_DATABASE_URL, y con código 0 fuera de CI sin la variable"
+    reason: "Test negativo de SEC-CNS-011 P1-01, exigido por la revisión de seguridad antes de aprobar el PR."
+  - id: TC-FRAMEWORK-06
+    layer: unit
+    file: "tests/unit/framework/run-tests-fail-closed.test.ts"
+    expect: "tools/testing/run-tests.ts contra un directorio vacío sale con código distinto de 0 con CI=true, y con código 0 fuera de CI"
+    reason: "Test negativo de SEC-CNS-011 P1-02, exigido por la revisión de seguridad antes de aprobar el PR."
   - id: TC-FRAMEWORK-04
-    layer: n/a
-    file: "tools/guardrails/dependency-allowlist-check.ts"
-    expect: "FAIL si se declara una dependencia directa fuera del allowlist o con versión distinta"
-    reason: "Verificado manualmente durante la implementación (ver reporte de PR); no tiene fixture automatizada en esta versión (openItem)."
+    layer: unit
+    file: "tests/unit/framework/dependency-allowlist-check.test.ts"
+    expect: "FAIL si se declara una dependencia directa (incl. optional/peer) fuera del allowlist o con versión distinta, si aparece bundleDependencies/overrides, o si una entrada del allowlist no cumple entryValidation; PASS en el caso válido"
+    reason: "SEC-CNS-011 P1-04/P2-01: fixtures en memoria contra la lógica pura de tools/guardrails/dependency-allowlist.ts (sin tocar el package.json/lockfile reales del repo)."
 
 openItems:
-  - "TC-FRAMEWORK-04 (guardrail de allowlist) no tiene test automatizado con fixture, solo verificación manual documentada en el PR; considerar una fixture de package.json temporal si lampone-qa lo prioriza."
   - "postgres:16@sha256:... es una elección provisional (ver integrationHarness.postgres.openItems); no cierra la versión de ADR-002."
   - "Las 3 entradas de dependency-allowlist.json quedan 'pending-human-review' hasta que Carlos (o el revisor humano de seguridad que designe) apruebe el PR de CODEOWNERS."
   - "No se verificó end-to-end en esta implementación el job de integración contra un Postgres real vía Docker local: el daemon de Docker no estaba disponible en el entorno de desarrollo usado; se verificó el camino de 'skip' sin TEST_DATABASE_URL y la lógica de conexión se revisó por lectura. Pendiente de una corrida real (CI, que sí tiene el service container, o un desarrollador con Docker activo) antes de cerrar H03."
