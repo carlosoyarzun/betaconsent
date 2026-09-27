@@ -55,11 +55,11 @@
       "id": "RC2u",
       "from": "OPEN",
       "to": "CONTACTING",
-      "via": "SIN OPERACIÓN en este borrador: la spec la declara httpPost false y disparada por el retorno por /m/, lo que no tiene superficie HTTP compatible con INV-CM-08 (FINDING F-CT-01)",
+      "via": "POST /rights-case/resume (POST explícito con CSRF desde la página del caso servida por /m/; el GET no transiciona, F-011)",
       "pending": [
-        "F-011",
-        "F-006",
-        "OPEN-CT-01"
+        "F-005 / DEC-BR-018 (actor)",
+        "F-CT-10",
+        "F-006"
       ]
     },
     {

@@ -40,7 +40,8 @@ info:
     `x-governed-by`, `x-state-transition` (IDs de las specs), `x-route-class`
     (ISSUANCE_DECISION | STAFF_ADMIN | RIGHTS | PLATFORM), `x-eligibility`,
     `x-actor`, `x-guards`, `x-pending` (decisiones abiertas; ninguna se resuelve aquí),
-    `x-not-exposed` (transiciones sin superficie HTTP y por qué).
+    `x-not-exposed` (transiciones sin superficie HTTP y por qué), `x-errors` (errores de la spec;
+    transcritos solo en las operaciones sincronizadas con F-011 y SEC-CNS-013, el resto OPEN-CT-08).
     Transiciones con más de una fuente (convención guardsBySource de common.spec; SEC-CNS-012
     N2-01): `x-actor.bySource` y `x-guards-by-source` (common + una lista por fuente) las
     transcriben; `x-guards` lista los guards efectivos de la fuente HTTP de la operación
@@ -50,6 +51,7 @@ info:
   x-pending:
     - "OPEN-CT-04: rango API-CNS-100…199 propuesto; reconciliar con el registro de Notion. API-CNS-001 reservado (AuthorizationCheck del consumidor)."
     - "P-26 / SEC-CNS-006: nombres de cookie __Host- y de la cabecera CSRF son ilustrativos hasta fijarse."
+    - "F-CT-10 (nuevo, P1, security↔architecture): RC2u (API-CNS-149) es un POST del entrypoint web con actor SYSTEM_GUARD (rights-case.spec RC2u actorPending), pero GRD-CM-15 y TEST-CNS-445 exigen que el ledger nunca registre SYSTEM_GUARD desde el entrypoint web y que una request no ejecute una rama SYSTEM. Se transcribe la spec sin resolverlo; depende de F-005 / DEC-BR-018 (Carlos)."
     - "OPEN-CT-08 (nuevo): las specs no fijan los códigos HTTP exactos por error; los status de este borrador son propuesta."
     - "F-CT-09 (nuevo, P2): listas de guards de las specs sin GRD-CM-06/GRD-CM-07/GRD-CM-01 en transiciones RIGHTS (RC3, RC3a, RH3, RC4-RC6; GRD-CM-01 también en RH2). El contrato declara la clase RIGHTS pero no añade guards; reconciliar en las specs (coordinar con lampone-security)."
     - "OPEN-CT-09: I1 idempotencyKey (tenantRef, clientRequestId) sin clientRequestId en el body; se transcribe como cabecera Idempotency-Key. (La parte 'cosign RH3 sin schema propio' se cerró: CosignCaseConfirmationRequest.)"
@@ -84,7 +86,7 @@ components:
       type: apiKey
       in: cookie
       name: __Host-cns-manage
-      description: Handle MANAGE_ENTRY creado por GET /m/{token} (P-14); habilita V1 scope MANAGE/REVOCATION, RV0 del portador, RC1, RC3/RC3a (CFG-RV-MANAGEMENT-LINK). Tras V3 queda sesión MANAGE verificada (P-28).
+      description: Handle MANAGE_ENTRY creado por GET /m/{token} (P-14); habilita V1 scope MANAGE/REVOCATION, RV0 del portador, RC1, RC2u (POST explícito, F-011), RC3/RC3a (CFG-RV-MANAGEMENT-LINK; erratum R13-3). Tras V3 queda sesión MANAGE verificada (P-28).
       x-pending: ["P-26 (nombre de cookie)", "F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"]
     recoveryHandle:
       type: apiKey
@@ -237,12 +239,12 @@ paths:
       x-api-id: API-CNS-102
       tags: [redemption]
       summary: Canje del enlace de gestión (crea handle MANAGE_ENTRY, 303 a /manage)
-      description: resolve_management_token(token_hash) → (tenant_id, chain_ref). Solo credencial + existencia del tenant; nunca *.active. No transiciona ni consume el token.
+      description: resolve_management_token(token_hash) → (tenant_id, chain_ref). Solo credencial + existencia del tenant; nunca *.active. No transiciona ni consume el token. La página del caso que se renderiza tras el canje NO dispara RC2u; RC2u solo transiciona con el POST explícito /rights-case/resume (F-011).
       x-governed-by: ["revocation.spec managementLink (CFG-RV-MANAGEMENT-LINK)", "INV-CM-08", "SM-CNS-001 §5.0", "ADR-006 §6.1", "DEC-BR-017 §1", "SEC-CNS-006 P-13, P-14"]
       x-state-transition: none
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06): solo existencia del tenant y chainRef; nunca lee *.active"
-      x-pending: ["DEC-BR-003 / EXT-A / LD-01", "F-006 (alcance del handle /m/)", "F-011 / F-CT-01 (RC2u no se dispara aquí: un GET no transiciona)"]
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01", "F-006 (alcance del handle /m/)"]
       parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
       responses:
         '303': {$ref: '#/components/responses/RedeemSeeOther'}
@@ -1122,7 +1124,7 @@ paths:
         '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   # ---------------------------------------------------------------------------
-  # rights-case (RC0, RC1, RC3/RC3a, RC4/RC5/RC6). RC2 worker; RC2u y RC1c sin HTTP.
+  # rights-case (RC0, RC1, RC2u, RC3/RC3a, RC4/RC5/RC6). RC2 worker; RC1c deshabilitada.
   # ---------------------------------------------------------------------------
   /staff/rights-reports:
     post:
@@ -1193,6 +1195,46 @@ paths:
             application/json:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InReviewAck'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+  /rights-case/resume:
+    post:
+      operationId: resumeRightsCase
+      x-api-id: API-CNS-149
+      tags: [bearer-rights]
+      summary: RC2u — el solicitante retoma su caso CHANNEL_UNREACHABLE con un POST explícito desde la página de /m/ (OPEN → CONTACTING)
+      description: |
+        F-011: el GET /m/{token} solo canjea y renderiza la página del caso (INV-CM-08); RC2u
+        transiciona únicamente con este POST explícito del solicitante, con CSRF + Origin (GRD-CM-10),
+        de modo que un escáner de enlaces no puede gatillarla (DEC-BR-017 §2). Sin caseRef del cliente:
+        el caso se resuelve en servidor desde (tenant_id, chainRef, revokedDecisionRef) del handle
+        (GRD-RC-14). Solo aplica con origin = CHANNEL_UNREACHABLE (GRD-RC-07); si no, respuesta
+        uniforme de ERR-RC-01 sin evento. Sin RV0 ni envío al canal que el solicitante declara no tener
+        (R6-3); no consume el token. La página muestra solo «en revisión» y el paso del guion
+        versionado (placeholder LD-02); sin plazo prometido (R7-2).
+      x-governed-by: ["rights-case.spec RC2u (rev. 4d F-011, rev. 4e SEC-CNS-013)", "rights-case.spec GRD-RC-07, GRD-RC-14", "SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3, R7-2", "DEC-BR-017 §2, §3", "INV-CM-08", "SEC-CNS-013"]
+      x-state-transition: {machine: RightsCase, id: RC2u, from: OPEN, to: CONTACTING, condition: "origin = CHANNEL_UNREACHABLE", emits: [RIGHTS_CASE_CONTACTING], note: "sin recoveryRef"}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06): solo existencia del tenant y chainRef; nunca *.active"
+      x-actor: {actorType: SYSTEM_GUARD, triggeredBy: "POST explícito del portador del handle MANAGE_ENTRY", actorPending: "F-005 / DEC-BR-018: SEC-CNS-013 propone {ref: UNVERIFIED_BEARER}; la spec mantiene SYSTEM_GUARD hasta que Carlos decida (no se resuelve aquí)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-20, GRD-RC-07, GRD-RC-14]
+      x-errors: [ERR-CM-01, ERR-CM-09, ERR-CM-10, ERR-RC-01, ERR-RC-09, ERR-RV-02]
+      x-idempotency: "caseRef"
+      x-uniform-response: "200 InReviewAck idéntico para éxito, caso ya CONTACTING, origin ≠ CHANNEL_UNREACHABLE (ERR-RC-01), caso de otra cadena o ciclo (ERR-RC-09) y management link no vigente (ERR-RV-02); ERR-CM-01 y ERR-CM-10 → 404 uniforme"
+      x-pending: ["F-005 / DEC-BR-018 (actor de RC2u: SYSTEM_GUARD vs UNVERIFIED_BEARER)", "F-CT-10 (P1: actor SYSTEM_GUARD registrado desde el entrypoint web vs GRD-CM-15 / TEST-CNS-445)", "F-006 (alcance del handle /m/, erratum R13-3)", "LD-02 (guion versionado)"]
+      security: [{manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: «En revisión», uniforme.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InReviewAck'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
   /rights-case/revocation-intent:
     post:
       operationId: expressRevocationIntentInCase
@@ -1260,7 +1302,6 @@ paths:
         '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
 x-not-exposed:
-  - {id: RC2u, machine: RightsCase, reason: "La spec la declara httpPost false y disparada por el retorno por /m/; un GET no puede transicionar (INV-CM-08) y no hay POST compatible. Sin superficie HTTP en este borrador.", pending: ["F-CT-01", "F-011", "F-006", "OPEN-CT-01"]}
   - {id: RC2, machine: RightsCase, reason: "worker (primera acción; RV0 al canal ligado con trigger CASE_CONTACT/SCHOOL_REPORTED)"}
   - {id: RC1c, machine: RightsCase, reason: "deshabilitada (R13-2; LD-03/LD-04)", pending: ["F-004", "LD-03", "LD-04"]}
   - {id: "RC1 (fuente SYSTEM)", machine: RightsCase, reason: "SYSTEM_GUARD desde R9 en la misma tx (origin REQUEST_EXPIRED); sin handle, POST ni CSRF; tenant, chainRef y revokedDecisionRef del registro de la Revocation (GRD-RC-16); fuente = rol worker (GRD-CM-15). Si falla, R9 y RC1 se revierten y el job se reintenta (ERR-RC-11); nunca FAILED ni cierre.", guards: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RV-16, GRD-RC-16, GRD-CM-15]}
