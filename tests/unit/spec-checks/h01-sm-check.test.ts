@@ -134,7 +134,7 @@ test("TEST-CNS-906 h01-sm-check: RC1 fuente SYSTEM sin GRD-CM-15 (SEC N3-01)", (
   const specs = clone(loadSpecs(SPEC_DIR));
   const rc1 = tr(specs, "rights-case", "RC1");
   const gbs = rc1.guardsBySource as Record<string, string[]>;
-  gbs.SYSTEM = gbs.SYSTEM.filter((g) => g !== "GRD-CM-15");
+  gbs.SYSTEM = (gbs.SYSTEM ?? []).filter((g) => g !== "GRD-CM-15");
   const { errors } = checkSpecs(specs);
   assert.ok(
     errors.some((e) => e.includes("fuente SYSTEM sin POST no deriva la fuente de la identidad de ejecución")),
@@ -146,7 +146,7 @@ test("TEST-CNS-906 h01-sm-check: fuente sin POST con guard de handle/CSRF (SEC N
   const specs = clone(loadSpecs(SPEC_DIR));
   const rc1 = tr(specs, "rights-case", "RC1");
   const gbs = rc1.guardsBySource as Record<string, string[]>;
-  gbs.SYSTEM.push("GRD-CM-10");
+  (gbs.SYSTEM ?? (gbs.SYSTEM = [])).push("GRD-CM-10");
   const { errors } = checkSpecs(specs);
   assert.ok(
     errors.some((e) => e.includes("fuente SYSTEM sin POST ni credencial con guards de handle/CSRF")),
@@ -165,7 +165,7 @@ test("TEST-CNS-906 h01-sm-check: FIXTURE sin GRD-CM-14 (R14-F)", () => {
   const specs = clone(loadSpecs(SPEC_DIR));
   const tn1 = tr(specs, "tenant-context", "TN1");
   const gbs = tn1.guardsBySource as Record<string, string[]>;
-  gbs.FIXTURE = gbs.FIXTURE.filter((g) => g !== "GRD-CM-14");
+  gbs.FIXTURE = (gbs.FIXTURE ?? []).filter((g) => g !== "GRD-CM-14");
   const { errors } = checkSpecs(specs);
   assert.ok(
     errors.some((e) => e.includes("fuente FIXTURE sin guardsBySource")),
@@ -199,7 +199,9 @@ test("TEST-CNS-906 h01-sm-check: testId fuera de rango 100-499", () => {
 test("TEST-CNS-906 h01-sm-check: dos estados iniciales", () => {
   const specs = clone(loadSpecs(SPEC_DIR));
   const states = spec(specs, "revocation").data.states as Array<Record<string, unknown>>;
-  states[1].initial = true;
+  const target = states[1];
+  if (!target) throw new Error("fixture inválido: revocation.states[1] no existe");
+  target.initial = true;
   const { errors } = checkSpecs(specs);
   assert.ok(errors.some((e) => e.includes("debe haber exactamente 1 estado inicial")), errors.join("\n"));
 });

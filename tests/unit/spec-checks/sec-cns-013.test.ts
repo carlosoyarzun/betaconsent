@@ -95,5 +95,6 @@ test("TEST-CNS-457 SEC-CNS-013 N-4c-03: RC1 (rights-case, fuente BEARER) lleva G
   const specs = loadSpecs(SPEC_DIR);
   const rc1 = findTransition(spec(specs, "rights-case"), "RC1");
   const gbs = rc1.guardsBySource as Record<string, string[]>;
-  assert.ok(gbs.BEARER.includes("GRD-CM-07"), `RC1.guardsBySource.BEARER no incluye GRD-CM-07: ${gbs.BEARER}`);
+  const bearer = gbs.BEARER ?? [];
+  assert.ok(bearer.includes("GRD-CM-07"), `RC1.guardsBySource.BEARER no incluye GRD-CM-07: ${bearer}`);
 });

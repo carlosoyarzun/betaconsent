@@ -27,10 +27,14 @@ function isQuoteChar(c: string): boolean {
 
 // Cuenta comillas dobles no escapadas en una línea (para detectar escalares entre comillas que
 // cruzan varias líneas físicas).
+function charAt(s: string, i: number): string {
+  return i >= 0 && i < s.length ? s[i]! : "";
+}
+
 function countUnescapedDoubleQuotes(line: string): number {
   let count = 0;
   for (let i = 0; i < line.length; i++) {
-    if (line[i] === '"' && line[i - 1] !== "\\") count++;
+    if (charAt(line, i) === '"' && charAt(line, i - 1) !== "\\") count++;
   }
   return count;
 }
@@ -38,16 +42,16 @@ function countUnescapedDoubleQuotes(line: string): number {
 function stripComment(line: string): string {
   let inQuote: string | null = null;
   for (let i = 0; i < line.length; i++) {
-    const c = line[i];
+    const c = charAt(line, i);
     if (inQuote) {
-      if (c === inQuote && line[i - 1] !== "\\") inQuote = null;
+      if (c === inQuote && charAt(line, i - 1) !== "\\") inQuote = null;
       continue;
     }
     if (isQuoteChar(c)) {
       inQuote = c;
       continue;
     }
-    if (c === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) {
+    if (c === "#" && (i === 0 || charAt(line, i - 1) === " " || charAt(line, i - 1) === "\t")) {
       return line.slice(0, i);
     }
   }
@@ -61,13 +65,13 @@ function toLines(text: string): Line[] {
   const raw = text.split("\n");
   const merged: { text: string; lineNo: number }[] = [];
   for (let i = 0; i < raw.length; i++) {
-    let current = raw[i];
+    let current = raw[i] ?? "";
     const lineNo = i + 1;
     // Si la línea (antes de fusionar) tiene comillas dobles sin balancear, va acumulando líneas
     // siguientes (con fold: un espacio) hasta que balanceen.
     while (countUnescapedDoubleQuotes(current) % 2 === 1 && i + 1 < raw.length) {
       i++;
-      current = current + " " + raw[i].trim();
+      current = current + " " + (raw[i] ?? "").trim();
     }
     merged.push({ text: current, lineNo });
   }
@@ -112,9 +116,13 @@ class FlowParser {
     this.s = s;
   }
 
+  private peek(offset = 0): string {
+    return charAt(this.s, this.pos + offset);
+  }
+
   parseValue(): YamlValue {
     this.skipSpaces();
-    const c = this.s[this.pos];
+    const c = this.peek();
     if (c === "[") return this.parseFlowSeq();
     if (c === "{") return this.parseFlowMap();
     if (c === '"') return this.parseDoubleQuoted();
@@ -123,28 +131,28 @@ class FlowParser {
   }
 
   private skipSpaces(): void {
-    while (this.s[this.pos] === " ") this.pos++;
+    while (this.peek() === " ") this.pos++;
   }
 
   private parseFlowSeq(): YamlValue[] {
     this.pos++; // [
     const items: YamlValue[] = [];
     this.skipSpaces();
-    if (this.s[this.pos] === "]") {
+    if (this.peek() === "]") {
       this.pos++;
       return items;
     }
     while (true) {
       items.push(this.parseValue());
       this.skipSpaces();
-      if (this.s[this.pos] === ",") {
+      if (this.peek() === ",") {
         this.pos++;
         this.skipSpaces();
         continue;
       }
       break;
     }
-    if (this.s[this.pos] === "]") this.pos++;
+    if (this.peek() === "]") this.pos++;
     return items;
   }
 
@@ -152,7 +160,7 @@ class FlowParser {
     this.pos++; // {
     const map: { [key: string]: YamlValue } = {};
     this.skipSpaces();
-    if (this.s[this.pos] === "}") {
+    if (this.peek() === "}") {
       this.pos++;
       return map;
     }
@@ -160,37 +168,37 @@ class FlowParser {
       this.skipSpaces();
       const key = this.parseKey();
       this.skipSpaces();
-      if (this.s[this.pos] === ":") this.pos++;
+      if (this.peek() === ":") this.pos++;
       this.skipSpaces();
       const value = this.parseValue();
       map[key] = value;
       this.skipSpaces();
-      if (this.s[this.pos] === ",") {
+      if (this.peek() === ",") {
         this.pos++;
         continue;
       }
       break;
     }
-    if (this.s[this.pos] === "}") this.pos++;
+    if (this.peek() === "}") this.pos++;
     return map;
   }
 
   private parseKey(): string {
-    if (this.s[this.pos] === '"') return String(this.parseDoubleQuoted());
-    if (this.s[this.pos] === "'") return String(this.parseSingleQuoted());
+    if (this.peek() === '"') return String(this.parseDoubleQuoted());
+    if (this.peek() === "'") return String(this.parseSingleQuoted());
     return String(this.parsePlainUntil([":"]));
   }
 
   private parseDoubleQuoted(): string {
     this.pos++; // "
     let out = "";
-    while (this.pos < this.s.length && this.s[this.pos] !== '"') {
-      if (this.s[this.pos] === "\\" && this.pos + 1 < this.s.length) {
-        out += this.s[this.pos + 1];
+    while (this.pos < this.s.length && this.peek() !== '"') {
+      if (this.peek() === "\\" && this.pos + 1 < this.s.length) {
+        out += this.peek(1);
         this.pos += 2;
         continue;
       }
-      out += this.s[this.pos];
+      out += this.peek();
       this.pos++;
     }
     this.pos++; // closing "
@@ -201,13 +209,13 @@ class FlowParser {
     this.pos++; // '
     let out = "";
     while (this.pos < this.s.length) {
-      if (this.s[this.pos] === "'" && this.s[this.pos + 1] === "'") {
+      if (this.peek() === "'" && this.peek(1) === "'") {
         out += "'";
         this.pos += 2;
         continue;
       }
-      if (this.s[this.pos] === "'") break;
-      out += this.s[this.pos];
+      if (this.peek() === "'") break;
+      out += this.peek();
       this.pos++;
     }
     this.pos++; // closing '
@@ -216,8 +224,8 @@ class FlowParser {
 
   private parsePlainUntil(stopChars: string[]): YamlValue {
     let out = "";
-    while (this.pos < this.s.length && !stopChars.includes(this.s[this.pos])) {
-      out += this.s[this.pos];
+    while (this.pos < this.s.length && !stopChars.includes(this.peek())) {
+      out += this.peek();
       this.pos++;
     }
     return parseScalar(out);
@@ -237,7 +245,7 @@ function parseFlowOrScalar(raw: string): YamlValue {
 function splitKeyValue(content: string): { key: string; rest: string } | null {
   let inQuote: string | null = null;
   for (let i = 0; i < content.length; i++) {
-    const c = content[i];
+    const c = charAt(content, i);
     if (inQuote) {
       if (c === inQuote) inQuote = null;
       continue;
@@ -246,7 +254,7 @@ function splitKeyValue(content: string): { key: string; rest: string } | null {
       inQuote = c;
       continue;
     }
-    if (c === ":" && (i + 1 === content.length || content[i + 1] === " ")) {
+    if (c === ":" && (i + 1 === content.length || charAt(content, i + 1) === " ")) {
       const key = content.slice(0, i).trim();
       const rest = content.slice(i + 1).trim();
       return { key: stripKeyQuotes(key), rest };
@@ -271,6 +279,12 @@ class BlockParser {
     this.lines = lines;
   }
 
+  private lineAt(i: number): Line {
+    const l = this.lines[i];
+    if (!l) throw new Error(`yaml-lite: índice de línea fuera de rango (${i})`);
+    return l;
+  }
+
   parseDocument(): YamlValue {
     const [value] = this.parseBlock(0, 0);
     return value ?? {};
@@ -278,20 +292,20 @@ class BlockParser {
 
   // Devuelve [valor, siguienteÍndice]. `indent` es la indentación mínima esperada del bloque.
   private parseBlock(i: number, indent: number): [YamlValue, number] {
-    if (i >= this.lines.length || this.lines[i].indent < indent) return [null, i];
-    if (isSeqItemLine(this.lines[i])) return this.parseSeq(i, this.lines[i].indent);
-    return this.parseMap(i, this.lines[i].indent);
+    if (i >= this.lines.length || this.lineAt(i).indent < indent) return [null, i];
+    if (isSeqItemLine(this.lineAt(i))) return this.parseSeq(i, this.lineAt(i).indent);
+    return this.parseMap(i, this.lineAt(i).indent);
   }
 
   private parseSeq(i: number, indent: number): [YamlValue[], number] {
     const items: YamlValue[] = [];
-    while (i < this.lines.length && this.lines[i].indent === indent && isSeqItemLine(this.lines[i])) {
-      const line = this.lines[i];
+    while (i < this.lines.length && this.lineAt(i).indent === indent && isSeqItemLine(this.lineAt(i))) {
+      const line = this.lineAt(i);
       const rest = line.content === "-" ? "" : line.content.slice(2);
       if (rest === "") {
         i++;
-        if (i < this.lines.length && this.lines[i].indent > indent) {
-          const [value, next] = this.parseBlock(i, this.lines[i].indent);
+        if (i < this.lines.length && this.lineAt(i).indent > indent) {
+          const [value, next] = this.parseBlock(i, this.lineAt(i).indent);
           items.push(value);
           i = next;
         } else {
@@ -330,8 +344,8 @@ class BlockParser {
     while (kv) {
       idx++;
       if (kv.rest === "") {
-        if (idx < this.lines.length && this.lines[idx].indent > virtualIndent) {
-          const [value, next] = this.parseBlock(idx, this.lines[idx].indent);
+        if (idx < this.lines.length && this.lineAt(idx).indent > virtualIndent) {
+          const [value, next] = this.parseBlock(idx, this.lineAt(idx).indent);
           map[kv.key] = value;
           idx = next;
         } else {
@@ -345,8 +359,8 @@ class BlockParser {
         map[kv.key] = this.parseScalarField(kv.rest);
       }
       firstLine = false;
-      if (idx < this.lines.length && this.lines[idx].indent === virtualIndent && !isSeqItemLine(this.lines[idx])) {
-        kv = splitKeyValue(this.lines[idx].content);
+      if (idx < this.lines.length && this.lineAt(idx).indent === virtualIndent && !isSeqItemLine(this.lineAt(idx))) {
+        kv = splitKeyValue(this.lineAt(idx).content);
         if (!kv) break;
       } else {
         kv = null;
@@ -359,15 +373,15 @@ class BlockParser {
   private parseMap(i: number, indent: number): [Record<string, YamlValue>, number] {
     const map: Record<string, YamlValue> = {};
     let idx = i;
-    while (idx < this.lines.length && this.lines[idx].indent === indent && !isSeqItemLine(this.lines[idx])) {
-      const kv = splitKeyValue(this.lines[idx].content);
+    while (idx < this.lines.length && this.lineAt(idx).indent === indent && !isSeqItemLine(this.lineAt(idx))) {
+      const kv = splitKeyValue(this.lineAt(idx).content);
       if (!kv) {
-        throw new Error(`yaml-lite: línea ${this.lines[idx].lineNo} no parece "clave: valor": "${this.lines[idx].content}"`);
+        throw new Error(`yaml-lite: línea ${this.lineAt(idx).lineNo} no parece "clave: valor": "${this.lineAt(idx).content}"`);
       }
       idx++;
       if (kv.rest === "") {
-        if (idx < this.lines.length && this.lines[idx].indent > indent) {
-          const [value, next] = this.parseBlock(idx, this.lines[idx].indent);
+        if (idx < this.lines.length && this.lineAt(idx).indent > indent) {
+          const [value, next] = this.parseBlock(idx, this.lineAt(idx).indent);
           map[kv.key] = value;
           idx = next;
         } else {
@@ -387,8 +401,8 @@ class BlockParser {
   private parseBlockScalar(i: number, parentIndent: number): [string, number] {
     const parts: string[] = [];
     let idx = i;
-    while (idx < this.lines.length && this.lines[idx].indent > parentIndent) {
-      parts.push(this.lines[idx].content);
+    while (idx < this.lines.length && this.lineAt(idx).indent > parentIndent) {
+      parts.push(this.lineAt(idx).content);
       idx++;
     }
     return [parts.join(" ").trim(), idx];
