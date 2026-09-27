@@ -45,7 +45,7 @@
       "to": "PARTIALLY_GRANTED",
       "via": "sin operación",
       "enabled": false,
-      "reason": "allowPartialGrant = false (F-025)"
+      "reason": "allowPartialGrant = false en el adapter activo (F-025; F-012)"
     },
     {
       "id": "C5",
@@ -170,7 +170,7 @@
             "EXPIRED",
             "SUPERSEDED"
           ],
-          "description": "PARTIALLY_GRANTED, EXPIRED y SUPERSEDED son inalcanzables en BETA_2026_01."
+          "description": "PARTIALLY_GRANTED, EXPIRED y SUPERSEDED son inalcanzables con el adapter activo de IT0 (allowPartialGrant = false; C7/C8 deshabilitadas)."
         },
         "sequence": {
           "type": "integer",

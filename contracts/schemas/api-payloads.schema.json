@@ -584,50 +584,22 @@
         },
         "purposes": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 1,
           "items": {
             "$ref": "#/$defs/PurposeDecision"
           },
-          "allOf": [
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "STUDY_PARTICIPATION"
-                  }
-                }
-              }
-            },
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "AUDIO_RECORDING"
-                  }
-                }
-              }
-            },
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "AUTOMATED_ANALYSIS"
-                  }
-                }
-              }
-            },
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "HUMAN_REVIEW"
-                  }
-                }
-              }
-            }
-          ],
-          "description": "Elección explícita por cada finalidad requerida, exactamente una vez cada una (GRD-CD-06/07). Todas GRANT: C3 GRANTED; al menos una DECLINE: C5 DECLINED. C4 (parcial) no existe en BETA_2026_01."
+          "description": "Elección explícita por cada finalidad de requiredPurposes del adapter activo, exactamente una vez cada una (GRD-CD-06/07; el servidor valida contra el adapter y rechaza con ERR-CD-02). Todas GRANT: C3 GRANTED; al menos una DECLINE: C5 DECLINED. C4 (parcial) inalcanzable mientras el adapter activo fije allowPartialGrant = false (F-025).",
+          "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.requiredPurposes",
+          "x-adapter-values": {
+            "adapter": "specs/adapters/lectorpro-beta.spec.yaml",
+            "requiredPurposes": [
+              "STUDY_PARTICIPATION",
+              "AUDIO_RECORDING",
+              "AUTOMATED_ANALYSIS",
+              "HUMAN_REVIEW"
+            ],
+            "items": 4
+          }
         }
       },
       "required": [
@@ -720,7 +692,7 @@
       "properties": {
         "confirmTotalWithdrawal": {
           "const": true,
-          "description": "Confirmación explícita de retiro total: en BETA_2026_01 revocar cualquier finalidad es retiro total (GRD-RV-07)."
+          "description": "Confirmación explícita de retiro total: con scope ALL revocar cualquier finalidad es retiro total (GRD-RV-07)."
         }
       },
       "required": [

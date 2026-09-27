@@ -12,7 +12,8 @@
     "DEC-BR-015 §1",
     "DEC-BR-017 §6",
     "ADR-002 §2, §3, §8",
-    "ADR-006 §1"
+    "ADR-006 §1",
+    "specs/adapters/lectorpro-beta.spec.yaml (F-012)"
   ],
   "x-forbidden-keys": [
     "organization_*",
@@ -38,17 +39,21 @@
       ]
     },
     "ProductRef": {
-      "const": "LECTORPRO",
-      "description": "Valor de consent-decision.spec configuration.",
-      "x-pending": [
-        "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "description": "Código de catálogo del producto (no PII). El contrato genérico no fija el valor: se resuelve desde el adapter activo (F-012; consent-decision.spec configuration.productRef).",
+      "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.productRef",
+      "examples": [
+        "LECTORPRO"
       ]
     },
     "ContextRef": {
-      "const": "BETA_2026_01",
-      "description": "Único contexto IT0 (consent-decision.spec configuration). Código de catálogo, no PII.",
-      "x-pending": [
-        "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "description": "Código de catálogo del contexto de consentimiento (no PII). Se resuelve desde el adapter activo (F-012; consent-decision.spec configuration.contextRef); en IT0 hay un único adapter.",
+      "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.contextRef",
+      "examples": [
+        "BETA_2026_01"
       ]
     },
     "Sha256Hex": {
@@ -65,13 +70,31 @@
       "pattern": "^[A-Za-z0-9._-]{1,32}$"
     },
     "Purpose": {
-      "enum": [
-        "STUDY_PARTICIPATION",
-        "AUDIO_RECORDING",
-        "AUTOMATED_ANALYSIS",
-        "HUMAN_REVIEW"
-      ],
-      "description": "Finalidades requeridas (DEC-BR-001; R0.9). PRODUCT_IMPROVEMENT, AI_TRAINING y RESEARCH están prohibidas y no forman parte del enum."
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "description": "Finalidad de catálogo. Valores válidos = requiredPurposes del adapter activo; toda finalidad fuera de esa lista o en prohibitedPurposes se rechaza en servidor (GRD-CD-06/07, ERR-CD-02). El contrato genérico no fija el enum (F-012).",
+      "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.requiredPurposes",
+      "x-adapter-values": {
+        "adapter": "specs/adapters/lectorpro-beta.spec.yaml",
+        "requiredPurposes": [
+          "STUDY_PARTICIPATION",
+          "AUDIO_RECORDING",
+          "AUTOMATED_ANALYSIS",
+          "HUMAN_REVIEW"
+        ],
+        "prohibitedPurposes": [
+          "PRODUCT_IMPROVEMENT",
+          "AI_TRAINING",
+          "RESEARCH"
+        ],
+        "governedBy": [
+          "DEC-BR-001",
+          "SM-CNS-001 R0.9"
+        ]
+      },
+      "examples": [
+        "STUDY_PARTICIPATION"
+      ]
     },
     "PurposeChoice": {
       "enum": [
@@ -81,18 +104,19 @@
       "description": "Sin valor por defecto ni preselección (P06)."
     },
     "OriginPurposeRef": {
-      "enum": [
-        "STUDY_PARTICIPATION",
-        "AUDIO_RECORDING",
-        "AUTOMATED_ANALYSIS",
-        "HUMAN_REVIEW",
-        "ALL"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Purpose"
+        },
+        {
+          "const": "ALL"
+        }
       ],
-      "description": "Nunca nulo (DEC-BR-017 §6)."
+      "description": "Una finalidad del adapter activo o ALL. Nunca nulo (DEC-BR-017 §6)."
     },
     "RevocationScope": {
       "const": "ALL",
-      "description": "BETA_2026_01: toda revocación es retiro total (CARLOS r3 H1; INV-CD-02)."
+      "description": "Toda revocación es retiro total: scope ALL (revocation.spec payloadValues; CARLOS r3 H1; INV-CD-02; DEC-BR-017 E-06)."
     },
     "AuthPath": {
       "enum": [

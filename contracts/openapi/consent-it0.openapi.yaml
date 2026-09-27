@@ -11,6 +11,7 @@ info:
   x-governed-by:
     - specs/state-machines/common.spec.yaml (routeClasses, GRD-CM-*, INV-CM-*)
     - specs de las 6 máquinas (transiciones con httpPost true)
+    - specs/adapters/lectorpro-beta.spec.yaml (F-012: contextRef, productRef, allowPartialGrant y finalidades se resuelven desde el adapter activo, no del contrato genérico)
     - SM-CNS-001 v6/v7
     - DEC-BR-014 §4, §5, §6 (Iteración 0; solo datos sintéticos)
     - DEC-BR-015 §1 (tenant = colegio), DEC-BR-016 §8, DEC-BR-017 §1-§8
@@ -166,7 +167,8 @@ components:
       name: contextRef
       in: path
       required: true
-      schema: {$ref: '../schemas/common.schema.json#/$defs/Ref'}
+      description: Código de catálogo del contexto (no PII), resuelto desde el adapter activo (F-012).
+      schema: {$ref: '../schemas/common.schema.json#/$defs/ContextRef'}
   headers:
     Location:
       description: Ruta relativa sin token (p. ej. /welcome, /manage, /recover).
@@ -365,7 +367,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, alt: "PRIVACY_LEGAL (OPEN-TC-06)", note: "nunca SYSTEM_GUARD, modelo ni agente"}
       x-guards: [GRD-CM-07, GRD-CM-10, GRD-TC-05, GRD-TC-06]
       x-idempotency: "(contextRef, sequence)"
-      x-pending: ["OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "OPEN-TC-05 / ADR-011 / DEC-BR-009 (almacén de auditoría PLATFORM; reasonCode sin enum)", "OPEN-TC-01", "OPEN-TC-03", "F-007 (transiciones de tenant/participación sin superficie HTTP)", "F-012 (contextRef como configuración de adapter)"]
+      x-pending: ["OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "OPEN-TC-05 / ADR-011 / DEC-BR-009 (almacén de auditoría PLATFORM; reasonCode sin enum)", "OPEN-TC-01", "OPEN-TC-03", "F-007 (transiciones de tenant/participación sin superficie HTTP)"]
       security: [{platformSession: []}]
       parameters: [{$ref: '#/components/parameters/ContextRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
       requestBody:
@@ -399,7 +401,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: INVITER}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11, GRD-TC-07]
       x-idempotency: "(tenantRef, clientRequestId); clientRequestId = Idempotency-Key"
-      x-pending: ["LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)", "F-012 (contextRef de LectorPro como configuración de adapter)"]
+      x-pending: ["LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
       requestBody:
@@ -746,7 +748,9 @@ paths:
         El resultado lo fija el guard determinista sobre la elección explícita del DecisionMaker;
         ningún modelo lo infiere (INV-CM-07). La respuesta nunca incluye el enlace de gestión:
         el management_token va SOLO al canal ligado (C3). Receipt con marca de agua IT0.
-        allowPartialGrant = false: C4 deshabilitada (F-025).
+        Finalidades requeridas y allowPartialGrant se resuelven desde el adapter activo
+        (specs/adapters/lectorpro-beta.spec.yaml, F-012; en IT0 allowPartialGrant = false):
+        C4 deshabilitada (F-025).
       x-governed-by: ["consent-decision.spec C3, C5", "SM-CNS-001 §4 C3, C5, §4.1, §5.0", "DEC-BR-001", "RULE-CNS-022", "SEC-CNS-006 P-13, P-31", "EXT-D"]
       x-state-transition:
         - {machine: ConsentDecision, id: C3, from: PENDING, to: GRANTED, sideEffects: ["invitation I6 (VERIFIED → COMPLETED)", "outbox consent.granted", "management_token al canal ligado"]}
@@ -756,6 +760,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
       x-guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-07, GRD-CD-08, GRD-CD-11, GRD-CD-12, GRD-TC-07]
       x-idempotency: "Idempotency-Key + consentId + payloadHash"
+      x-resolved-from: "specs/adapters/lectorpro-beta.spec.yaml configuration (requiredPurposes, prohibitedPurposes, allowPartialGrant)"
       x-pending: ["Q-13 (detalle por finalidad del DECLINED)", "LD-06"]
       security: [{landingHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
@@ -1322,5 +1327,4 @@ x-pending-global:
   - "LD-15 (retención de eventos de seguridad emitidos por V1/V2/V3/RV0)"
   - "OPEN-CM-02 (eventTypes de seguridad sin nombre: Guard T fallido, binding M1, INTEGRITY_FAILURE)"
   - "OPEN-CT-03 (enum bindingResult)"
-  - "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
   - "OPEN-TC-01 (enum de reasonCode), OPEN-TC-03 / Q-28 (LEFT_SCHOOL)"
