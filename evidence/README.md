@@ -22,6 +22,7 @@ en resumen: es evidencia de una corrida de CI/desarrollo, no la evidencia de run
 consentimiento/revocación que este directorio gobierna para producción, y commitear un
 archivo por corrida de cada PR no aporta valor de auditoría a largo plazo frente al
 riesgo de historial de git. En CI, cada job sube su archivo como artefacto de GitHub
-Actions (retención por defecto); en LOCAL queda en disco para depuración y puede
-borrarse. Revisable por Carlos/lampone-security si G-IT0-EXIT necesita evidencia
+Actions con retención de 30 días (`retention-days: 30` en `.github/workflows/tests.yml`,
+no la retención por defecto del repositorio); en LOCAL queda en disco para depuración y
+puede borrarse. Revisable por Carlos/lampone-security si G-IT0-EXIT necesita evidencia
 commiteada.
