@@ -175,6 +175,10 @@ export function checkSpecs(specs: SpecFile[]): CheckResult {
   const allTransitions: Transition[] = [];
   const usedGuards = new Set<string>();
   const usedErrors = new Set<string>();
+  // globalErrors (common.spec.yaml:156-158: ERR-CM-06, ERR-CM-12) aplican a TODA transición de TODA
+  // spec ("el checker los cuenta como usados"); una transición no necesita listarlos en su propio
+  // `errors` para que un onFail(guard) = ERR-CM-06/ERR-CM-12 cuente como cubierto (SEC-CNS-014 C1).
+  const globalErrorIds = new Set<string>();
 
   for (const { name, data } of specs) {
     if (asStr(data.status) !== "PROPOSED") err(`${name}: status != PROPOSED`);
@@ -203,7 +207,10 @@ export function checkSpecs(specs: SpecFile[]): CheckResult {
       eventIds.set(id, name);
     }
     for (const g of asArr(data.startupChecks)) usedGuards.add(String(g));
-    for (const e of asArr(data.globalErrors)) usedErrors.add(String(e));
+    for (const e of asArr(data.globalErrors)) {
+      usedErrors.add(String(e));
+      globalErrorIds.add(String(e));
+    }
   }
 
   for (const { name, data } of specs) {
@@ -315,7 +322,7 @@ export function checkSpecs(specs: SpecFile[]): CheckResult {
               err(`${u.unitName}:${tid} guard inexistente ${g} (${scope})`);
               continue;
             }
-            if (def.onFail && !g.startsWith("GRD-CM-") && !errorsSet.has(def.onFail)) {
+            if (def.onFail && !errorsSet.has(def.onFail) && !globalErrorIds.has(def.onFail)) {
               if (!isKnownOnFailGap(u.unitName, tid, g)) {
                 err(`${u.unitName}:${tid} errors no incluye onFail(${g})=${def.onFail} (${scope}); si es un hueco nuevo, corregir la spec; si es preexistente, no está en known-onfail-exceptions.ts (OPEN-RV-12)`);
               }

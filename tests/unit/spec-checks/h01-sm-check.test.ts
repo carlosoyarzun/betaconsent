@@ -52,8 +52,9 @@ test("TEST-CNS-906 h01-sm-check: guard inexistente en una transición", () => {
 
 test("TEST-CNS-906 h01-sm-check: onFail nuevo sin error en la transición (hueco NUEVO, no en known-onfail-exceptions)", () => {
   const specs = clone(loadSpecs(SPEC_DIR));
-  // GRD-IV-02 (onFail ERR-CM-01) no es un guard GRD-CM-*, así que sí lo exige el checker; I1 no
-  // tiene ERR-CM-01 en su lista de errors y esta combinación no está en known-onfail-exceptions.ts.
+  // GRD-IV-02 (onFail ERR-CM-01) no es un globalError (common.spec.yaml: solo ERR-CM-06/ERR-CM-12
+  // lo son) ni está en known-onfail-exceptions.ts para I1; al quitar ERR-CM-01 de I1.errors el
+  // checker debe fallar (SEC-CNS-014 C1: ya no hay exención por prefijo GRD-CM-*).
   const i1 = tr(specs, "invitation", "I1");
   i1.errors = (i1.errors as string[]).filter((e) => e !== "ERR-CM-01");
   const { errors } = checkSpecs(specs);
