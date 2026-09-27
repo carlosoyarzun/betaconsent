@@ -49,7 +49,7 @@
       "id": "RC2",
       "from": "OPEN",
       "to": "CONTACTING",
-      "via": "worker (primera acción; RV0 al canal ligado)"
+      "via": "worker SYSTEM_GUARD (primera acción; RV0 fuente SYSTEM al canal ligado); fuente = rol worker (GRD-CM-15, SEC-CNS-013 N-4c-02)"
     },
     {
       "id": "RC2u",
@@ -87,25 +87,37 @@
       "id": "RC4.RESOLVED",
       "from": "IN_VERIFICATION",
       "to": "RESOLVED",
-      "via": "POST /platform/rights-cases/{caseRef}/close"
+      "via": "POST /platform/rights-cases/{caseRef}/close",
+      "pending": [
+        "F-CT-11"
+      ]
     },
     {
       "id": "RC4.WITHDRAWN",
       "from": "IN_VERIFICATION",
       "to": "WITHDRAWN",
-      "via": "POST /platform/rights-cases/{caseRef}/close"
+      "via": "POST /platform/rights-cases/{caseRef}/close",
+      "pending": [
+        "F-CT-11"
+      ]
     },
     {
       "id": "RC5",
       "from": "CONTACTING",
       "to": "RESOLVED",
-      "via": "POST /platform/rights-cases/{caseRef}/close"
+      "via": "POST /platform/rights-cases/{caseRef}/close",
+      "pending": [
+        "F-CT-11"
+      ]
     },
     {
       "id": "RC6",
       "from": "CONTACTING",
       "to": "WITHDRAWN",
-      "via": "POST /platform/rights-cases/{caseRef}/close"
+      "via": "POST /platform/rights-cases/{caseRef}/close",
+      "pending": [
+        "F-CT-11"
+      ]
     }
   ],
   "$defs": {

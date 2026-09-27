@@ -37,40 +37,96 @@
       "id": "TN1",
       "from": "ACTIVE",
       "to": "SUSPENDED",
-      "via": "sin operación HTTP: fixture (LOCAL/CI) o migración revisada (DEC-BR-014 §5)",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
       "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
         "F-007"
-      ]
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "PLATFORM_ADMIN"
+        }
+      }
     },
     {
       "id": "TN2",
       "from": "SUSPENDED",
       "to": "ACTIVE",
-      "via": "sin operación HTTP: fixture o migración revisada",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
       "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
         "F-007"
-      ]
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "PLATFORM_ADMIN"
+        }
+      }
     },
     {
       "id": "SP1",
       "from": "PENDING_AUTHORIZATION",
       "to": "ACTIVE",
-      "via": "sin operación HTTP: fixture o migración revisada",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
       "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
         "F-007"
-      ]
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      }
     },
     {
       "id": "SP2",
       "from": "ACTIVE",
       "to": "SUSPENDED",
-      "via": "sin operación HTTP"
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      },
+      "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
+        "F-007"
+      ]
     },
     {
       "id": "SP3",
       "from": "SUSPENDED",
       "to": "ACTIVE",
-      "via": "sin operación HTTP"
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      },
+      "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
+        "F-007"
+      ]
     },
     {
       "id": "SP4",
@@ -79,10 +135,21 @@
         "SUSPENDED"
       ],
       "to": "CLOSED",
-      "via": "sin operación HTTP (+ I9 PARTICIPATION_CLOSED fuente SYSTEM en la misma tx, GRD-TC-08)",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013); + I9 PARTICIPATION_CLOSED fuente SYSTEM en la misma tx (GRD-TC-08)",
       "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
+        "F-007",
         "OPEN-TC-07"
-      ]
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      }
     },
     {
       "id": "EN0",

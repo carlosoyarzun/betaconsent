@@ -313,7 +313,19 @@
         "ERR-RC-06": "SCHOOL_CANNOT_EXECUTE_REVOCATION",
         "ERR-RC-10": "ROSTER_INSUFFICIENT"
       },
-      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-RC-11 (SYSTEM_ESCALATION_RETRY, fuente SYSTEM de RC1), ERR-TC-01 y ERR-TC-02 son de worker o fixture."
+      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-RC-11 (SYSTEM_ESCALATION_RETRY, fuente SYSTEM de RC1), ERR-TC-01 y ERR-TC-02 son de worker o fixture.",
+      "x-uniform-on-bearer-routes": {
+        "errors": [
+          "ERR-CM-01",
+          "ERR-CM-02",
+          "ERR-CM-10"
+        ],
+        "response": "UniformNotFound (404, AC-07.1)",
+        "governedBy": [
+          "common.spec ERR-CM-02, ERR-CM-10 (SEC-CNS-013)"
+        ],
+        "note": "En rutas del portador (landingHandle, manageHandle, recoveryHandle) INVITER_TENANT_MISMATCH y ACTOR_NOT_ALLOWED nunca salen como Problem: la respuesta externa es la uniforme de ERR-CM-01."
+      }
     },
     "RightsPaths": {
       "const": [
@@ -360,7 +372,7 @@
       "required": [
         "status"
       ],
-      "description": "404 uniforme: mismo cuerpo, código y tiempo acotado para token inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01; REQ-CNS-TBD-07 AC-07.1)."
+      "description": "404 uniforme: mismo cuerpo, código y tiempo acotado para token inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01; REQ-CNS-TBD-07 AC-07.1). En rutas del portador cubre también ERR-CM-02 y ERR-CM-10 (SEC-CNS-013)."
     },
     "UniformAccepted": {
       "type": "object",

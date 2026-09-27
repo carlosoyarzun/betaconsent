@@ -35,6 +35,11 @@ info:
       RIGHTS nunca leen `*.active` de tenant, estudio, participación, matrícula ni contexto.
     - Respuestas RIGHTS uniformes: nunca «denegado»; siempre `rightsPathsAvailable`
       (RULE-CNS-TBD-02; INV-RV-05; INV-OT-06).
+    - En rutas del portador (landingHandle, manageHandle, recoveryHandle) ERR-CM-01, ERR-CM-02 y
+      ERR-CM-10 (ACTOR_NOT_ALLOWED) salen con la respuesta uniforme de ERR-CM-01 (404
+      UniformNotFound, AC-07.1), nunca con un 403 ni un código distinguible (SEC-CNS-013). El 403
+      de esas rutas es solo CSRF_REJECTED (ERR-CM-09). ACTOR_NOT_ALLOWED solo se expone en las
+      consolas STAFF, PLATFORM y CASE.
     - Secretos (código OTP, aserciones de step-up) son `writeOnly` y nunca se loguean.
 
     Convenciones de extensiones:
@@ -54,7 +59,9 @@ info:
     - "P-26 / SEC-CNS-006: nombres de cookie __Host- y de la cabecera CSRF son ilustrativos hasta fijarse."
     - "F-CT-10 (nuevo, P1, security↔architecture): RC2u (API-CNS-149) es un POST del entrypoint web con actor SYSTEM_GUARD (rights-case.spec RC2u actorPending), pero GRD-CM-15 y TEST-CNS-445 exigen que el ledger nunca registre SYSTEM_GUARD desde el entrypoint web y que una request no ejecute una rama SYSTEM. Se transcribe la spec sin resolverlo; depende de F-005 / DEC-BR-018 (Carlos)."
     - "OPEN-CT-08 (nuevo): las specs no fijan los códigos HTTP exactos por error; los status de este borrador son propuesta."
-    - "F-CT-09 (nuevo, P2): listas de guards de las specs sin GRD-CM-06/GRD-CM-07/GRD-CM-01 en transiciones RIGHTS (RC3, RC3a, RH3, RC4-RC6; GRD-CM-01 también en RH2). El contrato declara la clase RIGHTS pero no añade guards; reconciliar en las specs (coordinar con lampone-security)."
+    - "F-CT-11 (nuevo, P2): rights-case.spec RC4.RESOLVED/RC4.WITHDRAWN/RC5/RC6 listan ERR-CM-01 en errors pero no GRD-CM-01 en guards (SEC-CNS-013); caso inverso de OPEN-RV-12 (F-SEC-013-02). Se transcribe la spec; reconciliar en la spec (lampone-security → lampone-architect)."
+    - "OPEN-RV-12 (F-SEC-013-02): errors[] de una transición no es sistemáticamente el cierre de onFail(guards); falta checker genérico."
+    - "OPEN-RV-13 (F-SEC-013-03, fuera de alcance de SEC-CNS-013): R1r, R10, R11 sin GRD-CM-07; R2, R3 sin GRD-CM-01."
     - "OPEN-CT-09: I1 idempotencyKey (tenantRef, clientRequestId) sin clientRequestId en el body; se transcribe como cabecera Idempotency-Key. (La parte 'cosign RH3 sin schema propio' se cerró: CosignCaseConfirmationRequest.)"
 servers:
   - url: http://localhost:8080
@@ -183,7 +190,7 @@ components:
         Location: {$ref: '#/components/headers/Location'}
         Set-Cookie: {$ref: '#/components/headers/SetCookie'}
     UniformNotFound:
-      description: 404 uniforme (mismo cuerpo, código y tiempo acotado) para token o ref inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01).
+      description: 404 uniforme (mismo cuerpo, código y tiempo acotado) para token o ref inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01). En rutas del portador cubre también ERR-CM-02 y ERR-CM-10 (SEC-CNS-013).
       content:
         application/json:
           schema: {$ref: '../schemas/common.schema.json#/$defs/UniformNotFound'}
@@ -846,6 +853,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /manage/revocation/verify:
     post:
@@ -860,7 +868,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: OTP}
       x-guards: [GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-05, GRD-RV-08, GRD-RV-19, GRD-RV-21, GRD-RV-23]
       x-idempotency: "revocationRef"
-      x-pending: ["LD-02 (assuranceLevel placeholder)"]
+      x-pending: ["LD-02 (assuranceLevel placeholder)", "OPEN-RV-13 (R2 sin GRD-CM-01; fuera de alcance de SEC-CNS-013)"]
       security: [{manageHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
@@ -876,6 +884,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /manage/revocation/confirm:
     post:
@@ -890,6 +899,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: OTP}
       x-guards: [GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-08, GRD-RV-21, GRD-RV-23, GRD-RV-24]
       x-idempotency: "revocationRef"
+      x-pending: ["OPEN-RV-13 (R3 sin GRD-CM-01; fuera de alcance de SEC-CNS-013)"]
       security: [{manageHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
@@ -905,6 +915,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /manage/revocation/withdraw:
     post:
@@ -935,6 +946,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /manage/recovery-link:
     post:
@@ -942,13 +954,22 @@ paths:
       x-api-id: API-CNS-134
       tags: [bearer-rights]
       summary: RV0 con trigger del portador — emitir enlace de recuperación SOLO al canal ligado (emisión, sin transición)
-      description: Sin canal en el body (GRD-RV-17). CASE_CONTACT y SCHOOL_REPORTED son triggers de sistema (RC2), sin HTTP. Respuesta uniforme (ERR-RV-02, ERR-RV-12).
-      x-governed-by: ["revocation.spec RV0", "CFG-RV-MANAGEMENT-LINK", "GRD-RV-20", "DEC-BR-017 §2"]
+      description: Sin canal en el body (GRD-RV-17). Solo la fuente BEARER (triggers REQUESTER_ASKED, LIMIT_REACHED); CASE_CONTACT y SCHOOL_REPORTED son la fuente SYSTEM (RC2), sin HTTP, y un POST web que los declare se rechaza sin envío ni evento (GRD-CM-15, TEST-CNS-445). El token queda ligado a revoked_decision_ref = decisión GRANTED vigente de la cadena (SEC N2-04). Respuesta uniforme (ERR-RV-02, ERR-RV-12); ERR-CM-01/ERR-CM-10 → 404 uniforme.
+      x-governed-by: ["revocation.spec RV0 (guardsBySource, rev. 4d)", "CFG-RV-MANAGEMENT-LINK", "GRD-RV-20", "DEC-BR-017 §2, §9", "SEC-CNS-012 re-verificación rev. 4 N2-04", "SEC-CNS-013 N-4c-01"]
       x-state-transition: {machine: Revocation, id: RV0, kind: EMISSION}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {actorType: SYSTEM_GUARD, triggeredBy: "portador del handle MANAGE_ENTRY"}
-      x-guards: [GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-17, GRD-RV-20]
+      x-actor:
+        source: BEARER
+        bySource:
+          BEARER: {ref: UNVERIFIED_BEARER, note: "POST explícito desde el handle MANAGE_ENTRY; triggers REQUESTER_ASKED, LIMIT_REACHED"}
+          SYSTEM: {actorType: SYSTEM_GUARD, note: "triggers CASE_CONTACT, SCHOOL_REPORTED dentro de la tx de RC2; sin superficie HTTP (x-not-exposed)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-02, GRD-RV-17, GRD-RV-20]
+      x-guards-by-source:
+        common: [GRD-CM-06, GRD-RV-02, GRD-RV-17]
+        BEARER: [GRD-CM-01, GRD-CM-07, GRD-CM-10, GRD-RV-20]
+        SYSTEM: [GRD-RV-22, GRD-CM-15] # sin superficie HTTP
+      x-errors: [ERR-RV-12, ERR-RV-02, ERR-CM-09, ERR-CM-01, ERR-CM-10]
       security: [{manageHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
@@ -959,6 +980,7 @@ paths:
       responses:
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
   /recovery/revoke:
     post:
       operationId: revokeWithRecoveryLink
@@ -985,7 +1007,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: RECOVERY, credential: "portador del handle RECOVERY (P-18)"}
       x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-06, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-25, GRD-RV-27]
       x-idempotency: "Idempotency-Key + handle RECOVERY (recoveryRef N:1 hacia la revocationRef abierta)"
-      x-pending: ["F-002"]
+      x-pending: ["F-002", "OPEN-RV-13 (R1r, R10, R11 sin GRD-CM-07; fuera de alcance de SEC-CNS-013)"]
       security: [{recoveryHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
       requestBody:
@@ -1001,6 +1023,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RecoveryRevokeResult'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /platform/rights-cases/{caseRef}/verification-proposals:
     post:
@@ -1009,12 +1032,13 @@ paths:
       tags: [platform]
       summary: RH2/RH2v paso 1 — propose_case_verification (RIGHTS_OPERATOR, sesión CASE, step-up)
       description: El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02; INV-CM-07). Sin efecto sobre Revocation hasta la aprobación. Dotación nominal atestada mínima de 4 personas (≥2 RIGHTS_OPERATOR distintos y ≥2 aprobadores distintos, sin reutilización entre roles; GRD-RC-15, R14-B); si no, ERR-RC-10 y el caso sigue abierto.
-      x-governed-by: ["revocation.spec RH2, RH2v", "SM-CNS-001 §5.2 RH2, v7 RH2v", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5, R13-1", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
+      x-governed-by: ["revocation.spec RH2, RH2v", "SEC-CNS-013", "SM-CNS-001 §5.2 RH2, v7 RH2v", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5, R13-1", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
       x-state-transition: {machine: Revocation, id: [RH2, RH2v], step: propose, effect: none}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, proposer: "RIGHTS_OPERATOR con sesión CASE del caso (verifiedByRef)"}
-      x-guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
+      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, proposer: "RIGHTS_OPERATOR con sesión CASE del caso (verifiedByRef)", note: "GRD-CM-07 se aplica al ejecutor (verifiedByRef), derivado de la sesión y principal_kind HUMAN; actorType/actorRole del evento los fija la spec, nunca un parámetro (SEC-CNS-013)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15] # GRD-RV-27 solo en RH2v
+      x-errors: [ERR-RV-07, ERR-RV-08, ERR-RV-19, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13] # ERR-RV-19 solo en RH2v
       x-idempotency: "(revocationRef, proposal_ref)"
       x-pending: ["LD-02 (suficiencia de la verificación humana)", "APR-IDP (PENDING — Carlos / studio)"]
       security: [{caseSession: []}]
@@ -1040,14 +1064,15 @@ paths:
       tags: [platform]
       summary: RH2/RH2v paso 2 — approve_case_verification (PRIVACY_LEGAL o SECURITY, tercer humano) → REQUESTED|VERIFIED → VERIFIED
       description: REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto. En la misma tx se proyectan verifiedAuthPath y verifiedRecoveryMethod (SEC N2-02, GRD-RV-29). Dotación mínima de 4 personas (GRD-RC-15, R14-B; ERR-RC-10).
-      x-governed-by: ["revocation.spec RH2, RH2v", "GRD-RV-09", "GRD-RC-15", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38", "CARLOS r3 R14-B"]
+      x-governed-by: ["revocation.spec RH2, RH2v", "SEC-CNS-013", "GRD-RV-09", "GRD-RC-15", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38", "CARLOS r3 R14-B"]
       x-state-transition:
         - {machine: Revocation, id: RH2, from: REQUESTED, to: VERIFIED}
         - {machine: Revocation, id: RH2v, from: VERIFIED, to: VERIFIED}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef)"}
-      x-guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
+      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef)", note: "GRD-CM-07 se aplica al ejecutor (secondApproverRef), derivado de la sesión y principal_kind HUMAN (SEC-CNS-013)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15] # GRD-RV-27 solo en RH2v
+      x-errors: [ERR-RV-07, ERR-RV-08, ERR-RV-19, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13] # ERR-RV-19 solo en RH2v
       x-idempotency: "(revocationRef, proposal_ref)"
       x-pending: ["APR-IDP", "OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "LD-02"]
       security: [{platformSession: []}]
@@ -1073,12 +1098,14 @@ paths:
       tags: [platform]
       summary: RH3 paso 1 — record_case_confirmation (RIGHTS_OPERATOR, sesión CASE); sin efecto sin co-firma
       description: Interino IT0 (R13-4, R14-B) — cuatro ojos, dos RIGHTS_OPERATOR distintos (registra uno, co-firma otro; cualquiera de los dos puede ser el proponente de RH2, AUDIT-H01-rev4 M-04), ninguno aprobador de RH2/RH2v ni de un grant del caso; mínimo 4 personas (≥2 RIGHTS_OPERATOR y ≥2 aprobadores distintos, GRD-RC-15) sin reutilización entre roles. recordedByRef se deriva de la sesión CASE, nunca del body (GRD-CM-07). La regla definitiva es LEGAL DECISION LD-03.
-      x-governed-by: ["revocation.spec RH3", "SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 N-04, P1-07", "ADR-006 §6.3", "LD-03"]
+      x-governed-by: ["revocation.spec RH3", "SEC-CNS-013", "SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 N-04, P1-07", "ADR-006 §6.3", "LD-03"]
       x-state-transition: {machine: Revocation, id: RH3, step: record, effect: none}
       x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06 implícito por clase RIGHTS; la spec no lo lista en RH3)"
-      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE"}
-      x-guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE", note: "GRD-CM-07 se aplica al ejecutor (recordedByRef), derivado de la sesión y principal_kind HUMAN (SEC-CNS-013)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+      x-errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-RV-20, ERR-RV-04, ERR-RC-10, ERR-CM-01, ERR-CM-10]
+      x-errors-note: "ERR-RC-05 huérfano: su guard GRD-RC-12 se quitó de RH3 por OPEN-RV-10; se conserva hasta que Carlos lo resuelva. ERR-RV-20 = RH3_NOT_BOUND_TO_RH2 (sin RH2/RH2v ATTESTED de la misma revocationRef y caseRef posterior al último RC3/RC3a)."
       x-idempotency: "revocationRef"
       x-pending: ["F-003 (RH3 con 4 personas y co-firma)", "OPEN-RV-10 (step-up de record/cosign; GRD-RC-12 retirado)", "LD-03 (LEGAL DECISION: quién escribe la confirmación)"]
       security: [{caseSession: []}]
@@ -1096,6 +1123,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/RightsProblem', description: "RH3_NOT_BOUND_TO_RH2 (ERR-RV-20), RH3_FOUR_EYES_REQUIRED (ERR-RV-18), ROSTER_INSUFFICIENT (ERR-RC-10); sin efecto, el caso sigue abierto."}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /platform/rights-cases/{caseRef}/confirmation/cosign:
     post:
@@ -1104,12 +1132,14 @@ paths:
       tags: [platform]
       summary: RH3 paso 2 — cosign_case_confirmation por un segundo RIGHTS_OPERATOR distinto (VERIFIED → CONFIRMED)
       description: Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Encola APPLY_REVOCATION en la misma tx. REVOCATION_CONFIRMED registra recordedByRef y cosignedByRef (refs opacas UUIDv4 del principal de plataforma, distintas entre sí e iguales a las columnas de la confirmación; INV-RV-11, F-R14-04); sin cosignedByRef el append falla y no hay efecto. cosignedByRef se deriva de la sesión CASE del co-firmante, nunca del body (GRD-CM-07).
-      x-governed-by: ["revocation.spec RH3, REVOCATION_CONFIRMED, INV-RV-11", "CARLOS r3 R14-B", "INV-17", "F-R14-04", "LD-03"]
+      x-governed-by: ["revocation.spec RH3, REVOCATION_CONFIRMED, INV-RV-11", "SEC-CNS-013", "CARLOS r3 R14-B", "INV-17", "F-R14-04", "LD-03"]
       x-state-transition: {machine: Revocation, id: RH3, from: VERIFIED, to: CONFIRMED, step: cosign, sideEffects: ["job durable APPLY_REVOCATION"]}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, cosignedByRef: "segundo RIGHTS_OPERATOR distinto, sesión CASE propia"}
-      x-guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, cosignedByRef: "segundo RIGHTS_OPERATOR distinto, sesión CASE propia", note: "GRD-CM-07 se aplica al ejecutor (cosignedByRef), derivado de la sesión y principal_kind HUMAN; el co-firmante va en payload.cosignedByRef, no en el sobre del actor (SEC-CNS-013, F-R14-04)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+      x-errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-RV-20, ERR-RV-04, ERR-RC-10, ERR-CM-01, ERR-CM-10]
+      x-errors-note: "ERR-RC-05 huérfano: su guard GRD-RC-12 se quitó de RH3 por OPEN-RV-10; se conserva hasta que Carlos lo resuelva. ERR-RV-20 = RH3_NOT_BOUND_TO_RH2 (sin RH2/RH2v ATTESTED de la misma revocationRef y caseRef posterior al último RC3/RC3a)."
       x-idempotency: "revocationRef"
       x-pending: ["F-003", "OPEN-RV-11 (PENDING-CARLOS: cosignedByRef es campo nuevo de la lista blanca de DEC-BR-017 §6 y cambia el payload de SM v7 §5.2 RH3; derivados pendientes)", "OPEN-RV-10", "LD-03"]
       security: [{caseSession: []}]
@@ -1127,6 +1157,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/RightsProblem', description: "RH3_NOT_BOUND_TO_RH2 (ERR-RV-20), RH3_FOUR_EYES_REQUIRED (ERR-RV-18), ROSTER_INSUFFICIENT (ERR-RC-10); sin efecto, el caso sigue abierto."}
         4XX: {$ref: '#/components/responses/RightsProblem'}
   # ---------------------------------------------------------------------------
   # rights-case (RC0, RC1, RC2u, RC3/RC3a, RC4/RC5/RC6). RC2 worker; RC1c deshabilitada.
@@ -1178,13 +1209,14 @@ paths:
           BEARER: {ref: UNVERIFIED_BEARER, note: "POST desde el handle /m/ o /r/ (R13-5)"}
           SYSTEM: {actorType: SYSTEM_GUARD, note: "solo desde R9 en la misma tx (GRD-RC-16); sin superficie HTTP (x-not-exposed)"}
         note: "Una request que declare origin REQUEST_EXPIRED, actorType SYSTEM_GUARD o una marca de fuente se rechaza sin caso ni evento (GRD-CM-15, TEST-CNS-445)."
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RC-05, GRD-RC-14]
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RC-05, GRD-RC-14]
       x-guards-by-source:
         common: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04]
-        BEARER: [GRD-CM-01, GRD-CM-10, GRD-RC-05, GRD-RC-14]
+        BEARER: [GRD-CM-01, GRD-CM-07, GRD-CM-10, GRD-RC-05, GRD-RC-14] # SEC-CNS-013 N-4c-03
         SYSTEM: [GRD-RV-16, GRD-RC-16, GRD-CM-15] # sin superficie HTTP
       x-idempotency: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
-      x-uniform-response: "200 InReviewAck para éxito, caso ya abierto, cadena inexistente e input rechazado"
+      x-errors: [ERR-RC-01, ERR-RC-02, ERR-CM-09, ERR-CM-10] # ERR-RC-11 solo en la fuente SYSTEM (sin HTTP)
+      x-uniform-response: "200 InReviewAck para éxito, caso ya abierto, cadena inexistente e input rechazado; ERR-CM-01/ERR-CM-10 → 404 uniforme"
       x-pending: ["F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"]
       security: [{manageHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
@@ -1200,6 +1232,7 @@ paths:
             application/json:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InReviewAck'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
   /rights-case/resume:
     post:
       operationId: resumeRightsCase
@@ -1247,14 +1280,20 @@ paths:
       tags: [bearer-rights]
       summary: RC3/RC3a — intención expresa en la página del caso (CONTACTING → IN_VERIFICATION) + lado Revocation (RC3 null → REQUESTED | R12 adjunta)
       description: Escrita por web desde el handle del DecisionMaker, nunca por el operador. Sin caseRef ni revocationRef del cliente (GRD-RC-14). El DecisionMaker queda probado por RH2 (P-v7-3 ACCEPTED, R14-A).
-      x-governed-by: ["rights-case.spec RC3, RC3a", "revocation.spec RC3, R12", "SM-CNS-001 §5.2 RC3, v7 RC3a, R12", "DEC-BR-017 §3, §6 (F-510)", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-H01-02"]
+      x-governed-by: ["rights-case.spec RC3, RC3a", "revocation.spec RC3, R12", "SM-CNS-001 §5.2 RC3, v7 RC3a, R12", "DEC-BR-017 §3, §6 (F-510)", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-H01-02", "SEC-CNS-013"]
       x-state-transition:
         - {machine: RightsCase, id: RC3, from: CONTACTING, to: IN_VERIFICATION, sameLotAs: "Revocation RC3 (null → REQUESTED)"}
         - {machine: RightsCase, id: RC3a, from: CONTACTING, to: IN_VERIFICATION, sameLotAs: "Revocation R12 (REQUESTED|VERIFIED|CONFIRMED → self)"}
       x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (clase RIGHTS; la spec no lista GRD-CM-06 en RC3/RC3a)"
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
       x-actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)"}
-      x-guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-08, GRD-RC-13, GRD-RC-14, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28]
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-08, GRD-RC-13, GRD-RC-14, GRD-RV-02, GRD-RV-04, GRD-RV-19, GRD-RV-20, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28]
+      x-guards-by-transition: # unión arriba; lista exacta por transición (rev. 4d/4e, SEC-CNS-013)
+        RightsCase.RC3: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-20, GRD-RC-08, GRD-RC-13, GRD-RC-14]
+        Revocation.RC3: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RC-08, GRD-RC-14]
+        RightsCase.RC3a: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-20, GRD-RC-08, GRD-RC-14, GRD-RV-27]
+        Revocation.R12: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28, GRD-RC-08, GRD-RC-14]
+      x-errors: [ERR-CM-01, ERR-CM-09, ERR-CM-10, ERR-RC-09, ERR-RV-02, ERR-RV-04, ERR-RV-19]
       x-idempotency: "(caseRef, revocationRef)"
       x-pending: ["F-005 (actor UNVERIFIED_BEARER en RC3/R12 vs DEC-BR-017 §8 DECISION_MAKER)", "F-006 (alcance del handle /m/)", "F-002", "P-v7-5 (RC3a/R12)"]
       security: [{manageHandle: []}]
@@ -1272,6 +1311,7 @@ paths:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InReviewAck'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
   /platform/rights-cases/{caseRef}/close:
     post:
       operationId: closeRightsCase
@@ -1279,16 +1319,18 @@ paths:
       tags: [platform]
       summary: RC4/RC5/RC6 — close_case (IN_VERIFICATION|CONTACTING → RESOLVED|WITHDRAWN)
       description: RESOLVED solo tras R4 APPLIED; WITHDRAWN solo tras REVOCATION_FAILED WITHDRAWN_BY_REQUESTER del ciclo vigente (GRD-RC-09). Ningún timer cierra el caso.
-      x-governed-by: ["rights-case.spec RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6", "SM-CNS-001 §5.2 RC4, v7 RC5, RC6", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-A01"]
+      x-governed-by: ["rights-case.spec RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6", "SM-CNS-001 §5.2 RC4, v7 RC5, RC6", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-A01", "SEC-CNS-013"]
       x-state-transition:
         - {machine: RightsCase, id: RC4.RESOLVED, from: IN_VERIFICATION, to: RESOLVED}
         - {machine: RightsCase, id: RC4.WITHDRAWN, from: IN_VERIFICATION, to: WITHDRAWN}
         - {machine: RightsCase, id: RC5, from: CONTACTING, to: RESOLVED}
         - {machine: RightsCase, id: RC6, from: CONTACTING, to: WITHDRAWN}
       x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (clase RIGHTS)"
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
       x-actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
-      x-guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+      x-guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-09, GRD-RC-10]
+      x-errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09, ERR-CM-01, ERR-CM-10]
+      x-pending: ["F-CT-11 (ERR-CM-01 en errors sin GRD-CM-01 en guards de RC4–RC6)"]
       x-idempotency: "caseRef"
       security: [{caseSession: []}]
       parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -1307,11 +1349,12 @@ paths:
         '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
 x-not-exposed:
-  - {id: RC2, machine: RightsCase, reason: "worker (primera acción; RV0 al canal ligado con trigger CASE_CONTACT/SCHOOL_REPORTED)"}
+  - {id: RC2, machine: RightsCase, reason: "worker SYSTEM_GUARD (primera acción; RV0 fuente SYSTEM al canal ligado con trigger CASE_CONTACT/SCHOOL_REPORTED); fuente = rol worker (GRD-CM-15, SEC-CNS-013 N-4c-02)", guards: [GRD-RC-06, GRD-RV-22, GRD-RV-17, GRD-CM-15]}
+  - {id: "RV0 (fuente SYSTEM)", machine: Revocation, reason: "triggers CASE_CONTACT/SCHOOL_REPORTED dentro de la tx de RC2; sin POST, credencial ni handle; token ligado al revokedDecisionRef del caso (GRD-RV-22, SEC N2-04); fuente = rol worker (GRD-CM-15, SEC-CNS-013 N-4c-01)", guards: [GRD-CM-06, GRD-RV-02, GRD-RV-17, GRD-RV-22, GRD-CM-15]}
   - {id: RC1c, machine: RightsCase, reason: "deshabilitada (R13-2; LD-03/LD-04)", pending: ["F-004", "LD-03", "LD-04"]}
   - {id: "RC1 (fuente SYSTEM)", machine: RightsCase, reason: "SYSTEM_GUARD desde R9 en la misma tx (origin REQUEST_EXPIRED); sin handle, POST ni CSRF; tenant, chainRef y revokedDecisionRef del registro de la Revocation (GRD-RC-16); fuente = rol worker (GRD-CM-15). Si falla, R9 y RC1 se revierten y el job se reintenta (ERR-RC-11); nunca FAILED ni cierre.", guards: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RV-16, GRD-RC-16, GRD-CM-15]}
-  - {id: [TN1, TN2], machine: TenantStatus, reason: "sin operación HTTP: fixture (LOCAL/CI) o migración revisada (DEC-BR-014 §5)", pending: ["F-007", "F-CT-07 (TENANT_STATUS_CHANGED sin estado destino)"]}
-  - {id: [SP1, SP2, SP3, SP4], machine: SchoolParticipation, reason: "sin operación HTTP (SP4 + I9 PARTICIPATION_CLOSED en la misma tx)", pending: ["F-007"]}
+  - {id: [TN1, TN2], machine: TenantStatus, reason: "sin operación HTTP. x-actor.bySource: FIXTURE (actorType FIXTURE, seed sintético solo LOCAL/CI, rol de seed del bootstrap LOCAL); MIGRATION (PLATFORM_ADMIN, 'migración revisada') DESHABILITADA hasta DECISION de Carlos (DEC-BR-014 §5). SEC-CNS-013.", x-actor: {bySource: {FIXTURE: {actorType: FIXTURE}, MIGRATION: {enabled: false, actorRole: PLATFORM_ADMIN}}}, guards: {common: [GRD-CM-07, GRD-CM-13, GRD-TC-01], FIXTURE: [GRD-CM-14, GRD-CM-15]}, pending: ["F-007", "F-CT-07 (TENANT_STATUS_CHANGED sin estado destino)", "DECISION CARLOS (actorType de 'migración revisada', DEC-BR-014 §5)", "OPEN-CM-08"]}
+  - {id: [SP1, SP2, SP3, SP4], machine: SchoolParticipation, reason: "sin operación HTTP. x-actor.bySource: FIXTURE (seed LOCAL/CI); MIGRATION (CONTEXT_OWNER) DESHABILITADA hasta DECISION de Carlos. SP4 + I9 PARTICIPATION_CLOSED fuente SYSTEM en la misma tx (GRD-TC-08). SEC-CNS-013.", x-actor: {bySource: {FIXTURE: {actorType: FIXTURE}, MIGRATION: {enabled: false, actorRole: CONTEXT_OWNER}}}, guards: {common: "[GRD-CM-07, GRD-CM-13] + GRD-TC-02 (SP1, SP3) + GRD-TC-08 (SP4)", FIXTURE: [GRD-CM-14, GRD-CM-15]}, pending: ["F-007", "DECISION CARLOS (actorType de 'migración revisada')", "OPEN-TC-04 (F-313)", "OPEN-TC-07", "OPEN-CM-08"]}
   - {id: "[EN0, EN1] (fuente FIXTURE)", machine: Enrollment, reason: "seed sintético solo LOCAL/CI por el rol de seed del bootstrap LOCAL (GRD-CM-13, GRD-CM-14, GRD-CM-15); sin POST ni CSRF; tenant desde el manifiesto de seed. La superficie HTTP de EN0/EN1 es solo la fuente STAFF (API-CNS-105/106).", guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-CM-15], pending: ["F-007", "OPEN-CM-08"]}
   - {id: CX1, machine: ConsentContextReadiness, reason: "SYSTEM_GUARD; fixture o migración en IT0"}
   - {id: [I5, I6, I7], machine: Invitation, reason: "internas: mismo lote que V3 / C3 / C5"}

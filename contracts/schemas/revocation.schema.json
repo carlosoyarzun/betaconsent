@@ -182,7 +182,7 @@
       "id": "RV0",
       "from": null,
       "to": null,
-      "via": "POST /manage/recovery-link (trigger portador); interno RC2 (trigger sistema)",
+      "via": "POST /manage/recovery-link (fuente BEARER: REQUESTER_ASKED, LIMIT_REACHED); fuente SYSTEM dentro de la tx de RC2 (CASE_CONTACT, SCHOOL_REPORTED), sin HTTP (GRD-CM-15, SEC-CNS-013 N-4c-01)",
       "kind": "EMISSION"
     }
   ],
