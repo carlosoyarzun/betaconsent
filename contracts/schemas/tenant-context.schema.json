@@ -5,11 +5,12 @@
   "x-api-id": "API-CNS-191",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "x-governed-by": [
     "specs/state-machines/tenant-context.spec.yaml",
     "SM-CNS-001 §6",
-    "ADR-006 §2, §12"
+    "ADR-006 §2, §12",
+    "DEC-BR-018 (ACCEPTED 2026-09-27)"
   ],
   "x-states": {
     "TenantStatus": [
@@ -37,40 +38,91 @@
       "id": "TN1",
       "from": "ACTIVE",
       "to": "SUSPENDED",
-      "via": "sin operación HTTP: fixture (LOCAL/CI) o migración revisada (DEC-BR-014 §5)",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
       "pending": [
-        "F-007"
-      ]
+        "DECISION CARLOS (actorType de 'migración revisada')"
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "PLATFORM_ADMIN"
+        }
+      }
     },
     {
       "id": "TN2",
       "from": "SUSPENDED",
       "to": "ACTIVE",
-      "via": "sin operación HTTP: fixture o migración revisada",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
       "pending": [
-        "F-007"
-      ]
+        "DECISION CARLOS (actorType de 'migración revisada')"
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "PLATFORM_ADMIN"
+        }
+      }
     },
     {
       "id": "SP1",
       "from": "PENDING_AUTHORIZATION",
       "to": "ACTIVE",
-      "via": "sin operación HTTP: fixture o migración revisada",
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
       "pending": [
-        "F-007"
-      ]
+        "DECISION CARLOS (actorType de 'migración revisada')"
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      }
     },
     {
       "id": "SP2",
       "from": "ACTIVE",
       "to": "SUSPENDED",
-      "via": "sin operación HTTP"
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      },
+      "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')"
+      ]
     },
     {
       "id": "SP3",
       "from": "SUSPENDED",
       "to": "ACTIVE",
-      "via": "sin operación HTTP"
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013)",
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      },
+      "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')"
+      ]
     },
     {
       "id": "SP4",
@@ -79,19 +131,35 @@
         "SUSPENDED"
       ],
       "to": "CLOSED",
-      "via": "sin operación HTTP (+ I9 PARTICIPATION_CLOSED en la misma tx)"
+      "via": "sin operación HTTP: fuente FIXTURE (seed LOCAL/CI, GRD-CM-14/15); fuente MIGRATION deshabilitada (DECISION Carlos, DEC-BR-014 §5; SEC-CNS-013); + I9 PARTICIPATION_CLOSED fuente SYSTEM en la misma tx (GRD-TC-08)",
+      "pending": [
+        "DECISION CARLOS (actorType de 'migración revisada')",
+        "SEC-CNS-006 (tope y backoff del job CASCADE_CANCEL_INVITATION: PENDING; OPEN-TC-07 cerrado por DEC-BR-018)"
+      ],
+      "actorBySource": {
+        "FIXTURE": {
+          "actorType": "FIXTURE"
+        },
+        "MIGRATION": {
+          "enabled": false,
+          "actorRole": "CONTEXT_OWNER"
+        }
+      }
     },
     {
       "id": "EN0",
       "from": null,
       "to": "ACTIVE",
-      "via": "POST /staff/enrollments"
+      "via": "POST /staff/enrollments (fuente STAFF); fuente FIXTURE por seed LOCAL/CI sin HTTP (GRD-CM-14, GRD-CM-15)"
     },
     {
       "id": "EN1",
       "from": "ACTIVE",
       "to": "CLOSED",
-      "via": "POST /staff/enrollments/{enrollmentRef}/close"
+      "via": "POST /staff/enrollments/{enrollmentRef}/close (fuente STAFF); fuente FIXTURE por seed sin HTTP; + I9 ENROLLMENT_CLOSED fuente SYSTEM en la misma tx (GRD-TC-08)",
+      "pending": [
+        "SEC-CNS-006 (tope y backoff del job CASCADE_CANCEL_INVITATION: PENDING; OPEN-TC-07 cerrado por DEC-BR-018)"
+      ]
     },
     {
       "id": "CX1",

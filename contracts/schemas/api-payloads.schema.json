@@ -5,12 +5,13 @@
   "x-api-id": "API-CNS-181",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "x-governed-by": [
     "specs/state-machines/*.spec.yaml (transiciones con httpPost: true)",
     "SM-CNS-001 v6/v7",
     "DEC-BR-014 §4",
-    "DEC-BR-017 §6, §8"
+    "DEC-BR-017 §6, §8",
+    "DEC-BR-018 (ACCEPTED 2026-09-27)"
   ],
   "$defs": {
     "EmptyCommand": {
@@ -584,50 +585,22 @@
         },
         "purposes": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 1,
           "items": {
             "$ref": "#/$defs/PurposeDecision"
           },
-          "allOf": [
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "STUDY_PARTICIPATION"
-                  }
-                }
-              }
-            },
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "AUDIO_RECORDING"
-                  }
-                }
-              }
-            },
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "AUTOMATED_ANALYSIS"
-                  }
-                }
-              }
-            },
-            {
-              "contains": {
-                "properties": {
-                  "purpose": {
-                    "const": "HUMAN_REVIEW"
-                  }
-                }
-              }
-            }
-          ],
-          "description": "Elección explícita por cada finalidad requerida, exactamente una vez cada una (GRD-CD-06/07). Todas GRANT: C3 GRANTED; al menos una DECLINE: C5 DECLINED. C4 (parcial) no existe en BETA_2026_01."
+          "description": "Elección explícita por cada finalidad de requiredPurposes del adapter activo, exactamente una vez cada una (GRD-CD-06/07; el servidor valida contra el adapter y rechaza con ERR-CD-02). Todas GRANT: C3 GRANTED; al menos una DECLINE: C5 DECLINED. C4 (parcial) inalcanzable mientras el adapter activo fije allowPartialGrant = false (F-025).",
+          "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.requiredPurposes",
+          "x-adapter-values": {
+            "adapter": "specs/adapters/lectorpro-beta.spec.yaml",
+            "requiredPurposes": [
+              "STUDY_PARTICIPATION",
+              "AUDIO_RECORDING",
+              "AUTOMATED_ANALYSIS",
+              "HUMAN_REVIEW"
+            ],
+            "items": 4
+          }
         }
       },
       "required": [
@@ -689,8 +662,8 @@
         "revokeIntent"
       ],
       "description": "R1. Sin chainRef, consentId, revokedDecisionRef ni initiatedVia del cliente: se derivan en servidor (GRD-RV-02, GRD-RV-25). scope = ALL siempre.",
-      "x-pending": [
-        "F-002 (unicidad de la revocación abierta por revokedDecisionRef vs decisionChainKey)"
+      "x-governed-by": [
+        "DEC-BR-018 R14-C (A-08, A-25, A-26: ≤1 revocación abierta por decisión revocada)"
       ]
     },
     "RevocationAck": {
@@ -720,7 +693,7 @@
       "properties": {
         "confirmTotalWithdrawal": {
           "const": true,
-          "description": "Confirmación explícita de retiro total: en BETA_2026_01 revocar cualquier finalidad es retiro total (GRD-RV-07)."
+          "description": "Confirmación explícita de retiro total: con scope ALL revocar cualquier finalidad es retiro total (GRD-RV-07)."
         }
       },
       "required": [
@@ -829,7 +802,7 @@
       "required": [
         "origin"
       ],
-      "description": "RC1 fromHandle. REQUEST_EXPIRED solo lo abre R9 (sistema).",
+      "description": "RC1 fuente BEARER. REQUEST_EXPIRED solo lo abre la fuente SYSTEM (R9, GRD-RC-16): el enum lo excluye y la fuente se deriva de la identidad de ejecución, nunca de este body (GRD-CM-15).",
       "if": {
         "properties": {
           "origin": {
@@ -847,10 +820,7 @@
             "caseContact"
           ]
         }
-      },
-      "x-pending": [
-        "F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"
-      ]
+      }
     },
     "InReviewAck": {
       "type": "object",
@@ -882,10 +852,8 @@
         "revokeIntent"
       ],
       "description": "RC3/RC3a. Sin caseRef ni revocationRef del cliente: el caso se resuelve desde la cadena del handle (GRD-RC-14).",
-      "x-pending": [
-        "F-005 (actor UNVERIFIED_BEARER en RC3/R12 vs DEC-BR-017 §8 DECISION_MAKER)",
-        "F-006 (alcance del handle /m/)",
-        "F-002 (revocación abierta por revokedDecisionRef)"
+      "x-governed-by": [
+        "DEC-BR-018 R14-C (A-08, A-25, A-26: ≤1 revocación abierta por decisión revocada)"
       ]
     },
     "StepUpAssertion": {
@@ -988,9 +956,28 @@
         "confirmationGivenOnCasePage"
       ],
       "x-pending": [
-        "F-003 (RH3 con 4 personas y co-firma)",
         "OPEN-RV-10 (step-up de record/cosign)",
         "LD-03 (regla definitiva de quién escribe la confirmación)"
+      ],
+      "description": "RH3 paso 1 (record_case_confirmation). recordedByRef se deriva de la sesión CASE del RIGHTS_OPERATOR, nunca de un campo del body (GRD-CM-07, SEC-CNS-013)."
+    },
+    "CosignCaseConfirmationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "RH3 paso 2 (cosign_case_confirmation) por un segundo RIGHTS_OPERATOR distinto. Sin campos: cosignedByRef (REVOCATION_CONFIRMED, INV-RV-11) se deriva de la sesión CASE del co-firmante y recordedByRef del registro del paso 1; nunca vienen del body (GRD-CM-07, SEC-CNS-013). La co-firma se liga a la confirmación registrada del caso de la sesión (GRD-RV-26).",
+      "x-derived-server-side": [
+        "cosignedByRef",
+        "recordedByRef",
+        "revocationRef",
+        "caseRef"
+      ],
+      "x-pending": [
+        "OPEN-RV-10 (step-up de record/cosign)",
+        "LD-03 (regla definitiva de quién escribe la confirmación)"
+      ],
+      "x-governed-by": [
+        "DEC-BR-018 OPEN-RV-11 (A-57, A-58)"
       ]
     },
     "CaseConfirmationAck": {
@@ -1014,10 +1001,7 @@
         "cosign",
         "revocationState"
       ],
-      "description": "Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17).",
-      "x-pending": [
-        "F-003"
-      ]
+      "description": "Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17)."
     },
     "CloseRightsCaseRequest": {
       "type": "object",

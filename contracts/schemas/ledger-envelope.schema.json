@@ -5,11 +5,12 @@
   "x-api-id": "API-CNS-182",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "x-governed-by": [
-    "common.spec.yaml ledgerEnvelope, INV-CM-01, INV-CM-04, GRD-CM-13",
+    "common.spec.yaml ledgerEnvelope, INV-CM-01, INV-CM-04, GRD-CM-13, GRD-CM-14",
     "ADR-002 §2, §8",
-    "DEC-BR-014 §4, §6"
+    "DEC-BR-014 §4, §6",
+    "DEC-BR-018 (ACCEPTED 2026-09-27)"
   ],
   "$defs": {
     "AuditEvent": {
@@ -160,7 +161,7 @@
         "evidentiary",
         "dataClass"
       ],
-      "description": "Sobre de integrity.audit_event (common.spec ledgerEnvelope). UNIQUE (tenant_id, aggregate_id, sequence). Cadena SHA-256 por tenant en IT0. La última regla de allOf aplica GRD-CM-13 (R14-F): actorType FIXTURE solo con environment LOCAL (incluye CI).",
+      "description": "Sobre de integrity.audit_event (common.spec ledgerEnvelope). UNIQUE (tenant_id, aggregate_id, sequence). Cadena SHA-256 por tenant en IT0. La última regla de allOf aplica GRD-CM-13 y GRD-CM-14 (R14-F, SEC N2-06): actorType FIXTURE solo con environment LOCAL (incluye CI; el environment es el del catálogo de la DB, nunca de configuración) y solo en los eventTypes de la lista blanca FIXTURE.",
       "allOf": [
         {
           "if": {
@@ -830,11 +831,23 @@
             "properties": {
               "environment": {
                 "const": "LOCAL"
+              },
+              "eventType": {
+                "enum": [
+                  "TENANT_STATUS_CHANGED",
+                  "SCHOOL_PARTICIPATION_STATUS_CHANGED",
+                  "ENROLLMENT_STATUS_CHANGED"
+                ],
+                "description": "GRD-CM-14: origen FIXTURE solo para la lista blanca TN1, TN2, SP1–SP4, EN0, EN1 (common.spec actorModel.fixture.allowlist)."
               }
             }
           },
-          "x-pending": [
-            "F-007 (FIXTURE en LOCAL/CI vs DEC-BR-014 §6 solo staging; OPEN-CM-08)"
+          "x-governed-by": [
+            "GRD-CM-13",
+            "GRD-CM-14",
+            "common.spec ledgerEnvelope.checks (CHECK actor_type <> 'FIXTURE' OR environment = 'LOCAL')",
+            "SEC-CNS-012 re-verificación rev. 4 N2-06",
+            "DEC-BR-018 R14-F (A-15: FIXTURE solo LOCAL/CI; cierra OPEN-CM-08)"
           ]
         }
       ],

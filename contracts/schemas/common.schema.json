@@ -5,14 +5,15 @@
   "x-api-id": "API-CNS-180",
   "status": "DRAFT",
   "x-it0-only": true,
-  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)",
+  "x-spec-source": "specs/state-machines/*.spec.yaml rev. 4c–4f + specs/adapters/lectorpro-beta.spec.yaml (CA-116; main @ bc945d5, PR #6)",
   "x-governed-by": [
     "specs/state-machines/common.spec.yaml (tenancy, actorModel, ledgerEnvelope, errors)",
     "DEC-BR-001",
     "DEC-BR-015 §1",
     "DEC-BR-017 §6",
     "ADR-002 §2, §3, §8",
-    "ADR-006 §1"
+    "ADR-006 §1",
+    "specs/adapters/lectorpro-beta.spec.yaml (F-012)"
   ],
   "x-forbidden-keys": [
     "organization_*",
@@ -38,17 +39,21 @@
       ]
     },
     "ProductRef": {
-      "const": "LECTORPRO",
-      "description": "Valor de consent-decision.spec configuration.",
-      "x-pending": [
-        "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "description": "Código de catálogo del producto (no PII). El contrato genérico no fija el valor: se resuelve desde el adapter activo (F-012; consent-decision.spec configuration.productRef).",
+      "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.productRef",
+      "examples": [
+        "LECTORPRO"
       ]
     },
     "ContextRef": {
-      "const": "BETA_2026_01",
-      "description": "Único contexto IT0 (consent-decision.spec configuration). Código de catálogo, no PII.",
-      "x-pending": [
-        "F-012 (contextRef/productRef de LectorPro como configuración de adapter, no en el contrato genérico)"
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "description": "Código de catálogo del contexto de consentimiento (no PII). Se resuelve desde el adapter activo (F-012; consent-decision.spec configuration.contextRef); en IT0 hay un único adapter.",
+      "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.contextRef",
+      "examples": [
+        "BETA_2026_01"
       ]
     },
     "Sha256Hex": {
@@ -65,13 +70,31 @@
       "pattern": "^[A-Za-z0-9._-]{1,32}$"
     },
     "Purpose": {
-      "enum": [
-        "STUDY_PARTICIPATION",
-        "AUDIO_RECORDING",
-        "AUTOMATED_ANALYSIS",
-        "HUMAN_REVIEW"
-      ],
-      "description": "Finalidades requeridas (DEC-BR-001; R0.9). PRODUCT_IMPROVEMENT, AI_TRAINING y RESEARCH están prohibidas y no forman parte del enum."
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+      "description": "Finalidad de catálogo. Valores válidos = requiredPurposes del adapter activo; toda finalidad fuera de esa lista o en prohibitedPurposes se rechaza en servidor (GRD-CD-06/07, ERR-CD-02). El contrato genérico no fija el enum (F-012).",
+      "x-resolved-from": "specs/adapters/lectorpro-beta.spec.yaml#configuration.requiredPurposes",
+      "x-adapter-values": {
+        "adapter": "specs/adapters/lectorpro-beta.spec.yaml",
+        "requiredPurposes": [
+          "STUDY_PARTICIPATION",
+          "AUDIO_RECORDING",
+          "AUTOMATED_ANALYSIS",
+          "HUMAN_REVIEW"
+        ],
+        "prohibitedPurposes": [
+          "PRODUCT_IMPROVEMENT",
+          "AI_TRAINING",
+          "RESEARCH"
+        ],
+        "governedBy": [
+          "DEC-BR-001",
+          "SM-CNS-001 R0.9"
+        ]
+      },
+      "examples": [
+        "STUDY_PARTICIPATION"
+      ]
     },
     "PurposeChoice": {
       "enum": [
@@ -81,18 +104,19 @@
       "description": "Sin valor por defecto ni preselección (P06)."
     },
     "OriginPurposeRef": {
-      "enum": [
-        "STUDY_PARTICIPATION",
-        "AUDIO_RECORDING",
-        "AUTOMATED_ANALYSIS",
-        "HUMAN_REVIEW",
-        "ALL"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Purpose"
+        },
+        {
+          "const": "ALL"
+        }
       ],
-      "description": "Nunca nulo (DEC-BR-017 §6)."
+      "description": "Una finalidad del adapter activo o ALL. Nunca nulo (DEC-BR-017 §6)."
     },
     "RevocationScope": {
       "const": "ALL",
-      "description": "BETA_2026_01: toda revocación es retiro total (CARLOS r3 H1; INV-CD-02)."
+      "description": "Toda revocación es retiro total: scope ALL (revocation.spec payloadValues; CARLOS r3 H1; INV-CD-02; DEC-BR-017 E-06)."
     },
     "AuthPath": {
       "enum": [
@@ -289,7 +313,19 @@
         "ERR-RC-06": "SCHOOL_CANNOT_EXECUTE_REVOCATION",
         "ERR-RC-10": "ROSTER_INSUFFICIENT"
       },
-      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-TC-01 y ERR-TC-02 son de worker o fixture."
+      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-RC-11 (SYSTEM_ESCALATION_RETRY, fuente SYSTEM de RC1), ERR-TC-01 y ERR-TC-02 son de worker o fixture.",
+      "x-uniform-on-bearer-routes": {
+        "errors": [
+          "ERR-CM-01",
+          "ERR-CM-02",
+          "ERR-CM-10"
+        ],
+        "response": "UniformNotFound (404, AC-07.1)",
+        "governedBy": [
+          "common.spec ERR-CM-02, ERR-CM-10 (SEC-CNS-013)"
+        ],
+        "note": "En rutas del portador (landingHandle, manageHandle, recoveryHandle) INVITER_TENANT_MISMATCH y ACTOR_NOT_ALLOWED nunca salen como Problem: la respuesta externa es la uniforme de ERR-CM-01."
+      }
     },
     "RightsPaths": {
       "const": [
@@ -336,7 +372,7 @@
       "required": [
         "status"
       ],
-      "description": "404 uniforme: mismo cuerpo, código y tiempo acotado para token inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01; REQ-CNS-TBD-07 AC-07.1)."
+      "description": "404 uniforme: mismo cuerpo, código y tiempo acotado para token inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01; REQ-CNS-TBD-07 AC-07.1). En rutas del portador cubre también ERR-CM-02 y ERR-CM-10 (SEC-CNS-013)."
     },
     "UniformAccepted": {
       "type": "object",
