@@ -1,4 +1,5 @@
 # Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14-A, R14-F).
+# rev. 4e (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — OPEN-CM-08 pasa a DECIDED (cierra F-007, deriva de A-15/A-16); citas R13-5/R14-F. Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # rev. 4d (2026-09-27): SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c): aclara GRD-CM-07
 # para recordedActor fijo (RH2/RH2v/RH3) y añade a ERR-CM-10 la nota de respuesta externa uniforme en
 # rutas del portador; suma RV0-sistema y RC2 a la lista de funciones cubiertas por GRD-CM-15.
@@ -84,7 +85,7 @@ actorModel:
   actorRole: [DECISION_MAKER, INVITER, CONTEXT_OWNER, PLATFORM_ADMIN, RIGHTS_OPERATOR, UNVERIFIED_BEARER] # UNVERIFIED_BEARER: R13-5 (SM v7 R0.2)
   approverRoles: [PRIVACY_LEGAL, SECURITY] # aprobadores de grants y de RH2 (R6-5); roles de plataforma, no de ledger
   fixture:
-    rule: "R14-F: actorType FIXTURE permitido exclusivamente en LOCAL y CI, para seed sintético; rechazado en DEV, STAGING y PRODUCTION. CI corre con environment = LOCAL (el enum de ADR-002 §2 no tiene CI; OPEN-CM-07). SEC N2-06, defensa en profundidad: (1) CHECK de DB en integrity.audit_event (ledgerEnvelope.checks); (2) environment fijado en el catálogo de la DB al aprovisionar, nunca por configuración (GRD-CM-11, GRD-CM-13); (3) rol/credencial de seed creado solo por el bootstrap LOCAL, más lista blanca de transiciones FIXTURE (GRD-CM-14). Un CHECK rechaza actores IA. Contradice el literal de DEC-BR-014 §6 ('solo en staging'): derivado pendiente P-01 (S/R14-derivados.md), OPEN-CM-08."
+    rule: "R14-F: actorType FIXTURE permitido exclusivamente en LOCAL y CI, para seed sintético; rechazado en DEV, STAGING y PRODUCTION. CI corre con environment = LOCAL (el enum de ADR-002 §2 no tiene CI; OPEN-CM-07). SEC N2-06, defensa en profundidad: (1) CHECK de DB en integrity.audit_event (ledgerEnvelope.checks); (2) environment fijado en el catálogo de la DB al aprovisionar, nunca por configuración (GRD-CM-11, GRD-CM-13); (3) rol/credencial de seed creado solo por el bootstrap LOCAL, más lista blanca de transiciones FIXTURE (GRD-CM-14). Un CHECK rechaza actores IA. DEC-BR-014 §6 quedó enmendada para reflejar R14-F (DEC-BR-018 A-15, A-16; cierra OPEN-CM-08 y el derivado P-01)."
     guard: GRD-CM-13
     seedGuard: GRD-CM-14
     allowlist: [TN1, TN2, SP1, SP2, SP3, SP4, EN0, EN1] # únicas transiciones con origen FIXTURE (GRD-CM-14)
@@ -99,7 +100,7 @@ actorModel:
     may: ["invitation I4", "otp-challenge V1, V2, V2r (solo al canal ligado)", "revocation RV0 con trigger del portador", "rights-case RC1, RC1c (deshabilitada), RC2u", "rights-case RC3/RC3a y revocation RC3/R12 (intención en la página del caso; P-v7-3 ACCEPTED, R14-A)", "consent-decision M3 (deshabilitada)"]
     mayNot: ["C1–C5", "R1, R2, R3, R8, R8h", "RH2, RH2v, RH3", "declarar TOKEN_COMPROMISED", "ver menor, colegio, finalidades o estado"]
     becomesDecisionMaker: "solo con V3 (OTP), con el consumo del enlace en R1r/R2r/R10/R11 (control del canal ligado) o con RH2/RH2v"
-    governedBy: ["SM-CNS-001 v7 R0.2", "CARLOS r3 R13-5", "SM-CNS-001 §2 I4 (SM:36)", "SM-CNS-001 §5.2 RC1 (SM:152)"]
+    governedBy: ["SM-CNS-001 v7 R0.2", "DEC-BR-018 R13-5", "SM-CNS-001 §2 I4 (SM:36)", "SM-CNS-001 §5.2 RC1 (SM:152)"]
     testIds: [TEST-CNS-313, TEST-CNS-396]
   rules:
     - "Actor derivado de la identidad autenticada en servidor; nunca de un campo enviado por el cliente (SM R0.2)."
@@ -240,19 +241,19 @@ guards:
     name: fixture_actor_environment
     rule: "R14-F: actorType FIXTURE solo con environment = LOCAL (incluye las corridas de CI); en DEV, STAGING y PRODUCTION se rechaza (ERR-CM-10). SEC N2-06: el environment comparado es el del catálogo de la DB, nunca la configuración (un STAGING mal etiquetado LOCAL por configuración no habilita FIXTURE), y además lo impone el CHECK de DB de ledgerEnvelope.checks, de modo que el guard solo no es la única barrera."
     onFail: ERR-CM-10
-    governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §6 (literal contradicho: derivado P-01)", "DEC-BR-014 §5 (DEC-BR-014:84: SchoolParticipation y tenant.active por fixture o migración revisada)", "ADR-002 §2, §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    governedBy: ["DEC-BR-018 R14-F", "DEC-BR-014 §6 (literal contradicho: derivado P-01)", "DEC-BR-014 §5 (DEC-BR-014:84: SchoolParticipation y tenant.active por fixture o migración revisada)", "ADR-002 §2, §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
     testIds: [TEST-CNS-311, TEST-CNS-421, TEST-CNS-439, TEST-CNS-440]
   - id: GRD-CM-14
     name: fixture_seed_channel
     rule: "SEC N2-06: el origen FIXTURE solo existe por el rol/credencial de seed que crea el bootstrap LOCAL (el aprovisionamiento de DEV, STAGING y PRODUCTION no lo crea) y solo para actorModel.fixture.allowlist (TN1, TN2, SP1–SP4, EN0, EN1); cualquier otra transición con origen FIXTURE se rechaza. En la fuente FIXTURE el tenant_id sale del manifiesto de seed con SET LOCAL app.tenant_id y relectura bajo RLS: sin credencial de portador, sin POST ni CSRF. Sin origen FIXTURE, el guard no aplica."
     onFail: ERR-CM-10
-    governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §1, §5, §6", "ADR-002 §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    governedBy: ["DEC-BR-018 R14-F", "DEC-BR-014 §1, §5, §6", "ADR-002 §8", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
     testIds: [TEST-CNS-429, TEST-CNS-441]
   - id: GRD-CM-15
     name: source_from_execution_identity
     rule: "SEC N3-01: la fuente de guardsBySource se deriva de la identidad de ejecución (rol de DB de la conexión + entrypoint del proceso), nunca de un campo, header, parámetro, reasonCode, origin ni actorType enviado en la request. BEARER/STAFF/HUMAN = entrypoint web con app_rw (consola PLATFORM: platform_rw) y sesión resuelta por session_hash. SYSTEM = rol worker, solo dentro de la tx de la transición que la dispara (R9 → RC1; SP4/EN1 → I9; RightsCase RC2 tras RC1; RV0 con trigger CASE_CONTACT/SCHOOL_REPORTED, SEC-CNS-013 N-4c-01/N-4c-02) o en el job durable de kind cerrado que la reintenta (ops.claim_due_jobs; GRD-TC-08). FIXTURE = rol de seed del bootstrap LOCAL (GRD-CM-14). Las funciones de las ramas SYSTEM y FIXTURE (RC1 desde R9, RC2, RV0-sistema, cascada I9 y su job, EN0/EN1 por seed; nombres en H02 / ADR-006 §6) son SECURITY DEFINER con REVOKE EXECUTE FROM PUBLIC y sin EXECUTE para app_rw ni platform_rw (chequeo de catálogo, igual que CONTEXT_READINESS en GRD-TC-05). Una request HTTP que declare origin REQUEST_EXPIRED, reasonCode PARTICIPATION_CLOSED/ENROLLMENT_CLOSED, actorType SYSTEM_GUARD/FIXTURE o una marca de fuente se rechaza sin efecto ni evento; la base rechaza la llamada con permission denied si el código la intentara."
     onFail: ERR-CM-10
-    governedBy: ["SEC-CNS-012 re-verificación rev. 4b N3-01", "SM-CNS-001 R0.2 (actor derivado en servidor)", "ADR-002 §5 (roles app_rw, worker, platform_rw)", "ADR-006 §2 (EXECUTE por job_kind), §6 (allowlist SECURITY DEFINER)", "CARLOS r3 R14-F", "SEC-CNS-013 N-4c-01, N-4c-02"]
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4b N3-01", "SM-CNS-001 R0.2 (actor derivado en servidor)", "ADR-002 §5 (roles app_rw, worker, platform_rw)", "ADR-006 §2 (EXECUTE por job_kind), §6 (allowlist SECURITY DEFINER)", "DEC-BR-018 R14-F", "SEC-CNS-013 N-4c-01, N-4c-02"]
     testIds: [TEST-CNS-444, TEST-CNS-445, TEST-CNS-446]
     testNotes:
       TEST-CNS-444: "Catálogo: las funciones de las ramas SYSTEM (RC1 desde R9, RC2, RV0-sistema con trigger CASE_CONTACT/SCHOOL_REPORTED, cascada I9 y job CASCADE_CANCEL_INVITATION) y FIXTURE (EN0/EN1 por seed) no tienen EXECUTE para PUBLIC, app_rw ni platform_rw; llamarlas con esas conexiones da permission denied y no deja fila ni evento."
@@ -319,7 +320,7 @@ errors:
     code: ACTOR_NOT_ALLOWED
     response: "Rechazo determinista (rol no autorizado para la transición, actor IA, identidad de servicio, FIXTURE fuera de LOCAL/CI según R14-F o fuera de la lista blanca de GRD-CM-14). En rutas del portador la respuesta externa es la uniforme de ERR-CM-01 (AC-07.1), como ERR-CM-02 (SEC-CNS-013)."
     emitsEvent: none
-    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6", "CARLOS r3 R14-F", "SEC-CNS-012 re-verificación rev. 4 N2-06", "SEC-CNS-013"]
+    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6", "DEC-BR-018 R14-F", "SEC-CNS-012 re-verificación rev. 4 N2-06", "SEC-CNS-013"]
     testIds: [TEST-CNS-106, TEST-CNS-311, TEST-CNS-441]
   - id: ERR-CM-11
     code: STARTUP_REFUSED_NON_SYNTHETIC
@@ -381,7 +382,7 @@ invariants:
     testIds: [TEST-CNS-110, TEST-CNS-314]
   - id: INV-CM-10
     statement: "Ningún portador no verificado queda registrado como DECISION_MAKER; su actorRole es UNVERIFIED_BEARER y solo ejecuta las transiciones de actorModel.unverifiedBearer.may (= SM v7 INV-19)."
-    governedBy: ["SM-CNS-001 v7 R0.2, §7 INV-19", "CARLOS r3 R13-5", "AUDIT F-A03"]
+    governedBy: ["SM-CNS-001 v7 R0.2, §7 INV-19", "DEC-BR-018 R13-5", "AUDIT F-A03"]
     testIds: [TEST-CNS-313]
   - id: INV-CM-11
     statement: "Ninguna request HTTP ejecuta una rama SYSTEM ni FIXTURE de una transición: la fuente la fija la identidad de ejecución (GRD-CM-15) y app_rw y platform_rw no tienen EXECUTE sobre las funciones de esas ramas."
@@ -424,7 +425,7 @@ openItems:
     owner: "lampone-architect → Carlos"
     status: OPEN
   - id: OPEN-CM-08
-    item: "FINDING P1 spec↔decisión: DEC-BR-014 §6 (S/DEC-BR-014-iteracion-0.md:94) dice 'FIXTURE solo en staging' y R14-F dice 'exclusivamente en LOCAL y CI'. La spec aplica R14-F (prevalece la decisión de Carlos); falta enmendar DEC-BR-014 §6 (derivado P-01, no aplicado)."
+    item: "FINDING P1 spec↔decisión: DEC-BR-014 §6 decía 'FIXTURE solo en staging' y R14-F dice 'exclusivamente en LOCAL y CI'. La spec aplicaba R14-F (prevalece la decisión de Carlos); DEC-BR-014 §6 quedó enmendada (DEC-BR-018 A-15, A-16; cierra F-007 y el derivado P-01)."
     owner: Carlos
-    status: OPEN
+    status: "DECIDED (DEC-BR-018)"
     blocksDataReal: false

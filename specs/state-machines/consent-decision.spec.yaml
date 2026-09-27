@@ -1,4 +1,5 @@
 # Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 4c (R14-C: revokedDecisionRef; F-012 fix 2026-09-27).
+# rev. 4d (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — P-02 (revokedDecisionRef en la lista blanca) queda DECIDED (A-50, A-51). Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (GRD-TC-07 en C3 y C5: locks frente a SP4/EN1).
 # La existencia y aceptación del consentimiento NO las decide ningún modelo: los guards
 # verifican hechos registrados (eventos previos, hash servido, elección explícita por finalidad).
@@ -449,7 +450,7 @@ events:
   - id: CONSENT_REVOKED
     stream: LEDGER
     emittedBy: [C6, "revocation:R4"]
-    payload: [revocationRef, revokedDecisionRef, scope, effectiveAt, authPath, recoveryMethod, originPurposeRef] # revokedDecisionRef: R14-C (derivado P-02); scope = ALL; recoveryMethod iff authPath = RECOVERY
+    payload: [revocationRef, revokedDecisionRef, scope, effectiveAt, authPath, recoveryMethod, originPurposeRef] # revokedDecisionRef: R14-C, P-02 DECIDED (DEC-BR-018 A-50, A-51); scope = ALL; recoveryMethod iff authPath = RECOVERY
     governedBy: ["DEC-BR-017 §6", "SM-CNS-001 §4 C6", "ADR-002 §10"]
     testIds: [TEST-CNS-195]
   - id: CONSENT_EXPIRED
