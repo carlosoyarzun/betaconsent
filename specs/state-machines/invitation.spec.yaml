@@ -3,12 +3,13 @@
 # transversales en common.spec.yaml (GRD-CM-*, ERR-CM-*, INV-CM-*). Cero PII.
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de I9) y condición (iii) de GRD-TC-08 (GRD-IV-13: 404 uniforme en GET /i/; OPEN-TC-07 DECIDED, DEC-BR-018).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en I9), N2-05 (GRD-TC-07 en I1/I3/I3r/I4); AUDIT-H01-rev4 M-05.
+# rev. 4e (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en I2/I3/I3r/I4/I5/I6/I7/I9 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 specId: SPEC-CNS-SM-INVITATION
 title: "State machine Invitation (IT0)"
 smId: SM-CNS-001
 smSection: "§2, §2.1, §2.2"
 aggregateType: Invitation
-version: "0.4.2"
+version: "0.4.3"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -138,7 +139,7 @@ transitions:
     effects: ["Fija consentVersion, expiresAt y recipientBinding (+ recipientChannelRef si RECIPIENT_CHANNEL)."]
     emits: [INVITATION_READY]
     idempotencyKey: "(invitationRef, sequence)"
-    errors: [ERR-CM-05, ERR-CM-09, ERR-IV-03]
+    errors: [ERR-CM-02, ERR-CM-05, ERR-CM-09, ERR-IV-03]
     governedBy: ["SM-CNS-001 §2 I2, R0.5", "AUDIT F-A06"]
     testIds: [TEST-CNS-121, TEST-CNS-316]
   - id: I3
@@ -154,7 +155,7 @@ transitions:
       - "Encola la entrega por el adaptador de email de IT0 (sink/allowlist, DEC-BR-014 §4.2); ningún SMTP externo."
     emits: [INVITATION_SENT]
     idempotencyKey: "invitationRef"
-    errors: [ERR-CM-03, ERR-CM-04, ERR-CM-05, ERR-CM-09, ERR-IV-04]
+    errors: [ERR-CM-02, ERR-CM-03, ERR-CM-04, ERR-CM-05, ERR-CM-09, ERR-IV-04]
     governedBy: ["SM-CNS-001 §2 I3", "RULE-CNS-022", "DEC-BR-013", "SEC-CNS-006 P-31", "DEC-BR-014 §4, §6"]
     testIds: [TEST-CNS-122, TEST-CNS-437]
   - id: I3r
@@ -168,7 +169,7 @@ transitions:
     effects: ["Rota el token: el anterior deja de resolver (404 uniforme); invalida handles y sesiones derivados (P-30)."]
     emits: [INVITATION_TOKEN_ROTATED]
     idempotencyKey: "(invitationRef, rotationNo)"
-    errors: [ERR-IV-05, ERR-IV-10, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-IV-05, ERR-IV-10, ERR-CM-09]
     governedBy: ["SM-CNS-001 §2 I3r", "DEC-BR-017 E-04", "SEC-CNS-006 P-11, P-30"]
     testIds: [TEST-CNS-123, TEST-CNS-437]
   - id: I4
@@ -184,7 +185,7 @@ transitions:
       - "El primer POST con el handle transiciona a OPENED."
     emits: [INVITATION_OPENED]
     idempotencyKey: "invitationRef (INVITATION_OPENED una sola vez)"
-    errors: [ERR-IV-01, ERR-CM-05, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-IV-01, ERR-CM-05, ERR-CM-09]
     governedBy: ["SM-CNS-001 §2 I4, §2.2", "ADR-001 §2", "SEC F23", "SEC-CNS-006 P-12", "SEC-CNS-012 re-verificación rev. 4b (3)(iii)"]
     testIds: [TEST-CNS-124, TEST-CNS-437, TEST-CNS-451]
   - id: I5
@@ -200,7 +201,7 @@ transitions:
       - "Se escribe en el mismo lote atómico que DECISION_MAKER_CHANNEL_VERIFIED."
     emits: [INVITATION_VERIFIED]
     idempotencyKey: "(invitationRef, verificationRef)"
-    errors: [ERR-IV-06]
+    errors: [ERR-CM-02, ERR-IV-06]
     governedBy: ["SM-CNS-001 §2 I5, §2.1 M1, M4"]
     testIds: [TEST-CNS-125]
   - id: I6
@@ -214,7 +215,7 @@ transitions:
     effects: ["Mismo lote atómico que C3; invalida sesión DECISION (padre terminal, P-30)."]
     emits: [INVITATION_COMPLETED]
     idempotencyKey: "consentId + payloadHash (el de C3)"
-    errors: [ERR-CM-06]
+    errors: [ERR-CM-02, ERR-CM-06]
     governedBy: ["SM-CNS-001 §2 I6, §4 C3"]
     testIds: [TEST-CNS-126]
   - id: I7
@@ -228,7 +229,7 @@ transitions:
     effects: ["Mismo lote atómico que C5; invalida sesión DECISION."]
     emits: [INVITATION_DECLINED]
     idempotencyKey: "consentId + payloadHash (el de C5)"
-    errors: [ERR-CM-06]
+    errors: [ERR-CM-02, ERR-CM-06]
     governedBy: ["SM-CNS-001 §2 I7, §4 C5"]
     testIds: [TEST-CNS-127]
   - id: I7u
@@ -287,7 +288,7 @@ transitions:
       - "PARTICIPATION_CLOSED/ENROLLMENT_CLOSED: todas las invitaciones no terminales afectadas se cancelan en la misma transacción que SP4/EN1; ninguna ConsentDecision cambia y no se emite consent.revoked (INV-7)."
     emits: [INVITATION_CANCELLED]
     idempotencyKey: "(invitationRef, reasonCode)"
-    errors: [ERR-IV-09, ERR-IV-10, ERR-CM-09, ERR-CM-10]
+    errors: [ERR-CM-02, ERR-IV-09, ERR-IV-10, ERR-CM-09, ERR-CM-10]
     governedBy: ["SM-CNS-001 §2 I9, §2.1 M3, §6", "DEC-BR-018 R14-E (Q-18 opción A)", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "DEC-BR-018 (R14-E, Q-18 opcion A; A-09, A-19, A-35, A-36)", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05"]
     testIds: [TEST-CNS-130, TEST-CNS-317, TEST-CNS-418, TEST-CNS-419, TEST-CNS-420, TEST-CNS-428, TEST-CNS-438, TEST-CNS-444, TEST-CNS-445, TEST-CNS-449, TEST-CNS-450]
 

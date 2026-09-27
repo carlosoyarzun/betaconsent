@@ -161,7 +161,7 @@ transitions:
     emits: [RIGHTS_CASE_OPENED]
     payloadValues: {reasonCode: SCHOOL_REPORTED, initiatedVia: SCHOOL_REPORT}
     idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
-    errors: [ERR-RC-06, ERR-RC-07, ERR-CM-09, ERR-CM-10]
+    errors: [ERR-CM-02, ERR-RC-06, ERR-RC-07, ERR-CM-09, ERR-CM-10]
     governedBy: ["SM-CNS-001 §5.2 RC0", "DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.2", "SEC-CNS-006 P-35", "LD-03", "AUDIT F-A10", "SEC-CNS-012 P2-10"]
     testIds: [TEST-CNS-290, TEST-CNS-342, TEST-CNS-343]
   - id: RC1

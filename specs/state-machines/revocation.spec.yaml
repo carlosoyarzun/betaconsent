@@ -189,7 +189,7 @@ transitions:
     emits: [REVOCATION_REQUESTED]
     payloadValues: {scope: ALL, authPath: OTP, initiatedVia: "derivado en servidor (GRD-RV-25 no aplica: sin caso → DECISION_MAKER)", originPurposeRef: "código de finalidad o ALL"}
     idempotencyKey: revocationRef
-    errors: [ERR-CM-01, ERR-CM-09, ERR-RV-01, ERR-RV-04, ERR-RV-14]
+    errors: [ERR-CM-02, ERR-CM-01, ERR-CM-09, ERR-RV-01, ERR-RV-04, ERR-RV-14]
     governedBy: ["SM-CNS-001 §5 R1", "DEC-BR-017 §1 (S4-06c)", "REQ-CNS-TBD-02 AC-02.1", "SEC-CNS-012 P1-05"]
     testIds: [TEST-CNS-230, TEST-CNS-414, TEST-CNS-415, TEST-CNS-416]
   - id: R1r
@@ -247,7 +247,7 @@ transitions:
     emits: [REVOCATION_VERIFIED]
     payloadValues: {authPath: OTP, verificationRef: required, assuranceLevel: "placeholder LD-02"}
     idempotencyKey: revocationRef
-    errors: [ERR-RV-03, ERR-RV-14, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-RV-03, ERR-RV-14, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5 R2", "DEC-BR-017 §0.1 (a), §1", "CARLOS r3 R5-3", "REQ-CNS-TBD-02 AC-02.4", "SEC-CNS-012 P1-05"]
     testIds: [TEST-CNS-233, TEST-CNS-327, TEST-CNS-329]
   - id: R2r
@@ -304,7 +304,7 @@ transitions:
       - "En la misma tx se encola el job durable APPLY_REVOCATION (GRD-RV-24)."
     emits: [REVOCATION_CONFIRMED]
     idempotencyKey: revocationRef
-    errors: [ERR-RV-04, ERR-RV-14, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-RV-04, ERR-RV-14, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5 R3", "DEC-BR-017 §1", "SEC-CNS-012 P1-01 (técnico), P1-05"]
     testIds: [TEST-CNS-236, TEST-CNS-328]
   - id: R3r
@@ -434,7 +434,7 @@ transitions:
     emits: [REVOCATION_FAILED]
     payloadValues: {reasonCode: WITHDRAWN_BY_REQUESTER}
     idempotencyKey: revocationRef
-    errors: [ERR-RV-11, ERR-RV-14, ERR-RV-15, ERR-RV-04, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-RV-11, ERR-RV-14, ERR-RV-15, ERR-RV-04, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5 R8", "DEC-BR-017 §0.3, §5", "REQ-CNS-TBD-06 AC-06.2", "SEC-CNS-012 P1-05, P1-06 (técnico)"]
     testIds: [TEST-CNS-243, TEST-CNS-330, TEST-CNS-332, TEST-CNS-333, TEST-CNS-401]
   - id: R8h

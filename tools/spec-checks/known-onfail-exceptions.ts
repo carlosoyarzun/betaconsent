@@ -43,28 +43,11 @@ export interface KnownOnFailGap {
 }
 
 export const KNOWN_ONFAIL_GAPS: readonly KnownOnFailGap[] = [
-  // --- PRIORITARIO (SEC-CNS-014): GRD-CM-02 (Guard T, cross-tenant), 21 filas ---
-  { unit: "invitation", transition: "I2", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I3", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I3r", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I4", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I5", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I6", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I7", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I9", guard: "GRD-CM-02" },
-  { unit: "otp-challenge", transition: "V1", guard: "GRD-CM-02" },
-  { unit: "otp-challenge", transition: "V3", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C1", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C2", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C3", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C5", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R1", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R2", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R3", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R8", guard: "GRD-CM-02" },
-  { unit: "rights-case", transition: "RC0", guard: "GRD-CM-02" },
-  { unit: "tenant-context.Enrollment", transition: "EN0", guard: "GRD-CM-02" },
-  { unit: "tenant-context.Enrollment", transition: "EN1", guard: "GRD-CM-02" },
+  // --- GRD-CM-02 (Guard T, cross-tenant): las 21 filas originales se cerraron el 2026-09-27
+  // (SEC-CNS-014, aprobado por Carlos): se agregó ERR-CM-02 a errors[] en las 21 transiciones
+  // (invitation I2/I3/I3r/I4/I5/I6/I7/I9, otp-challenge V1/V3, consent-decision C1/C2/C3/C5,
+  // revocation R1/R2/R3/R8, rights-case RC0, tenant-context.Enrollment EN0/EN1). Ya no son
+  // excepciones: el checker exige errors ⊇ onFail(GRD-CM-02) en esas transiciones.
   // --- Resto de GRD-CM-* (CM-01 15, CM-07 10, CM-06 9, CM-10 8, CM-05 4, CM-09 2, CM-03/04/08 1) ---
   { unit: "invitation", transition: "I1", guard: "GRD-CM-08" },
   { unit: "invitation", transition: "I2", guard: "GRD-CM-01" },

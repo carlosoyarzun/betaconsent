@@ -7,12 +7,13 @@
 # y prohibitedPurposes dejan de ser valores concretos hardcodeados aquí; se declaran como parámetros
 # tipados resueltos desde specs/adapters/lectorpro-beta.spec.yaml (Notion Executable Specs Index:
 # comportamiento de producto va en una spec de adapter). Ver changeNote en el bloque `configuration`.
+# rev. 4e (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en C1/C2/C3/C5 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 specId: SPEC-CNS-SM-CONSENT-DECISION
 title: "State machine ConsentDecision (IT0; contextRef/productRef y finalidades vía adapter, ver specs/adapters/lectorpro-beta.spec.yaml)"
 smId: SM-CNS-001
 smSection: "§4, §4.1, §4.2, §7"
 aggregateType: ConsentDecision
-version: "0.4.2"
+version: "0.4.3"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -126,7 +127,7 @@ transitions:
     effects: ["Crea el agregado; resuelve/crea app.decision_chain (chainRef) por decisionChainKey dentro del tenant."]
     emits: []
     idempotencyKey: "(tenantRef, invitationRef, verificationRef)"
-    errors: [ERR-CM-05, ERR-CM-09, ERR-CD-07]
+    errors: [ERR-CM-02, ERR-CM-05, ERR-CM-09, ERR-CD-07]
     governedBy: ["SM-CNS-001 §4 C1", "ADR-002 §10", "SEC-CNS-012 P2-12"]
     testIds: [TEST-CNS-190]
   - id: C2
@@ -142,7 +143,7 @@ transitions:
       - "'No es mi estudiante' → I9 SUBJECT_MISMATCH_REPORTED (invitation)."
     emits: [CONTEXT_INFORMATION_VIEWED, CONSENT_VERSION_VIEWED, DECISION_MAKER_AUTHORITY_DECLARED, SUBJECT_CONFIRMED]
     idempotencyKey: "(consentId, stepKind, sequence)"
-    errors: [ERR-CD-03, ERR-CD-04]
+    errors: [ERR-CM-02, ERR-CD-03, ERR-CD-04]
     governedBy: ["SM-CNS-001 §4 C2", "ADR-001 §4", "EXT-A (P06)", "EXT-C (DEC-BR-004)"]
     testIds: [TEST-CNS-191]
   - id: C3
@@ -162,7 +163,7 @@ transitions:
       - "M2 (aviso al colegio de cada decisión y enlace 'yo no hice esta decisión' en el receipt, SM:48): no modelado en IT0 (OPEN-CD-05, LD-01)."
     emits: [PURPOSE_DECISION_RECORDED, CONSENT_GRANTED, RECEIPT_CREATED, consent.granted]
     idempotencyKey: "Idempotency-Key + consentId + payloadHash"
-    errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
+    errors: [ERR-CM-02, ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
     governedBy: ["SM-CNS-001 §4 C3, §4.1, §5.0", "DEC-BR-001", "RULE-CNS-022", "SEC-CNS-006 P-13, P-31"]
     testIds: [TEST-CNS-192, TEST-CNS-436]
   - id: C4
@@ -197,7 +198,7 @@ transitions:
       - "M2 no modelado en IT0 (OPEN-CD-05, LD-01)."
     emits: [PURPOSE_DECISION_RECORDED, CONSENT_DECLINED, RECEIPT_CREATED]
     idempotencyKey: "Idempotency-Key + consentId + payloadHash"
-    errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
+    errors: [ERR-CM-02, ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
     governedBy: ["SM-CNS-001 §4 C5", "EXT-D", "Q-13 (detalle por finalidad del DECLINED, abierta)"]
     testIds: [TEST-CNS-194, TEST-CNS-436]
   - id: C6
