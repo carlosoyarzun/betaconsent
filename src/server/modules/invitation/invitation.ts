@@ -138,6 +138,12 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+/** Expuesto para que el entrypoint HTTP resuelva el tenantId de un token de invitación antes
+ * de llamar openInvitation (GRD-IV-07: igualdad exacta del hash, nunca del token en claro). */
+export function hashInvitationToken(token: string): string {
+  return hashToken(token);
+}
+
 /** I3: READY -> SENT. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-04 (parcial), GRD-IV-05. */
 export function sendInvitation(
   ports: InvitationPorts,
