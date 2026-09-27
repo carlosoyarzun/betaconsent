@@ -1,0 +1,555 @@
+# Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 2 (SEC-CNS-012 + AUDIT-H01).
+# La existencia y aceptación del consentimiento NO las decide ningún modelo: los guards
+# verifican hechos registrados (eventos previos, hash servido, elección explícita por finalidad).
+specId: SPEC-CNS-SM-CONSENT-DECISION
+title: "State machine ConsentDecision (IT0, contexto BETA_2026_01)"
+smId: SM-CNS-001
+smSection: "§4, §4.1, §4.2, §7"
+aggregateType: ConsentDecision
+version: "0.2.0"
+status: PROPOSED
+jiraStory: CA-116
+owner: lampone-architect
+reviewers: [lampone-security, lampone-qa, carlosoyarzun]
+humanGate: "Solo Carlos cierra esta spec; toda semántica de consentimiento es human gate."
+commonSpec: specs/state-machines/common.spec.yaml
+governedBy:
+  - "SM-CNS-001 v6 §4 (C1–C8), §4.1 (inválidas), §4.2 (carrera revocación/supersesión), §7 (INV-1…INV-7)"
+  - "[N-SM] §4 ConsentDecision; [N-CML] Consent Model & Lifecycle (enmienda E-06/E-07 publicada, Fase 3–4)"
+  - "DEC-BR-001 (4 finalidades requeridas; prohibidas PRODUCT_IMPROVEMENT, AI_TRAINING, RESEARCH) — ACEPTADA"
+  - "DEC-BR-006 (RULE-CNS-025/026/027) y DEC-BR-017 E-06 (decisionChainKey; scope ALL en BETA_2026_01)"
+  - "CARLOS r3 H1, adición (b) (RULE-CNS-027 intacta), R5-1"
+  - "DEC-BR-016 §1 (AuthorizationCheck), §7 (traslado ≠ revocación)"
+  - "ADR-001 §4 (consentTextHash en servidor), ADR-002 §10 (app.decision_chain)"
+  - "SEC-CNS-005 T-12, T-13, T-14; SEC-CNS-006 P-27, P-33"
+
+scope:
+  it0: "Contexto BETA_2026_01, allowPartialGrant = false, 4 finalidades requeridas; GRANTED / DECLINED por el DecisionMaker verificado; REVOKED solo vía Revocation R4."
+  notInIt0:
+    - "C4 PENDING → PARTIALLY_GRANTED: inválida en BETA_2026_01 (F-025)"
+    - "C7 → EXPIRED: deshabilitada en BETA_2026_01 (EXT-E, F-023)"
+    - "C8 → SUPERSEDED: depende de EXT-E (DEC nueva: ConsentVersion nueva); OPEN (Q-16)"
+    - "Contextos con finalidades opcionales (RULE-CNS-027 parcial): no modelados"
+
+configuration:
+  contextRef: BETA_2026_01
+  productRef: LECTORPRO
+  allowPartialGrant: false
+  requiredPurposes: [STUDY_PARTICIPATION, AUDIO_RECORDING, AUTOMATED_ANALYSIS, HUMAN_REVIEW] # DEC-BR-001; R0.9
+  prohibitedPurposes: [PRODUCT_IMPROVEMENT, AI_TRAINING, RESEARCH]
+  purposeChoice: [GRANT, DECLINE] # sin valor por defecto ni preselección (P06)
+  governedBy: ["SM-CNS-001 R0.9", "DEC-BR-001", "SM-CNS-001 §11 NF-05 (Notion [N-CML] actualizado por C-34)"]
+
+attributes:
+  - consentId
+  - tenantRef
+  - productRef
+  - contextRef
+  - subjectRef
+  - decisionMakerRef
+  - relationshipRef
+  - consentVersion
+  - privacyNoticeVersion
+  - consentTextHash # calculado por el servidor sobre lo servido (LD-06)
+  - purposes # lista {purpose, choice}
+  - authorityDeclaration
+  - decidedAt
+  - revokedAt
+  - chainRef # opaco de decisionChainKey = (tenantRef, contextRef, subjectRef, decisionMakerRef)
+  - abandoned # flag derivado: PENDING con Invitation terminal (NF-06)
+
+states:
+  - id: PENDING
+    initial: true
+    terminal: false
+    description: "Decisión en curso; no es evidencia. Si la Invitation llega a terminal queda 'abandoned' (NF-06)."
+    governedBy: ["SM-CNS-001 §4 C1", "SM-CNS-001 §11 NF-06"]
+    testIds: [TEST-CNS-190]
+  - id: GRANTED
+    initial: false
+    terminal: false
+    description: "GRANT explícito en todas las finalidades requeridas."
+    governedBy: ["SM-CNS-001 §4 C3", "[N-SM] §4"]
+    testIds: [TEST-CNS-192]
+  - id: PARTIALLY_GRANTED
+    initial: false
+    terminal: false
+    reachableInIt0: false
+    description: "Solo en contextos con allowPartialGrant; inalcanzable en BETA_2026_01 (C4 inválida)."
+    governedBy: ["SM-CNS-001 §4 C4", "[N-SM] §4"]
+    testIds: [TEST-CNS-193]
+  - id: DECLINED
+    initial: false
+    terminal: true
+    description: ">=1 finalidad requerida con DECLINE."
+    governedBy: ["SM-CNS-001 §4 C5", "[N-SM] §4"]
+    testIds: [TEST-CNS-194]
+  - id: REVOKED
+    initial: false
+    terminal: true
+    description: "Revocada por Revocation R4 (scope ALL en BETA_2026_01). Re-consentir = consentId nuevo con invitación nueva."
+    governedBy: ["SM-CNS-001 §4 C6", "DEC-BR-017 §6"]
+    testIds: [TEST-CNS-195]
+  - id: EXPIRED
+    initial: false
+    terminal: true
+    reachableInIt0: false
+    description: "Vigencia por reglas de validez; deshabilitado en BETA_2026_01 (C7)."
+    governedBy: ["SM-CNS-001 §4 C7"]
+    testIds: [TEST-CNS-196]
+  - id: SUPERSEDED
+    initial: false
+    terminal: true
+    reachableInIt0: false
+    pendingDecision: OPEN-CD-01 # EXT-E / Q-16: mientras siga abierta, C8 se rechaza
+    description: "Reemplazada por una decisión sobre una versión posterior en la misma cadena (C8, EXT-E)."
+    governedBy: ["SM-CNS-001 §4 C8", "[N-SM] §4"]
+    testIds: [TEST-CNS-197]
+
+transitions:
+  - id: C1
+    from: null
+    to: PENDING
+    command: StartDecision
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-CD-01, GRD-CD-02]
+    effects: ["Crea el agregado; resuelve/crea app.decision_chain (chainRef) por decisionChainKey dentro del tenant."]
+    emits: []
+    idempotencyKey: "(tenantRef, invitationRef, verificationRef)"
+    errors: [ERR-CM-05, ERR-CM-09, ERR-CD-07]
+    governedBy: ["SM-CNS-001 §4 C1", "ADR-002 §10", "SEC-CNS-012 P2-12"]
+    testIds: [TEST-CNS-190]
+  - id: C2
+    from: PENDING
+    to: PENDING
+    command: RecordDecisionStep
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-04]
+    effects:
+      - "Servidor sirve el texto de consentVersion y calcula consentTextHash sobre los bytes canónicos servidos (LD-06)."
+      - "'No es mi estudiante' → I9 SUBJECT_MISMATCH_REPORTED (invitation)."
+    emits: [CONTEXT_INFORMATION_VIEWED, CONSENT_VERSION_VIEWED, DECISION_MAKER_AUTHORITY_DECLARED, SUBJECT_CONFIRMED]
+    idempotencyKey: "(consentId, stepKind, sequence)"
+    errors: [ERR-CD-03, ERR-CD-04]
+    governedBy: ["SM-CNS-001 §4 C2", "ADR-001 §4", "EXT-A (P06)", "EXT-C (DEC-BR-004)"]
+    testIds: [TEST-CNS-191]
+  - id: C3
+    from: PENDING
+    to: GRANTED
+    command: SubmitDecision
+    outcome: all_required_granted
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-08, GRD-CD-11, GRD-CD-12]
+    effects:
+      - "Lote atómico: n× PURPOSE_DECISION_RECORDED + CONSENT_GRANTED + RECEIPT_CREATED + INVITATION_COMPLETED (I6) + outbox consent.granted."
+      - "Emite el enlace de gestión (management_token, P-31/P-13) SOLO al canal ligado (revocation §managementLink)."
+      - "Receipt con marca de agua IT0 (DEC-BR-014 §1)."
+      - "Si la cadena ya tenía un enlace de gestión (re-consentimiento tras REVOKED, misma decisionChainKey), el enlace anterior sigue vigente: rotarlo o no es OPEN-CD-06 (SEC P2-09; LD-12/LD-22)."
+      - "M2 (aviso al colegio de cada decisión y enlace 'yo no hice esta decisión' en el receipt, SM:47): no modelado en IT0 (OPEN-CD-05, LD-01)."
+    emits: [PURPOSE_DECISION_RECORDED, CONSENT_GRANTED, RECEIPT_CREATED, consent.granted]
+    idempotencyKey: "Idempotency-Key + consentId + payloadHash"
+    errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §4 C3, §4.1, §5.0", "DEC-BR-001", "RULE-CNS-022", "SEC-CNS-006 P-13, P-31"]
+    testIds: [TEST-CNS-192]
+  - id: C4
+    from: PENDING
+    to: PARTIALLY_GRANTED
+    command: SubmitDecision
+    outcome: partial
+    enabled: false
+    disabledReason: "Inválida en BETA_2026_01 (allowPartialGrant = false; F-025)."
+    actor: null
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-10]
+    effects: []
+    emits: []
+    idempotencyKey: null
+    errors: [ERR-CD-06]
+    governedBy: ["SM-CNS-001 §4 C4", "[N-SM] §4"]
+    testIds: [TEST-CNS-193]
+  - id: C5
+    from: PENDING
+    to: DECLINED
+    command: SubmitDecision
+    outcome: required_declined
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-07, GRD-CD-11, GRD-CD-12]
+    effects:
+      - "Lote atómico: n× PURPOSE_DECISION_RECORDED + CONSENT_DECLINED + RECEIPT_CREATED + INVITATION_DECLINED (I7)."
+      - "Downstream de DECLINED: EXT-D (DEC-BR-005, LD-20); en IT0 sin evento de outbox definido."
+      - "M2 no modelado en IT0 (OPEN-CD-05, LD-01)."
+    emits: [PURPOSE_DECISION_RECORDED, CONSENT_DECLINED, RECEIPT_CREATED]
+    idempotencyKey: "Idempotency-Key + consentId + payloadHash"
+    errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §4 C5", "EXT-D", "Q-13 (detalle por finalidad del DECLINED, abierta)"]
+    testIds: [TEST-CNS-194]
+  - id: C6
+    from: [GRANTED, PARTIALLY_GRANTED]
+    to: REVOKED
+    command: "(interno) Revocation R4"
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER, via: "revocation R4 (CONFIRMED → APPLIED)"}
+    routeClass: RIGHTS
+    httpPost: false
+    guards: [GRD-CD-09, GRD-CD-10]
+    effects:
+      - "Mismo lote que R4: CONSENT_REVOKED {scope = ALL, effectiveAt = hora del append (RULE-CNS-025), authPath, recoveryMethod?, originPurposeRef} + outbox consent.revoked."
+      - "revokedAt = effectiveAt; desde este append ningún AuthorizationCheck devuelve AUTHORIZED (INV-5)."
+    emits: [CONSENT_REVOKED, consent.revoked]
+    idempotencyKey: "revocationRef (un solo CONSENT_REVOKED efectivo por cadena; si la decisión ya está REVOKED, no se emite un segundo evento)"
+    sameLotAs: "revocation:R4"
+    errors: [ERR-CD-05, ERR-CD-08]
+    governedBy: ["SM-CNS-001 §4 C6, §4.2", "DEC-BR-017 §6", "RULE-CNS-025", "RULE-CNS-027", "CARLOS r3 H1"]
+    testIds: [TEST-CNS-195]
+  - id: C7
+    from: [GRANTED, PARTIALLY_GRANTED]
+    to: EXPIRED
+    command: "(sistema) vigencia"
+    enabled: false
+    disabledReason: "Deshabilitada en BETA_2026_01 (EXT-E, F-023); requiere DEC nueva."
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: []
+    effects: []
+    emits: [CONSENT_EXPIRED]
+    idempotencyKey: null
+    errors: [ERR-CD-06]
+    governedBy: ["SM-CNS-001 §4 C7, §10 EXT-E"]
+    testIds: [TEST-CNS-196]
+  - id: C8
+    from: [GRANTED, PARTIALLY_GRANTED]
+    to: SUPERSEDED
+    command: "(sistema) al registrarse C3/C5 sobre una versión posterior en la misma cadena"
+    status: "OPEN — EXT-E / Q-16 (owner Carlos). Mientras no se decida, no hay ConsentVersion posterior en IT0 y la transición se rechaza (ERR-CD-06)."
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    enabled: false
+    disabledReason: "EXT-E / Q-16 (OPEN-CD-01): sin ConsentVersion posterior en IT0."
+    guards: [GRD-CD-10]
+    effects: ["Mismo lote que el C3/C5 nuevo; con expectedSequence (§4.2)."]
+    emits: [CONSENT_SUPERSEDED, consent.changed]
+    idempotencyKey: "(chainRef, expectedSequence)"
+    errors: [ERR-CD-05, ERR-CD-06]
+    governedBy: ["SM-CNS-001 §4 C8, §4.2, §10 EXT-E"]
+    testIds: [TEST-CNS-197]
+
+  - id: M3
+    from: [GRANTED, DECLINED]
+    to: [GRANTED, DECLINED]
+    toNote: "Sin cambio de estado: DECISION_CONTESTED se registra sin mutar eventos y abre revisión humana"
+    command: ContestDecision
+    enabled: false
+    disabledReason: "SM-CNS-001 §2.1 M3: credencial (enlace 'yo no hice esta decisión' del receipt), actor y efecto sin definir; efecto = LEGAL DECISION LD-01 (EXT-A). AUDIT F-A13."
+    actor: {ref: UNVERIFIED_BEARER}
+    routeClass: OPEN
+    httpPost: true
+    guards: [GRD-CM-10]
+    effects: []
+    emits: [DECISION_CONTESTED]
+    idempotencyKey: "(consentId, contestRef)"
+    errors: [ERR-CD-06, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §2.1 M2, M3", "LD-01", "AUDIT F-A13"]
+    testIds: [TEST-CNS-324]
+
+guards:
+  - id: GRD-CD-01
+    name: decision_session_valid
+    rule: "Sesión DECISION vigente (P-27), ligada a (tenantRef, parentRef = invitationRef, verificationRef, scope = DECISION, decisionMakerRef); se invalida cuando la Invitation llega a terminal."
+    onFail: ERR-CD-07
+    governedBy: ["SM-CNS-001 §3.1, §4 C1", "SEC-CNS-006 P-27, P-30"]
+    testIds: [TEST-CNS-190]
+  - id: GRD-CD-02
+    name: invitation_verified
+    rule: "La Invitation del decisor está en VERIFIED con boundDecisionMakerRef = actorRef."
+    onFail: ERR-CD-07
+    governedBy: ["SM-CNS-001 §4 C1"]
+    testIds: [TEST-CNS-190]
+  - id: GRD-CD-03
+    name: served_version_in_force_and_hash
+    rule: "Versión servida = versión en vigor; consentTextHash calculado por el servidor sobre lo servido; en el submit, hash devuelto = servido = en vigor."
+    onFail: ERR-CD-03
+    governedBy: ["SM-CNS-001 §4 C2, C3", "ADR-001 §4", "LD-06", "SEC-CNS-005 T-12"]
+    testIds: [TEST-CNS-191, TEST-CNS-192]
+  - id: GRD-CD-04
+    name: relationship_and_authority_declaration
+    rule: "relationshipRef del enum; declaración de autoridad explícita, sin preselección (P06); datos del sujeto según EXT-C."
+    onFail: ERR-CD-04
+    governedBy: ["SM-CNS-001 §4 C2", "EXT-A (DEC-BR-003, LD-01)", "EXT-C (DEC-BR-004)"]
+    testIds: [TEST-CNS-191]
+  - id: GRD-CD-05
+    name: prior_steps_complete
+    rule: "Existen previamente DECISION_MAKER_CHANNEL_VERIFIED, CONSENT_VERSION_VIEWED, DECISION_MAKER_AUTHORITY_DECLARED y SUBJECT_CONFIRMED de esta decisión (INV-2)."
+    onFail: ERR-CD-04
+    governedBy: ["SM-CNS-001 §4 C3, §7 INV-2"]
+    testIds: [TEST-CNS-199]
+  - id: GRD-CD-06
+    name: explicit_grant_per_required_purpose
+    rule: "Elección explícita GRANT por cada finalidad requerida (R0.9); ninguna prohibida; ninguna fuera de configuración; ninguna preseleccionada ni implícita."
+    onFail: ERR-CD-02
+    governedBy: ["SM-CNS-001 §4 C3, §4.1 (3), R0.9", "DEC-BR-001", "[N-CML] Rules"]
+    testIds: [TEST-CNS-192, TEST-CNS-209]
+  - id: GRD-CD-07
+    name: at_least_one_required_declined
+    rule: "Todas las finalidades requeridas con elección explícita y >=1 con DECLINE; mismas reglas de GRD-CD-06 salvo GRANT."
+    onFail: ERR-CD-02
+    governedBy: ["SM-CNS-001 §4 C5"]
+    testIds: [TEST-CNS-194]
+  - id: GRD-CD-08
+    name: single_active_grant_per_chain
+    rule: "Índice único parcial sobre decisionChainKey WHERE state IN (GRANTED, PARTIALLY_GRANTED) (INV-1)."
+    onFail: ERR-CD-01
+    governedBy: ["SM-CNS-001 §4.2, §7 INV-1"]
+    testIds: [TEST-CNS-198]
+  - id: GRD-CD-09
+    name: revoked_only_via_revocation
+    rule: "C6 solo se ejecuta dentro de la tx de R4 (revocation), con revocationRef CONFIRMED de la misma cadena."
+    onFail: ERR-CM-06
+    governedBy: ["SM-CNS-001 §4 C6", "SM-CNS-001 §5 R4"]
+    testIds: [TEST-CNS-195]
+  - id: GRD-CD-10
+    name: expected_sequence
+    rule: "Concurrencia optimista por expectedSequence de la cadena; R4 revoca el vigente y reintenta ante conflicto; si la revocación llega primero, el submit falla con CHAIN_REVOKED_RECONFIRM."
+    onFail: ERR-CD-05
+    governedBy: ["SM-CNS-001 §4.2", "SEC-CNS-005 T-14"]
+    testIds: [TEST-CNS-211]
+  - id: GRD-CD-11
+    name: actor_is_decision_maker
+    rule: "C3/C5 solo por el DecisionMaker verificado; nunca INVITER, TENANT_ADMIN, colegio, School Champion (Protocolo §11), RIGHTS_OPERATOR ni actor IA; sin aceptación implícita."
+    onFail: ERR-CM-10
+    governedBy: ["SM-CNS-001 §4.1 (4)", "SEC-CNS-005 T-13"]
+    testIds: [TEST-CNS-212]
+  - id: GRD-CD-12
+    name: context_guards_at_submit
+    rule: "Guards (a)–(c) de la ConsentVersion y R0.5 re-evaluados al submit; si fallan, PENDING se conserva y se responde el código de R0.4."
+    onFail: ERR-CM-05
+    governedBy: ["SM-CNS-001 §4 C3, §4.1 (3)", "[N-SM] §1 'Effects on dependent machines'"]
+    testIds: [TEST-CNS-192]
+
+errors:
+  - id: ERR-CD-01
+    code: ALREADY_DECIDED
+    response: "409: segundo submit con otra Idempotency-Key"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4.1 (2)"]
+    testIds: [TEST-CNS-210]
+  - id: ERR-CD-02
+    code: PURPOSE_SELECTION_INVALID
+    response: "422: finalidad sin elegir, preseleccionada, prohibida o fuera de configuración"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4.1 (3)"]
+    testIds: [TEST-CNS-209]
+  - id: ERR-CD-03
+    code: VERSION_CHANGED
+    response: "409: hash devuelto distinto del servido o versión no en vigor"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4.1 (3)"]
+    testIds: [TEST-CNS-191]
+  - id: ERR-CD-04
+    code: DECISION_STEPS_INCOMPLETE
+    response: "Rechazo determinista; PENDING se conserva"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §7 INV-2"]
+    testIds: [TEST-CNS-199]
+  - id: ERR-CD-05
+    code: CHAIN_REVOKED_RECONFIRM
+    response: "Rechazo del submit si la cadena fue revocada antes (carrera §4.2)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4.2"]
+    testIds: [TEST-CNS-211]
+  - id: ERR-CD-06
+    code: TRANSITION_DISABLED_IN_CONTEXT
+    response: "Rechazo determinista sin evento (C4, C7 en BETA_2026_01; C8 mientras EXT-E siga OPEN)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4 C4, C7, C8"]
+    testIds: [TEST-CNS-193, TEST-CNS-196, TEST-CNS-197]
+  - id: ERR-CD-07
+    code: DECISION_SESSION_INVALID
+    response: "Rechazo (sesión DECISION ausente, expirada, de otro padre o Invitation no VERIFIED)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §3.1, §4 C1"]
+    testIds: [TEST-CNS-190]
+  - id: ERR-CD-08
+    code: DECISION_TERMINAL
+    response: "Rechazo determinista: GRANTED ↔ DECLINED directo, salida de terminal, DECLINED → REVOKED/SUPERSEDED"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4.1 (1)"]
+    testIds: [TEST-CNS-206]
+
+events:
+  - id: CONTEXT_INFORMATION_VIEWED
+    stream: LEDGER
+    emittedBy: [C2]
+    payload: [consentId]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §4 C2"]
+    testIds: [TEST-CNS-191]
+  - id: CONSENT_VERSION_VIEWED
+    stream: LEDGER
+    emittedBy: [C2]
+    payload: [consentId, consentVersion, consentTextHash, privacyNoticeVersion]
+    governedBy: ["SM-CNS-001 §4 C2", "ADR-001 §4"]
+    testIds: [TEST-CNS-191]
+  - id: DECISION_MAKER_AUTHORITY_DECLARED
+    stream: LEDGER
+    emittedBy: [C2]
+    payload: [consentId, relationshipRef]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §4 C2"]
+    testIds: [TEST-CNS-191]
+  - id: SUBJECT_CONFIRMED
+    stream: LEDGER
+    emittedBy: [C2]
+    payload: [consentId, subjectRef]
+    payloadStatus: "Lista blanca final en contracts/ (H02); datos del sujeto según EXT-C"
+    governedBy: ["SM-CNS-001 §4 C2"]
+    testIds: [TEST-CNS-191]
+  - id: PURPOSE_DECISION_RECORDED
+    stream: LEDGER
+    emittedBy: [C3, C5]
+    payload: [consentId, purpose, choice]
+    governedBy: ["SM-CNS-001 §4 C3, C5", "SM-CNS-001 §1 (enums de finalidad sí)"]
+    testIds: [TEST-CNS-192, TEST-CNS-194]
+  - id: CONSENT_GRANTED
+    stream: LEDGER
+    emittedBy: [C3]
+    payload: [consentId, chainRef, consentVersion, consentTextHash]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §4 C3"]
+    testIds: [TEST-CNS-192]
+  - id: CONSENT_DECLINED
+    stream: LEDGER
+    emittedBy: [C5]
+    payload: [consentId, chainRef, consentVersion, consentTextHash]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §4 C5"]
+    testIds: [TEST-CNS-194]
+  - id: RECEIPT_CREATED
+    stream: LEDGER
+    emittedBy: [C3, C5, "revocation:R4", "revocation:R7"]
+    payload: [receiptRef, managementLinkIssued]
+    governedBy: ["SM-CNS-001 §4 C3, C5, §5 R4, R7", "REQ-CNS-033"]
+    testIds: [TEST-CNS-192, TEST-CNS-194, TEST-CNS-239]
+  - id: CONSENT_REVOKED
+    stream: LEDGER
+    emittedBy: [C6, "revocation:R4"]
+    payload: [revocationRef, scope, effectiveAt, authPath, recoveryMethod, originPurposeRef] # scope = ALL; recoveryMethod iff authPath = RECOVERY
+    governedBy: ["DEC-BR-017 §6", "SM-CNS-001 §4 C6", "ADR-002 §10"]
+    testIds: [TEST-CNS-195]
+  - id: CONSENT_EXPIRED
+    stream: LEDGER
+    emittedBy: [C7]
+    enabledInIt0: false
+    payload: [consentId]
+    governedBy: ["SM-CNS-001 §4 C7"]
+    testIds: [TEST-CNS-196]
+  - id: CONSENT_SUPERSEDED
+    stream: LEDGER
+    emittedBy: [C8]
+    enabledInIt0: false
+    payload: [consentId, supersededBy]
+    governedBy: ["SM-CNS-001 §4 C8"]
+    testIds: [TEST-CNS-197]
+  - id: DECISION_CONTESTED
+    stream: LEDGER
+    emittedBy: [M3]
+    enabledInIt0: false
+    payload: [consentId, contestRef]
+    note: "No muta eventos; abre revisión humana. Efecto: LEGAL DECISION LD-01 (EXT-A)."
+    governedBy: ["SM-CNS-001 §2.1 M3"]
+    testIds: [TEST-CNS-208]
+  - id: consent.granted
+    stream: OUTBOX
+    emittedBy: [C3]
+    payload: [consentId, tenantRef, productRef, contextRef, subjectRef]
+    payloadStatus: "Contrato de eventos downstream en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §4 C3", "DEC-BR-006"]
+    testIds: [TEST-CNS-192]
+  - id: consent.revoked
+    stream: OUTBOX
+    emittedBy: [C6, "revocation:R4"]
+    payload: [revocationRef, scope, effectiveAt]
+    note: "Firmado, anti-replay, a toda EventSubscription del tenant aunque tenant.active = false (revocation R5)."
+    governedBy: ["SM-CNS-001 §4 C6, §5 R5", "DEC-BR-017 §7"]
+    testIds: [TEST-CNS-195, TEST-CNS-240]
+  - id: consent.changed
+    stream: OUTBOX
+    emittedBy: [C8]
+    enabledInIt0: false
+    payload: [consentId, supersededBy]
+    governedBy: ["SM-CNS-001 §4 C8"]
+    testIds: [TEST-CNS-197]
+
+invariants:
+  - id: INV-1
+    statement: "Como máximo una decisión GRANTED/PARTIALLY_GRANTED no reemplazada por decisionChainKey."
+    governedBy: ["SM-CNS-001 §7 INV-1, §4.2"]
+    testIds: [TEST-CNS-198]
+  - id: INV-2
+    statement: "No hay GRANTED sin CHANNEL_VERIFIED, VERSION_VIEWED, AUTHORITY_DECLARED, SUBJECT_CONFIRMED y PURPOSE_DECISION_RECORDED por cada finalidad requerida, previos."
+    governedBy: ["SM-CNS-001 §7 INV-2"]
+    testIds: [TEST-CNS-199]
+  - id: INV-4
+    statement: "Toda ConsentVersion referenciada por una decisión es inmutable; las decisiones quedan ligadas a la versión/hash exactos vistos."
+    governedBy: ["SM-CNS-001 §7 INV-4", "[N-SM] §5 ConsentVersion"]
+    testIds: [TEST-CNS-200]
+  - id: INV-5
+    statement: "Tras CONSENT_REVOKED nada devuelve AUTHORIZED (API-CNS-001 / AuthorizationCheck) hasta un consentimiento nuevo."
+    governedBy: ["SM-CNS-001 §7 INV-5", "RULE-CNS-013", "DEC-BR-006 Área 1"]
+    testIds: [TEST-CNS-201]
+  - id: INV-7
+    statement: "Ningún cierre de Enrollment (TRANSFERRED, LEFT_SCHOOL, PARTICIPATION_CLOSED) ni de SchoolParticipation produce CONSENT_REVOKED ni emite consent.revoked."
+    governedBy: ["SM-CNS-001 §7 INV-7, §6", "DEC-BR-016 §7", "DR2 D1"]
+    testIds: [TEST-CNS-202]
+  - id: INV-CD-01
+    statement: "PENDING no es evidencia; una decisión PENDING con Invitation terminal queda marcada abandoned y nunca pasa a GRANTED."
+    governedBy: ["SM-CNS-001 §4 (NF-06)"]
+    testIds: [TEST-CNS-203]
+  - id: INV-CD-02
+    statement: "En BETA_2026_01 revocar cualquier finalidad revoca la decisión completa (scope = ALL) con originPurposeRef (código o ALL, nunca nulo); no existe consentimiento parcial. RULE-CNS-027 (revocación parcial en contextos futuros) queda intacta y no se modela."
+    governedBy: ["CARLOS r3 H1, adición (b)", "RULE-CNS-027", "DEC-BR-017 §0.7, §6", "REQ-CNS-TBD-05 AC-05.2"]
+    testIds: [TEST-CNS-204]
+  - id: INV-CD-03
+    statement: "Re-consentir tras REVOKED crea un consentId nuevo con invitación nueva; nunca revive la decisión revocada ni datos suprimidos (T17)."
+    governedBy: ["SM-CNS-001 §4 (T17)", "[N-SM] §6"]
+    testIds: [TEST-CNS-205]
+  - id: INV-CD-04
+    statement: "Las decisiones son evidencia append-only: sin mutación destructiva de eventos de grant/decline; el estado es proyección."
+    governedBy: ["[N-SM] §4 Rules", "SM-CNS-001 R0.1"]
+    testIds: [TEST-CNS-206]
+  - id: INV-CD-05
+    statement: "Submit duplicado idempotente: misma key y payloadHash → misma respuesta y receiptRef."
+    governedBy: ["SM-CNS-001 §4.1 (2)", "[N-SM] §4"]
+    testIds: [TEST-CNS-210]
+  - id: INV-CD-06
+    statement: "Enrollment cerrado o TRANSFERRED no transiciona la ConsentDecision; el DecisionMaker conserva consulta, revocación y derechos."
+    governedBy: ["SM-CNS-001 §4, §6", "DEC-BR-017 E-06", "DEC-BR-016 §7, §8"]
+    testIds: [TEST-CNS-207]
+
+failClosed: >
+  Toda falla de guard en C1–C5 conserva PENDING y no emite eventos. Fallo de clave o integridad
+  en C3/C5 rechaza el submit (ERR-CM-08). C6 es la única transición que acepta falla de clave
+  (vía R4, LD-05). Estado de contexto/participación desconocido = no elegible.
+
+legalDecisions:
+  - {id: LD-01, topic: "Suficiencia email + OTP + declaración de autoridad; efecto de DECISION_CONTESTED (EXT-A, DEC-BR-003); bloquea datos reales", owner: Carlos, blocksDataReal: true}
+  - {id: LD-06, topic: "consentTextHash como prueba de lo mostrado", owner: Carlos, blocksDataReal: true}
+  - {id: LD-20, topic: "Apoderados en conflicto; downstream de DECLINED (EXT-D, DEC-BR-005)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-09, topic: "Traslado: sin tratamiento en el tenant nuevo hasta consentimiento nuevo (fail-closed)", owner: Carlos, blocksDataReal: true}
+
+openItems:
+  - {id: OPEN-CD-01, item: "EXT-E / Q-16: ConsentVersion nueva (C8) y vigencia (C7).", owner: Carlos, status: OPEN}
+  - {id: OPEN-CD-02, item: "Q-13: DECLINED con detalle por finalidad hacia downstream.", owner: Carlos, status: OPEN}
+  - {id: OPEN-CD-03, item: "Q-01 scope = ALL: DECIDIDO por Carlos (CARLOS r3 H1 y adición (b); DEC-BR-017 §6 ACCEPTED). Cierre de Q-01 confirmado por Carlos en R13-6 (CARLOS r3 :119).", owner: Carlos, status: DECIDED}
+  - {id: OPEN-CD-04, item: "EXT-C / DEC-BR-004: datos mínimos del sujeto en SUBJECT_CONFIRMED.", owner: Carlos, status: OPEN}
+  - {id: OPEN-CD-05, item: "M2/M3 (SM:47-48): aviso al canal del colegio de cada COMPLETED/DECLINED y enlace 'yo no hice esta decisión'; M3 enabled: false (AUDIT F-A13).", owner: Carlos, status: "LEGAL DECISION (LD-01)"}
+  - {id: OPEN-CD-06, item: "Re-consentimiento sobre la misma decisionChainKey: C3 emite un /m/ nuevo y el anterior sigue vigente (vida = la de la cadena). Rotarlo requiere un trigger fuera del enum de DEC-BR-017 §6 (SEC P2-09).", owner: Carlos, status: "OPEN (LD-12/LD-22)"}

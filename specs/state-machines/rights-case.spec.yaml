@@ -1,0 +1,530 @@
+# Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 3 (SM-CNS-001 v7, R13-1…R13-5).
+# No es la RightsRequest de [N-SM] §7 (A5 F-511). Sin estado de expiración ni de rechazo:
+# nunca deniega. Toda acción del operador es una función SECURITY DEFINER con actor desde su sesión.
+specId: SPEC-CNS-SM-RIGHTS-CASE
+title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
+smId: SM-CNS-001
+smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
+aggregateType: RightsCase
+version: "0.3.0"
+status: PROPOSED
+jiraStory: CA-116
+owner: lampone-architect
+reviewers: [lampone-security, lampone-qa, carlosoyarzun]
+humanGate: "Solo Carlos cierra esta spec."
+commonSpec: specs/state-machines/common.spec.yaml
+relatedSpecs: [specs/state-machines/revocation.spec.yaml]
+governedBy:
+  - "SM-CNS-001 v6 §5.2 (RC0–RC4, RH2, RH3, case_contact, SLA, avisos), §7 (INV-10…INV-15) — ACCEPTED subconjunto IT0"
+  - "SM-CNS-001 v7 §5.2 (RC3a, RC5, RC6, RC1c; erratum §5.0) — contenido aprobado por Carlos en R13 (CARLOS r3 :112-120); enmienda PROPOSED hasta re-revisión y cierre"
+  - "DEC-BR-017 §3 (recuperación manual, caso R5-4), §4 (escalamiento), §5 (expiración), §6 (vocabulario), §8 (fronteras)"
+  - "REQ-CNS-TBD-06 AC-06.1…AC-06.6; REQ-CNS-TBD-08 AC-08.2"
+  - "CARLOS r3 C, (a), R5-4, R6-1, R6-3…R6-5, R7-2, R7-4, R7-5, R7-6"
+  - "ADR-002 §5, §10 (app.rights_case, pii.case_contact, ops.access_log); ADR-006 §6.3"
+  - "DEC-BR-014 §1 (caso humano en IT0), X4 (limitación conocida R7-2)"
+  - "SEC-CNS-006 P-20, P-23, P-25, P-35…P-38; SEC-CNS-005 T-24, T-29…T-31, T-51…T-54, T-58, T-61"
+
+scope:
+  it0: >
+    Todo caso tiene chainRef (cadena conocida): se abre desde un handle /m/ o /r/ (incluido el
+    portador que declara no tener acceso al correo, R5-4), por disparador del sistema (R9) o por
+    reporte del colegio sobre un subjectRef de su tenant. Operador RIGHTS_OPERATOR de plataforma,
+    case-scoped, IT0_ONLY con MFA; tres humanos distintos en HUMAN_ASSISTED.
+  notInIt0:
+    - "Intake humano sin enlace (DEFERRED, adición r3 (a)): no hay caso sin chainRef, ni rights_intake, ni función de match"
+    - "Estado PARKED (S4-06a): propuesta no activa hasta que Carlos decida (LD-04)"
+    - "SUSPENDED protector de la participación mientras el caso está abierto (LD-04; default PROVISIONAL: no)"
+  knownLimitations:
+    - id: LIM-RC-01
+      testIds: [TEST-CNS-302]
+      text: "Caso R5-4 abierto sin /m/ (solo /r/, o /m/ perdido por rotación V6c) no tiene vía de retorno: queda overdue, nunca FAILED; la página del caso no promete plazo. Aceptado para IT0 (R7-2; F-17-5; T-61); P1 antes de datos reales; X4 lo declara como limitación, no como flujo verificado."
+      governedBy: ["CARLOS r3 R7-2", "DEC-BR-017 §3, F-17-5", "DEC-BR-014 X4"]
+    - id: LIM-RC-02
+      testIds: [TEST-CNS-346]
+      text: "Con 3 humanos, si un grant nuevo del caso lo aprueba el otro aprobador, RH2 queda sin aprobador elegible: rechazo fail-closed, caso abierto, solo un cuarto aprobador lo destraba (ADR-006 §6.3; R-15 aceptado IT0, R7-6)."
+      governedBy: ["ADR-006 §6.3", "CARLOS r3 R7-5, R7-6"]
+    - id: LIM-RC-03
+      testIds: [TEST-CNS-386]
+      text: "R13-4 (cuatro ojos en RH3 = dos RIGHTS_OPERATOR distintos) eleva el mínimo de la lista nominal de 3 a 4 humanos (2 RIGHTS_OPERATOR + 2 aprobadores). Con 3 humanos RH3 no es posible: el caso queda abierto (fail-closed). SEC-CNS-006 P-38, ADR-006 §6.3, DEC-BR-016 §4 y H08 dicen ≥3 (SM v7 NF-19)."
+      governedBy: ["CARLOS r3 R13-4", "SM-CNS-001 v7 §11 NF-19"]
+
+vocabulary:
+  origin: [LIMIT_REACHED, CHANNEL_UNREACHABLE, REQUESTER_ASKED, SCHOOL_REPORTED, REQUEST_EXPIRED] # = escalationReason (DEC-BR-017 §6)
+  initiatedVia: [DECISION_MAKER, SCHOOL_REPORT]
+  outcome: [RESOLVED, WITHDRAWN]
+  caseContactKind: [EMAIL]
+  caseContactProvenance: [MANAGE_ENTRY, RECOVERY]
+  governedBy: ["DEC-BR-017 §6", "ADR-002 §10"]
+
+attributes: # app.rights_case (ADR-002 §10)
+  - caseRef
+  - tenantRef
+  - chainRef # NOT NULL
+  - revocationRef # NULL hasta RC3 (o la Revocation abierta adjunta)
+  - origin
+  - initiatedVia
+  - status
+  - slaDueAt # placeholder P-20 (LD-04)
+  - overdue
+  - openedAt
+  - closedAt
+
+flags:
+  - id: FLAG-overdue
+    appliesTo: [OPEN, CONTACTING, IN_VERIFICATION]
+    guard: GRD-RC-11
+    rule: "Al vencer el placeholder de SLA (P-20, LD-04): overdue + alerta; el caso sigue en su estado; nunca FAILED ni cierre."
+    governedBy: ["SM-CNS-001 §5.2", "SEC-CNS-006 P-20", "REQ-CNS-TBD-06 AC-06.4"]
+    testIds: [TEST-CNS-305]
+
+proposedStates:
+  - id: PARKED
+    active: false
+    rule: "No terminal para 'sin contacto del titular'; seguiría contando como caso abierto, se reabre ante cualquier contacto y nunca deniega. No activo hasta decisión de Carlos (LD-04, S4-06a, NF-13)."
+    governedBy: ["SM-CNS-001 §5.2 (S4-06a)", "LD-04"]
+    testIds: [TEST-CNS-345] # PARKED no existe en el enum de app.rights_case.status
+
+parametersRef:
+  note: "Valores solo en SEC-CNS-006 rev. 5 §1."
+  used: [P-17, P-20, P-23, P-25, P-35, P-36, P-37, P-38]
+
+states:
+  - id: OPEN
+    initial: true
+    terminal: false
+    description: "Caso abierto con chainRef; alerta a RIGHTS_OPERATOR / cola de Privacy Legal."
+    governedBy: ["SM-CNS-001 §5.2 RC0, RC1", "DEC-BR-017 §4"]
+    testIds: [TEST-CNS-290, TEST-CNS-291]
+  - id: CONTACTING
+    initial: false
+    terminal: false
+    description: "Primer contacto: RV0 al canal ligado (RC2) o, en CHANNEL_UNREACHABLE, retorno del solicitante por /m/ sin envío (RC2u)."
+    governedBy: ["SM-CNS-001 §5.2 RC2, RC2u"]
+    testIds: [TEST-CNS-292, TEST-CNS-293]
+  - id: IN_VERIFICATION
+    initial: false
+    terminal: false
+    description: "El DecisionMaker expresó su intención en la página del caso; Revocation REQUESTED (HUMAN_ASSISTED) en curso."
+    governedBy: ["SM-CNS-001 §5.2 RC3"]
+    testIds: [TEST-CNS-294]
+  - id: RESOLVED
+    initial: false
+    terminal: true
+    description: "Cerrado por close_case tras R4 APPLIED."
+    governedBy: ["SM-CNS-001 §5.2 RC4"]
+    testIds: [TEST-CNS-295]
+  - id: WITHDRAWN
+    initial: false
+    terminal: true
+    description: "Cerrado tras retiro explícito del DecisionMaker (R8)."
+    governedBy: ["SM-CNS-001 §5.2 RC4"]
+    testIds: [TEST-CNS-296]
+
+transitions:
+  - id: RC0
+    from: null
+    to: OPEN
+    command: SchoolReportsRevocationIntent
+    origin: SCHOOL_REPORTED
+    actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN/INVITER vía acceso staff IT0_ONLY; quién opera y con qué base: LD-03"}
+    routeClass: RIGHTS
+    httpPost: true # consola STAFF
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-03]
+    effects:
+      - "No crea Revocation; no aporta ni cambia canal; el colegio ve solo 'en trámite'."
+      - "Un único RV0 al canal ligado: lo emite RC2 como primera acción del caso, con trigger SCHOOL_REPORTED (SM:135; DEC-BR-017 §8 'dispara RV0 … o abre el caso'). RC0 no emite RV0 por sí mismo (AUDIT F-A10)."
+      - "Si el subjectRef tiene más de una cadena GRANTED en el tenant, no se abre ningún caso ni se elige decisor: el colegio recibe igual 'en trámite' y se alerta a Privacy Legal (ERR-RC-07; OPEN-RC-05, LD-20; SEC P2-10)."
+      - "Tope y alerta por tenant (P-35), sin pausa automática."
+    emits: [RIGHTS_CASE_OPENED]
+    payloadValues: {reasonCode: SCHOOL_REPORTED, initiatedVia: SCHOOL_REPORT}
+    idempotencyKey: "(tenant_id, chainRef) — ≤1 no terminal"
+    errors: [ERR-RC-06, ERR-RC-07, ERR-CM-09, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §5.2 RC0", "DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.2", "SEC-CNS-006 P-35", "LD-03", "AUDIT F-A10", "SEC-CNS-012 P2-10"]
+    testIds: [TEST-CNS-290, TEST-CNS-342, TEST-CNS-343]
+  - id: RC1
+    from: null
+    to: OPEN
+    command: OpenRightsCase
+    origin: [LIMIT_REACHED, CHANNEL_UNREACHABLE, REQUESTER_ASKED, REQUEST_EXPIRED]
+    actor:
+      fromHandle: {ref: UNVERIFIED_BEARER, note: "R13-5 (SM v7 R0.2): actorRole UNVERIFIED_BEARER"}
+      fromR9: {actorType: SYSTEM_GUARD}
+    routeClass: RIGHTS
+    httpPost: true
+    httpPostNote: "Desde handle; la apertura fromR9 es interna."
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RC-05]
+    handleScope: "R13-3 (erratum SM v7 §5.0 / ADR-006 §6.1): el handle /m/ habilita RC1"
+    effects:
+      - "Desde handle: POST con CSRF, no consume el token, no muestra datos, idempotente por cadena; desde /r/ se ofrece antes revocar con ese enlace."
+      - "CHANNEL_UNREACHABLE (declarado, R5-4): puede aportar case_contact opcional (GRD-RC-05)."
+      - "Desde handle con Revocation abierta: marca FLAG-escalated y emite REVOCATION_ESCALATED {reasonCode = origin}. fromR9: no la emite (ya la emitió R9; AUDIT F-A11)."
+      - "Alerta a RIGHTS_OPERATOR; el solicitante ve 'en revisión', nunca 'denegado'."
+      - "REQUESTER_ASKED abierto tras R4 ('yo no hice esto') no pasa por aquí: es RC1c, enabled: false."
+    emits: [RIGHTS_CASE_OPENED, REVOCATION_ESCALATED]
+    emitsCondition: {REVOCATION_ESCALATED: "solo fromHandle con Revocation abierta de la cadena"}
+    payloadValues: {reasonCode: "origin", initiatedVia: DECISION_MAKER}
+    idempotencyKey: "(tenant_id, chainRef) — ≤1 no terminal"
+    errors: [ERR-RC-01, ERR-RC-02, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §5.2 RC1, §5 R9", "DEC-BR-017 §3, §4", "CARLOS r3 R5-4, R6-3", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "AUDIT F-A03, F-A11"]
+    testIds: [TEST-CNS-291, TEST-CNS-344]
+  - id: RC1c
+    from: null
+    to: OPEN
+    command: "ContestAppliedRevocation ('yo no hice esto' tras R4)"
+    origin: REQUESTER_ASKED
+    enabled: false
+    disabledReason: "R13-2 (Carlos, 2026-09-27; SM-CNS-001 v7 RC1c): deshabilitada en IT0. Destino de 'yo no hice esto' tras R4 (origen nuevo, incidente de seguridad o RC4 desde OPEN) = LEGAL DECISION LD-03/LD-04; bloquea datos reales. El aviso tras R4 se envía sin la opción."
+    actor: {ref: UNVERIFIED_BEARER}
+    routeClass: RIGHTS
+    httpPost: true
+    guards: [GRD-CM-10]
+    effects: []
+    emits: [RIGHTS_CASE_OPENED]
+    idempotencyKey: null
+    errors: [ERR-RC-08]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC1c", "CARLOS r3 R13-2", "DEC-BR-017 §7", "REQ-CNS-TBD-05 AC-05.3", "LD-03", "LD-04", "SEC-CNS-012 P1-02"]
+    testIds: [TEST-CNS-341]
+  - id: RC2
+    from: OPEN
+    to: CONTACTING
+    command: "(sistema) primera acción del caso"
+    condition: "origin ≠ CHANNEL_UNREACHABLE"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: RIGHTS
+    httpPost: false
+    guards: [GRD-RC-06, GRD-RV-22, GRD-RV-17]
+    effects:
+      - "Ejecuta RV0 (revocation) al canal ligado sin handle (GRD-RV-22): trigger SCHOOL_REPORTED si el caso tiene origin SCHOOL_REPORTED, si no CASE_CONTACT. Es el único RV0 del caso en su apertura (AUDIT F-A10)."
+      - "El enlace es ya la vía CHANNEL_LINK (R1r). Si la revocación termina por R1r sin RC3, el caso cierra por RC5 (tras R4) o RC6 (tras R8) desde CONTACTING (R13-1)."
+    emits: [RIGHTS_CASE_CONTACTING, RECOVERY_TOKEN_ISSUED]
+    payloadValues: {recoveryRef: required}
+    idempotencyKey: caseRef
+    errors: [ERR-RV-12]
+    governedBy: ["SM-CNS-001 §5.2 RC2, §5.1 RV0 (SM:135)", "DEC-BR-017 §3 (S3-12), §8", "SEC-CNS-012 P1-03"]
+    testIds: [TEST-CNS-292, TEST-CNS-325]
+  - id: RC2u
+    from: OPEN
+    to: CONTACTING
+    command: "(sistema) el solicitante vuelve con su /m/ a la página del caso"
+    condition: "origin = CHANNEL_UNREACHABLE"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: RIGHTS
+    httpPost: false
+    handleScope: "R13-3: el handle /m/ habilita RC2u"
+    guards: [GRD-RC-07]
+    effects:
+      - "Sin RV0 ni envío al correo que el solicitante declara no tener (R6-3 prevalece sobre S5-13); RV0 solo si él lo pide después."
+      - "La página muestra solo 'en revisión' y el paso del guion versionado (placeholder LD-02); sin plazo prometido (R7-2)."
+      - "Sin /m/ no hay retorno: FLAG-overdue (LIM-RC-01)."
+    emits: [RIGHTS_CASE_CONTACTING] # sin recoveryRef
+    idempotencyKey: caseRef
+    errors: [ERR-RC-01]
+    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3, R7-2", "DEC-BR-017 §3"]
+    testIds: [TEST-CNS-293]
+  - id: RC3
+    from: CONTACTING
+    to: IN_VERIFICATION
+    command: ExpressRevocationIntentInCase
+    actor: {ref: UNVERIFIED_BEARER, writtenBy: "web desde el handle del DecisionMaker; nunca el operador", note: "SM v7 P-v7-3"}
+    routeClass: RIGHTS
+    httpPost: true
+    sameLotAs: "revocation:RC3"
+    handleScope: "R13-3: el handle /m/ habilita RC3"
+    guards: [GRD-CM-10, GRD-RC-08, GRD-RC-13]
+    effects: ["Solo si no hay Revocation abierta: crea REQUESTED (revocation RC3, RECOVERY/HUMAN_ASSISTED) en el mismo lote; caseRef 1:1. Con Revocation ya abierta aplica RC3a (R13-1)."]
+    emits: [REVOCATION_REQUESTED]
+    idempotencyKey: "(caseRef, revocationRef)"
+    errors: [ERR-RV-04]
+    governedBy: ["SM-CNS-001 §5.2 RC3", "DEC-BR-017 §3, §6 (F-510)", "ADR-006 §6.3 (RC3 la escribe web)"]
+    testIds: [TEST-CNS-294]
+  - id: RC3a
+    from: CONTACTING
+    to: IN_VERIFICATION
+    command: ExpressRevocationIntentInCase
+    condition: "la cadena ya tiene una Revocation abierta en cualquier estado no terminal"
+    actor: {ref: UNVERIFIED_BEARER, writtenBy: "web desde el handle; nunca el operador", note: "SM v7 P-v7-3"}
+    routeClass: RIGHTS
+    httpPost: true
+    handleScope: "R13-3: el handle /m/ habilita RC3/RC3a"
+    guards: [GRD-CM-10, GRD-RC-08, GRD-RV-27]
+    effects: ["R13-1: no crea otra Revocation; la adjunta con revocation R12 en el mismo lote (caseRef 1:1). La verificación continúa por RH2 (REQUESTED) o RH2v (VERIFIED); en CONFIRMED el job de R4 la aplica y el caso cierra por RC4.RESOLVED."]
+    emits: [REVOCATION_REQUESTED]
+    note: "Mismo único append que revocation R12 (mismo lote)."
+    idempotencyKey: "(caseRef, revocationRef)"
+    errors: [ERR-RV-19, ERR-CM-09]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC3a", "CARLOS r3 R13-1"]
+    testIds: [TEST-CNS-390]
+  - id: RC4.RESOLVED
+    smId: RC4 # SM-CNS-001 §5.2 define una sola RC4 con outcome RESOLVED | WITHDRAWN; aquí se separa por outcome
+    from: IN_VERIFICATION
+    fromNote: "Desde CONTACTING rige RC5 (R13-1); desde OPEN no hay cierre (NF-21)."
+    to: RESOLVED
+    command: "close_case (función SECURITY DEFINER, actor desde la sesión CASE)"
+    actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
+    routeClass: RIGHTS
+    httpPost: true # consola PLATFORM
+    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    effects: ["Solo tras R4 APPLIED de la revocationRef del caso."]
+    emits: [RIGHTS_CASE_CLOSED]
+    payloadValues: {outcome: RESOLVED}
+    idempotencyKey: caseRef
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §5.2 RC4", "ADR-006 §6.3"]
+    testIds: [TEST-CNS-295]
+  - id: RC4.WITHDRAWN
+    smId: RC4
+    from: IN_VERIFICATION
+    to: WITHDRAWN
+    command: "close_case tras R8 (retiro explícito del DecisionMaker)"
+    actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
+    routeClass: RIGHTS
+    httpPost: true # consola PLATFORM
+    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    effects: ["Solo tras REVOCATION_FAILED {WITHDRAWN_BY_REQUESTER} de la revocationRef del caso. En IT0 solo alcanzable si la revocación tiene authPath OTP (R8h enabled: false, OPEN-RV-07)."]
+    emits: [RIGHTS_CASE_CLOSED]
+    payloadValues: {outcome: WITHDRAWN}
+    idempotencyKey: caseRef
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §5.2 RC4, §5 R8"]
+    testIds: [TEST-CNS-296]
+
+  - id: RC5
+    from: CONTACTING
+    to: RESOLVED
+    command: "close_case tras R4 APPLIED de la Revocation de la cadena terminada fuera del caso"
+    actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
+    routeClass: RIGHTS
+    httpPost: true # consola PLATFORM
+    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    effects: ["R13-1: p. ej. RV0 de RC2 → R1r…R4 por CHANNEL_LINK sin pasar por RC3; el caso no queda abierto para siempre."]
+    emits: [RIGHTS_CASE_CLOSED]
+    payloadValues: {outcome: RESOLVED}
+    idempotencyKey: caseRef
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC5", "CARLOS r3 R13-1", "AUDIT F-A01"]
+    testIds: [TEST-CNS-391]
+  - id: RC6
+    from: CONTACTING
+    to: WITHDRAWN
+    command: "close_case tras R8 de la Revocation de la cadena"
+    actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
+    routeClass: RIGHTS
+    httpPost: true # consola PLATFORM
+    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    effects: ["R13-1: retiro explícito (R8, authPath OTP) fuera del caso."]
+    emits: [RIGHTS_CASE_CLOSED]
+    payloadValues: {outcome: WITHDRAWN}
+    idempotencyKey: caseRef
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC6", "CARLOS r3 R13-1", "AUDIT F-A01"]
+    testIds: [TEST-CNS-392]
+
+guards:
+  - id: GRD-RC-01
+    name: chain_known
+    rule: "Todo caso tiene chainRef NOT NULL resuelto en servidor desde el handle, el R9 o el subjectRef del tenant (RC0); no existe intake sin enlace."
+    onFail: ERR-RC-01
+    governedBy: ["SM-CNS-001 §5.2", "ADR-002 §10", "CARLOS r3 (a)", "SEC-CNS-005 TS-24"]
+    testIds: [TEST-CNS-301]
+  - id: GRD-RC-02
+    name: single_open_case_per_chain
+    rule: "≤1 RightsCase no terminal por (tenant_id, chainRef) (UNIQUE parcial); una segunda apertura devuelve el caseRef existente."
+    onFail: null # idempotente, no error
+    governedBy: ["SM-CNS-001 §5.2", "ADR-002 §10", "REQ-CNS-TBD-06 AC-06.1"]
+    testIds: [TEST-CNS-291, TEST-CNS-300]
+  - id: GRD-RC-03
+    name: school_report_boundaries
+    rule: "Reporta un HUMAN INVITER/TENANT_ADMIN del tenant resuelto sobre un subjectRef de su tenant con exactamente una cadena GRANTED; no crea Revocation, no aporta ni cambia canal, solo recibe 'en trámite'; alerta por tenant según P-35."
+    onFail: ERR-RC-06
+    governedBy: ["SM-CNS-001 §5.2 RC0", "DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.2", "SEC-CNS-006 P-35"]
+    testIds: [TEST-CNS-290]
+  - id: GRD-RC-04
+    name: open_case_origin_rules
+    rule: "LIMIT_REACHED solo a pedido del portador tras el límite de DEC-BR-017 §9; REQUESTER_ASKED tras >=1 intento automático (o 'yo no hice esto' tras R4); CHANNEL_UNREACHABLE detectado o declarado por el portador; REQUEST_EXPIRED solo desde R9. Desde handle: POST CSRF, sin consumir token, sin datos."
+    onFail: ERR-RC-02
+    governedBy: ["SM-CNS-001 §5.2 RC1", "DEC-BR-017 §4 (S4-06b)", "CARLOS r3 R5-4"]
+    testIds: [TEST-CNS-291]
+  - id: GRD-RC-05
+    name: case_contact_constraints
+    rule: "case_contact opcional solo con CHANNEL_UNREACHABLE; en IT0 solo dominio reservado (RFC 2606/6761) o patrón [SYN], validado en la entrada y por CHECK; si no cumple, respuesta uniforme y nada persistido; append-only con procedencia; no verificado; nunca canal de OTP, RV0 ni envío; lectura solo por pii.v_case_contact con ops.access_log (placeholder LD-03)."
+    onFail: ERR-RC-02
+    governedBy: ["SM-CNS-001 §5.2 'case_contact'", "ADR-002 §10", "ADR-006 §6.3", "CARLOS r3 R6-3", "REQ-CNS-TBD-06 AC-06.5"]
+    testIds: [TEST-CNS-306]
+  - id: GRD-RC-06
+    name: first_contact_via_bound_channel
+    rule: "origin ≠ CHANNEL_UNREACHABLE; la primera acción es RV0 al canal ligado (trigger CASE_CONTACT)."
+    onFail: null # guard de disparo
+    governedBy: ["SM-CNS-001 §5.2 RC2", "DEC-BR-017 §3 (S3-12)"]
+    testIds: [TEST-CNS-292]
+  - id: GRD-RC-07
+    name: channel_unreachable_no_send
+    rule: "origin = CHANNEL_UNREACHABLE: ningún RV0 ni envío al canal ligado hasta R4 salvo pedido posterior del solicitante; transición solo cuando vuelve con su /m/."
+    onFail: null # guard de disparo
+    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3", "SEC-CNS-005 TS-24b"]
+    testIds: [TEST-CNS-293]
+  - id: GRD-RC-08
+    name: intent_by_decision_maker_on_case_page
+    rule: "Intención expresa del DecisionMaker en la página del caso, POST con CSRF desde su handle; la escribe web, nunca el operador."
+    onFail: ERR-RV-04
+    governedBy: ["SM-CNS-001 §5.2 RC3", "ADR-006 §6.3", "SEC-CNS-005 T-13"]
+    testIds: [TEST-CNS-294]
+  - id: GRD-RC-09
+    name: close_after_applied_or_withdrawn
+    rule: "RC4.RESOLVED/RC5 solo con la Revocation de la cadena (del caso o adjunta) en APPLIED o posterior; RC4.WITHDRAWN/RC6 solo con REVOCATION_FAILED WITHDRAWN_BY_REQUESTER; ningún timer cierra el caso."
+    onFail: ERR-RC-03
+    governedBy: ["SM-CNS-001 §5.2 RC4, INV-10"]
+    testIds: [TEST-CNS-295, TEST-CNS-296]
+  - id: GRD-RC-10
+    name: operator_case_scoped_session
+    rule: "Acto del operador solo por función SECURITY DEFINER (propose_case_verification, record_case_confirmation, close_case) con sesión CASE vigente (P-25) ligada a un rights_case_grant atestado (≤ P-23), pedido por el receptor y aprobado por PRIVACY_LEGAL/SECURITY ≠ solicitante (grant_request pendiente expira según P-37); sin Membership TENANT (trigger + revalidación en cada sesión); rights_operator sin DML y lectura solo por vistas filtradas por case_scope()."
+    onFail: ERR-RC-04
+    governedBy: ["SM-CNS-001 §5.2", "ADR-006 §6.3", "ADR-002 §5", "DEC-BR-017 §3", "REQ-CNS-TBD-06 AC-06.3", "SEC-CNS-006 P-23, P-25, P-37", "CARLOS r3 R6-1, R6-5"]
+    testIds: [TEST-CNS-307, TEST-CNS-308]
+  - id: GRD-RC-11
+    name: sla_placeholder_overdue_only
+    rule: "Vencido el placeholder P-20: FLAG-overdue + alerta; ningún cambio de estado; la página del caso no promete plazo."
+    onFail: null # guard de disparo
+    governedBy: ["SEC-CNS-006 P-20", "LD-04", "CARLOS r3 R7-2"]
+    testIds: [TEST-CNS-305]
+  - id: GRD-RC-13
+    name: no_open_revocation_for_rc3
+    rule: "RC3 solo si la cadena no tiene Revocation abierta; si la tiene, la petición se enruta a RC3a (R13-1), nunca crea una segunda."
+    onFail: null # enrutamiento, no error
+    governedBy: ["SM-CNS-001 v7 §5.2 RC3, RC3a", "CARLOS r3 R13-1", "INV-16"]
+    testIds: [TEST-CNS-390]
+  - id: GRD-RC-12
+    name: step_up_and_assertion
+    rule: "request_grant, approve_grant, propose_case_verification y approve_case_verification exigen step-up auth_time dentro de P-36, nonce por acción y aserción del IdP; sin ATTESTED por integrity_verifier no hay efecto."
+    onFail: ERR-RC-05
+    governedBy: ["SEC-CNS-006 P-36", "ADR-006 §6.3", "CARLOS r3 R6-4", "INV-13"]
+    testIds: [TEST-CNS-309]
+
+errors:
+  - id: ERR-RC-01
+    code: RIGHTS_CASE_UNIFORM_RESPONSE
+    response: "Respuesta uniforme: no revela existencia de cadena, menor ni colegio; el solicitante ve 'en revisión', nunca 'denegado'"
+    emitsEvent: none
+    governedBy: ["REQ-CNS-TBD-06 AC-06.1", "REQ-CNS-TBD-07 AC-07.1"]
+    testIds: [TEST-CNS-291, TEST-CNS-301]
+  - id: ERR-RC-02
+    code: CASE_INPUT_REJECTED
+    response: "Respuesta uniforme y nada persistido (case_contact fuera de dominio reservado u origen no admitido)"
+    emitsEvent: none
+    governedBy: ["ADR-002 §10", "REQ-CNS-TBD-06 AC-06.5", "SEC-CNS-005 TS-24c"]
+    testIds: [TEST-CNS-306]
+  - id: ERR-RC-03
+    code: CASE_CLOSE_PRECONDITION_FAILED
+    response: "Rechazo; el caso sigue abierto (sin R4 APPLIED ni R8)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §5.2 RC4"]
+    testIds: [TEST-CNS-295]
+  - id: ERR-RC-04
+    code: OPERATOR_NOT_AUTHORIZED
+    response: "permission denied / 0 filas (sin sesión CASE, grant no atestado o vencido, Membership TENANT, DML directo)"
+    emitsEvent: none
+    governedBy: ["ADR-006 §6.3", "SEC-CNS-005 TS-16, TS-16d, TS-16e"]
+    testIds: [TEST-CNS-307, TEST-CNS-308]
+  - id: ERR-RC-05
+    code: STEP_UP_OR_ASSERTION_INVALID
+    response: "Rechazo (auth_time fuera de P-36, nonce de otra acción, jti repetido, claims fuera de allowlist); aserción PENDING = sin efecto"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-006 P-36", "SEC-CNS-005 TS-15b, TS-16c"]
+    testIds: [TEST-CNS-309]
+  - id: ERR-RC-06
+    code: SCHOOL_CANNOT_EXECUTE_REVOCATION
+    response: "Rechazo determinista si el colegio intenta revocar, confirmar, declarar TOKEN_COMPROMISED o aportar/cambiar canal"
+    emitsEvent: none
+    governedBy: ["DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.1, AC-08.2"]
+    testIds: [TEST-CNS-290, TEST-CNS-304]
+
+  - id: ERR-RC-07
+    code: SUBJECT_CHAIN_AMBIGUOUS
+    response: "Sin caso ni RV0; hacia el colegio la respuesta es la misma 'en trámite' (no revela cuántos apoderados hay); alerta interna a Privacy Legal"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-012 P2-10", "LD-20"]
+    testIds: [TEST-CNS-342]
+  - id: ERR-RC-08
+    code: TRANSITION_DISABLED_IN_IT0
+    response: "Rechazo determinista sin evento (RC1c en IT0)"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-012 P1-02", "LD-03", "LD-04"]
+    testIds: [TEST-CNS-341]
+
+events:
+  - id: RIGHTS_CASE_OPENED
+    stream: LEDGER
+    emittedBy: [RC0, RC1, RC1c]
+    payload: [caseRef, reasonCode, initiatedVia] # reasonCode = escalationReason
+    governedBy: ["DEC-BR-017 §6"]
+    testIds: [TEST-CNS-290, TEST-CNS-291]
+  - id: RIGHTS_CASE_CONTACTING
+    stream: LEDGER
+    emittedBy: [RC2, RC2u]
+    payload: [caseRef, recoveryRef] # recoveryRef ausente si origin = CHANNEL_UNREACHABLE
+    governedBy: ["DEC-BR-017 §6", "ADR-002 §10"]
+    testIds: [TEST-CNS-292, TEST-CNS-293]
+  - id: RIGHTS_CASE_CLOSED
+    stream: LEDGER
+    emittedBy: [RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6]
+    payload: [caseRef, outcome]
+    governedBy: ["DEC-BR-017 §6"]
+    testIds: [TEST-CNS-295, TEST-CNS-296]
+
+invariants:
+  - id: INV-13
+    statement: "Ningún grant ni RH2 surte efecto sin las aserciones del IdP atestadas por integrity_verifier; tras atestar o rechazar, grant_assertion guarda solo el hash del ID token + claims verificados."
+    governedBy: ["SM-CNS-001 §7 INV-13", "ADR-006 §6.3 (S6-01)", "CARLOS r3 R6-4"]
+    testIds: [TEST-CNS-297]
+  - id: INV-14
+    statement: "Ningún RH2 surte efecto si su aprobador es el receptor o el aprobador de algún grant del caso (tres humanos)."
+    governedBy: ["SM-CNS-001 §7 INV-14", "CARLOS r3 R7-4", "SEC-CNS-006 P-38"]
+    testIds: [TEST-CNS-298]
+  - id: INV-15
+    statement: "Toda renovación de un rights_case_grant tiene el approved_by_ref del grant original (FK compuesta + CHECK)."
+    governedBy: ["SM-CNS-001 §7 INV-15", "CARLOS r3 R7-5", "ADR-006 §6.3", "REQ-CNS-TBD-06 AC-06.6"]
+    testIds: [TEST-CNS-299]
+  - id: INV-RC-01
+    statement: "El RightsCase no tiene estado de expiración ni de rechazo; ningún timer lo cierra (INV-10); nunca deniega."
+    governedBy: ["SM-CNS-001 §5.2", "DEC-BR-017 §4, §5", "RULE-CNS-TBD-02", "ADR-002 §10"]
+    testIds: [TEST-CNS-300]
+  - id: INV-RC-02
+    statement: "Todo caso tiene chainRef; no existe rights_case con chain_ref nulo ni intake sin enlace en IT0."
+    governedBy: ["SM-CNS-001 §5.2", "ADR-002 §10", "SEC-CNS-005 TS-24"]
+    testIds: [TEST-CNS-301]
+  - id: INV-RC-03
+    statement: "El solicitante ve solo 'en revisión' y el paso del guion versionado; la página del caso no muestra plazo ni fecha comprometida."
+    governedBy: ["DEC-BR-017 §3, §4", "CARLOS r3 R7-2", "SEC-CNS-005 TS-24d"]
+    testIds: [TEST-CNS-302]
+  - id: INV-RC-04
+    statement: "Cada transición del caso va al ledger con caseRef; cada lectura del operador va a ops.access_log (append-only, sin PII), no al ledger."
+    governedBy: ["SM-CNS-001 §5.2 (S4-16)", "ADR-002 §10", "ADR-006 §6.3", "DEC-BR-014 X6"]
+    testIds: [TEST-CNS-303]
+  - id: INV-RC-06
+    statement: "Todo caso cuya Revocation de la cadena llegó a APPLIED o FAILED sale de CONTACTING/IN_VERIFICATION por RC4, RC5 o RC6; ningún caso queda en CONTACTING tras el cierre de su revocación."
+    governedBy: ["CARLOS r3 R13-1", "SM-CNS-001 v7 §5.2"]
+    testIds: [TEST-CNS-391, TEST-CNS-392]
+  - id: INV-RC-05
+    statement: "El colegio (INVITER/TENANT_ADMIN, School Champion) solo reporta: nunca ejecuta R1–R4 ni RH2/RH3, nunca aporta ni cambia canal y solo ve 'en trámite'; sin aviso al colegio por defecto (LD-23)."
+    governedBy: ["DEC-BR-017 §7, §8", "CARLOS r3 C", "REQ-CNS-TBD-08 AC-08.2"]
+    testIds: [TEST-CNS-304]
+
+failClosed: >
+  Ante cualquier fallo de guard del operador (sesión, grant, atestación, separación de funciones,
+  step-up) la acción se rechaza sin efecto y el caso sigue abierto; nunca se degrada a menos
+  humanos ni a una decisión automática. Vencido el SLA placeholder solo se marca overdue.
+  El sistema no decide si quien pide es el apoderado ni la suficiencia de la verificación.
+
+legalDecisions:
+  - {id: LD-02, topic: "Guion versionado de verificación y assuranceLevel (placeholder IT0)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-03, topic: "Quién opera el caso y con qué base; lectura de case_contact (solo SYNTHETIC en IT0); qué ocurre si quien pide no es el apoderado; 'yo no hice esto' tras R4", owner: Carlos, blocksDataReal: true}
+  - {id: LD-04, topic: "SLA del caso (P-20 placeholder), cierre sin contacto, SUSPENDED protector, PARKED, FR-2, 'yo no hice esto' tras R4", owner: Carlos, blocksDataReal: true}
+  - {id: LD-15, topic: "Retención de case_contact (placeholder P-34)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-20, topic: "RC0 con varios apoderados de un mismo sujeto (DEC-BR-005)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-23, topic: "Aviso al colegio y del acceso del operador (default PROVISIONAL: sin aviso)", owner: Carlos, blocksDataReal: true}
+
+openItems:
+  - {id: OPEN-RC-01, item: "Activar o no PARKED (S4-06a) y carga de la cola humana (NF-13).", owner: Carlos, status: "LEGAL DECISION (LD-04)"}
+  - {id: OPEN-RC-02, item: "RC1c 'yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0); destino = LEGAL DECISION LD-03/LD-04.", owner: Carlos, status: "DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04)", blocksDataReal: true}
+  - {id: OPEN-RC-03, item: "Handle con que el solicitante vuelve a la página del caso: DECIDIDO R13-3 (MANAGE_ENTRY de /m/). Queda el copy 'en revisión' (ravena-ux).", owner: "ravena-ux; cierre Carlos", status: "DECIDED (R13-3); copy OPEN"}
+  - {id: OPEN-RC-04, item: "Cierre del caso desde CONTACTING cuando la revocación termina fuera del caso: DECIDIDO R13-1 (RC5, RC6). Desde OPEN no hay cierre (NF-21, residuo de R7-2).", owner: Carlos, status: DECIDED, blocksDataReal: false}
+  - {id: OPEN-RC-05, item: "RC0 con más de una cadena GRANTED para el subjectRef (dos apoderados): cómo se abre el caso sin que el colegio elija al decisor (SEC-CNS-012 P2-10). Interino: no se abre caso (ERR-RC-07).", owner: Carlos, status: "LEGAL DECISION (LD-20)", blocksDataReal: true}

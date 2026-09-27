@@ -1,0 +1,74 @@
+spec,item_type,item_id,status,owner,blocks_data_real,summary
+common,legal_decision,LD-05,LEGAL DECISION,Carlos,true,Validez de una revocación aceptada con falla de clave/integridad (excepción P16 de failClosed)
+common,legal_decision,LD-04,LEGAL DECISION,Carlos,true,'suspended' (SUSPENDED protector) no existe en IT0; vale false por construcción
+common,open_item,OPEN-CM-01,OPEN,lampone-architect (H02); cierre Carlos,false,Estados HTTP concretos de ERR-CM-06 y de errores sin código fijado en SM-CNS-001: se definen en el contrato mínimo (H02 / CA-117).
+common,open_item,OPEN-CM-02,OPEN,gaona-measure / lampone-architect; cierre Carlos,false,"Nombres de eventType de los 'eventos de seguridad' que SM-CNS-001 menciona sin nombre (Guard T fallido, binding M1, INTEGRITY_FAILURE): taxonomía gaona-measure "
+common,open_item,OPEN-CM-03,OPEN,lampone-qa; cierre Carlos,false,Rango TEST-CNS-100..399 propuesto para tests de máquinas de estado; pendiente de reconciliar con la numeración de lampone-qa (el rango del marco de tests de CA-
+common,open_item,OPEN-CM-04,OPEN,scribe-sync; cierre Carlos,false,IDs REQ-CNS-TBD-01..08 y RULE-CNS-TBD-01..03 son placeholders de REQ-REC; reemplazar por los IDs registrados en Notion (E-12) cuando scribe-sync los asigne.
+common,open_item,OPEN-CM-05,DECIDED,Carlos,false,actorRole del portador no verificado: DECIDIDO R13-5 (valor UNVERIFIED_BEARER en SM v7 R0.2; F-H01-04 + AUDIT F-A03).
+common,open_item,OPEN-CM-06,OPEN,Carlos,false,"actorType FIXTURE: DEC-BR-014 §6 dice 'solo en staging'; si se admite en LOCAL/DEV/CI para las fixtures de IT0 (DEC-BR-014 §1, §5)."
+invitation,legal_decision,LD-01,LEGAL DECISION,Carlos,true,"Suficiencia email + OTP + declaración; efecto del contest M3 (EXT-A, DEC-BR-003); bloquea datos reales"
+invitation,legal_decision,LD-20,LEGAL DECISION,Carlos,true,Una decisión por estudiante o por apoderado; apoderados en conflicto (DEC-BR-005) — afecta GRD-IV-01
+invitation,legal_decision,LD-21,LEGAL DECISION,Carlos,true,"Si Consent App recibe el email esperado del colegio (binding M1; EXT-B, DEC-BR-002)"
+invitation,open_item,OPEN-IV-01,OPEN,Carlos,false,Q-15: habilitar o no I7u (OPENED → DECLINED sin verificar).
+invitation,open_item,OPEN-IV-02,OPEN,Carlos,false,"Q-18: reasonCodes PARTICIPATION_CLOSED / ENROLLMENT_CLOSED de I9 (condicionales en DEC-BR-017 E-04; SM:161 los usa incondicionales, AUDIT F-A15). enabled: false"
+invitation,open_item,OPEN-IV-03,OPEN,Carlos,false,EXT-B / F-014: issuerActor y deliveryChannel (no se fijan; DEC-BR-014 §7).
+invitation,open_item,OPEN-IV-04,OPEN,Carlos,false,EXT-C / DEC-BR-004: datos mínimos del sujeto para SUBJECT_MISMATCH_REPORTED.
+invitation,open_item,OPEN-IV-05,OPEN,lampone-security / Carlos,false,"P-10 marcado [VERIFICAR contra el cronograma del Protocolo] en SEC-CNS-006; si choca, FINDING."
+invitation,open_item,OPEN-IV-06,DECIDED,Carlos,false,actorRole del portador en I4: DECIDIDO R13-5 (UNVERIFIED_BEARER; OPEN-CM-05).
+invitation,open_item,OPEN-IV-07,LEGAL DECISION,Carlos,false,"M2/M3 (aviso al colegio de cada decisión, enlace 'yo no hice esta decisión'): CONTESTED_BY_RECIPIENT enabled: false (LD-01; AUDIT F-A13)."
+otp-challenge,legal_decision,LD-15,LEGAL DECISION,Carlos,true,"Retención de security_event, otp_budget y network_signal (placeholder P-34)"
+otp-challenge,legal_decision,LD-03,LEGAL DECISION,Carlos,true,Acceso MANAGE diferido por la rotación del tope 30/30 (con datos reales)
+otp-challenge,legal_decision,LD-04,LEGAL DECISION,Carlos,true,Admisibilidad de la demora de acceso MANAGE por el tope (con datos reales)
+otp-challenge,legal_decision,LD-12,LEGAL DECISION,Carlos,true,Vida del enlace de gestión y acceso MANAGE mientras existan derechos (referencia de GRD-OT-01)
+otp-challenge,legal_decision,LD-22,LEGAL DECISION,Carlos,true,Qué habilita MANAGE tras supresión o tras ConsentContext CLOSED (referencia de GRD-OT-01)
+otp-challenge,open_item,OPEN-OT-01,OPEN,lampone-security → Carlos,false,Valores del límite por señal de red/origen en la emisión de OTP (DEC-BR-017 §9 lo permite; SEC-CNS-006 no lo fija). No se inventan.
+otp-challenge,open_item,OPEN-OT-02,OPEN,lampone-architect (H02); cierre Carlos,false,Forma exacta de la respuesta de V2 (sin revelar intentos restantes) y códigos HTTP: H02.
+otp-challenge,open_item,OPEN-OT-03,DECIDED,Carlos,false,actorRole del portador antes de V3: DECIDIDO R13-5 (UNVERIFIED_BEARER en SM v7 R0.2; OPEN-CM-05).
+otp-challenge,open_item,OPEN-OT-04,DECIDED,Carlos,false,"F-H01-01 / SEC P2-01: DECIDIDO R13-7 (opción A): V6/V6r salen solo de CODE_SENT, V6a es contabilidad del padre, LOCKED sin salidas, NOT_STARTED inicial no termi"
+consent-decision,legal_decision,LD-01,LEGAL DECISION,Carlos,true,"Suficiencia email + OTP + declaración de autoridad; efecto de DECISION_CONTESTED (EXT-A, DEC-BR-003); bloquea datos reales"
+consent-decision,legal_decision,LD-06,LEGAL DECISION,Carlos,true,consentTextHash como prueba de lo mostrado
+consent-decision,legal_decision,LD-20,LEGAL DECISION,Carlos,true,"Apoderados en conflicto; downstream de DECLINED (EXT-D, DEC-BR-005)"
+consent-decision,legal_decision,LD-09,LEGAL DECISION,Carlos,true,Traslado: sin tratamiento en el tenant nuevo hasta consentimiento nuevo (fail-closed)
+consent-decision,open_item,OPEN-CD-01,OPEN,Carlos,false,EXT-E / Q-16: ConsentVersion nueva (C8) y vigencia (C7).
+consent-decision,open_item,OPEN-CD-02,OPEN,Carlos,false,Q-13: DECLINED con detalle por finalidad hacia downstream.
+consent-decision,open_item,OPEN-CD-03,DECIDED,Carlos,false,Q-01 scope = ALL: DECIDIDO por Carlos (CARLOS r3 H1 y adición (b); DEC-BR-017 §6 ACCEPTED). Cierre de Q-01 confirmado por Carlos en R13-6 (CARLOS r3 :119).
+consent-decision,open_item,OPEN-CD-04,OPEN,Carlos,false,EXT-C / DEC-BR-004: datos mínimos del sujeto en SUBJECT_CONFIRMED.
+consent-decision,open_item,OPEN-CD-05,LEGAL DECISION (LD-01),Carlos,false,M2/M3 (SM:47-48): aviso al canal del colegio de cada COMPLETED/DECLINED y enlace 'yo no hice esta decisión'; M3 enabled: false (AUDIT F-A13).
+consent-decision,open_item,OPEN-CD-06,OPEN (LD-12/LD-22),Carlos,false,Re-consentimiento sobre la misma decisionChainKey: C3 emite un /m/ nuevo y el anterior sigue vigente (vida = la de la cadena). Rotarlo requiere un trigger fuera
+revocation,legal_decision,LD-02,LEGAL DECISION,Carlos,true,"Verificación suficiente por RECOVERY (CHANNEL_LINK y HUMAN_ASSISTED), assuranceLevel, equivalencia con 'same strength', guion versionado"
+revocation,legal_decision,LD-03,LEGAL DECISION,Carlos,true,"Quién revoca también por RECOVERY, quién opera el caso, quién escribe la confirmación de RH3 (P1-07), qué verificación exige retirar en HUMAN_ASSISTED (P1-06) y"
+revocation,legal_decision,LD-04,LEGAL DECISION,Carlos,true,"Efecto del caso abierto (SUSPENDED protector), diferir borrado downstream en HUMAN_ASSISTED, FR-2, 'yo no hice esto' tras R4"
+revocation,legal_decision,LD-05,LEGAL DECISION,Carlos,true,Validez de una revocación aceptada con falla de clave (P16)
+revocation,legal_decision,LD-12,LEGAL DECISION,Carlos,true,Vida y retención del enlace de gestión mientras existan derechos
+revocation,legal_decision,LD-22,LEGAL DECISION,Carlos,true,Revocación y derechos tras ConsentContext CLOSED o tras supresión (AC-01.5 no cuenta en IT0)
+revocation,legal_decision,LD-23,LEGAL DECISION,Carlos,true,Aviso al colegio de la revocación y del acceso del operador (default PROVISIONAL: sin aviso)
+revocation,legal_decision,DEC-BR-006-LD-1,LEGAL DECISION,Carlos,true,Plazo máximo de supresión que dispara FLAG-overdue (sin valor en código)
+revocation,open_item,OPEN-RV-01,LEGAL DECISION,Carlos,true,Valores de assuranceLevel (enum placeholder versionado; LD-02).
+revocation,open_item,OPEN-RV-02,DECIDED,Carlos,false,"Salidas de una Revocation VERIFIED/CONFIRMED y del caso: DECIDIDO R13-1 (CARLOS r3 :114). Modelado: R10, R11, R12, RH2v (revocation), RC3a, RC5, RC6 (rights-cas"
+revocation,open_item,OPEN-RV-03,OPEN,ravena-ux / Privacy; cierre Carlos,true,Pista no identificante en la confirmación RECOVERY para distinguir cadenas del mismo tenant (S4-17a → ravena-ux + Privacy; T-23).
+revocation,open_item,OPEN-RV-04,LEGAL DECISION,Carlos,true,Plazo de supresión downstream (DEC-BR-006 LEGAL DECISION 1) para FLAG-overdue.
+revocation,open_item,OPEN-RV-05,DECIDED,Carlos,false,Alcance del handle MANAGE_ENTRY: DECIDIDO R13-3; erratum aplicado en SM v7 §5.0 y ADR-006 §6.1; GRD-RV-20.
+revocation,open_item,OPEN-RV-06,DECIDED interino (R13-4); definitivo LEGAL DECISION (LD-03),Carlos,true,"RH3: interino IT0 DECIDIDO R13-4 (cuatro ojos, GRD-RV-26); regla definitiva de quién escribe la confirmación = LEGAL DECISION LD-03. Impacto en el mínimo de hum"
+revocation,open_item,OPEN-RV-07,DECIDED interino (R13-4); definitivo LEGAL DECISION (LD-03),Carlos,true,R8h: interino IT0 DECIDIDO R13-4 (enabled: false); regla definitiva = LEGAL DECISION LD-03.
+revocation,open_item,OPEN-RV-08,DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04),Carlos,true,"'Yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0, rights-case RC1c); destino = LEGAL DECISION LD-03/LD-04. AC-05.3 de REQ-REC queda diferido en "
+revocation,known_conflict,OPEN-RV-05,DECIDED,Carlos,false,Alcance del handle MANAGE_ENTRY (SEC-CNS-012 P1-04)
+rights-case,legal_decision,LD-02,LEGAL DECISION,Carlos,true,Guion versionado de verificación y assuranceLevel (placeholder IT0)
+rights-case,legal_decision,LD-03,LEGAL DECISION,Carlos,true,Quién opera el caso y con qué base; lectura de case_contact (solo SYNTHETIC en IT0); qué ocurre si quien pide no es el apoderado; 'yo no hice esto' tras R4
+rights-case,legal_decision,LD-04,LEGAL DECISION,Carlos,true,"SLA del caso (P-20 placeholder), cierre sin contacto, SUSPENDED protector, PARKED, FR-2, 'yo no hice esto' tras R4"
+rights-case,legal_decision,LD-15,LEGAL DECISION,Carlos,true,Retención de case_contact (placeholder P-34)
+rights-case,legal_decision,LD-20,LEGAL DECISION,Carlos,true,RC0 con varios apoderados de un mismo sujeto (DEC-BR-005)
+rights-case,legal_decision,LD-23,LEGAL DECISION,Carlos,true,Aviso al colegio y del acceso del operador (default PROVISIONAL: sin aviso)
+rights-case,open_item,OPEN-RC-01,LEGAL DECISION (LD-04),Carlos,false,Activar o no PARKED (S4-06a) y carga de la cola humana (NF-13).
+rights-case,open_item,OPEN-RC-02,DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04),Carlos,true,RC1c 'yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0); destino = LEGAL DECISION LD-03/LD-04.
+rights-case,open_item,OPEN-RC-03,DECIDED (R13-3); copy OPEN,ravena-ux; cierre Carlos,false,Handle con que el solicitante vuelve a la página del caso: DECIDIDO R13-3 (MANAGE_ENTRY de /m/). Queda el copy 'en revisión' (ravena-ux).
+rights-case,open_item,OPEN-RC-04,DECIDED,Carlos,false,"Cierre del caso desde CONTACTING cuando la revocación termina fuera del caso: DECIDIDO R13-1 (RC5, RC6). Desde OPEN no hay cierre (NF-21, residuo de R7-2)."
+rights-case,open_item,OPEN-RC-05,LEGAL DECISION (LD-20),Carlos,true,RC0 con más de una cadena GRANTED para el subjectRef (dos apoderados): cómo se abre el caso sin que el colegio elija al decisor (SEC-CNS-012 P2-10). Interino: n
+tenant-context,legal_decision,LD-09,LEGAL DECISION,Carlos,true,Si el cambio de colegio exige consentimiento nuevo (supuesto fail-closed: sí)
+tenant-context,legal_decision,LD-10,LEGAL DECISION,Carlos,true,Vincular al estudiante o apoderado entre tenants
+tenant-context,legal_decision,LD-12,LEGAL DECISION,Carlos,true,Retención del histórico TRANSFERRED y del tenant mientras existan derechos
+tenant-context,open_item,OPEN-TC-01,OPEN,lampone-architect (H02); cierre Carlos,false,Enum de reasonCode de TENANT_STATUS_CHANGED (SM §6 lo exige sin enumerarlo).
+tenant-context,open_item,OPEN-TC-02,OPEN,Carlos,false,Si SP4 (participación CLOSED) cierra en cascada los Enrollments con motivo PARTICIPATION_CLOSED; SM §6 no lo dice.
+tenant-context,open_item,OPEN-TC-03,OPEN,Carlos,false,Q-28: nombre LEFT_SCHOOL y 'la revocación no cierra el Enrollment'.
+tenant-context,open_item,OPEN-TC-04,OPEN,Carlos,false,F-313: si el Context Owner autoriza la SchoolParticipation con Privacy Legal como segundo aprobador.
+tenant-context,open_item,OPEN-TC-05,OPEN,gaona-measure / lampone-architect; cierre Carlos,false,"Nombres de SCHOOL_PARTICIPATION_STATUS_CHANGED, ENROLLMENT_STATUS_CHANGED y CONSENT_CONTEXT_STATUS_CHANGED, y almacén de la auditoría PLATFORM (ADR-011)."

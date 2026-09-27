@@ -1,0 +1,374 @@
+# Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 3 (SM-CNS-001 v7, R13-5).
+# rev. 2 (2026-09-27): correcciones de SEC-CNS-012 (SEC-review-CA116) y AUDIT-H01.
+# Las demás specs referencian por ID los guards (GRD-CM-*), errores (ERR-CM-*),
+# invariantes (INV-CM-*, INV-3, INV-12) y el actor UNVERIFIED_BEARER declarados aquí. Cero PII.
+specId: SPEC-CNS-SM-COMMON
+title: "State machines IT0 — reglas transversales (tenancy, clases de ruta, ledger, actor, fail-closed)"
+smId: SM-CNS-001
+smSection: "§0, §1, §7 (el §6 se modela en tenant-context.spec.yaml, solo en lo que afecta a las cinco máquinas)"
+version: "0.3.0"
+status: PROPOSED
+jiraStory: CA-116
+owner: lampone-architect
+reviewers:
+  - lampone-security # tenancy, OTP, ledger y rutas RIGHTS (ruta crítica)
+  - lampone-qa # dueño de la numeración TEST-CNS-### (rango propuesto pendiente de reconciliar)
+  - carlosoyarzun # human gate: cierre de la spec y de todo ítem OPEN / LEGAL DECISION
+humanGate: "Solo Carlos cierra esta spec (status PROPOSED hasta revisión humana; CLAUDE.md, human gates)."
+reviewInputs: ["SEC-CNS-012 (SEC-review-CA116.md, 2026-09-27)", "AUDIT-H01.md (2026-09-27)"]
+governedBy:
+  - "SM-CNS-001 v6 §0 (R0.1–R0.10), §1, §7 — ACCEPTED para el subconjunto IT0 (Carlos, r3 'Aprobación formal', 2026-09-25)"
+  - "SM-CNS-001 v7 R0.2 (UNVERIFIED_BEARER, R13-5), INV-16…INV-19 — contenido aprobado en R13 (CARLOS r3 :112-120); enmienda PROPOSED hasta cierre"
+  - "DEC-BR-014 rev. 8 §1 (alcance IT0), §4 (synthetic-only), §6 (ledger básico, actor, FIXTURE) — ACCEPTED 2026-09-26 (R11-A)"
+  - "DEC-BR-015 §1–§5 (tenant = colegio, tenant_id única clave) — ACCEPTED 2026-09-25"
+  - "DEC-BR-016 §1, §2, §4, §8 (partes IT0; invariante D5) — ACCEPTED 2026-09-25"
+  - "DEC-BR-017 §6, §8, §10 — ACCEPTED 2026-09-25"
+  - "REQ-CNS-TBD-01, REQ-CNS-TBD-02, REQ-CNS-TBD-07, RULE-CNS-TBD-01 (REQ-REC; IDs placeholder hasta registro en Notion, E-12)"
+  - "ADR-001 rev. 7 §2, §6, §8, §10, §11; ADR-002 §2, §3, §4, §8, §11; ADR-006 §1–§6 — ACCEPTED IT0 (R11-A)"
+  - "SEC-CNS-005 rev. 5 (T-26, T-27, T-28, T-36, T-38, T-39, T-44); SEC-CNS-006 rev. 5 (P-26, P-30, P-31, P-33, P-40)"
+  - "Master Plan §29 (fail closed), §32 (límites de IA), §39 (append + proyección + outbox en una tx) — solo por referencia"
+
+scope:
+  it0: >
+    Un colegio = un tenant funcional + >=2 tenants fixture para aislamiento (DEC-BR-014 §1).
+    Solo datos sintéticos; producción NOT PROVISIONED; todo evento NON-EVIDENTIARY y SYNTHETIC.
+  deferred:
+    - "Organization/sostenedor, Membership ORGANIZATION (DEC-BR-016 §3)"
+    - "BillingSubscription (DEC-BR-016 §5): en IT0 nunca afecta ninguna máquina"
+    - "Reporting cross-tenant / reporting_runner (DEC-BR-016 §6)"
+    - "Intake humano sin enlace (DEC-BR-017 §3, adición r3 (a))"
+    - "Flujo de traslado en el tenant destino (DEC-BR-014 §1; LD-09)"
+
+tenancy:
+  isolationKey: tenant_id # única clave de aislamiento (DEC-BR-015 §1; DR2 D2)
+  contractName: tenantRef # nombre en contratos y eventos (ADR-006 §1)
+  forbiddenKeys: ["organization_*", "organizationRef", "billing_subscription*", "rbd"]
+  resolution: >
+    tenant_id se resuelve SIEMPRE en servidor desde tokenHash, handle, sesión o credencial vía
+    la allowlist SECURITY DEFINER de ADR-006 §6; nunca desde tenantRef, organizationRef ni RBD
+    enviados por el cliente. Tras resolver: tx nueva, SET LOCAL app.tenant_id y relectura bajo RLS.
+  uniqueConstraints: "Todo UNIQUE de tabla TENANT incluye tenant_id, salvo hashes de tenant_resolve (ADR-006 §4)."
+
+routeClasses:
+  - id: ISSUANCE_DECISION
+    appliesTo: "I1–I4, V1 scope DECISION, C1–C5 (I1 e I2 incluidos: SM-CNS-001 R0.5; AUDIT F-A06)"
+    rule: >
+      Fórmula conjuntiva de DEC-BR-016 §8, evaluada sin caché: study.active AND tenant.active AND
+      schoolParticipation.active AND enrollment.active AND consent.valid AND NOT revoked AND
+      NOT suspended. Estado desconocido, desactualizado o con error = false (fail-closed).
+      'suspended' vale false por construcción en IT0 (LD-04, no modelado).
+    guard: GRD-CM-05
+  - id: RIGHTS
+    appliesTo: "/m/, consulta, MANAGE, Revocation (OTP y RECOVERY), RightsCase, entrega de consent.revoked"
+    rule: >
+      Solo exige que el tenant EXISTA y la cadena del titular (chainRef) resuelta en servidor.
+      Nunca lee tenant.active, study.active, SchoolParticipation, Enrollment, BillingSubscription
+      ni estado del contexto (DEC-BR-016 §8; ADR-006 §6; RULE-CNS-TBD-01).
+    guard: GRD-CM-06
+
+actorModel:
+  actorType: [HUMAN, SYSTEM_GUARD, FIXTURE]
+  actorRole: [DECISION_MAKER, INVITER, CONTEXT_OWNER, PLATFORM_ADMIN, RIGHTS_OPERATOR, UNVERIFIED_BEARER] # UNVERIFIED_BEARER: R13-5 (SM v7 R0.2)
+  approverRoles: [PRIVACY_LEGAL, SECURITY] # aprobadores de grants y de RH2 (R6-5); roles de plataforma, no de ledger
+  fixture:
+    rule: "actorType FIXTURE solo en staging (literal DEC-BR-014 §6); nunca en PRODUCTION; un CHECK rechaza actores IA. Su uso en LOCAL/DEV/CI queda OPEN-CM-06 (fail-closed: rechazado hasta decisión)."
+    guard: GRD-CM-13
+  unverifiedBearer:
+    id: UNVERIFIED_BEARER
+    definition: >
+      DECIDIDO R13-5 (SM-CNS-001 v7 R0.2): valor del enum actorRole para el portador de un token o
+      handle (/i/ LANDING, /m/ MANAGE_ENTRY, /r/ RECOVERY) que aún no pasó V3 ni consumió un enlace
+      de recuperación.
+    actorType: HUMAN
+    actorRole: UNVERIFIED_BEARER
+    may: ["invitation I4", "otp-challenge V1, V2, V2r (solo al canal ligado)", "revocation RV0 con trigger del portador", "rights-case RC1, RC1c (deshabilitada), RC2u", "rights-case RC3/RC3a y revocation RC3/R12 (intención en la página del caso; P-v7-3)", "consent-decision M3 (deshabilitada)"]
+    mayNot: ["C1–C5", "R1, R2, R3, R8, R8h", "RH2, RH2v, RH3", "declarar TOKEN_COMPROMISED", "ver menor, colegio, finalidades o estado"]
+    becomesDecisionMaker: "solo con V3 (OTP), con el consumo del enlace en R1r/R2r/R10/R11 (control del canal ligado) o con RH2/RH2v"
+    governedBy: ["SM-CNS-001 v7 R0.2", "CARLOS r3 R13-5", "SM-CNS-001 §2 I4 (SM:35)", "SM-CNS-001 §5.2 RC1 (SM:147)"]
+    testIds: [TEST-CNS-313, TEST-CNS-396]
+  rules:
+    - "Actor derivado de la identidad autenticada en servidor; nunca de un campo enviado por el cliente (SM R0.2)."
+    - "SYSTEM_GUARD = evaluador determinista versionado del backend; nunca un modelo ni agente IA (MP §32; [N-SM] §1)."
+    - "Credenciales de IA sin permiso en ninguna transición; CHECK rechaza actor IA (SEC F21; DEC-BR-014 §6)."
+    - "Roles de plataforma solo IT0_ONLY, MFA, principal_kind='HUMAN' (ADR-001 §10; R6-5)."
+  transitionConventions:
+    httpPost: "Toda transición declara httpPost. Si es true, lleva GRD-CM-10 (CSRF + Origin); el checker lo exige (SEC P2-12)."
+    actorRef: "actor: {ref: UNVERIFIED_BEARER} referencia la definición única de arriba (R13-5)."
+
+ledgerEnvelope:
+  table: integrity.audit_event
+  fields: [eventId, eventType, schemaVersion, ruleVersion, tenantRef, productRef, contextRef, aggregateType, aggregateId, sequence, occurredAt, actor, payload, payloadHash, previousEventHash, eventHash, idempotencyKeyHash, environment, evidentiary, dataClass]
+  actorFields: [actorType, actorRole, actorRef, recordedByRef]
+  environmentEnum: [LOCAL, DEV, STAGING, PRODUCTION] # PRODUCTION NOT PROVISIONED (ADR-003 §2)
+  checks:
+    - "CHECK (evidentiary = false OR environment = 'PRODUCTION') (ADR-002 §2)"
+    - "CHECK (data_class = 'SYNTHETIC') con DEFAULT; roles runtime sin grant de columna (ADR-002 §8)"
+    - "UNIQUE (tenant_id, aggregate_id, sequence) (ADR-002 §2)"
+  concurrency: "Toda transición de un agregado se aplica con expectedSequence (sequence esperado del agregado); el conflicto se reintenta o se rechaza con el error de la transición."
+  payloadPolicy: >
+    Lista blanca por eventType con test de CI; fuente única en contracts/ (H02 / CA-117).
+    Prohibidos: email, nombre, RUT, token, OTP, IP, HMAC y texto libre. Enums de finalidad sí.
+    Refs = UUIDv4 aleatorios mapeados a PII solo en pii (SM §1; ADR-002 §3).
+  streams:
+    LEDGER: "integrity.audit_event (append-only; cadena SHA-256 por tenant en IT0; ADR-011/DEC-BR-009 para HMAC/ancla)"
+    SECURITY: "ops.security_event (RLS por tenant, solo refs; no es ledger de consentimiento; SEC F03; retención LD-15)"
+    OUTBOX: "outbox transaccional at-least-once con dedupe por eventId; entrega firmada anti-replay (SM §7)"
+    PLATFORM_AUDIT: "auditoría de transiciones de catálogo PLATFORM (ConsentContext); tabla y encadenado OPEN (ADR-011 / H02)"
+
+failClosed:
+  default: >
+    Toda transición cuyo guard falle, no pueda evaluarse o encuentre estado desconocido se rechaza
+    de forma determinista, SIN estado parcial y SIN evento de ledger (SM R0.3; MP §29, P16).
+    Si el evaluador de guards falla (no disponible, timeout, error) la operación se rechaza y se
+    alerta; no es evidencia de que un guard falló y no pausa el contexto ([N-SM] §1 'Not a context pause').
+  exception: >
+    Revocación: R4 se acepta con receipt y efecto más restrictivo aunque falle una clave o la
+    integridad (P16, [N-SM] §1 PROPOSED). Validez de esa evidencia: LEGAL DECISION LD-05.
+    Ningún guard de ISSUANCE/DECISION se aplica a rutas RIGHTS (INV-CM-06).
+
+globalErrors: # aplican a toda transición de todas las specs (el checker los cuenta como usados)
+  - ERR-CM-06 # INVALID_TRANSITION
+  - ERR-CM-12 # GUARD_EVALUATOR_UNAVAILABLE
+startupChecks: # chequeos de arranque, no de transición (el checker los cuenta como usados)
+  - GRD-CM-11
+
+parametersRef:
+  note: "Solo por referencia a SEC-CNS-006 rev. 5 §1 (valores aprobados R6-8 / R11-B3). Esta spec no fija valores. P-45 NO aprobado y no se usa."
+  used: [P-26, P-30, P-31, P-33, P-40]
+
+guards:
+  - id: GRD-CM-01
+    name: tenant_resolved_server_side
+    rule: "tenant_id resuelto por función de la allowlist de ADR-006 §6 desde credencial (hash exacto); vacío/expirado/rotado → 404 uniforme."
+    onFail: ERR-CM-01
+    governedBy: ["SM-CNS-001 R0.4", "ADR-006 §6", "DEC-BR-015 §1"]
+    testIds: [TEST-CNS-111]
+  - id: GRD-CM-02
+    name: guard_T_tenant_consistency
+    rule: "tenant(token) = tenant(sesión) = tenant(agregado); token del tenant X con sesión del tenant Y, o token del contexto A usado en B, se rechaza."
+    onFail: ERR-CM-02
+    governedBy: ["SM-CNS-001 R0.4 (Guard T)", "ADR-006 §2"]
+    testIds: [TEST-CNS-112]
+  - id: GRD-CM-03
+    name: guard_P_school_participation_active
+    rule: "El tenant de la request tiene SchoolParticipation ACTIVE para (contextRef, productRef); se evalúa por request (literal DEC-BR-015:42)."
+    onFail: ERR-CM-03
+    governedBy: ["SM-CNS-001 R0.4 (Guard P)", "DEC-BR-015 Consecuencias (guard (d) + Guard P)", "RULE-CNS-024", "DEC-BR-013"]
+    testIds: [TEST-CNS-113]
+  - id: GRD-CM-04
+    name: guard_E_enrollment_active
+    rule: "Enrollment ACTIVE del subjectRef en esa SchoolParticipation."
+    onFail: ERR-CM-04
+    governedBy: ["SM-CNS-001 R0.4 (Guard E)", "DEC-BR-016 §1, §8"]
+    testIds: [TEST-CNS-114]
+  - id: GRD-CM-05
+    name: route_class_issuance_decision
+    rule: "Fórmula conjuntiva de DEC-BR-016 §8 sin caché; desconocido = false. PAUSED/SUSPENDED de contexto o participación → CONTEXT_NOT_ACTIVE o el código de R0.4, sin volver nada terminal."
+    onFail: ERR-CM-05
+    governedBy: ["SM-CNS-001 R0.5", "DEC-BR-016 §8", "ADR-006 §6"]
+    testIds: [TEST-CNS-115]
+  - id: GRD-CM-06
+    name: route_class_rights
+    rule: "Solo tenant existe + cadena del titular resuelta en servidor; nunca *.active ni status de tenant, participación, Enrollment, contexto ni BillingSubscription. Un tenant SUSPENDED sigue resolviendo /m/ y /r/ (AC-02.3)."
+    onFail: ERR-CM-01
+    governedBy: ["SM-CNS-001 R0.5, R0.6", "DEC-BR-016 §8", "RULE-CNS-TBD-01", "REQ-CNS-TBD-01 AC-01.3, AC-01.4", "REQ-CNS-TBD-02 AC-02.3", "ADR-006 §6"]
+    testIds: [TEST-CNS-107, TEST-CNS-116, TEST-CNS-315]
+  - id: GRD-CM-07
+    name: actor_derived_and_allowed
+    rule: "Actor derivado de la identidad autenticada; rol permitido por transición; actor IA o identidad de servicio como HUMAN → rechazo por CHECK."
+    onFail: ERR-CM-10
+    governedBy: ["SM-CNS-001 R0.2, INV-12", "DEC-BR-014 §6", "DEC-BR-017 §8", "MP §32"]
+    testIds: [TEST-CNS-106]
+  - id: GRD-CM-08
+    name: idempotency_key
+    rule: "Idempotency-Key ligada a (tenantRef, principal, operación), almacenada como hash con TTL P-33; replay solo al mismo principal; misma key + mismo payloadHash → misma respuesta; misma key + otro hash → conflicto."
+    onFail: ERR-CM-07
+    governedBy: ["SM-CNS-001 §7", "SEC-CNS-006 P-33"]
+    testIds: [TEST-CNS-117]
+  - id: GRD-CM-09
+    name: integrity_and_keys_available
+    rule: "Clave de firma/cifrado presente e integridad del ledger verificable; si no, la operación se rechaza (salvo R4 de revocación, LD-05)."
+    onFail: ERR-CM-08
+    governedBy: ["SM-CNS-001 R0.3, §4.1", "MP §29", "[N-SM] §1 P16"]
+    testIds: [TEST-CNS-118]
+  - id: GRD-CM-10
+    name: csrf_and_origin
+    rule: "Todo POST (httpPost: true) exige token CSRF y Origin/Host por igualdad exacta; cookies __Host- según P-26; consolas STAFF/PLATFORM con cookie y CSRF propios."
+    onFail: ERR-CM-09
+    governedBy: ["SM-CNS-001 §3.1", "ADR-001 §2", "SEC-CNS-006 P-26", "SEC-CNS-005 T-03, T-04"]
+    testIds: [TEST-CNS-119]
+  - id: GRD-CM-11
+    name: synthetic_only_environment
+    rule: "data_class = 'SYNTHETIC', environment ∈ {LOCAL, DEV, STAGING}, evidentiary = false; si el catálogo no lo garantiza el servicio no arranca (chequeo de arranque, no de transición)."
+    onFail: ERR-CM-11
+    governedBy: ["DEC-BR-014 §4", "ADR-002 §2, §8", "ADR-001 §10"]
+    testIds: [TEST-CNS-104]
+  - id: GRD-CM-12
+    name: server_time_only
+    rule: "Toda comparación temporal (expiresAt, TTL, SLA) usa la hora del servidor; nunca el reloj del cliente ni del consumidor. Reloj según P-40."
+    onFail: null # guard de disparo: sin la condición temporal no hay transición
+    governedBy: ["SM-CNS-001 §2 I8, §3 V5, §5 R9", "SEC-CNS-006 P-40", "[N-SM] §1 (pausedAt)"]
+    testIds: [TEST-CNS-310]
+  - id: GRD-CM-13
+    name: fixture_actor_environment
+    rule: "actorType FIXTURE solo con environment = STAGING (literal DEC-BR-014 §6); en PRODUCTION nunca; en LOCAL/DEV rechazado hasta OPEN-CM-06."
+    onFail: ERR-CM-10
+    governedBy: ["DEC-BR-014 §6", "DEC-BR-014 §5 (SchoolParticipation y tenant.active por fixture)"]
+    testIds: [TEST-CNS-311]
+
+errors:
+  - id: ERR-CM-01
+    code: TENANT_NOT_RESOLVED
+    response: "404 uniforme (mismo cuerpo, código y tiempo acotado; REQ-CNS-TBD-07 AC-07.1)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 R0.4", "ADR-006 §2, §6", "REQ-CNS-TBD-07 AC-07.1"]
+    testIds: [TEST-CNS-111]
+  - id: ERR-CM-02
+    code: INVITER_TENANT_MISMATCH
+    response: "Rechazo de operación + evento de seguridad + revisión humana, sin pausa automática. En rutas del portador la respuesta externa es la uniforme de ERR-CM-01 (AC-07.1)."
+    emitsEvent: "security (nombre del eventType: OPEN-CM-02)"
+    governedBy: ["SM-CNS-001 R0.4 (enum único de tenancy)", "ADR-006 §2 (enum único, F-204)"]
+    note: "DEC-BR-015:46 dice 'falta que Carlos lo apruebe' el enum; texto desactualizado frente a la aceptación de SM-CNS-001/ADR-006 (FINDING F-H01-05)."
+    testIds: [TEST-CNS-112]
+  - id: ERR-CM-03
+    code: INVITER_NOT_PARTICIPATING
+    response: "Rechazo determinista; estado previo intacto"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 R0.4", "DEC-BR-015:42"]
+    testIds: [TEST-CNS-113]
+  - id: ERR-CM-04
+    code: ENROLLMENT_NOT_ACTIVE
+    response: "Rechazo determinista interno. Hacia el consumidor (API-CNS-001) solo NOT_AUTHORIZED; el motivo interno queda en AuthorizationCheck (F-323)."
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 R0.4, §6", "ADR-006 §2", "RULE-CNS-013"]
+    testIds: [TEST-CNS-114]
+  - id: ERR-CM-05
+    code: CONTEXT_NOT_ACTIVE
+    response: "Rechazo determinista en rutas ISSUANCE_DECISION; PENDING/SENT se conservan, nada pasa a terminal. Nunca se devuelve en una ruta RIGHTS."
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 R0.4, R0.5", "ADR-006 §2"]
+    testIds: [TEST-CNS-115]
+  - id: ERR-CM-06
+    code: INVALID_TRANSITION
+    response: "Rechazo determinista sin evento ni estado parcial (invalidTransitionResponse de [N-SM]); estado HTTP: OPEN (contrato H02)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 R0.3, §4.1", "[N-SM] Transition contract"]
+    testIds: [TEST-CNS-103]
+  - id: ERR-CM-07
+    code: IDEMPOTENCY_CONFLICT
+    response: "422: misma Idempotency-Key con otro payloadHash"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §4.1 (2), §7"]
+    testIds: [TEST-CNS-117]
+  - id: ERR-CM-08
+    code: INTEGRITY_FAILURE
+    response: "Rechazo de la operación afectada (no de revocación); alerta"
+    emitsEvent: "security (nombre OPEN-CM-02)"
+    governedBy: ["SM-CNS-001 R0.3, §4.1 (4)", "MP §29"]
+    testIds: [TEST-CNS-118]
+  - id: ERR-CM-09
+    code: CSRF_REJECTED
+    response: "Rechazo sin efecto (POST sin CSRF, Origin ajeno, de otra consola o con sufijo parecido)"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-005 T-03, T-04", "SEC-CNS-006 P-26"]
+    testIds: [TEST-CNS-119]
+  - id: ERR-CM-10
+    code: ACTOR_NOT_ALLOWED
+    response: "Rechazo determinista (rol no autorizado para la transición, actor IA, identidad de servicio o FIXTURE fuera de STAGING)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6"]
+    testIds: [TEST-CNS-106, TEST-CNS-311]
+  - id: ERR-CM-11
+    code: STARTUP_REFUSED_NON_SYNTHETIC
+    response: "El servicio no arranca (chequeo de catálogo)"
+    emitsEvent: none
+    governedBy: ["ADR-002 §8, §9", "DEC-BR-014 §4, §5"]
+    testIds: [TEST-CNS-104]
+  - id: ERR-CM-12
+    code: GUARD_EVALUATOR_UNAVAILABLE
+    response: "Operación rechazada + alerta; el contexto NO se pausa (fallo del evaluador no es evidencia de guard fallido)"
+    emitsEvent: none
+    governedBy: ["[N-SM] §1 'Not a context pause'", "SM-CNS-001 R0.3"]
+    testIds: [TEST-CNS-312]
+
+invariants:
+  - id: INV-CM-01
+    statement: "El estado de todo agregado es proyección del ledger append-only; append + proyección + outbox en una sola transacción; no hay UPDATE de estado sin evento."
+    governedBy: ["SM-CNS-001 R0.1", "ADR-002 §2, §4", "DEC-BR-014 §6", "MP §39"]
+    testIds: [TEST-CNS-100]
+  - id: INV-CM-02
+    statement: "tenant_id es la única clave de aislamiento; organization_* nunca aparece en RLS, SET LOCAL, middleware, scopes, claves de cache ni UNIQUE de tablas TENANT."
+    governedBy: ["DEC-BR-015 §1", "DEC-BR-016 §2", "ADR-006 §1", "DR2 D2"]
+    testIds: [TEST-CNS-101]
+  - id: INV-3
+    statement: "Ninguna autorización cruza contexto ni tenant (0 accesos cross-tenant exitosos, incluida la reutilización de conexión A→B)."
+    governedBy: ["SM-CNS-001 §7 INV-3", "ADR-006 §4–§6", "SEC-CNS-005 T-26", "DEC-BR-014 X5", "REQ-CNS-TBD-02 AC-02.3 (A→B: 0 filas)"]
+    testIds: [TEST-CNS-102]
+  - id: INV-CM-03
+    statement: "Fail closed sin estado parcial ni evento; la única excepción es la revocación (R4, LD-05)."
+    governedBy: ["SM-CNS-001 R0.3", "MP §29"]
+    testIds: [TEST-CNS-103]
+  - id: INV-CM-04
+    statement: "Todo evento lleva environment ∈ {LOCAL, DEV, STAGING}, evidentiary = false y dataClass = 'SYNTHETIC' en IT0."
+    governedBy: ["ADR-002 §2, §8", "DEC-BR-014 §4.5", "SEC-CNS-005 T-39"]
+    testIds: [TEST-CNS-104]
+  - id: INV-CM-05
+    statement: "Payload de cada eventType = lista blanca de contracts/; un campo fuera de la lista o un valor fuera de enum hace fallar el append; cero PII, token, OTP, IP, HMAC o texto libre."
+    governedBy: ["SM-CNS-001 §1", "ADR-002 §10, §11", "DEC-BR-017 §6", "REQ-CNS-TBD-05 AC-05.1", "SEC-CNS-005 T-38"]
+    testIds: [TEST-CNS-105]
+  - id: INV-12
+    statement: "Ningún agente IA ni identidad de servicio pide, aprueba, habilita o recibe un grant de caso o diagnóstico, ni es actor HUMAN de una transición."
+    governedBy: ["SM-CNS-001 §7 INV-12", "DEC-BR-017 §8", "MP §32"]
+    testIds: [TEST-CNS-106]
+  - id: INV-CM-06
+    statement: "eligibility_to_participate != eligibility_to_revoke: ninguna ruta RIGHTS consulta estado/active de tenant, Study, SchoolParticipation, Enrollment, contexto ni BillingSubscription (revisión estática); la prueba dinámica es INV-6 (revocation)."
+    governedBy: ["RULE-CNS-TBD-01", "DR2 D5", "DEC-BR-016 §8", "DEC-BR-017 §10", "REQ-CNS-TBD-01 AC-01.4", "SM-CNS-001 R0.6"]
+    testIds: [TEST-CNS-107]
+  - id: INV-CM-07
+    statement: "Todos los guards son código determinista versionado; ningún modelo decide consentimiento, validez de OTP, autoridad del apoderado, revocación ni suficiencia de verificación."
+    governedBy: ["SM-CNS-001:6", "MP §32", "CLAUDE.md Límites de IA"]
+    testIds: [TEST-CNS-108]
+  - id: INV-CM-08
+    statement: "Un GET nunca consume un token ni transiciona un agregado (/i/, /m/, /r/ se canjean en backend con 303 a ruta sin token)."
+    governedBy: ["SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20"]
+    testIds: [TEST-CNS-109]
+  - id: INV-CM-09
+    statement: "Todas las refs (subjectRef, decisionMakerRef, invitationRef, chainRef, revocationRef, caseRef, channelRef, ...) son UUIDv4 aleatorios; channelHmac = HMAC(K, tenant_id ‖ email normalizado) vive solo en pii.channel, de modo que la misma dirección en dos tenants no coincide; integrity no tiene FKs a pii/app."
+    governedBy: ["SM-CNS-001 §1", "ADR-002 §3", "DEC-BR-016 §2", "DR2 D8", "REQ-CNS-TBD-02 AC-02.2"]
+    testIds: [TEST-CNS-110, TEST-CNS-314]
+  - id: INV-CM-10
+    statement: "Ningún portador no verificado queda registrado como DECISION_MAKER; su actorRole es UNVERIFIED_BEARER y solo ejecuta las transiciones de actorModel.unverifiedBearer.may (= SM v7 INV-19)."
+    governedBy: ["SM-CNS-001 v7 R0.2, §7 INV-19", "CARLOS r3 R13-5", "AUDIT F-A03"]
+    testIds: [TEST-CNS-313]
+
+events: [] # esta spec no emite eventos propios; define el sobre común (ledgerEnvelope)
+
+legalDecisions:
+  - {id: LD-05, topic: "Validez de una revocación aceptada con falla de clave/integridad (excepción P16 de failClosed)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-04, topic: "'suspended' (SUSPENDED protector) no existe en IT0; vale false por construcción", owner: Carlos, blocksDataReal: true}
+
+openItems:
+  - id: OPEN-CM-01
+    item: "Estados HTTP concretos de ERR-CM-06 y de errores sin código fijado en SM-CNS-001: se definen en el contrato mínimo (H02 / CA-117)."
+    owner: "lampone-architect (H02); cierre Carlos"
+    status: OPEN
+  - id: OPEN-CM-02
+    item: "Nombres de eventType de los 'eventos de seguridad' que SM-CNS-001 menciona sin nombre (Guard T fallido, binding M1, INTEGRITY_FAILURE): taxonomía gaona-measure + H02."
+    owner: "gaona-measure / lampone-architect; cierre Carlos"
+    status: OPEN
+  - id: OPEN-CM-03
+    item: "Rango TEST-CNS-100..399 propuesto para tests de máquinas de estado; pendiente de reconciliar con la numeración de lampone-qa (el rango del marco de tests de CA-118 no se usa)."
+    owner: "lampone-qa; cierre Carlos"
+    status: OPEN
+  - id: OPEN-CM-04
+    item: "IDs REQ-CNS-TBD-01..08 y RULE-CNS-TBD-01..03 son placeholders de REQ-REC; reemplazar por los IDs registrados en Notion (E-12) cuando scribe-sync los asigne."
+    owner: "scribe-sync; cierre Carlos"
+    status: OPEN
+  - id: OPEN-CM-05
+    item: "actorRole del portador no verificado: DECIDIDO R13-5 (valor UNVERIFIED_BEARER en SM v7 R0.2; F-H01-04 + AUDIT F-A03)."
+    owner: Carlos
+    status: DECIDED
+  - id: OPEN-CM-06
+    item: "actorType FIXTURE: DEC-BR-014 §6 dice 'solo en staging'; si se admite en LOCAL/DEV/CI para las fixtures de IT0 (DEC-BR-014 §1, §5)."
+    owner: Carlos
+    status: OPEN
