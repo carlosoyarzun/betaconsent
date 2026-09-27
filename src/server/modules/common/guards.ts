@@ -3,7 +3,7 @@
 // consentimiento, OTP, autoridad del apoderado ni revocación (Límites de IA, CLAUDE.md).
 
 import { DomainError } from "./errors.ts";
-import type { ActorType, Environment, ExecutionContext, ExecutionSource } from "./types.ts";
+import type { ActorRole, ActorType, Environment, ExecutionContext, ExecutionSource } from "./types.ts";
 import type { ResolvedHandle, TenantHandlePort } from "../../ports/tenant-handle.port.ts";
 
 /**
@@ -50,6 +50,41 @@ export function assertExecutionSourceIsSeed(ctx: ExecutionContext): void {
  */
 export function assertExecutionSourceIn(ctx: ExecutionContext, allowed: readonly ExecutionSource[]): void {
   if (!allowed.includes(ctx.source)) {
+    throw new DomainError("ERR-CM-10");
+  }
+}
+
+/**
+ * GRD-CM-02 (guard_T_tenant_consistency): tenant(token) = tenant(sesión) = tenant(agregado).
+ * Un recurso resuelto en un tenant distinto del tenant de la request se rechaza (ERR-CM-02).
+ * Invitation I1..I9, otp-challenge V1/V3 y consent-decision C1/C2/C3/C5 citan este guard.
+ */
+export function assertTenantConsistency(resourceTenantId: string, requestTenantId: string): void {
+  if (resourceTenantId !== requestTenantId) {
+    throw new DomainError("ERR-CM-02");
+  }
+}
+
+/**
+ * GRD-CM-05 (route_class_issuance_decision): fórmula conjuntiva de DEC-BR-016 §8, evaluada
+ * sin caché por la ruta ISSUANCE_DECISION (study.active AND tenant.active AND
+ * schoolParticipation.active AND enrollment.active AND consent.valid AND NOT revoked AND NOT
+ * suspended). Este helper no evalúa la fórmula (eso vive en el EligibilityPort inyectado por
+ * el llamador, IT0 en memoria); solo aplica el resultado ya evaluado, fail-closed.
+ */
+export function assertRouteEligible(eligible: boolean): void {
+  if (!eligible) {
+    throw new DomainError("ERR-CM-05");
+  }
+}
+
+/**
+ * GRD-CM-07 (actor_derived_and_allowed), subconjunto: exige que el actorRole de la identidad
+ * ya derivada en servidor esté en la allowlist de la transición. No deriva el actor (eso es
+ * responsabilidad del entrypoint/sesión, nunca de un campo del body).
+ */
+export function assertActorRoleIn(actorRole: ActorRole, allowed: readonly ActorRole[]): void {
+  if (!allowed.includes(actorRole)) {
     throw new DomainError("ERR-CM-10");
   }
 }
