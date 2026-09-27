@@ -1,0 +1,528 @@
+# Máquina DecisionMakerVerification / OTP challenge del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + SEC-CNS-012 re-verificación N-09).
+# Parámetros SOLO por referencia a SEC-CNS-006 (P-xx aprobados); ningún valor se fija aquí.
+# El sistema no decide la validez del OTP como juicio: la comparación es código determinista.
+specId: SPEC-CNS-SM-OTP-CHALLENGE
+title: "State machine DecisionMakerVerification / OTP challenge (IT0)"
+smId: SM-CNS-001
+smSection: "§3, §3.1, R0.7"
+aggregateType: DecisionMakerVerification
+version: "0.4.0"
+status: PROPOSED
+jiraStory: CA-116
+owner: lampone-architect
+reviewers: [lampone-security, lampone-qa, carlosoyarzun]
+humanGate: "Solo Carlos cierra esta spec."
+commonSpec: specs/state-machines/common.spec.yaml
+governedBy:
+  - "SM-CNS-001 v6 §3 (V1–V6c, atomicidad SEC F02), §3.1 (sesión posterior), R0.7 (rate limiting por clase) — ACCEPTED subconjunto IT0"
+  - "SM-CNS-001 v7 §3 (R13-7: V6/V6r desde CODE_SENT, V6a contabilidad del padre, LOCKED sin salidas) — contenido aprobado en R13; enmienda PROPOSED hasta cierre"
+  - "[N-SM] §3 DecisionMakerVerification / OTP (enmienda E-05 vía DEC-BR-017, Fase 4)"
+  - "DEC-BR-017 §1, §2, §9 (presupuesto por scope_class, '3 LOCKED' solo DECISION, tope 30/30 con rotación)"
+  - "CARLOS r3: F, R5-2, R5-3, R6-2, R6-8"
+  - "REQ-CNS-TBD-02 AC-02.4; REQ-CNS-TBD-07 AC-07.1–AC-07.3"
+  - "ADR-002 §3 (ops.otp_budget), ADR-006 §6.1 (rotación FAILURE_CAP)"
+  - "SEC-CNS-006 P-01…P-08, P-13, P-27, P-28, P-30; SEC-CNS-005 T-07…T-11, T-16"
+
+scope:
+  it0: "Challenges scope DECISION (padre = Invitation) y scope REVOCATION/MANAGE (padre = chainRef, clase RIGHTS). Entrega solo por el sink/allowlist de IT0."
+  notInIt0: ["Canales distintos de email (MFA/SMS): no existen en el diseño"]
+
+attributes:
+  - verificationRef
+  - tenantRef
+  - scope # enum DECISION | REVOCATION | MANAGE
+  - scopeClass # derivado: DECISION -> DECISION; REVOCATION|MANAGE -> RIGHTS
+  - parentRef # DECISION: invitationRef; REVOCATION/MANAGE: chainRef resuelto en servidor desde el handle /m/
+  - channelRef
+  - codeHmac # P-08; nunca el código en claro
+  - attempts
+  - expiresAt
+  - consumedAt
+  - resendCount
+  - requestedByHandleRef # hash del handle/sesión que pidió el challenge (SEC P2-03)
+
+commandGuards: # mismo comando = mismo conjunto de guards previo a comparar (AUDIT F-A02, SEC P2-02; SM:70)
+  SubmitOtp: [GRD-CM-10, GRD-OT-13, GRD-OT-04, GRD-OT-03, GRD-OT-05, GRD-OT-07]
+
+budget:
+  id: CFG-OT-BUDGET
+  testIds: [TEST-CNS-162, TEST-CNS-163]
+  table: ops.otp_budget
+  keys:
+    DECISION: ["(tenant_id, CHANNEL, channelRef)", "(tenant_id, INVITATION, invitationRef)"]
+    RIGHTS: ["(tenant_id, CHANNEL, channelRef)", "(tenant_id, CHAIN, chainRef)", "(tenant_id, CHAIN, chainRef, DAYS_30)"]
+  enums:
+    scope_class: [DECISION, RIGHTS]
+    key_kind: [CHANNEL, INVITATION, CHAIN] # estable, sin alias (DEC-BR-017 §6)
+    window_kind: [DAY_1, DAYS_30]
+  checks: ["INVITATION solo en DECISION", "CHAIN solo en RIGHTS", "DAYS_30 solo en (RIGHTS, CHAIN)"]
+  governedBy: ["SEC-CNS-006 P-04, P-04a, P-04b, P-04c, P-05, P-07", "ADR-002 §3", "DEC-BR-017 §6, §9"]
+
+parametersRef:
+  note: "Valores solo en SEC-CNS-006 rev. 5 §1 (aprobados R6-8). Esta spec no repite números."
+  used: [P-01, P-02, P-03, P-04, P-04a, P-04b, P-04c, P-05, P-06, P-07, P-08, P-13, P-27, P-28, P-30, P-31]
+  notApproved: "Límite por señal de red/origen en la emisión (DEC-BR-017 §9, S3-11): sin valor aprobado en SEC-CNS-006 (ver OPEN-OT-01)."
+
+states:
+  - id: NOT_STARTED
+    initial: true
+    terminal: false
+    description: "Challenge creado, sin código emitido. Uno activo por (tenantRef, parentRef, scope). Inicial y no terminal (SM v7 §3, R13-7)."
+    governedBy: ["SM-CNS-001 §3", "[N-SM] §3"]
+    testIds: [TEST-CNS-150]
+  - id: CODE_SENT
+    initial: false
+    terminal: false
+    description: "Código emitido al canal ligado; único estado no terminal con intentos."
+    governedBy: ["SM-CNS-001 §3"]
+    testIds: [TEST-CNS-150]
+  - id: VERIFIED
+    initial: false
+    terminal: true
+    description: "Control del canal probado; se consume una sola vez (consumedAt). No prueba identidad civil ni autoridad."
+    governedBy: ["SM-CNS-001 §3 V3, R0.8"]
+    testIds: [TEST-CNS-153]
+  - id: EXPIRED
+    initial: false
+    terminal: true
+    description: "Hora de servidor >= expiresAt (P-02)."
+    governedBy: ["SM-CNS-001 §3 V5", "SEC-CNS-006 P-02"]
+    testIds: [TEST-CNS-155]
+  - id: LOCKED
+    initial: false
+    terminal: true
+    terminalNote: "R13-7 (opción A de SEC): LOCKED no tiene transiciones de salida; '3 LOCKED' y los presupuestos se cuentan en el padre (V6a)."
+    description: "attempts = N (P-03)."
+    governedBy: ["SM-CNS-001 v7 §3 V4, V6a", "CARLOS r3 R13-7", "SEC-CNS-006 P-03"]
+    testIds: [TEST-CNS-154]
+  - id: FAILED
+    initial: false
+    terminal: true
+    description: "DECISION: presupuesto agotado, 3 LOCKED o padre terminal → reemitir invitación. RIGHTS: presupuesto/tope agotado o padre terminal → RECOVERY y RightsCase siempre disponibles."
+    governedBy: ["SM-CNS-001 §3 V6, V6r, V6c", "DEC-BR-017 §9"]
+    testIds: [TEST-CNS-156, TEST-CNS-157, TEST-CNS-158]
+
+transitions:
+  - id: V1
+    from: NOT_STARTED
+    to: CODE_SENT
+    command: RequestOtp
+    actor: {ref: UNVERIFIED_BEARER} # handle LANDING o MANAGE_ENTRY (OPEN-CM-05)
+    routeClass: "ISSUANCE_DECISION si scope = DECISION; RIGHTS si scope ∈ {REVOCATION, MANAGE}"
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-10, GRD-OT-01, GRD-OT-02, GRD-OT-03, GRD-OT-08, GRD-OT-11, GRD-OT-12]
+    guardsByScope:
+      DECISION: [GRD-CM-05, GRD-OT-14]
+      REVOCATION: [GRD-CM-06]
+      MANAGE: [GRD-CM-06]
+    effects:
+      - "Genera código (P-01), guarda codeHmac (P-08), fija expiresAt (P-02) y encola envío SOLO al channelRef ligado."
+      - "Respuesta genérica idéntica exista o no el canal/cadena (MP §12, AC-07.1)."
+      - "El challenge queda ligado al handle/sesión que lo pidió (requestedByHandleRef); V1 repetido desde el mismo handle es idempotente, desde otro handle da la respuesta uniforme sin tocar el challenge vigente (GRD-OT-08)."
+    emits: [OTP_ISSUED]
+    idempotencyKey: "(tenantRef, parentRef, scope, requestedByHandleRef) — uno activo"
+    errors: [ERR-OT-01, ERR-OT-08, ERR-CM-05, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §3 V1, §2.1 M1, M4, §5.0", "DEC-BR-017 §1", "SEC-CNS-006 P-01, P-02, P-08"]
+    testIds: [TEST-CNS-150, TEST-CNS-319, TEST-CNS-320]
+  - id: V2
+    from: CODE_SENT
+    to: CODE_SENT
+    command: SubmitOtp
+    outcome: wrong_code
+    actor: {ref: UNVERIFIED_BEARER}
+    routeClass: "según scope (igual que V1)"
+    httpPost: true
+    guards: [GRD-CM-10, GRD-OT-13, GRD-OT-04, GRD-OT-03, GRD-OT-05, GRD-OT-07] # = commandGuards.SubmitOtp
+    effects:
+      - "Reserva atómica del intento (attempts+1) y de un fallo en cada clave de presupuesto aplicable, en una tx, ANTES de comparar (SEC F02)."
+      - "Si alguna reserva no devuelve fila → rechazo sin comparar (deriva a V4/V6/V6r/V6c según corresponda)."
+    emits: [OTP_FAILED]
+    idempotencyKey: null
+    errors: [ERR-OT-02, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §3 V2, 'Atomicidad'", "SEC-CNS-006 P-03, P-04"]
+    testIds: [TEST-CNS-151]
+  - id: V2r
+    from: CODE_SENT
+    to: CODE_SENT
+    command: ResendOtp
+    actor: {ref: UNVERIFIED_BEARER}
+    routeClass: "según scope (igual que V1)"
+    httpPost: true
+    guards: [GRD-CM-10, GRD-OT-13, GRD-OT-06, GRD-OT-02]
+    effects: ["Reemplaza codeHmac; NO reinicia attempts ni presupuesto; mismo canal ligado."]
+    emits: [OTP_ISSUED]
+    idempotencyKey: "(verificationRef, resendCount)"
+    errors: [ERR-OT-09]
+    governedBy: ["SM-CNS-001 §3 V2r", "SEC-CNS-006 P-06", "DEC-BR-017 E-05"]
+    testIds: [TEST-CNS-152]
+  - id: V3
+    from: CODE_SENT
+    to: VERIFIED
+    command: SubmitOtp
+    outcome: correct_code
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER, note: "el rol se registra solo al acertar (V3); antes es UNVERIFIED_BEARER"}
+    routeClass: "según scope (igual que V1)"
+    httpPost: true
+    guards: [GRD-CM-02, GRD-CM-10, GRD-OT-13, GRD-OT-04, GRD-OT-03, GRD-OT-05, GRD-OT-07] # = commandGuards.SubmitOtp + Guard T
+    effects:
+      - "Antes de comparar, en la misma tx: reserva del intento (GRD-OT-04) y de un fallo en cada clave de presupuesto aplicable (GRD-OT-03); si alguna reserva no devuelve fila, rechazo sin comparar (SM:70)."
+      - "Al acertar, la reserva de fallo se revierte en la misma tx: los aciertos no consumen G (P-04)."
+      - "consumedAt + evento de ledger en la misma tx; rota el ID de sesión (P-30)."
+      - "Crea sesión ligada a (tenantRef, parentRef, verificationRef, scope, decisionMakerRef) con validUntil de servidor: DECISION P-27; REVOCATION/MANAGE P-28."
+      - "scope = DECISION: dispara I5 en el mismo lote (invitation)."
+      - "scope = REVOCATION: habilita R2 solo si es posterior a R1 (revocation GRD-RV-05)."
+    emits: [DECISION_MAKER_CHANNEL_VERIFIED]
+    idempotencyKey: "verificationRef (un solo consumo)"
+    errors: [ERR-OT-05, ERR-OT-03, ERR-OT-06, ERR-OT-07, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §3 V3, §3.1, 'Atomicidad' (SM:70)", "SEC-CNS-006 P-04, P-27, P-28, P-30", "AUDIT F-A02", "SEC-CNS-012 P2-02"]
+    testIds: [TEST-CNS-153, TEST-CNS-318]
+  - id: V4
+    from: CODE_SENT
+    to: LOCKED
+    command: "(sistema) attempts alcanza N"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: "según scope"
+    httpPost: false
+    guards: [GRD-OT-04]
+    effects: ["DECISION: cuenta para la regla '3 LOCKED' (V6). RIGHTS: nunca produce FAILED por conteo de LOCKED; RECOVERY visible."]
+    emits: [OTP_LOCKED]
+    idempotencyKey: verificationRef
+    errors: [ERR-OT-04]
+    governedBy: ["SM-CNS-001 §3 V4", "SEC-CNS-006 P-03, P-07"]
+    testIds: [TEST-CNS-154]
+  - id: V5
+    from: CODE_SENT
+    to: EXPIRED
+    command: "(sistema) expiración"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: "según scope"
+    httpPost: false
+    guards: [GRD-OT-05, GRD-CM-12]
+    effects: ["El código deja de ser aceptable; se puede crear un challenge nuevo (sujeto a presupuesto)."]
+    emits: [OTP_EXPIRED]
+    idempotencyKey: verificationRef
+    errors: [ERR-OT-03]
+    governedBy: ["SM-CNS-001 §3 V5", "SEC-CNS-006 P-02"]
+    testIds: [TEST-CNS-155]
+  - id: V6
+    from: CODE_SENT
+    to: FAILED
+    scopeClass: DECISION
+    command: "(sistema) presupuesto DECISION agotado o padre terminal (la regla '3 LOCKED' es V6a)"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: [GRD-OT-03]
+    effects: ["Respuesta: reemitir la invitación (denegación de participación admisible fail-closed; SEC-CNS-006 §2)."]
+    emits: [OTP_BUDGET_EXHAUSTED]
+    idempotencyKey: verificationRef
+    errors: [ERR-OT-06]
+    governedBy: ["SM-CNS-001 §3 V6", "SEC-CNS-006 P-04, P-07", "DEC-BR-017 §9"]
+    testIds: [TEST-CNS-156]
+  - id: V6r
+    from: CODE_SENT
+    to: FAILED
+    scopeClass: RIGHTS
+    command: "(sistema) presupuesto RIGHTS DAY_1 agotado o padre terminal (sin regla '3 LOCKED')"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: RIGHTS
+    httpPost: false
+    guards: [GRD-OT-03, GRD-OT-10]
+    effects:
+      - "Respuesta uniforme; RECOVERY (RV0) siempre visible (S3-15); nunca deniega la revocación."
+      - "Una Revocation abierta de la cadena no cambia de estado (nunca FAILED)."
+    emits: [OTP_BUDGET_EXHAUSTED]
+    idempotencyKey: verificationRef
+    errors: [ERR-OT-07]
+    governedBy: ["SM-CNS-001 §3 V6r, R0.7", "DEC-BR-017 §2, §9", "RULE-CNS-TBD-02"]
+    testIds: [TEST-CNS-157]
+  - id: V6a
+    kind: ACCOUNTING # contabilidad del padre; el challenge no transiciona (R13-7)
+    from: null
+    to: null
+    scopeClass: DECISION
+    command: "(sistema) al registrarse el 3.er LOCKED de la misma invitación"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: [GRD-OT-09]
+    effects:
+      - "Marca la invitación padre con otpExhausted; el challenge LOCKED no cambia de estado."
+      - "Todo V1 posterior de esa invitación se rechaza con la respuesta genérica (GRD-OT-14); la vía es reemitir la invitación (I1 con reissueOfRef)."
+      - "En RIGHTS no existe (el tope de largo plazo es V6c)."
+    emits: [OTP_BUDGET_EXHAUSTED]
+    idempotencyKey: "(tenantRef, invitationRef)"
+    errors: []
+    governedBy: ["SM-CNS-001 v7 §3 V6a", "CARLOS r3 R13-7", "SEC-CNS-006 P-07", "SEC-CNS-012 P2-01 (opción A)"]
+    testIds: [TEST-CNS-393, TEST-CNS-394]
+  - id: V6c
+    from: CODE_SENT
+    to: FAILED
+    scopeClass: RIGHTS
+    command: "(sistema) el fallo alcanza el tope de largo plazo por chainRef (P-07, window_kind DAYS_30)"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: RIGHTS
+    httpPost: false
+    guards: [GRD-OT-10]
+    effects:
+      - "En la misma tx del fallo: verificación → FAILED; management_token vigente revoked_at (ROTATED); token nuevo al outbox SOLO al canal ligado."
+      - "Invalida handles y sesiones MANAGE_ENTRY/MANAGE/REVOCATION del token viejo (P-30); reinicia la ventana DAYS_30 con el enlace nuevo."
+      - "Enlace viejo: 404 uniforme, no habilita V1 ni RV0. Revocation abierta sigue en su estado (R9 escala)."
+    emits: [OTP_BUDGET_EXHAUSTED, MANAGEMENT_TOKEN_ROTATED]
+    idempotencyKey: verificationRef
+    errors: [ERR-OT-07]
+    governedBy: ["SM-CNS-001 §3 V6c, §5.0", "ADR-006 §6.1", "SEC-CNS-006 P-07, P-13, §2", "DEC-BR-017 §9"]
+    testIds: [TEST-CNS-158]
+
+guards:
+  - id: GRD-OT-01
+    name: valid_parent_by_scope
+    rule: "Padre resuelto en servidor, nunca desde un id del cliente. Por scope: DECISION → Invitation OPENED, o VERIFIED solo por reingreso M4. REVOCATION → chainRef (desde el handle MANAGE_ENTRY/MANAGE de /m/) con ConsentDecision GRANTED/PARTIALLY_GRANTED vigente. MANAGE → chainRef existente 'con consentimiento' (SM:59): la cadena tiene alguna ConsentDecision registrada, incluida una REVOKED; no exige GRANTED (SM:127 vida del enlace 'mientras existan derechos', SM:173 y DEC-BR-016 §8: el DecisionMaker conserva la consulta tras revocar). Qué habilita MANAGE tras supresión o tras CLOSED: LD-12/LD-22 (referencia; no se decide aquí)."
+    byScope:
+      DECISION: "Invitation OPENED | VERIFIED (M4)"
+      REVOCATION: "chain con decisión GRANTED/PARTIALLY_GRANTED"
+      MANAGE: "chain existente con alguna decisión registrada (cualquier estado)"
+    onFail: ERR-OT-01
+    governedBy: ["SM-CNS-001 §3 V1 (SM:59), 'Inválidas', §5.0 (SM:127), §6 (SM:173)", "DEC-BR-016 §8", "SEC F02", "SM-CNS-001 §2.1 M4", "AUDIT F-A04", "SEC-CNS-012 P2-14", "LD-12", "LD-22"]
+    testIds: [TEST-CNS-150, TEST-CNS-168, TEST-CNS-319]
+  - id: GRD-OT-02
+    name: bound_channel_only
+    rule: "El código va solo al channelRef ligado (REVOCATION/MANAGE) o, en DECISION con RECIPIENT_CHANNEL, solo si coincide con recipientChannelRef (M1); nunca a un canal aportado en la request ni a pii.case_contact."
+    onFail: ERR-OT-08
+    governedBy: ["SM-CNS-001 §3 V1, 'Inválidas', §2.1 M1, §5.0 (OTP 'al canal ligado')", "DEC-BR-017 §1 ('ambos al canal ya ligado')", "INV-11"]
+    testIds: [TEST-CNS-150, TEST-CNS-167]
+  - id: GRD-OT-03
+    name: budget_by_scope_class
+    rule: "Todas las claves aplicables de la clase (P-05) tienen cupo en la ventana (P-04); reserva atómica con UPDATE … RETURNING por clave ANTES de comparar, en V2 y en V3 (mismo comando SubmitOtp); si el código es correcto la reserva se revierte en la misma tx (los aciertos no consumen G)."
+    onFail: ERR-OT-06
+    governedBy: ["SM-CNS-001 R0.7, §3 'Atomicidad'", "SEC-CNS-006 P-04, P-04a, P-04b, P-04c, P-05"]
+    testIds: [TEST-CNS-151, TEST-CNS-162, TEST-CNS-318]
+  - id: GRD-OT-04
+    name: attempts_below_N_atomic
+    rule: "UPDATE verification SET attempts = attempts + 1 WHERE consumed_at IS NULL AND attempts < N AND expires_at > now() RETURNING …, en la misma tx que la reserva de presupuesto; solo después se compara (N = P-03)."
+    onFail: ERR-OT-04
+    governedBy: ["SM-CNS-001 §3 'Atomicidad'", "SEC F02", "SEC-CNS-006 P-03"]
+    testIds: [TEST-CNS-154, TEST-CNS-161]
+  - id: GRD-OT-05
+    name: not_expired_not_consumed
+    rule: "Hora de servidor < expiresAt (P-02) y consumedAt IS NULL."
+    onFail: ERR-OT-03
+    governedBy: ["SM-CNS-001 §3 V3, V5", "SEC-CNS-006 P-02"]
+    testIds: [TEST-CNS-155, TEST-CNS-169]
+  - id: GRD-OT-06
+    name: resend_limits
+    rule: "Reenvío dentro de los límites de P-06; no reinicia attempts ni presupuesto."
+    onFail: ERR-OT-09
+    governedBy: ["SM-CNS-001 §3 V2r", "SEC-CNS-006 P-06"]
+    testIds: [TEST-CNS-152]
+  - id: GRD-OT-07
+    name: constant_time_compare
+    rule: "Comparación HMAC(K_otp_env, verificationRef ‖ code) con timingSafeEqual tras reservar el intento (P-08)."
+    onFail: ERR-OT-02
+    governedBy: ["SEC-CNS-006 P-08", "SM-CNS-001 §3 V3"]
+    testIds: [TEST-CNS-153]
+  - id: GRD-OT-08
+    name: single_active_challenge_bound_to_handle
+    rule: "Uno activo por (tenantRef, parentRef, scope), ligado al handle/sesión que lo pidió (requestedByHandleRef). V1 repetido desde el mismo handle devuelve el mismo challenge (idempotente); desde otro handle, respuesta uniforme y el challenge vigente no se toca. SubmitOtp solo acepta el challenge ligado al handle del POST."
+    onFail: ERR-OT-01
+    governedBy: ["SM-CNS-001 §3", "SEC-CNS-012 P2-03"]
+    testIds: [TEST-CNS-320]
+  - id: GRD-OT-09
+    name: decision_three_locked_rule
+    rule: "Solo scope DECISION: el 3.er challenge LOCKED de la misma invitación (P-07) dispara V6a sobre el padre; el challenge LOCKED no transiciona (R13-7). V4, V6a y V1 toman el lock de la fila de la invitación padre, de modo que un V1 concurrente con el 3.er LOCKED se evalúa después de V6a (SEC N-09)."
+    onFail: null # guard de disparo
+    governedBy: ["SM-CNS-001 §3 V6", "SEC-CNS-006 P-07", "CARLOS r3 R6-2"]
+    testIds: [TEST-CNS-156]
+  - id: GRD-OT-10
+    name: rights_budget_and_long_term_cap
+    rule: "Solo scope_class RIGHTS: presupuesto DAY_1 agotado → V6r; fallo que alcanza el tope DAYS_30 por (tenant_id, chainRef) → V6c con rotación. Nunca '3 LOCKED'."
+    onFail: null # guard de disparo
+    governedBy: ["SM-CNS-001 §3 V6r, V6c", "SEC-CNS-006 P-07, §2", "ADR-006 §6.1"]
+    testIds: [TEST-CNS-157, TEST-CNS-158]
+  - id: GRD-OT-11
+    name: route_class_by_scope
+    rule: "scope DECISION → GRD-CM-05 (ISSUANCE_DECISION); REVOCATION/MANAGE → GRD-CM-06 (RIGHTS, solo tenant existe). En RIGHTS nunca se responde con el estado del contexto."
+    onFail: null
+    onFailByScope:
+      DECISION: ERR-CM-05
+      REVOCATION: ERR-OT-01
+      MANAGE: ERR-OT-01
+    governedBy: ["SM-CNS-001 R0.5, §3 V1", "SEC-CNS-012 P2-04"]
+    testIds: [TEST-CNS-170, TEST-CNS-321]
+  - id: GRD-OT-14
+    name: parent_not_otp_exhausted
+    rule: "V1 scope DECISION se rechaza con la respuesta genérica si la invitación padre tiene otpExhausted (V6a), evaluado bajo el mismo lock de la fila de la invitación que V6a (SEC N-09); la vía es reemitir la invitación."
+    onFail: ERR-OT-06
+    governedBy: ["SM-CNS-001 v7 §3 V6a", "CARLOS r3 R13-7", "SEC-CNS-012 re-verificación N-09"]
+    testIds: [TEST-CNS-395, TEST-CNS-410]
+  - id: GRD-OT-13
+    name: challenge_bound_to_request_handle
+    rule: "SubmitOtp y ResendOtp solo operan sobre el challenge cuyo requestedByHandleRef coincide con el handle/sesión del POST; si no, respuesta uniforme sin reservar intentos."
+    onFail: ERR-OT-01
+    governedBy: ["SEC-CNS-012 P2-03", "SM-CNS-001 §3.1"]
+    testIds: [TEST-CNS-320]
+  - id: GRD-OT-12
+    name: issuance_origin_signal_limit
+    rule: "Límite adicional por señal de red/origen, tenant-scoped, clave propia (pii.network_signal HMAC), TTL corto; valores NO aprobados (OPEN-OT-01). Mientras no haya valor aprobado no se aplica un valor inventado; rige solo el presupuesto P-04/P-05."
+    status: OPEN
+    enforced: false # sin valor aprobado; el test verifica que NO se aplica (SEC P2-15)
+    onFail: ERR-OT-01
+    governedBy: ["DEC-BR-017 §9", "SM-CNS-001 §3 'Security stream'", "ADR-002 §3 (S3-11)", "LD-15", "SEC-CNS-012 P2-15"]
+    testIds: [TEST-CNS-322]
+
+errors:
+  - id: ERR-OT-01
+    code: OTP_GENERIC_RESPONSE
+    response: "Respuesta genérica uniforme en V1 (no revela existencia de canal, cadena, bloqueo, menor ni colegio)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §3 V1", "MP §12", "REQ-CNS-TBD-07 AC-07.1", "SEC-CNS-005 T-10"]
+    testIds: [TEST-CNS-323]
+  - id: ERR-OT-02
+    code: OTP_CODE_REJECTED
+    response: "Rechazo del código; forma exacta de la respuesta (sin revelar intentos restantes) en H02"
+    emitsEvent: OTP_FAILED
+    governedBy: ["SM-CNS-001 §3 V2"]
+    testIds: [TEST-CNS-151]
+  - id: ERR-OT-03
+    code: OTP_EXPIRED_OR_CONSUMED
+    response: "Rechazo; replay de challenge consumido o expirado nunca verifica"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §3 'Inválidas'"]
+    testIds: [TEST-CNS-155, TEST-CNS-169]
+  - id: ERR-OT-04
+    code: OTP_LOCKED
+    response: "Rechazo; DECISION: nuevo challenge sujeto a presupuesto; RIGHTS: RECOVERY visible"
+    emitsEvent: OTP_LOCKED
+    governedBy: ["SM-CNS-001 §3 V4"]
+    testIds: [TEST-CNS-154]
+  - id: ERR-OT-05
+    code: OTP_SCOPE_MISUSE
+    response: "Rechazo determinista: VERIFIED DECISION no sirve para revocar; MANAGE no sustituye REVOCATION en R2"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §3 'Inválidas'", "REQ-CNS-TBD-02 AC-02.4", "CARLOS r3 R5-3"]
+    testIds: [TEST-CNS-165]
+  - id: ERR-OT-06
+    code: OTP_BUDGET_EXHAUSTED_DECISION
+    response: "Rechazo; la vía es reemitir la invitación"
+    emitsEvent: OTP_BUDGET_EXHAUSTED
+    governedBy: ["SM-CNS-001 §3 V6"]
+    testIds: [TEST-CNS-156]
+  - id: ERR-OT-07
+    code: OTP_BUDGET_EXHAUSTED_RIGHTS
+    response: "Respuesta uniforme con RECOVERY y caso humano disponibles; nunca 'denegado'"
+    emitsEvent: OTP_BUDGET_EXHAUSTED
+    governedBy: ["SM-CNS-001 §3 V6r, V6c", "DEC-BR-017 §9", "RULE-CNS-TBD-02"]
+    testIds: [TEST-CNS-157, TEST-CNS-158]
+  - id: ERR-OT-08
+    code: OTP_CHANNEL_NOT_BOUND
+    response: "Sin envío y respuesta uniforme (canal aportado, distinto del ligado o ref de case_contact)"
+    emitsEvent: "security (nombre OPEN, OPEN-CM-02)"
+    governedBy: ["SM-CNS-001 §3 'Inválidas', §2.1 M1", "INV-11"]
+    testIds: [TEST-CNS-167]
+  - id: ERR-OT-09
+    code: OTP_RESEND_LIMIT
+    response: "Rechazo del reenvío (P-06)"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-006 P-06"]
+    testIds: [TEST-CNS-152]
+
+events:
+  - id: OTP_ISSUED
+    stream: SECURITY
+    emittedBy: [V1, V2r]
+    payload: [verificationRef, scope, channelRef]
+    governedBy: ["SM-CNS-001 §3 V1, V2r", "SEC F03"]
+    testIds: [TEST-CNS-150, TEST-CNS-152]
+  - id: OTP_FAILED
+    stream: SECURITY
+    emittedBy: [V2]
+    payload: [verificationRef, scope]
+    governedBy: ["SM-CNS-001 §3 V2"]
+    testIds: [TEST-CNS-151]
+  - id: OTP_LOCKED
+    stream: SECURITY
+    emittedBy: [V4]
+    payload: [verificationRef, scope]
+    governedBy: ["SM-CNS-001 §3 V4"]
+    testIds: [TEST-CNS-154]
+  - id: OTP_EXPIRED
+    stream: SECURITY
+    emittedBy: [V5]
+    payload: [verificationRef, scope]
+    governedBy: ["SM-CNS-001 §3 V5"]
+    testIds: [TEST-CNS-155]
+  - id: OTP_BUDGET_EXHAUSTED
+    stream: SECURITY
+    emittedBy: [V6, V6r, V6c, V6a]
+    payload: [verificationRef, scopeClass, keyKind, windowKind]
+    governedBy: ["SM-CNS-001 §3 V6, V6r, V6c"]
+    testIds: [TEST-CNS-156, TEST-CNS-157, TEST-CNS-158]
+  - id: MANAGEMENT_TOKEN_ROTATED
+    stream: SECURITY
+    emittedBy: [V6c]
+    payload: [chainRef, trigger] # trigger ∈ {RECEIPT_REISSUED, FAILURE_CAP}; aquí FAILURE_CAP
+    governedBy: ["DEC-BR-017 §6", "SM-CNS-001 §5.0", "ADR-006 §6.1", "SEC-CNS-006 P-13"]
+    testIds: [TEST-CNS-158]
+  - id: DECISION_MAKER_CHANNEL_VERIFIED
+    stream: LEDGER
+    mpEquivalent: GUARDIAN_EMAIL_VERIFIED
+    emittedBy: [V3]
+    payload: [verificationRef, parentRef, decisionMakerRef, scope, method, bindingResult] # method = EMAIL_OTP
+    governedBy: ["SM-CNS-001 §3 V3"]
+    testIds: [TEST-CNS-153]
+
+invariants:
+  - id: INV-OT-01
+    statement: "VERIFIED prueba solo control del canal (email); no prueba identidad civil ni autoridad legal; verificar ≠ consentir."
+    governedBy: ["SM-CNS-001 R0.8", "[N-SM] §3", "P03"]
+    testIds: [TEST-CNS-159]
+  - id: INV-OT-02
+    statement: "El código OTP nunca se guarda ni registra en claro (solo codeHmac); no aparece en ledger, security stream, logs ni evidencia."
+    governedBy: ["[N-SM] §3", "SEC-CNS-006 P-08", "ADR-002 §3"]
+    testIds: [TEST-CNS-160]
+  - id: INV-OT-03
+    statement: "Bajo intentos concurrentes nunca se superan N por código ni G por clave (reserva atómica previa a la comparación)."
+    governedBy: ["SM-CNS-001 §3 'Atomicidad'", "SEC-CNS-005 T-08, TS-10"]
+    testIds: [TEST-CNS-161]
+  - id: INV-OT-04
+    statement: "El presupuesto es independiente por scope_class: agotar DECISION no reduce el cupo RIGHTS y viceversa."
+    governedBy: ["SEC-CNS-006 P-05", "CARLOS r3 R6-2", "REQ-CNS-TBD-07 AC-07.2", "SEC-CNS-005 T-09"]
+    testIds: [TEST-CNS-162]
+  - id: INV-OT-05
+    statement: "'3 LOCKED → FAILED' existe solo en DECISION; en RIGHTS ningún conteo de LOCKED produce FAILED."
+    governedBy: ["SEC-CNS-006 P-07", "SM-CNS-001 §3 V6, V6r"]
+    testIds: [TEST-CNS-163]
+  - id: INV-OT-06
+    statement: "Ningún límite RIGHTS elimina la vía de revocación: todo agotamiento deriva a RECOVERY, RightsCase o enlace rotado; nunca a denegación ni a Revocation FAILED."
+    governedBy: ["SM-CNS-001 R0.7", "RULE-CNS-TBD-02", "DEC-BR-017 §9", "CARLOS r3 F"]
+    testIds: [TEST-CNS-164]
+  - id: INV-OT-07
+    statement: "Transiciones inválidas: EXPIRED/LOCKED/FAILED → VERIFIED; replay de un challenge consumido; ligar a un id del cliente; usar VERIFIED DECISION para revocar."
+    governedBy: ["SM-CNS-001 §3 'Inválidas'"]
+    testIds: [TEST-CNS-165]
+  - id: INV-18
+    statement: "Un challenge LOCKED no tiene transiciones de salida; '3 LOCKED' y los presupuestos se cuentan en el padre (V6a)."
+    governedBy: ["SM-CNS-001 v7 §7 INV-18", "CARLOS r3 R13-7"]
+    testIds: [TEST-CNS-394]
+  - id: INV-OT-08
+    statement: "El security stream no es ledger de consentimiento: solo refs (channelRef, signalRef), RLS por tenant; la señal de red vive como HMAC en pii.network_signal."
+    governedBy: ["SM-CNS-001 §3 'Security stream'", "SEC F03", "ADR-002 §3"]
+    testIds: [TEST-CNS-166]
+
+failClosed: >
+  Cualquier reserva atómica (intento o presupuesto) que no devuelva fila rechaza sin comparar.
+  Canal no ligado, padre inválido o scope incorrecto → respuesta uniforme sin envío. En clase
+  RIGHTS el cierre nunca es denegación de la revocación: la respuesta ofrece RECOVERY y caso humano.
+
+legalDecisions:
+  - {id: LD-15, topic: "Retención de security_event, otp_budget y network_signal (placeholder P-34)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-03, topic: "Acceso MANAGE diferido por la rotación del tope 30/30 (con datos reales)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-04, topic: "Admisibilidad de la demora de acceso MANAGE por el tope (con datos reales)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-12, topic: "Vida del enlace de gestión y acceso MANAGE mientras existan derechos (referencia de GRD-OT-01)", owner: Carlos, blocksDataReal: true}
+  - {id: LD-22, topic: "Qué habilita MANAGE tras supresión o tras ConsentContext CLOSED (referencia de GRD-OT-01)", owner: Carlos, blocksDataReal: true}
+
+openItems:
+  - {id: OPEN-OT-01, item: "Valores del límite por señal de red/origen en la emisión de OTP (DEC-BR-017 §9 lo permite; SEC-CNS-006 no lo fija). No se inventan.", owner: "lampone-security → Carlos", status: OPEN}
+  - {id: OPEN-OT-02, item: "Forma exacta de la respuesta de V2 (sin revelar intentos restantes) y códigos HTTP: H02.", owner: "lampone-architect (H02); cierre Carlos", status: OPEN}
+  - {id: OPEN-OT-03, item: "actorRole del portador antes de V3: DECIDIDO R13-5 (UNVERIFIED_BEARER en SM v7 R0.2; OPEN-CM-05).", owner: Carlos, status: DECIDED}
+  - {id: OPEN-OT-04, item: "F-H01-01 / SEC P2-01: DECIDIDO R13-7 (opción A): V6/V6r salen solo de CODE_SENT, V6a es contabilidad del padre, LOCKED sin salidas, NOT_STARTED inicial no terminal (SM v7 §3).", owner: Carlos, status: DECIDED}

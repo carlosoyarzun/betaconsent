@@ -1,0 +1,542 @@
+# Máquina Invitation del subconjunto IT0 (H01 / CA-116), rev. 4 (R14-E: Q-18 opción A). Guards/errores/invariantes
+# transversales en common.spec.yaml (GRD-CM-*, ERR-CM-*, INV-CM-*). Cero PII.
+specId: SPEC-CNS-SM-INVITATION
+title: "State machine Invitation (IT0)"
+smId: SM-CNS-001
+smSection: "§2, §2.1, §2.2"
+aggregateType: Invitation
+version: "0.4.0"
+status: PROPOSED
+jiraStory: CA-116
+owner: lampone-architect
+reviewers: [lampone-security, lampone-qa, carlosoyarzun]
+humanGate: "Solo Carlos cierra esta spec."
+commonSpec: specs/state-machines/common.spec.yaml
+governedBy:
+  - "SM-CNS-001 v6 §2 (I1–I9, I3r, I7u), §2.1 (M1–M5, SEC F01), §2.2 (tokens fuera de la URL)"
+  - "[N-SM] §2 Invitation (Notion State Machines — Build Draft; enmienda E-04 publicada vía DEC-BR-017, Fase 4)"
+  - "DEC-BR-014 §1 (solo INSTITUTION_MEDIATED), §6 (token de invitación)"
+  - "DEC-BR-015:42 (guard (d) + Guard P), DEC-BR-013, RULE-CNS-024, RULE-CNS-022"
+  - "DEC-BR-016 §1, §4 (TENANT_ADMIN con capacidad INVITER), §7, §8"
+  - "ADR-001 §2, §8; ADR-006 §6 (resolve_invitation)"
+  - "SEC-CNS-006 P-10, P-11, P-12, P-31; SEC-CNS-005 T-01, T-06"
+
+scope:
+  it0: "Emisión por staff IT0_ONLY (TENANT_ADMIN/INVITER), invitationMode = INSTITUTION_MEDIATED, apertura, verificación DECISION, cierre por decisión, expiración y cancelación."
+  notInIt0:
+    - "I7u OPENED → DECLINED sin verificar: deshabilitada en BETA_2026_01 (NF-03, Q-15)"
+    - "Emisor técnico y canal de entrega (issuerActor, deliveryChannel): parametrizados, sin fijar (EXT-B, F-014; DEC-BR-014 §7)"
+  blockers:
+    - "SEC F01 (P0, LD-01): el enlace es credencial al portador; bloquea todo uso de datos personales reales. IT0 solo sintético."
+
+attributes:
+  - invitationRef
+  - tenantRef # tenant originador (inviterTenantRef, E-04)
+  - participationRef
+  - enrollmentRef
+  - productRef
+  - contextRef
+  - subjectRef
+  - consentVersion
+  - tokenHash # SHA-256 del token; el token nunca persiste
+  - expiresAt
+  - recipientBinding # enum RECIPIENT_CHANNEL | UNBOUND
+  - recipientChannelRef
+  - boundDecisionMakerRef
+  - reissueOfRef
+  - issuerActor # enum INSTITUTION_OPERATOR | PLATFORM_ON_BEHALF (EXT-B, sin fijar)
+  - deliveryChannel # enum SCHOOL_CHANNEL | CONSENT_APP_EMAIL (EXT-B, sin fijar)
+
+parametersRef:
+  note: "Valores solo en SEC-CNS-006 rev. 5 §1; aquí únicamente la referencia."
+  used: [P-10, P-11, P-12, P-31]
+
+states:
+  - id: DRAFT
+    initial: true
+    terminal: false
+    description: "Creada por el inviter; sin token emitido."
+    governedBy: ["SM-CNS-001 §2", "[N-SM] §2"]
+    testIds: [TEST-CNS-120]
+  - id: READY
+    initial: false
+    terminal: false
+    description: "consentVersion, expiresAt y recipientBinding fijados."
+    governedBy: ["SM-CNS-001 §2 I2"]
+    testIds: [TEST-CNS-121]
+  - id: SENT
+    initial: false
+    terminal: false
+    description: "Token emitido y entregado; el token solo resuelve mientras no expire ni rote."
+    governedBy: ["SM-CNS-001 §2 I3"]
+    testIds: [TEST-CNS-122]
+  - id: OPENED
+    initial: false
+    terminal: false
+    description: "Primer POST del portador tras el canje del token (nunca un GET)."
+    governedBy: ["SM-CNS-001 §2 I4", "SEC F23"]
+    testIds: [TEST-CNS-124]
+  - id: VERIFIED
+    initial: false
+    terminal: false
+    description: "Canal del decisor verificado (V3 scope DECISION); verificar no es consentir."
+    governedBy: ["SM-CNS-001 §2 I5, R0.8", "[N-SM] §2 'Verification success does not equal consent'"]
+    testIds: [TEST-CNS-125]
+  - id: COMPLETED
+    initial: false
+    terminal: true
+    description: "Decisión GRANTED registrada (C3) en la misma tx."
+    governedBy: ["SM-CNS-001 §2 I6", "[N-SM] §2"]
+    testIds: [TEST-CNS-126]
+  - id: DECLINED
+    initial: false
+    terminal: true
+    description: "Decisión DECLINED registrada (C5) en la misma tx."
+    governedBy: ["SM-CNS-001 §2 I7", "[N-SM] §2"]
+    testIds: [TEST-CNS-127]
+  - id: EXPIRED
+    initial: false
+    terminal: true
+    description: "Hora de servidor >= expiresAt (P-10)."
+    governedBy: ["SM-CNS-001 §2 I8", "SEC-CNS-006 P-10"]
+    testIds: [TEST-CNS-129]
+  - id: CANCELLED
+    initial: false
+    terminal: true
+    description: "Cancelada con reasonCode de enum cerrado."
+    governedBy: ["SM-CNS-001 §2 I9"]
+    testIds: [TEST-CNS-130]
+
+transitions:
+  - id: I1
+    from: null
+    to: DRAFT
+    command: CreateInvitation
+    actor: {actorType: HUMAN, actorRole: INVITER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11]
+    effects:
+      - "Crea el agregado Invitation con tenantRef del inviter (resuelto en servidor, nunca del cliente)."
+      - "Si reissueOfRef está presente: reemisión sujeta a GRD-IV-11 (P-11)."
+    emits: [INVITATION_CREATED]
+    idempotencyKey: "(tenantRef, clientRequestId)"
+    errors: [ERR-CM-01, ERR-CM-02, ERR-CM-03, ERR-CM-04, ERR-CM-05, ERR-CM-09, ERR-CM-10, ERR-IV-02, ERR-IV-07]
+    governedBy: ["SM-CNS-001 §2 I1, R0.5 (ISSUANCE I1–I4)", "DEC-BR-016 §4", "DEC-BR-015:42", "AUDIT F-A06, F-A07"]
+    testIds: [TEST-CNS-120, TEST-CNS-316]
+  - id: I2
+    from: DRAFT
+    to: READY
+    command: MarkInvitationReady
+    actor: {actorType: HUMAN, actorRole: INVITER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-03]
+    effects: ["Fija consentVersion, expiresAt y recipientBinding (+ recipientChannelRef si RECIPIENT_CHANNEL)."]
+    emits: [INVITATION_READY]
+    idempotencyKey: "(invitationRef, sequence)"
+    errors: [ERR-CM-05, ERR-CM-09, ERR-IV-03]
+    governedBy: ["SM-CNS-001 §2 I2, R0.5", "AUDIT F-A06"]
+    testIds: [TEST-CNS-121, TEST-CNS-316]
+  - id: I3
+    from: READY
+    to: SENT
+    command: SendInvitation
+    actor: {actorType: HUMAN, actorRole: INVITER, evaluatedBy: SYSTEM_GUARD}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05]
+    effects:
+      - "Genera token opaco (P-31), no JWT; persiste solo tokenHash en tenant_resolve.invitation_token."
+      - "Encola la entrega por el adaptador de email de IT0 (sink/allowlist, DEC-BR-014 §4.2); ningún SMTP externo."
+    emits: [INVITATION_SENT]
+    idempotencyKey: "invitationRef"
+    errors: [ERR-CM-03, ERR-CM-04, ERR-CM-05, ERR-CM-09, ERR-IV-04]
+    governedBy: ["SM-CNS-001 §2 I3", "RULE-CNS-022", "DEC-BR-013", "SEC-CNS-006 P-31", "DEC-BR-014 §4, §6"]
+    testIds: [TEST-CNS-122]
+  - id: I3r
+    from: SENT
+    to: SENT
+    command: ResendInvitation
+    actor: {actorType: HUMAN, actorRole: INVITER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05, GRD-IV-06]
+    effects: ["Rota el token: el anterior deja de resolver (404 uniforme); invalida handles y sesiones derivados (P-30)."]
+    emits: [INVITATION_TOKEN_ROTATED]
+    idempotencyKey: "(invitationRef, rotationNo)"
+    errors: [ERR-IV-05, ERR-IV-10, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §2 I3r", "DEC-BR-017 E-04", "SEC-CNS-006 P-11, P-30"]
+    testIds: [TEST-CNS-123]
+  - id: I4
+    from: SENT
+    to: OPENED
+    command: OpenInvitation
+    actor: {ref: UNVERIFIED_BEARER} # definición única en common (OPEN-CM-05)
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-IV-07, GRD-IV-08]
+    effects:
+      - "GET /i/{token}: backend valida hash, crea handle LANDING (P-12), Set-Cookie y 303 a ruta sin token; el GET no transiciona (INV-CM-08)."
+      - "El primer POST con el handle transiciona a OPENED."
+    emits: [INVITATION_OPENED]
+    idempotencyKey: "invitationRef (INVITATION_OPENED una sola vez)"
+    errors: [ERR-IV-01, ERR-CM-05, ERR-CM-09]
+    governedBy: ["SM-CNS-001 §2 I4, §2.2", "ADR-001 §2", "SEC F23", "SEC-CNS-006 P-12"]
+    testIds: [TEST-CNS-124]
+  - id: I5
+    from: OPENED
+    to: VERIFIED
+    command: "(interno) resultado de V3 scope DECISION"
+    actor: {actorType: SYSTEM_GUARD, triggeredBy: "otp-challenge V3"}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: [GRD-CM-02, GRD-IV-09]
+    effects:
+      - "Fija boundDecisionMakerRef; con RECIPIENT_CHANNEL exige channelRef = recipientChannelRef (M1)."
+      - "Se escribe en el mismo lote atómico que DECISION_MAKER_CHANNEL_VERIFIED."
+    emits: [INVITATION_VERIFIED]
+    idempotencyKey: "(invitationRef, verificationRef)"
+    errors: [ERR-IV-06]
+    governedBy: ["SM-CNS-001 §2 I5, §2.1 M1, M4"]
+    testIds: [TEST-CNS-125]
+  - id: I6
+    from: VERIFIED
+    to: COMPLETED
+    command: "(interno) consent-decision C3"
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: [GRD-CM-02]
+    effects: ["Mismo lote atómico que C3; invalida sesión DECISION (padre terminal, P-30)."]
+    emits: [INVITATION_COMPLETED]
+    idempotencyKey: "consentId + payloadHash (el de C3)"
+    errors: [ERR-CM-06]
+    governedBy: ["SM-CNS-001 §2 I6, §4 C3"]
+    testIds: [TEST-CNS-126]
+  - id: I7
+    from: VERIFIED
+    to: DECLINED
+    command: "(interno) consent-decision C5"
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: [GRD-CM-02]
+    effects: ["Mismo lote atómico que C5; invalida sesión DECISION."]
+    emits: [INVITATION_DECLINED]
+    idempotencyKey: "consentId + payloadHash (el de C5)"
+    errors: [ERR-CM-06]
+    governedBy: ["SM-CNS-001 §2 I7, §4 C5"]
+    testIds: [TEST-CNS-127]
+  - id: I7u
+    from: OPENED
+    to: DECLINED
+    command: DeclineWithoutVerification
+    enabled: false
+    disabledReason: "Deshabilitada en BETA_2026_01 (NF-03; decisión pendiente Q-15, owner Carlos). Todo intento → ERR-IV-08."
+    actor: null
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    guards: [GRD-CM-10]
+    effects: []
+    emits: []
+    idempotencyKey: null
+    errors: [ERR-IV-08]
+    governedBy: ["SM-CNS-001 §2 I7u, §11 NF-03", "DEC-BR-017 E-04"]
+    testIds: [TEST-CNS-128]
+  - id: I8
+    from: [READY, SENT, OPENED, VERIFIED]
+    to: EXPIRED
+    command: "(sistema) expiración lazy al acceder + barrido programado"
+    actor: {actorType: SYSTEM_GUARD}
+    routeClass: ISSUANCE_DECISION
+    httpPost: false
+    guards: [GRD-IV-12, GRD-CM-12]
+    effects: ["El token deja de resolver; invalida handles/sesiones (P-30); la ConsentDecision PENDING asociada queda 'abandoned' (NF-06)."]
+    emits: [INVITATION_EXPIRED]
+    idempotencyKey: "invitationRef"
+    errors: []
+    governedBy: ["SM-CNS-001 §2 I8, §4 (NF-06)", "SEC-CNS-006 P-10"]
+    testIds: [TEST-CNS-129]
+  - id: I9
+    from: [DRAFT, READY, SENT, OPENED, VERIFIED]
+    to: CANCELLED
+    command: CancelInvitation
+    actor:
+      byReasonCode:
+        INVITER_WITHDRAWN: {actorType: HUMAN, actorRole: INVITER}
+        SUBJECT_MISMATCH_REPORTED: {actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
+        CONTESTED_BY_RECIPIENT: {actorType: HUMAN, actorRole: DECISION_MAKER, enabled: false, disabledReason: "M3: credencial del enlace 'yo no hice esta decisión' y efecto sin definir (LD-01; AUDIT F-A13); ver consent-decision M3."}
+        TOKEN_COMPROMISED: {actorType: HUMAN, actorRole: INVITER}
+        PARTICIPATION_CLOSED: {actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context SP4, en la misma transacción (Q-18 opción A, R14-E)"}
+        ENROLLMENT_CLOSED: {actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context EN1, en la misma transacción (Q-18 opción A, R14-E)"}
+    routeClass: ISSUANCE_DECISION
+    httpPost: true
+    httpPostNote: "Solo para los reasonCodes con actor HUMAN; PARTICIPATION_CLOSED y ENROLLMENT_CLOSED son internos (SYSTEM_GUARD, en la tx de SP4/EN1)."
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-IV-10]
+    effects:
+      - "El token deja de resolver; invalida handles/sesiones (P-30)."
+      - "Habilitados en IT0: INVITER_WITHDRAWN, SUBJECT_MISMATCH_REPORTED, TOKEN_COMPROMISED, PARTICIPATION_CLOSED y ENROLLMENT_CLOSED (R14-E). Deshabilitado: CONTESTED_BY_RECIPIENT (LD-01)."
+      - "PARTICIPATION_CLOSED/ENROLLMENT_CLOSED: todas las invitaciones no terminales afectadas se cancelan en la misma transacción que SP4/EN1; ninguna ConsentDecision cambia y no se emite consent.revoked (INV-7)."
+    emits: [INVITATION_CANCELLED]
+    idempotencyKey: "(invitationRef, reasonCode)"
+    errors: [ERR-IV-09, ERR-IV-10, ERR-CM-09, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §2 I9, §2.1 M3, §6", "CARLOS r3 R14-E (Q-18 opción A)", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "S/PROPUESTA-Q18.md"]
+    testIds: [TEST-CNS-130, TEST-CNS-317, TEST-CNS-418, TEST-CNS-419, TEST-CNS-420]
+
+guards:
+  - id: GRD-IV-01
+    name: single_non_terminal_invitation
+    rule: "No existe otra Invitation no terminal para (tenantRef, contextRef, subjectRef)."
+    status: "ACCEPTED como regla de SM-CNS-001 §2 I1 (subconjunto IT0). La marca [Q1] remite a la pregunta LD-20 (AUDIT-consistencia-3 §7: 'SM:247 Q1'; DEC-BR-005): si cambia, la regla se revisa. Es la regla más restrictiva (fail-closed)."
+    onFail: ERR-IV-02
+    governedBy: ["SM-CNS-001 §2 I1 [Q1]", "LD-20"]
+    testIds: [TEST-CNS-120, TEST-CNS-132]
+  - id: GRD-IV-02
+    name: subject_belongs_to_tenant
+    rule: "subjectRef y enrollmentRef pertenecen al tenant resuelto (lectura bajo RLS)."
+    onFail: ERR-CM-01
+    governedBy: ["SM-CNS-001 §2 I1", "ADR-006 §4"]
+    testIds: [TEST-CNS-120]
+  - id: GRD-IV-03
+    name: ready_fields_fixed
+    rule: "consentVersion, expiresAt y recipientBinding presentes y válidos (recipientChannelRef obligatorio si RECIPIENT_CHANNEL)."
+    onFail: ERR-IV-03
+    governedBy: ["SM-CNS-001 §2 I2"]
+    testIds: [TEST-CNS-121]
+  - id: GRD-IV-04
+    name: version_and_mode_guards
+    rule: "Guards (a)–(c) de la ConsentVersion en vigor (RULE-CNS-022) y (d) invitationMode = INSTITUTION_MEDIATED; nulo o desconocido falla cerrado."
+    onFail: ERR-IV-04
+    governedBy: ["SM-CNS-001 §2 I3", "[N-SM] §1 guards (a)–(d)", "DEC-BR-015:42", "RULE-CNS-022", "DEC-BR-013"]
+    testIds: [TEST-CNS-122]
+  - id: GRD-IV-05
+    name: opaque_token
+    rule: "Token al portador opaco con la entropía de P-31, CSPRNG, no JWT; solo el hash persiste; igualdad exacta al resolver."
+    onFail: ERR-CM-08
+    governedBy: ["SM-CNS-001 §2 I3", "SEC-CNS-006 P-31", "SEC F04", "DEC-BR-014 §6"]
+    testIds: [TEST-CNS-122, TEST-CNS-133]
+  - id: GRD-IV-06
+    name: rotation_limit
+    rule: "Número de rotaciones (I3r) dentro del límite de P-11; superarlo se rechaza."
+    onFail: ERR-IV-05
+    governedBy: ["SEC-CNS-006 P-11", "SM-CNS-001 §2.1 M5"]
+    testIds: [TEST-CNS-123]
+  - id: GRD-IV-07
+    name: token_resolves_not_expired
+    rule: "tokenHash resuelve por resolve_invitation (igualdad exacta) y la invitación no está expirada ni rotada; si no → 404 uniforme."
+    onFail: ERR-IV-01
+    governedBy: ["SM-CNS-001 §2 I4", "ADR-006 §6", "REQ-CNS-TBD-07 AC-07.1"]
+    testIds: [TEST-CNS-124]
+  - id: GRD-IV-08
+    name: first_post_only
+    rule: "Solo un POST con handle LANDING transiciona; GET nunca; INVITATION_OPENED se registra una vez."
+    onFail: ERR-CM-06
+    governedBy: ["SM-CNS-001 §2 I4, §7", "SEC F23"]
+    testIds: [TEST-CNS-124, TEST-CNS-134]
+  - id: GRD-IV-09
+    name: channel_binding_and_single_decision_maker
+    rule: "Verificación de esta invitación y tenant; con RECIPIENT_CHANNEL, channelRef = recipientChannelRef; un segundo I5 con otro decisor → respuesta genérica + M2."
+    onFail: ERR-IV-06
+    governedBy: ["SM-CNS-001 §2 I5, §2.1 M1, M2", "LD-21"]
+    testIds: [TEST-CNS-125]
+  - id: GRD-IV-10
+    name: cancel_reason_and_actor
+    rule: "reasonCode ∈ {INVITER_WITHDRAWN, SUBJECT_MISMATCH_REPORTED, CONTESTED_BY_RECIPIENT, TOKEN_COMPROMISED, PARTICIPATION_CLOSED, ENROLLMENT_CLOSED}, el actor corresponde al reasonCode (tabla de I9) y el reasonCode está habilitado en IT0; la invitación no es terminal."
+    onFail: ERR-IV-09
+    governedBy: ["SM-CNS-001 §2 I9"]
+    testIds: [TEST-CNS-130]
+  - id: GRD-IV-11
+    name: reissue_limit
+    rule: "Reemisiones (I1 con reissueOfRef) por (tenant, contexto, sujeto) dentro de P-11 sin revisión humana; sobre el límite, rechazo hasta revisión humana."
+    onFail: ERR-IV-07
+    governedBy: ["SEC-CNS-006 P-11", "SM-CNS-001 §2.1 M5"]
+    testIds: [TEST-CNS-120, TEST-CNS-131]
+  - id: GRD-IV-12
+    name: expiry_by_server_time
+    rule: "Hora de servidor >= expiresAt; expiresAt = SENT + P-10."
+    onFail: null # guard de disparo: si no se cumple, no hay transición
+    governedBy: ["SM-CNS-001 §2 I8", "SEC-CNS-006 P-10"]
+    testIds: [TEST-CNS-129]
+
+errors:
+  - id: ERR-IV-01
+    code: INVITATION_TOKEN_NOT_RESOLVED
+    response: "404 uniforme (token inexistente, expirado, rotado o de otro tenant/contexto)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 I3r, I4", "REQ-CNS-TBD-07 AC-07.1", "ADR-006 §6"]
+    testIds: [TEST-CNS-124, TEST-CNS-139]
+  - id: ERR-IV-02
+    code: INVITATION_ALREADY_ACTIVE
+    response: "Rechazo determinista (otra invitación no terminal para el mismo sujeto y contexto)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 I1 [Q1]"]
+    testIds: [TEST-CNS-132]
+  - id: ERR-IV-03
+    code: INVITATION_NOT_READY
+    response: "Rechazo determinista (faltan consentVersion, expiresAt o recipientBinding)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 I2"]
+    testIds: [TEST-CNS-121]
+  - id: ERR-IV-04
+    code: VERSION_OR_MODE_GUARD_FAILED
+    response: "Rechazo determinista; la invitación sigue READY"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 I3", "[N-SM] §1"]
+    testIds: [TEST-CNS-122]
+  - id: ERR-IV-05
+    code: ROTATION_LIMIT_REACHED
+    response: "Rechazo; requiere I9 + reemisión o revisión humana"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-006 P-11"]
+    testIds: [TEST-CNS-123]
+  - id: ERR-IV-06
+    code: GENERIC_VERIFICATION_RESPONSE
+    response: "Respuesta genérica sin revelar binding ni decisor; evento de seguridad (M2)"
+    emitsEvent: "security (nombre OPEN, OPEN-CM-02)"
+    governedBy: ["SM-CNS-001 §2 I5, 'Inválidas', §2.1 M1, M2"]
+    testIds: [TEST-CNS-125]
+  - id: ERR-IV-07
+    code: REISSUE_LIMIT_REACHED
+    response: "Rechazo hasta revisión humana"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-006 P-11"]
+    testIds: [TEST-CNS-131]
+  - id: ERR-IV-08
+    code: TRANSITION_DISABLED_IN_CONTEXT
+    response: "Rechazo determinista sin evento (I7u en BETA_2026_01)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 I7u"]
+    testIds: [TEST-CNS-128]
+  - id: ERR-IV-09
+    code: CANCEL_REASON_INVALID
+    response: "422 / rechazo determinista (reasonCode fuera de enum o actor no corresponde)"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 I9"]
+    testIds: [TEST-CNS-130]
+  - id: ERR-IV-10
+    code: INVITATION_TERMINAL
+    response: "Rechazo determinista: no se sale de un terminal; reemitir = I1 con reissueOfRef"
+    emitsEvent: none
+    governedBy: ["SM-CNS-001 §2 'Inválidas'", "[N-SM] §2"]
+    testIds: [TEST-CNS-131]
+
+events:
+  - id: INVITATION_CREATED
+    stream: LEDGER
+    emittedBy: [I1]
+    payload: [invitationRef, participationRef, enrollmentRef, subjectRef, reissueOfRef]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §2 I1", "ADR-002 §11"]
+    testIds: [TEST-CNS-120]
+  - id: INVITATION_READY
+    stream: LEDGER
+    emittedBy: [I2]
+    payload: [invitationRef, consentVersion, expiresAt, recipientBinding]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §2 I2"]
+    testIds: [TEST-CNS-121]
+  - id: INVITATION_SENT
+    stream: LEDGER
+    emittedBy: [I3]
+    payload: [invitationRef, deliveryChannel, expiresAt] # sin token (SM I3)
+    governedBy: ["SM-CNS-001 §2 I3"]
+    testIds: [TEST-CNS-122]
+  - id: INVITATION_TOKEN_ROTATED
+    stream: LEDGER
+    emittedBy: [I3r]
+    payload: [invitationRef, rotationNo]
+    governedBy: ["SM-CNS-001 §2 I3r"]
+    testIds: [TEST-CNS-123]
+  - id: INVITATION_OPENED
+    stream: LEDGER
+    emittedBy: [I4]
+    payload: [invitationRef]
+    governedBy: ["SM-CNS-001 §2 I4"]
+    testIds: [TEST-CNS-124]
+  - id: INVITATION_VERIFIED
+    stream: LEDGER
+    emittedBy: [I5]
+    payload: [invitationRef, verificationRef, decisionMakerRef, bindingResult]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §2 I5"]
+    testIds: [TEST-CNS-125]
+  - id: INVITATION_COMPLETED
+    stream: LEDGER
+    emittedBy: [I6]
+    payload: [invitationRef, consentId]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §2 I6, §4 C3"]
+    testIds: [TEST-CNS-126]
+  - id: INVITATION_DECLINED
+    stream: LEDGER
+    emittedBy: [I7]
+    payload: [invitationRef, consentId]
+    payloadStatus: "Lista blanca final en contracts/ (H02)"
+    governedBy: ["SM-CNS-001 §2 I7, §4 C5"]
+    testIds: [TEST-CNS-127]
+  - id: INVITATION_EXPIRED
+    stream: LEDGER
+    emittedBy: [I8]
+    payload: [invitationRef]
+    governedBy: ["SM-CNS-001 §2 I8"]
+    testIds: [TEST-CNS-129]
+  - id: INVITATION_CANCELLED
+    stream: LEDGER
+    emittedBy: [I9]
+    payload: [invitationRef, reasonCode]
+    governedBy: ["SM-CNS-001 §2 I9"]
+    testIds: [TEST-CNS-130]
+
+invariants:
+  - id: INV-IV-01
+    statement: "COMPLETED, DECLINED, EXPIRED y CANCELLED son terminales para el token; reemitir crea una Invitation nueva (I1 con reissueOfRef)."
+    governedBy: ["[N-SM] §2", "SM-CNS-001 §2 'Inválidas'"]
+    testIds: [TEST-CNS-131]
+  - id: INV-IV-02
+    statement: "Como máximo una Invitation no terminal por (tenantRef, contextRef, subjectRef) (PROPOSED [Q1]/LD-20)."
+    governedBy: ["SM-CNS-001 §2 I1"]
+    testIds: [TEST-CNS-132]
+  - id: INV-IV-03
+    statement: "El token nunca persiste ni aparece en ledger, logs de app/plataforma/DB ni URL tras el 303; solo tokenHash."
+    governedBy: ["SM-CNS-001 §2.2", "ADR-001 §2, §8", "SEC-CNS-005 T-01", "DEC-BR-014 §6"]
+    testIds: [TEST-CNS-133]
+  - id: INV-IV-04
+    statement: "INVITATION_OPENED se registra una sola vez por invitación."
+    governedBy: ["SM-CNS-001 §2 I4, §7"]
+    testIds: [TEST-CNS-134]
+  - id: INV-IV-05
+    statement: "VERIFIED no equivale a consentimiento: ninguna autorización nace de I5."
+    governedBy: ["[N-SM] §2", "SM-CNS-001 R0.8"]
+    testIds: [TEST-CNS-135]
+  - id: INV-IV-06
+    statement: "Reintentar o reabrir nunca crea una segunda ConsentDecision por accidente."
+    governedBy: ["[N-SM] §2", "SM-CNS-001 §4.1 (2)"]
+    testIds: [TEST-CNS-136]
+  - id: INV-IV-07
+    statement: "SchoolParticipation SUSPENDED no cancela invitaciones: bloquea I3/I4 y C1–C5 hasta reactivar."
+    governedBy: ["SM-CNS-001 §2 'Inválidas', R0.5, §6"]
+    testIds: [TEST-CNS-137]
+  - id: INV-IV-08
+    statement: "Solo invitationMode = INSTITUTION_MEDIATED en BETA_2026_01 (sin canal de familias individuales)."
+    governedBy: ["DEC-BR-013", "RULE-CNS-024", "DEC-BR-014 §1"]
+    testIds: [TEST-CNS-138]
+
+failClosed: >
+  Cualquier guard no satisfecho o no evaluable rechaza la transición sin evento (ERR-CM-06 /
+  código específico). Token desconocido, expirado, rotado o de otro tenant → 404 uniforme.
+  Contexto o participación no activos → la invitación conserva su estado (no pasa a terminal).
+
+legalDecisions:
+  - {id: LD-01, topic: "Suficiencia email + OTP + declaración; efecto del contest M3 (EXT-A, DEC-BR-003); bloquea datos reales", owner: Carlos, blocksDataReal: true}
+  - {id: LD-20, topic: "Una decisión por estudiante o por apoderado; apoderados en conflicto (DEC-BR-005) — afecta GRD-IV-01", owner: Carlos, blocksDataReal: true}
+  - {id: LD-21, topic: "Si Consent App recibe el email esperado del colegio (binding M1; EXT-B, DEC-BR-002)", owner: Carlos, blocksDataReal: true}
+
+openItems:
+  - {id: OPEN-IV-01, item: "Q-15: habilitar o no I7u (OPENED → DECLINED sin verificar).", owner: Carlos, status: OPEN}
+  - {id: OPEN-IV-02, item: "Q-18: DECIDIDO R14-E (opción A): I9 PARTICIPATION_CLOSED / ENROLLMENT_CLOSED en la misma transacción que SP4/EN1; eligibility.changed sigue PROPOSED (E-10).", owner: Carlos, status: DECIDED}
+  - {id: OPEN-IV-03, item: "EXT-B / F-014: issuerActor y deliveryChannel (no se fijan; DEC-BR-014 §7).", owner: Carlos, status: OPEN}
+  - {id: OPEN-IV-04, item: "EXT-C / DEC-BR-004: datos mínimos del sujeto para SUBJECT_MISMATCH_REPORTED.", owner: Carlos, status: OPEN}
+  - {id: OPEN-IV-05, item: "P-10 marcado [VERIFICAR contra el cronograma del Protocolo] en SEC-CNS-006; si choca, FINDING.", owner: "lampone-security / Carlos", status: OPEN}
+  - {id: OPEN-IV-06, item: "actorRole del portador en I4: DECIDIDO R13-5 (UNVERIFIED_BEARER; OPEN-CM-05).", owner: Carlos, status: DECIDED}
+  - {id: OPEN-IV-07, item: "M2/M3 (aviso al colegio de cada decisión, enlace 'yo no hice esta decisión'): CONTESTED_BY_RECIPIENT enabled: false (LD-01; AUDIT F-A13).", owner: Carlos, status: "LEGAL DECISION"}
