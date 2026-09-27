@@ -1,11 +1,11 @@
-# Máquina Invitation del subconjunto IT0 (H01 / CA-116), rev. 2 (SEC-CNS-012 + AUDIT-H01). Guards/errores/invariantes
+# Máquina Invitation del subconjunto IT0 (H01 / CA-116), rev. 4 (R14-E: Q-18 opción A). Guards/errores/invariantes
 # transversales en common.spec.yaml (GRD-CM-*, ERR-CM-*, INV-CM-*). Cero PII.
 specId: SPEC-CNS-SM-INVITATION
 title: "State machine Invitation (IT0)"
 smId: SM-CNS-001
 smSection: "§2, §2.1, §2.2"
 aggregateType: Invitation
-version: "0.2.0"
+version: "0.4.0"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -268,26 +268,27 @@ transitions:
         SUBJECT_MISMATCH_REPORTED: {actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
         CONTESTED_BY_RECIPIENT: {actorType: HUMAN, actorRole: DECISION_MAKER, enabled: false, disabledReason: "M3: credencial del enlace 'yo no hice esta decisión' y efecto sin definir (LD-01; AUDIT F-A13); ver consent-decision M3."}
         TOKEN_COMPROMISED: {actorType: HUMAN, actorRole: INVITER}
-        PARTICIPATION_CLOSED: {actorType: SYSTEM_GUARD, enabled: false, disabledReason: "Condicional Q-18 (DEC-BR-017 E-04; SEC P2-13). Interino: Guard P ya bloquea I3/I4/C1–C5."}
-        ENROLLMENT_CLOSED: {actorType: SYSTEM_GUARD, enabled: false, disabledReason: "Condicional Q-18 (DEC-BR-017 E-04; SEC P2-13). Interino: Guard E ya bloquea I3/I4/C1–C5."}
+        PARTICIPATION_CLOSED: {actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context SP4, en la misma transacción (Q-18 opción A, R14-E)"}
+        ENROLLMENT_CLOSED: {actorType: SYSTEM_GUARD, enabled: true, trigger: "tenant-context EN1, en la misma transacción (Q-18 opción A, R14-E)"}
     routeClass: ISSUANCE_DECISION
     httpPost: true
-    httpPostNote: "Solo para los reasonCodes con actor HUMAN; los de SYSTEM_GUARD están enabled: false."
+    httpPostNote: "Solo para los reasonCodes con actor HUMAN; PARTICIPATION_CLOSED y ENROLLMENT_CLOSED son internos (SYSTEM_GUARD, en la tx de SP4/EN1)."
     guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-IV-10]
     effects:
       - "El token deja de resolver; invalida handles/sesiones (P-30)."
-      - "Habilitados en IT0: INVITER_WITHDRAWN, SUBJECT_MISMATCH_REPORTED, TOKEN_COMPROMISED. Deshabilitados: CONTESTED_BY_RECIPIENT (LD-01), PARTICIPATION_CLOSED y ENROLLMENT_CLOSED (Q-18)."
+      - "Habilitados en IT0: INVITER_WITHDRAWN, SUBJECT_MISMATCH_REPORTED, TOKEN_COMPROMISED, PARTICIPATION_CLOSED y ENROLLMENT_CLOSED (R14-E). Deshabilitado: CONTESTED_BY_RECIPIENT (LD-01)."
+      - "PARTICIPATION_CLOSED/ENROLLMENT_CLOSED: todas las invitaciones no terminales afectadas se cancelan en la misma transacción que SP4/EN1; ninguna ConsentDecision cambia y no se emite consent.revoked (INV-7)."
     emits: [INVITATION_CANCELLED]
     idempotencyKey: "(invitationRef, reasonCode)"
     errors: [ERR-IV-09, ERR-IV-10, ERR-CM-09, ERR-CM-10]
-    governedBy: ["SM-CNS-001 §2 I9, §2.1 M3, §6", "DEC-BR-017 E-04 (condicional Q-18)", "SM-CNS-001 §11 NF-10", "SEC-CNS-012 P2-13"]
-    testIds: [TEST-CNS-130, TEST-CNS-317]
+    governedBy: ["SM-CNS-001 §2 I9, §2.1 M3, §6", "CARLOS r3 R14-E (Q-18 opción A)", "DEC-BR-017 E-04 (sin condición, derivado D-17)", "S/PROPUESTA-Q18.md"]
+    testIds: [TEST-CNS-130, TEST-CNS-317, TEST-CNS-418, TEST-CNS-419, TEST-CNS-420]
 
 guards:
   - id: GRD-IV-01
     name: single_non_terminal_invitation
     rule: "No existe otra Invitation no terminal para (tenantRef, contextRef, subjectRef)."
-    status: "ACCEPTED como regla de SM-CNS-001 §2 I1 (subconjunto IT0). La marca [Q1] remite a la pregunta LD-20 (AUDIT-consistencia-3 §7: 'SM:230 Q1'; DEC-BR-005): si cambia, la regla se revisa. Es la regla más restrictiva (fail-closed)."
+    status: "ACCEPTED como regla de SM-CNS-001 §2 I1 (subconjunto IT0). La marca [Q1] remite a la pregunta LD-20 (AUDIT-consistencia-3 §7: 'SM:247 Q1'; DEC-BR-005): si cambia, la regla se revisa. Es la regla más restrictiva (fail-closed)."
     onFail: ERR-IV-02
     governedBy: ["SM-CNS-001 §2 I1 [Q1]", "LD-20"]
     testIds: [TEST-CNS-120, TEST-CNS-132]
@@ -533,7 +534,7 @@ legalDecisions:
 
 openItems:
   - {id: OPEN-IV-01, item: "Q-15: habilitar o no I7u (OPENED → DECLINED sin verificar).", owner: Carlos, status: OPEN}
-  - {id: OPEN-IV-02, item: "Q-18: reasonCodes PARTICIPATION_CLOSED / ENROLLMENT_CLOSED de I9 (condicionales en DEC-BR-017 E-04; SM:161 los usa incondicionales, AUDIT F-A15). enabled: false en IT0.", owner: Carlos, status: OPEN}
+  - {id: OPEN-IV-02, item: "Q-18: DECIDIDO R14-E (opción A): I9 PARTICIPATION_CLOSED / ENROLLMENT_CLOSED en la misma transacción que SP4/EN1; eligibility.changed sigue PROPOSED (E-10).", owner: Carlos, status: DECIDED}
   - {id: OPEN-IV-03, item: "EXT-B / F-014: issuerActor y deliveryChannel (no se fijan; DEC-BR-014 §7).", owner: Carlos, status: OPEN}
   - {id: OPEN-IV-04, item: "EXT-C / DEC-BR-004: datos mínimos del sujeto para SUBJECT_MISMATCH_REPORTED.", owner: Carlos, status: OPEN}
   - {id: OPEN-IV-05, item: "P-10 marcado [VERIFICAR contra el cronograma del Protocolo] en SEC-CNS-006; si choca, FINDING.", owner: "lampone-security / Carlos", status: OPEN}

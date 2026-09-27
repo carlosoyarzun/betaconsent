@@ -1,11 +1,11 @@
 # §6 de SM-CNS-001 (contexto de tenant) modelado SOLO en lo que afecta a las cinco máquinas IT0
-# (decisión del Supervisor sobre AUDIT F-A14, 2026-09-27). H01 / CA-116, rev. 2. Cero PII.
+# (decisión del Supervisor sobre AUDIT F-A14, 2026-09-27). H01 / CA-116, rev. 4 (R14-E, R14-F; AUDIT-H01-rev3 N-12/N-13). Cero PII.
 # Lo que §6 no aplica a IT0 se lista en coverage.notCovered y no se declara cubierto.
 specId: SPEC-CNS-SM-TENANT-CONTEXT
 title: "Contexto de tenant (Tenant status, SchoolParticipation, Enrollment, readiness de ConsentContext): efectos sobre las máquinas IT0"
 smId: SM-CNS-001
 smSection: "§6 (D1, F-211), R0.4–R0.6"
-version: "0.2.0"
+version: "0.4.0"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -14,8 +14,9 @@ humanGate: "Solo Carlos cierra esta spec."
 commonSpec: specs/state-machines/common.spec.yaml
 reviewInputs: ["AUDIT-H01 F-A14 (decisión del Supervisor: entra en H01 solo lo que afecta a las cinco máquinas)"]
 governedBy:
-  - "SM-CNS-001 v6 §6 (SM:158-163)"
-  - "DEC-BR-014 §1 (SchoolParticipation y Enrollment por fixture o acto humano), §5 (SchoolParticipation y tenant.active solo por fixture o migración revisada, sin UI), §6 (actor FIXTURE)"
+  - "SM-CNS-001 v7 §6 (SM:169-174)"
+  - "DEC-BR-014 §1 (SchoolParticipation y Enrollment por fixture o acto humano), §5 (DEC-BR-014:84, viñeta 'Roles de plataforma': SchoolParticipation y tenant.active solo por fixture o migración revisada, sin UI), §6 (actor FIXTURE; R14-F lo limita a LOCAL y CI)"
+  - "CARLOS r3 R14-E (Q-18 opción A), R14-F (FIXTURE solo en LOCAL/CI)"
   - "DEC-BR-015:42, :45 (guard (d) + Guard P; reactivación R7-1)"
   - "DEC-BR-016 §1, §4, §7, §8"
   - "ADR-006 §2 (school_participation, enrollment, CONTEXT_READINESS), §12 (estado del tenant)"
@@ -25,17 +26,17 @@ governedBy:
 
 coverage:
   covered:
-    - "Tenant ACTIVE ↔ SUSPENDED y su efecto: bloquea ISSUANCE/DECISION, nunca RIGHTS (SM:159)"
-    - "SchoolParticipation PENDING_AUTHORIZATION → ACTIVE ↔ SUSPENDED → CLOSED y su efecto sobre Guard P, I9 y ConsentDecision (SM:161)"
-    - "Enrollment ACTIVE → CLOSED {TRANSFERRED, LEFT_SCHOOL, PARTICIPATION_CLOSED} y su efecto sobre Guard E, I9, API-CNS-001 e INV-7 (SM:162)"
-    - "ConsentContext READY → ACTIVE y PAUSED → ACTIVE: solo el guard (d) / CONTEXT_READINESS (R7-1) y su evaluación sin lectura cross-tenant (SM:160)"
-    - "Fail-closed en el tenant nuevo tras un traslado: ninguna autorización cruza tenant (SM:163, INV-3)"
+    - "Tenant ACTIVE ↔ SUSPENDED y su efecto: bloquea ISSUANCE/DECISION, nunca RIGHTS (SM:170)"
+    - "SchoolParticipation PENDING_AUTHORIZATION → ACTIVE ↔ SUSPENDED → CLOSED y su efecto sobre Guard P, I9 y ConsentDecision (SM:172)"
+    - "Enrollment ACTIVE → CLOSED {TRANSFERRED, LEFT_SCHOOL, PARTICIPATION_CLOSED} y su efecto sobre Guard E, I9, API-CNS-001 e INV-7 (SM:173)"
+    - "ConsentContext READY → ACTIVE y PAUSED → ACTIVE: solo el guard (d) / CONTEXT_READINESS (R7-1) y su evaluación sin lectura cross-tenant (SM:171)"
+    - "Fail-closed en el tenant nuevo tras un traslado: ninguna autorización cruza tenant (SM:174, INV-3)"
   notCovered: # no se declaran cubiertos por H01
     - "Creación/borrado de tenants (provisión por fixture; borrado: LD-12)"
     - "BillingSubscription → tenant.active (DEFERRED IT0; DEC-BR-016 §5)"
     - "Flujo del traslado en el tenant destino (DEFERRED IT0; LD-09, LD-10)"
     - "Resto de la máquina ConsentContext ([N-SM] §1): DRAFT → READY, ACTIVE → PAUSED (reasonCodes, cuarentena REQ-CNS-035), → CLOSED, → ARCHIVED; guards (a)–(c) de ética y versión"
-    - "eligibility.changed (E-10 PROPOSED; Q-18) — no se emite"
+    - "eligibility.changed (E-10 PROPOSED; separado de Q-18 por R14-E) — no se emite"
     - "Ética por colegio (Q-11), Organization (DEFERRED)"
 
 submachines:
@@ -48,20 +49,20 @@ submachines:
         initial: true
         terminal: false
         description: "tenant.active = true."
-        governedBy: ["SM-CNS-001 §6 (SM:159)", "ADR-006 §12"]
+        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12"]
         testIds: [TEST-CNS-350]
       - id: SUSPENDED
         initial: false
         terminal: false
         description: "tenant.active = false: bloquea ISSUANCE/DECISION (GRD-CM-05); nunca RIGHTS (INV-6)."
-        governedBy: ["SM-CNS-001 §6 (SM:159)", "DEC-BR-016 §8"]
+        governedBy: ["SM-CNS-001 §6 (SM:170)", "DEC-BR-016 §8"]
         testIds: [TEST-CNS-351]
     transitions:
       - id: TN1
         from: ACTIVE
         to: SUSPENDED
         command: SuspendTenant
-        actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "en IT0 solo fixture o migración revisada, sin UI (DEC-BR-014 §5); FIXTURE solo según GRD-CM-13"}
+        actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "fixture (solo LOCAL/CI, R14-F, GRD-CM-13) o migración revisada, sin UI (DEC-BR-014 §5, :84); en STAGING solo migración revisada"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-CM-07, GRD-CM-13, GRD-TC-01]
@@ -69,13 +70,13 @@ submachines:
         emits: [TENANT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, sequence)"
         errors: [ERR-CM-10, ERR-TC-01]
-        governedBy: ["SM-CNS-001 §6 (SM:159)", "ADR-006 §12", "DEC-BR-014 §5"]
+        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "DEC-BR-014 §5"]
         testIds: [TEST-CNS-352]
       - id: TN2
         from: SUSPENDED
         to: ACTIVE
         command: ReactivateTenant
-        actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "en IT0 solo fixture o migración revisada, sin UI"}
+        actor: {actorType: HUMAN, actorRole: PLATFORM_ADMIN, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada, sin UI (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-CM-07, GRD-CM-13, GRD-TC-01]
@@ -83,7 +84,7 @@ submachines:
         emits: [TENANT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, sequence)"
         errors: [ERR-CM-10, ERR-TC-01]
-        governedBy: ["SM-CNS-001 §6 (SM:159)", "ADR-006 §12"]
+        governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12"]
         testIds: [TEST-CNS-353]
   - machine: SchoolParticipation
     aggregateType: SchoolParticipation
@@ -93,7 +94,7 @@ submachines:
         initial: true
         terminal: false
         description: "Participación creada sin autorizar: Guard P falla."
-        governedBy: ["SM-CNS-001 §6 (SM:161)", "ADR-006 §2", "DEC-BR-016 §1"]
+        governedBy: ["SM-CNS-001 §6 (SM:172)", "ADR-006 §2", "DEC-BR-016 §1"]
         testIds: [TEST-CNS-354]
       - id: ACTIVE
         initial: false
@@ -105,20 +106,20 @@ submachines:
         initial: false
         terminal: false
         description: "Bloquea I3/I4/C1–C5 sin cancelar invitaciones ni tocar decisiones; nunca RIGHTS."
-        governedBy: ["SM-CNS-001 §6 (SM:161), §2 'Inválidas'"]
+        governedBy: ["SM-CNS-001 §6 (SM:172), §2 'Inválidas'"]
         testIds: [TEST-CNS-356]
       - id: CLOSED
         initial: false
         terminal: true
         description: "Participación cerrada; nunca toca ConsentDecision ni emite consent.revoked."
-        governedBy: ["SM-CNS-001 §6 (SM:161)", "INV-7"]
+        governedBy: ["SM-CNS-001 §6 (SM:172)", "INV-7"]
         testIds: [TEST-CNS-357]
     transitions:
       - id: SP1
         from: PENDING_AUTHORIZATION
         to: ACTIVE
         command: AuthorizeSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "en IT0 solo fixture o migración revisada (DEC-BR-014 §5); segundo aprobador Privacy Legal: pregunta abierta F-313"}
+        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84); segundo aprobador Privacy Legal: pregunta abierta F-313"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-CM-07, GRD-CM-13, GRD-TC-02]
@@ -126,13 +127,13 @@ submachines:
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10, ERR-TC-02]
-        governedBy: ["SM-CNS-001 §6 (SM:161)", "DEC-BR-016 §1, §4", "ADR-006 §2"]
+        governedBy: ["SM-CNS-001 §6 (SM:172)", "DEC-BR-016 §1, §4", "ADR-006 §2"]
         testIds: [TEST-CNS-358]
       - id: SP2
         from: ACTIVE
         to: SUSPENDED
         command: SuspendSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "en IT0 solo fixture o migración revisada"}
+        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-CM-07, GRD-CM-13]
@@ -140,13 +141,13 @@ submachines:
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10]
-        governedBy: ["SM-CNS-001 §6 (SM:161)", "DEC-BR-016 §4"]
+        governedBy: ["SM-CNS-001 §6 (SM:172)", "DEC-BR-016 §4"]
         testIds: [TEST-CNS-359]
       - id: SP3
         from: SUSPENDED
         to: ACTIVE
         command: ReactivateSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "en IT0 solo fixture o migración revisada"}
+        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-CM-07, GRD-CM-13, GRD-TC-02]
@@ -154,25 +155,25 @@ submachines:
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10, ERR-TC-02]
-        governedBy: ["SM-CNS-001 §6 (SM:161: 'ACTIVE ↔ SUSPENDED')"]
+        governedBy: ["SM-CNS-001 §6 (SM:172: 'ACTIVE ↔ SUSPENDED')"]
         testIds: [TEST-CNS-360]
       - id: SP4
         from: [ACTIVE, SUSPENDED]
         to: CLOSED
         command: CloseSchoolParticipation
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "en IT0 solo fixture o migración revisada"}
+        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, channel: "fixture (solo LOCAL/CI, R14-F) o migración revisada (DEC-BR-014:84)"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-CM-07, GRD-CM-13]
         effects:
-          - "Invitaciones no terminales: I9 PARTICIPATION_CLOSED está enabled: false (Q-18); mientras tanto Guard P las bloquea (fail-closed)."
+          - "R14-E (Q-18 opción A): en la misma transacción, invitation I9 PARTICIPATION_CLOSED sobre todas las invitaciones no terminales del tenant en esa participación."
           - "Cierre en cascada de Enrollments con motivo PARTICIPATION_CLOSED: no especificado en SM §6 como efecto automático (OPEN-TC-02); Guard P ya bloquea el tratamiento."
           - "Ninguna transición de ConsentDecision ni consent.revoked (INV-7)."
         emits: [SCHOOL_PARTICIPATION_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, participation_ref, sequence)"
         errors: [ERR-CM-10]
-        governedBy: ["SM-CNS-001 §6 (SM:161)", "DEC-BR-016 §4", "DEC-BR-017 E-04 (condicional Q-18)"]
-        testIds: [TEST-CNS-361]
+        governedBy: ["SM-CNS-001 v7 §6 (SM:172)", "DEC-BR-016 §4", "CARLOS r3 R14-E", "DEC-BR-017 E-04 (sin condición, derivado D-17)"]
+        testIds: [TEST-CNS-361, TEST-CNS-418]
   - machine: Enrollment
     aggregateType: Enrollment
     table: "app.enrollment (ADR-006 §2); UNIQUE parcial (tenant_id, subject_ref, participation_ref) WHERE status = 'ACTIVE'"
@@ -181,13 +182,13 @@ submachines:
         initial: true
         terminal: false
         description: "Guard E se cumple para el subjectRef en la participación."
-        governedBy: ["SM-CNS-001 §6 (SM:162)", "ADR-006 §2"]
+        governedBy: ["SM-CNS-001 §6 (SM:173)", "ADR-006 §2"]
         testIds: [TEST-CNS-362]
       - id: CLOSED
         initial: false
         terminal: true
         description: "close_reason ∈ {TRANSFERRED, LEFT_SCHOOL, PARTICIPATION_CLOSED}; ningún motivo es retiro de consentimiento."
-        governedBy: ["SM-CNS-001 §6 (SM:162)", "DEC-BR-016 §1"]
+        governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §1"]
         testIds: [TEST-CNS-363]
     transitions:
       - id: EN0
@@ -195,7 +196,7 @@ submachines:
         to: ACTIVE
         command: OpenEnrollment
         actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN (DEC-BR-016 §4 'abre y cierra Enrollments'); en IT0 también por fixture (DEC-BR-014 §1)"}
-        routeClass: ISSUANCE_DECISION
+        routeClass: STAFF_ADMIN # AUDIT-H01-rev3 N-13: no evalúa la fórmula de elegibilidad
         httpPost: true # consola STAFF cuando no es fixture
         guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-03]
         effects: ["Guard E empieza a cumplirse para el subjectRef en esa participación."]
@@ -208,20 +209,20 @@ submachines:
         from: ACTIVE
         to: CLOSED
         command: CloseEnrollment
-        actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo (DEC-BR-016 §4); en IT0 también por fixture"}
-        routeClass: ISSUANCE_DECISION
+        actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo (DEC-BR-016 §4); fixture solo en LOCAL/CI (R14-F)"}
+        routeClass: STAFF_ADMIN # AUDIT-H01-rev3 N-13
         httpPost: true
         guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-04]
         effects:
-          - "Guard E falla: I3/I4/C1–C5 del subjectRef se rechazan; I9 ENROLLMENT_CLOSED está enabled: false (Q-18)."
+          - "Guard E falla: I3/I4/C1–C5 del subjectRef se rechazan; en la misma transacción, invitation I9 ENROLLMENT_CLOSED sobre sus invitaciones no terminales (R14-E, Q-18 opción A)."
           - "API-CNS-001 responde NOT_AUTHORIZED (RULE-CNS-013); el motivo interno ENROLLMENT_NOT_ACTIVE queda solo en AuthorizationCheck (F-323)."
           - "TRANSFERRED ≠ revocación: sin consent.revoked, sin transición de ConsentDecision, sin supresión; histórico conservado (LD-12). El DecisionMaker conserva consulta, revocación y derechos (INV-6)."
           - "eligibility.changed no se emite (E-10 PROPOSED, Q-18)."
         emits: [ENROLLMENT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, enrollment_ref, sequence)"
         errors: [ERR-CM-09, ERR-CM-10, ERR-TC-04]
-        governedBy: ["SM-CNS-001 §6 (SM:162)", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06"]
-        testIds: [TEST-CNS-365]
+        governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06"]
+        testIds: [TEST-CNS-365, TEST-CNS-419]
   - machine: ConsentContextReadiness
     aggregateType: ConsentContext
     partial: true
@@ -250,7 +251,7 @@ submachines:
         from: READY
         to: ACTIVE
         command: ActivateContext
-        actor: {actorType: SYSTEM_GUARD, note: "en IT0 el contexto cambia por fixture o migración revisada (SM:160; ADR-006 §2), pero la evaluación CONTEXT_READINESS se prueba igual"}
+        actor: {actorType: SYSTEM_GUARD, note: "en IT0 el contexto cambia por fixture o migración revisada (SM:171; ADR-006 §2), pero la evaluación CONTEXT_READINESS se prueba igual"}
         routeClass: PLATFORM
         httpPost: false
         guards: [GRD-TC-05]
@@ -258,13 +259,13 @@ submachines:
         emits: [CONSENT_CONTEXT_STATUS_CHANGED]
         idempotencyKey: "(contextRef, sequence)"
         errors: [ERR-TC-05]
-        governedBy: ["SM-CNS-001 §6 (SM:160)", "DEC-BR-015:42", "ADR-006 §2", "[N-SM] §1 guard (d)"]
+        governedBy: ["SM-CNS-001 §6 (SM:171)", "DEC-BR-015:42", "ADR-006 §2", "[N-SM] §1 guard (d)"]
         testIds: [TEST-CNS-369]
       - id: CX2
         from: PAUSED
         to: ACTIVE
         command: ReactivateContext
-        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, alt: "PRIVACY_LEGAL (rol de plataforma)", note: "HUMAN only; nunca SYSTEM_GUARD, modelo ni agente ([N-SM] §1, ACCEPTED)"}
+        actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, alt: "PRIVACY_LEGAL (está en approverRoles, no en el enum actorRole: OPEN-TC-06)", note: "HUMAN only; nunca SYSTEM_GUARD, modelo ni agente ([N-SM] §1, ACCEPTED)"}
         routeClass: PLATFORM
         httpPost: true # consola PLATFORM
         guards: [GRD-CM-07, GRD-CM-10, GRD-TC-05, GRD-TC-06]
@@ -275,7 +276,7 @@ submachines:
         emits: [CONSENT_CONTEXT_STATUS_CHANGED]
         idempotencyKey: "(contextRef, sequence)"
         errors: [ERR-TC-05, ERR-CM-09, ERR-CM-10]
-        governedBy: ["SM-CNS-001 §6 (SM:160)", "CARLOS r3 R7-1", "DEC-BR-015:45", "ADR-006 §2", "SEC-CNS-005 T-62, TS-16j"]
+        governedBy: ["SM-CNS-001 §6 (SM:171)", "CARLOS r3 R7-1", "DEC-BR-015:45", "ADR-006 §2", "SEC-CNS-005 T-62, TS-16j"]
         testIds: [TEST-CNS-370]
 
 guards:
@@ -283,7 +284,7 @@ guards:
     name: tenant_status_reason_code
     rule: "Cambio de tenant.active solo por acto humano de plataforma (PLATFORM_ADMIN con MFA) registrado en ledger con reasonCode; ningún webhook ni billing_admin escribe app.tenant_status. Enum de reasonCode: OPEN-TC-01."
     onFail: ERR-TC-01
-    governedBy: ["SM-CNS-001 §6 (SM:159)", "ADR-006 §12", "DEC-BR-016 §4, §5"]
+    governedBy: ["SM-CNS-001 §6 (SM:170)", "ADR-006 §12", "DEC-BR-016 §4, §5"]
     testIds: [TEST-CNS-371]
   - id: GRD-TC-02
     name: participation_authorization_evidence
@@ -301,7 +302,7 @@ guards:
     name: enrollment_close_reason
     rule: "close_reason ∈ {TRANSFERRED, LEFT_SCHOOL, PARTICIPATION_CLOSED} (LEFT_SCHOOL pendiente de confirmación Q-28); el cierre no toca ConsentDecision."
     onFail: ERR-TC-04
-    governedBy: ["SM-CNS-001 §6 (SM:162)", "DEC-BR-016 §1"]
+    governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §1"]
     testIds: [TEST-CNS-374]
   - id: GRD-TC-05
     name: context_readiness
@@ -311,7 +312,7 @@ guards:
     testIds: [TEST-CNS-375]
   - id: GRD-TC-06
     name: human_only_reactivation
-    rule: "PAUSED → ACTIVE solo actorType HUMAN (Context Owner o Privacy Legal); guards (a)–(d) re-evaluados atómicamente; incidentes abiertos resueltos ([N-SM] §1)."
+    rule: "PAUSED → ACTIVE solo actorType HUMAN (Context Owner o Privacy Legal); guards (a)–(d) re-evaluados atómicamente ([N-SM] §1, ACCEPTED). Exigir además que los incidentes abiertos estén resueltos es PROPOSED en [N-SM] §1 ('applies to every reasonCode') y se aplica aquí como regla PROPOSED, no como aceptada."
     onFail: ERR-CM-10
     governedBy: ["[N-SM] §1 PAUSED → ACTIVE (ACCEPTED 2026-09-23)"]
     testIds: [TEST-CNS-376]
@@ -353,21 +354,21 @@ events:
     stream: LEDGER
     emittedBy: [TN1, TN2]
     payload: [reasonCode]
-    governedBy: ["SM-CNS-001 §6 (SM:159: 'TENANT_STATUS_CHANGED {reasonCode}')"]
+    governedBy: ["SM-CNS-001 §6 (SM:170: 'TENANT_STATUS_CHANGED {reasonCode}')"]
     testIds: [TEST-CNS-352, TEST-CNS-353]
   - id: SCHOOL_PARTICIPATION_STATUS_CHANGED
     stream: LEDGER
     nameStatus: "PROPOSED — SM §6 no nombra el evento; taxonomía gaona-measure / H02 (OPEN-CM-02)"
     emittedBy: [SP1, SP2, SP3, SP4]
     payload: [participationRef, fromStatus, toStatus, authorizationEvidenceRef]
-    governedBy: ["SM-CNS-001 §6 (SM:161)", "SM-CNS-001 R0.1 (sin cambio de estado sin evento)"]
+    governedBy: ["SM-CNS-001 §6 (SM:172)", "SM-CNS-001 R0.1 (sin cambio de estado sin evento)"]
     testIds: [TEST-CNS-358, TEST-CNS-361]
   - id: ENROLLMENT_STATUS_CHANGED
     stream: LEDGER
     nameStatus: "PROPOSED — SM §6 no nombra el evento; taxonomía gaona-measure / H02 (OPEN-CM-02)"
     emittedBy: [EN0, EN1]
     payload: [enrollmentRef, participationRef, subjectRef, toStatus, closeReason]
-    governedBy: ["SM-CNS-001 §6 (SM:162)", "SM-CNS-001 R0.1"]
+    governedBy: ["SM-CNS-001 §6 (SM:173)", "SM-CNS-001 R0.1"]
     testIds: [TEST-CNS-364, TEST-CNS-365]
   - id: CONSENT_CONTEXT_STATUS_CHANGED
     stream: PLATFORM_AUDIT
@@ -384,11 +385,11 @@ invariants:
     testIds: [TEST-CNS-377]
   - id: INV-TC-02
     statement: "Ningún traslado habilita tratamiento en el tenant destino: no hay vínculo entre tenants; el destino crea Student, Enrollment, Invitation y ConsentDecision nuevos (DEFERRED en IT0)."
-    governedBy: ["SM-CNS-001 §6 (SM:163)", "INV-3", "LD-09", "LD-10"]
+    governedBy: ["SM-CNS-001 §6 (SM:174)", "INV-3", "LD-09", "LD-10"]
     testIds: [TEST-CNS-378]
   - id: INV-TC-03
     statement: "Que ninguna participación siga ACTIVE no pausa el contexto: Guard P bloquea por tenant; la reactivación de un contexto PAUSED exige la misma condición (R7-1)."
-    governedBy: ["SM-CNS-001 §6 (SM:160)", "DEC-BR-015 Consecuencias (C-19, C-57/C-58)", "CARLOS r3 R7-1"]
+    governedBy: ["SM-CNS-001 §6 (SM:171)", "DEC-BR-015 Consecuencias (C-19, C-57/C-58)", "CARLOS r3 R7-1"]
     testIds: [TEST-CNS-379]
 
 failClosed: >
@@ -406,4 +407,5 @@ openItems:
   - {id: OPEN-TC-02, item: "Si SP4 (participación CLOSED) cierra en cascada los Enrollments con motivo PARTICIPATION_CLOSED; SM §6 no lo dice.", owner: Carlos, status: OPEN}
   - {id: OPEN-TC-03, item: "Q-28: nombre LEFT_SCHOOL y 'la revocación no cierra el Enrollment'.", owner: Carlos, status: OPEN}
   - {id: OPEN-TC-04, item: "F-313: si el Context Owner autoriza la SchoolParticipation con Privacy Legal como segundo aprobador.", owner: Carlos, status: OPEN}
+  - {id: OPEN-TC-06, item: "PRIVACY_LEGAL puede reactivar el contexto ([N-SM] §1) pero no está en el enum actorRole (SM v7 R0.2); agregarlo o registrarlo como actorRole CONTEXT_OWNER con rol de plataforma (AUDIT-H01-rev3 N-13).", owner: Carlos, status: OPEN}
   - {id: OPEN-TC-05, item: "Nombres de SCHOOL_PARTICIPATION_STATUS_CHANGED, ENROLLMENT_STATUS_CHANGED y CONSENT_CONTEXT_STATUS_CHANGED, y almacén de la auditoría PLATFORM (ADR-011).", owner: "gaona-measure / lampone-architect; cierre Carlos", status: OPEN}

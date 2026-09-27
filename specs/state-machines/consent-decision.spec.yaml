@@ -1,4 +1,4 @@
-# Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 2 (SEC-CNS-012 + AUDIT-H01).
+# Máquina ConsentDecision del subconjunto IT0 (H01 / CA-116), rev. 4 (R14-C: revokedDecisionRef).
 # La existencia y aceptación del consentimiento NO las decide ningún modelo: los guards
 # verifican hechos registrados (eventos previos, hash servido, elección explícita por finalidad).
 specId: SPEC-CNS-SM-CONSENT-DECISION
@@ -6,7 +6,7 @@ title: "State machine ConsentDecision (IT0, contexto BETA_2026_01)"
 smId: SM-CNS-001
 smSection: "§4, §4.1, §4.2, §7"
 aggregateType: ConsentDecision
-version: "0.2.0"
+version: "0.4.0"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -151,7 +151,7 @@ transitions:
       - "Emite el enlace de gestión (management_token, P-31/P-13) SOLO al canal ligado (revocation §managementLink)."
       - "Receipt con marca de agua IT0 (DEC-BR-014 §1)."
       - "Si la cadena ya tenía un enlace de gestión (re-consentimiento tras REVOKED, misma decisionChainKey), el enlace anterior sigue vigente: rotarlo o no es OPEN-CD-06 (SEC P2-09; LD-12/LD-22)."
-      - "M2 (aviso al colegio de cada decisión y enlace 'yo no hice esta decisión' en el receipt, SM:47): no modelado en IT0 (OPEN-CD-05, LD-01)."
+      - "M2 (aviso al colegio de cada decisión y enlace 'yo no hice esta decisión' en el receipt, SM:48): no modelado en IT0 (OPEN-CD-05, LD-01)."
     emits: [PURPOSE_DECISION_RECORDED, CONSENT_GRANTED, RECEIPT_CREATED, consent.granted]
     idempotencyKey: "Idempotency-Key + consentId + payloadHash"
     errors: [ERR-CD-01, ERR-CM-07, ERR-CD-02, ERR-CD-03, ERR-CD-05, ERR-CD-07, ERR-CM-10]
@@ -204,7 +204,7 @@ transitions:
       - "Mismo lote que R4: CONSENT_REVOKED {scope = ALL, effectiveAt = hora del append (RULE-CNS-025), authPath, recoveryMethod?, originPurposeRef} + outbox consent.revoked."
       - "revokedAt = effectiveAt; desde este append ningún AuthorizationCheck devuelve AUTHORIZED (INV-5)."
     emits: [CONSENT_REVOKED, consent.revoked]
-    idempotencyKey: "revocationRef (un solo CONSENT_REVOKED efectivo por cadena; si la decisión ya está REVOKED, no se emite un segundo evento)"
+    idempotencyKey: "revocationRef (un solo CONSENT_REVOKED efectivo por decisión revocada, R14-C; si la decisión ya está REVOKED, no se emite un segundo evento)"
     sameLotAs: "revocation:R4"
     errors: [ERR-CD-05, ERR-CD-08]
     governedBy: ["SM-CNS-001 §4 C6, §4.2", "DEC-BR-017 §6", "RULE-CNS-025", "RULE-CNS-027", "CARLOS r3 H1"]
@@ -312,7 +312,7 @@ guards:
     testIds: [TEST-CNS-198]
   - id: GRD-CD-09
     name: revoked_only_via_revocation
-    rule: "C6 solo se ejecuta dentro de la tx de R4 (revocation), con revocationRef CONFIRMED de la misma cadena."
+    rule: "C6 solo se ejecuta dentro de la tx de R4 (revocation), con una revocationRef CONFIRMED cuyo revokedDecisionRef es este consentId (R14-C); una revocación de otro ciclo de la misma cadena no revoca esta decisión."
     onFail: ERR-CM-06
     governedBy: ["SM-CNS-001 §4 C6", "SM-CNS-001 §5 R4"]
     testIds: [TEST-CNS-195]
@@ -442,7 +442,7 @@ events:
   - id: CONSENT_REVOKED
     stream: LEDGER
     emittedBy: [C6, "revocation:R4"]
-    payload: [revocationRef, scope, effectiveAt, authPath, recoveryMethod, originPurposeRef] # scope = ALL; recoveryMethod iff authPath = RECOVERY
+    payload: [revocationRef, revokedDecisionRef, scope, effectiveAt, authPath, recoveryMethod, originPurposeRef] # revokedDecisionRef: R14-C (derivado P-02); scope = ALL; recoveryMethod iff authPath = RECOVERY
     governedBy: ["DEC-BR-017 §6", "SM-CNS-001 §4 C6", "ADR-002 §10"]
     testIds: [TEST-CNS-195]
   - id: CONSENT_EXPIRED
@@ -551,5 +551,5 @@ openItems:
   - {id: OPEN-CD-02, item: "Q-13: DECLINED con detalle por finalidad hacia downstream.", owner: Carlos, status: OPEN}
   - {id: OPEN-CD-03, item: "Q-01 scope = ALL: DECIDIDO por Carlos (CARLOS r3 H1 y adición (b); DEC-BR-017 §6 ACCEPTED). Cierre de Q-01 confirmado por Carlos en R13-6 (CARLOS r3 :119).", owner: Carlos, status: DECIDED}
   - {id: OPEN-CD-04, item: "EXT-C / DEC-BR-004: datos mínimos del sujeto en SUBJECT_CONFIRMED.", owner: Carlos, status: OPEN}
-  - {id: OPEN-CD-05, item: "M2/M3 (SM:47-48): aviso al canal del colegio de cada COMPLETED/DECLINED y enlace 'yo no hice esta decisión'; M3 enabled: false (AUDIT F-A13).", owner: Carlos, status: "LEGAL DECISION (LD-01)"}
+  - {id: OPEN-CD-05, item: "M2/M3 (SM:48-49): aviso al canal del colegio de cada COMPLETED/DECLINED y enlace 'yo no hice esta decisión'; M3 enabled: false (AUDIT F-A13).", owner: Carlos, status: "LEGAL DECISION (LD-01)"}
   - {id: OPEN-CD-06, item: "Re-consentimiento sobre la misma decisionChainKey: C3 emite un /m/ nuevo y el anterior sigue vigente (vida = la de la cadena). Rotarlo requiere un trigger fuera del enum de DEC-BR-017 §6 (SEC P2-09).", owner: Carlos, status: "OPEN (LD-12/LD-22)"}

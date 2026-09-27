@@ -1,4 +1,4 @@
-# Máquina DecisionMakerVerification / OTP challenge del subconjunto IT0 (H01 / CA-116), rev. 3 (SM-CNS-001 v7, R13-5 y R13-7).
+# Máquina DecisionMakerVerification / OTP challenge del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + SEC-CNS-012 re-verificación N-09).
 # Parámetros SOLO por referencia a SEC-CNS-006 (P-xx aprobados); ningún valor se fija aquí.
 # El sistema no decide la validez del OTP como juicio: la comparación es código determinista.
 specId: SPEC-CNS-SM-OTP-CHALLENGE
@@ -6,7 +6,7 @@ title: "State machine DecisionMakerVerification / OTP challenge (IT0)"
 smId: SM-CNS-001
 smSection: "§3, §3.1, R0.7"
 aggregateType: DecisionMakerVerification
-version: "0.3.0"
+version: "0.4.0"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -41,7 +41,7 @@ attributes:
   - resendCount
   - requestedByHandleRef # hash del handle/sesión que pidió el challenge (SEC P2-03)
 
-commandGuards: # mismo comando = mismo conjunto de guards previo a comparar (AUDIT F-A02, SEC P2-02; SM:68)
+commandGuards: # mismo comando = mismo conjunto de guards previo a comparar (AUDIT F-A02, SEC P2-02; SM:70)
   SubmitOtp: [GRD-CM-10, GRD-OT-13, GRD-OT-04, GRD-OT-03, GRD-OT-05, GRD-OT-07]
 
 budget:
@@ -165,7 +165,7 @@ transitions:
     httpPost: true
     guards: [GRD-CM-02, GRD-CM-10, GRD-OT-13, GRD-OT-04, GRD-OT-03, GRD-OT-05, GRD-OT-07] # = commandGuards.SubmitOtp + Guard T
     effects:
-      - "Antes de comparar, en la misma tx: reserva del intento (GRD-OT-04) y de un fallo en cada clave de presupuesto aplicable (GRD-OT-03); si alguna reserva no devuelve fila, rechazo sin comparar (SM:68)."
+      - "Antes de comparar, en la misma tx: reserva del intento (GRD-OT-04) y de un fallo en cada clave de presupuesto aplicable (GRD-OT-03); si alguna reserva no devuelve fila, rechazo sin comparar (SM:70)."
       - "Al acertar, la reserva de fallo se revierte en la misma tx: los aciertos no consumen G (P-04)."
       - "consumedAt + evento de ledger en la misma tx; rota el ID de sesión (P-30)."
       - "Crea sesión ligada a (tenantRef, parentRef, verificationRef, scope, decisionMakerRef) con validUntil de servidor: DECISION P-27; REVOCATION/MANAGE P-28."
@@ -174,7 +174,7 @@ transitions:
     emits: [DECISION_MAKER_CHANNEL_VERIFIED]
     idempotencyKey: "verificationRef (un solo consumo)"
     errors: [ERR-OT-05, ERR-OT-03, ERR-OT-06, ERR-OT-07, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §3 V3, §3.1, 'Atomicidad' (SM:68)", "SEC-CNS-006 P-04, P-27, P-28, P-30", "AUDIT F-A02", "SEC-CNS-012 P2-02"]
+    governedBy: ["SM-CNS-001 §3 V3, §3.1, 'Atomicidad' (SM:70)", "SEC-CNS-006 P-04, P-27, P-28, P-30", "AUDIT F-A02", "SEC-CNS-012 P2-02"]
     testIds: [TEST-CNS-153, TEST-CNS-318]
   - id: V4
     from: CODE_SENT
@@ -277,13 +277,13 @@ transitions:
 guards:
   - id: GRD-OT-01
     name: valid_parent_by_scope
-    rule: "Padre resuelto en servidor, nunca desde un id del cliente. Por scope: DECISION → Invitation OPENED, o VERIFIED solo por reingreso M4. REVOCATION → chainRef (desde el handle MANAGE_ENTRY/MANAGE de /m/) con ConsentDecision GRANTED/PARTIALLY_GRANTED vigente. MANAGE → chainRef existente 'con consentimiento' (SM:58): la cadena tiene alguna ConsentDecision registrada, incluida una REVOKED; no exige GRANTED (SM:124 vida del enlace 'mientras existan derechos', SM:162 y DEC-BR-016 §8: el DecisionMaker conserva la consulta tras revocar). Qué habilita MANAGE tras supresión o tras CLOSED: LD-12/LD-22 (referencia; no se decide aquí)."
+    rule: "Padre resuelto en servidor, nunca desde un id del cliente. Por scope: DECISION → Invitation OPENED, o VERIFIED solo por reingreso M4. REVOCATION → chainRef (desde el handle MANAGE_ENTRY/MANAGE de /m/) con ConsentDecision GRANTED/PARTIALLY_GRANTED vigente. MANAGE → chainRef existente 'con consentimiento' (SM:59): la cadena tiene alguna ConsentDecision registrada, incluida una REVOKED; no exige GRANTED (SM:127 vida del enlace 'mientras existan derechos', SM:173 y DEC-BR-016 §8: el DecisionMaker conserva la consulta tras revocar). Qué habilita MANAGE tras supresión o tras CLOSED: LD-12/LD-22 (referencia; no se decide aquí)."
     byScope:
       DECISION: "Invitation OPENED | VERIFIED (M4)"
       REVOCATION: "chain con decisión GRANTED/PARTIALLY_GRANTED"
       MANAGE: "chain existente con alguna decisión registrada (cualquier estado)"
     onFail: ERR-OT-01
-    governedBy: ["SM-CNS-001 §3 V1 (SM:58), 'Inválidas', §5.0 (SM:124), §6 (SM:162)", "DEC-BR-016 §8", "SEC F02", "SM-CNS-001 §2.1 M4", "AUDIT F-A04", "SEC-CNS-012 P2-14", "LD-12", "LD-22"]
+    governedBy: ["SM-CNS-001 §3 V1 (SM:59), 'Inválidas', §5.0 (SM:127), §6 (SM:173)", "DEC-BR-016 §8", "SEC F02", "SM-CNS-001 §2.1 M4", "AUDIT F-A04", "SEC-CNS-012 P2-14", "LD-12", "LD-22"]
     testIds: [TEST-CNS-150, TEST-CNS-168, TEST-CNS-319]
   - id: GRD-OT-02
     name: bound_channel_only
@@ -329,7 +329,7 @@ guards:
     testIds: [TEST-CNS-320]
   - id: GRD-OT-09
     name: decision_three_locked_rule
-    rule: "Solo scope DECISION: el 3.er challenge LOCKED de la misma invitación (P-07) dispara V6a sobre el padre; el challenge LOCKED no transiciona (R13-7)."
+    rule: "Solo scope DECISION: el 3.er challenge LOCKED de la misma invitación (P-07) dispara V6a sobre el padre; el challenge LOCKED no transiciona (R13-7). V4, V6a y V1 toman el lock de la fila de la invitación padre, de modo que un V1 concurrente con el 3.er LOCKED se evalúa después de V6a (SEC N-09)."
     onFail: null # guard de disparo
     governedBy: ["SM-CNS-001 §3 V6", "SEC-CNS-006 P-07", "CARLOS r3 R6-2"]
     testIds: [TEST-CNS-156]
@@ -351,10 +351,10 @@ guards:
     testIds: [TEST-CNS-170, TEST-CNS-321]
   - id: GRD-OT-14
     name: parent_not_otp_exhausted
-    rule: "V1 scope DECISION se rechaza con la respuesta genérica si la invitación padre tiene otpExhausted (V6a); la vía es reemitir la invitación."
+    rule: "V1 scope DECISION se rechaza con la respuesta genérica si la invitación padre tiene otpExhausted (V6a), evaluado bajo el mismo lock de la fila de la invitación que V6a (SEC N-09); la vía es reemitir la invitación."
     onFail: ERR-OT-06
-    governedBy: ["SM-CNS-001 v7 §3 V6a", "CARLOS r3 R13-7"]
-    testIds: [TEST-CNS-395]
+    governedBy: ["SM-CNS-001 v7 §3 V6a", "CARLOS r3 R13-7", "SEC-CNS-012 re-verificación N-09"]
+    testIds: [TEST-CNS-395, TEST-CNS-410]
   - id: GRD-OT-13
     name: challenge_bound_to_request_handle
     rule: "SubmitOtp y ResendOtp solo operan sobre el challenge cuyo requestedByHandleRef coincide con el handle/sesión del POST; si no, respuesta uniforme sin reservar intentos."

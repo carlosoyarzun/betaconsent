@@ -1,4 +1,4 @@
-# Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 3 (SM-CNS-001 v7, R13-5).
+# Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14-A, R14-F).
 # rev. 2 (2026-09-27): correcciones de SEC-CNS-012 (SEC-review-CA116) y AUDIT-H01.
 # Las demás specs referencian por ID los guards (GRD-CM-*), errores (ERR-CM-*),
 # invariantes (INV-CM-*, INV-3, INV-12) y el actor UNVERIFIED_BEARER declarados aquí. Cero PII.
@@ -6,7 +6,7 @@ specId: SPEC-CNS-SM-COMMON
 title: "State machines IT0 — reglas transversales (tenancy, clases de ruta, ledger, actor, fail-closed)"
 smId: SM-CNS-001
 smSection: "§0, §1, §7 (el §6 se modela en tenant-context.spec.yaml, solo en lo que afecta a las cinco máquinas)"
-version: "0.3.0"
+version: "0.4.0"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -58,6 +58,14 @@ routeClasses:
       NOT suspended. Estado desconocido, desactualizado o con error = false (fail-closed).
       'suspended' vale false por construcción en IT0 (LD-04, no modelado).
     guard: GRD-CM-05
+  - id: PLATFORM
+    appliesTo: "actos de plataforma sobre tenant, SchoolParticipation y ConsentContext (tenant-context TN*, SP*, CX*)"
+    rule: "Solo roles de plataforma humanos (o FIXTURE en LOCAL/CI); no evalúan la fórmula de elegibilidad; nunca tocan ConsentDecision ni la vía de revocación."
+    guard: GRD-CM-07
+  - id: STAFF_ADMIN
+    appliesTo: "actos administrativos del staff del colegio sin emisión ni decisión (tenant-context EN0, EN1)"
+    rule: "Membership TENANT vigente del tenant resuelto (GRD-CM-01/02/07); no evalúan la fórmula de elegibilidad (AUDIT-H01-rev3 N-13)."
+    guard: GRD-CM-07
   - id: RIGHTS
     appliesTo: "/m/, consulta, MANAGE, Revocation (OTP y RECOVERY), RightsCase, entrega de consent.revoked"
     rule: >
@@ -71,7 +79,7 @@ actorModel:
   actorRole: [DECISION_MAKER, INVITER, CONTEXT_OWNER, PLATFORM_ADMIN, RIGHTS_OPERATOR, UNVERIFIED_BEARER] # UNVERIFIED_BEARER: R13-5 (SM v7 R0.2)
   approverRoles: [PRIVACY_LEGAL, SECURITY] # aprobadores de grants y de RH2 (R6-5); roles de plataforma, no de ledger
   fixture:
-    rule: "actorType FIXTURE solo en staging (literal DEC-BR-014 §6); nunca en PRODUCTION; un CHECK rechaza actores IA. Su uso en LOCAL/DEV/CI queda OPEN-CM-06 (fail-closed: rechazado hasta decisión)."
+    rule: "R14-F: actorType FIXTURE permitido exclusivamente en LOCAL y CI, para seed sintético; rechazado en DEV, STAGING y PRODUCTION. CI corre con environment = LOCAL (el enum de ADR-002 §2 no tiene CI; OPEN-CM-07). Un CHECK rechaza actores IA. Contradice el literal de DEC-BR-014 §6 ('solo en staging'): derivado pendiente P-01 (S/R14-derivados.md), OPEN-CM-08."
     guard: GRD-CM-13
   unverifiedBearer:
     id: UNVERIFIED_BEARER
@@ -81,10 +89,10 @@ actorModel:
       de recuperación.
     actorType: HUMAN
     actorRole: UNVERIFIED_BEARER
-    may: ["invitation I4", "otp-challenge V1, V2, V2r (solo al canal ligado)", "revocation RV0 con trigger del portador", "rights-case RC1, RC1c (deshabilitada), RC2u", "rights-case RC3/RC3a y revocation RC3/R12 (intención en la página del caso; P-v7-3)", "consent-decision M3 (deshabilitada)"]
+    may: ["invitation I4", "otp-challenge V1, V2, V2r (solo al canal ligado)", "revocation RV0 con trigger del portador", "rights-case RC1, RC1c (deshabilitada), RC2u", "rights-case RC3/RC3a y revocation RC3/R12 (intención en la página del caso; P-v7-3 ACCEPTED, R14-A)", "consent-decision M3 (deshabilitada)"]
     mayNot: ["C1–C5", "R1, R2, R3, R8, R8h", "RH2, RH2v, RH3", "declarar TOKEN_COMPROMISED", "ver menor, colegio, finalidades o estado"]
     becomesDecisionMaker: "solo con V3 (OTP), con el consumo del enlace en R1r/R2r/R10/R11 (control del canal ligado) o con RH2/RH2v"
-    governedBy: ["SM-CNS-001 v7 R0.2", "CARLOS r3 R13-5", "SM-CNS-001 §2 I4 (SM:35)", "SM-CNS-001 §5.2 RC1 (SM:147)"]
+    governedBy: ["SM-CNS-001 v7 R0.2", "CARLOS r3 R13-5", "SM-CNS-001 §2 I4 (SM:36)", "SM-CNS-001 §5.2 RC1 (SM:152)"]
     testIds: [TEST-CNS-313, TEST-CNS-396]
   rules:
     - "Actor derivado de la identidad autenticada en servidor; nunca de un campo enviado por el cliente (SM R0.2)."
@@ -211,10 +219,10 @@ guards:
     testIds: [TEST-CNS-310]
   - id: GRD-CM-13
     name: fixture_actor_environment
-    rule: "actorType FIXTURE solo con environment = STAGING (literal DEC-BR-014 §6); en PRODUCTION nunca; en LOCAL/DEV rechazado hasta OPEN-CM-06."
+    rule: "R14-F: actorType FIXTURE solo con environment = LOCAL (incluye las corridas de CI); en DEV, STAGING y PRODUCTION se rechaza (ERR-CM-10)."
     onFail: ERR-CM-10
-    governedBy: ["DEC-BR-014 §6", "DEC-BR-014 §5 (SchoolParticipation y tenant.active por fixture)"]
-    testIds: [TEST-CNS-311]
+    governedBy: ["CARLOS r3 R14-F", "DEC-BR-014 §6 (literal contradicho: derivado P-01)", "DEC-BR-014 §5 (DEC-BR-014:84: SchoolParticipation y tenant.active por fixture o migración revisada)"]
+    testIds: [TEST-CNS-311, TEST-CNS-421]
 
 errors:
   - id: ERR-CM-01
@@ -326,7 +334,7 @@ invariants:
     testIds: [TEST-CNS-107]
   - id: INV-CM-07
     statement: "Todos los guards son código determinista versionado; ningún modelo decide consentimiento, validez de OTP, autoridad del apoderado, revocación ni suficiencia de verificación."
-    governedBy: ["SM-CNS-001:6", "MP §32", "CLAUDE.md Límites de IA"]
+    governedBy: ["SM-CNS-001:7", "MP §32", "CLAUDE.md Límites de IA"]
     testIds: [TEST-CNS-108]
   - id: INV-CM-08
     statement: "Un GET nunca consume un token ni transiciona un agregado (/i/, /m/, /r/ se canjean en backend con 303 a ruta sin token)."
@@ -357,7 +365,7 @@ openItems:
     owner: "gaona-measure / lampone-architect; cierre Carlos"
     status: OPEN
   - id: OPEN-CM-03
-    item: "Rango TEST-CNS-100..399 propuesto para tests de máquinas de estado; pendiente de reconciliar con la numeración de lampone-qa (el rango del marco de tests de CA-118 no se usa)."
+    item: "Rango TEST-CNS-100..499 propuesto para tests de máquinas de estado (ampliado en rev. 4); pendiente de reconciliar con la numeración de lampone-qa (el rango del marco de tests de CA-118 no se usa)."
     owner: "lampone-qa; cierre Carlos"
     status: OPEN
   - id: OPEN-CM-04
@@ -369,6 +377,15 @@ openItems:
     owner: Carlos
     status: DECIDED
   - id: OPEN-CM-06
-    item: "actorType FIXTURE: DEC-BR-014 §6 dice 'solo en staging'; si se admite en LOCAL/DEV/CI para las fixtures de IT0 (DEC-BR-014 §1, §5)."
+    item: "actorType FIXTURE: DECIDIDO R14-F — permitido exclusivamente en LOCAL y CI para seed sintético, rechazado fuera (GRD-CM-13)."
+    owner: Carlos
+    status: DECIDED
+  - id: OPEN-CM-07
+    item: "CI no existe en el enum environment de ADR-002 §2 {LOCAL, DEV, STAGING, PRODUCTION}: la spec asume que CI corre con environment = LOCAL; si Carlos quiere distinguir CI, requiere enmienda de ADR-002 §2."
+    owner: "lampone-architect → Carlos"
+    status: OPEN
+  - id: OPEN-CM-08
+    item: "FINDING P1 spec↔decisión: DEC-BR-014 §6 (S/DEC-BR-014-iteracion-0.md:94) dice 'FIXTURE solo en staging' y R14-F dice 'exclusivamente en LOCAL y CI'. La spec aplica R14-F (prevalece la decisión de Carlos); falta enmendar DEC-BR-014 §6 (derivado P-01, no aplicado)."
     owner: Carlos
     status: OPEN
+    blocksDataReal: false

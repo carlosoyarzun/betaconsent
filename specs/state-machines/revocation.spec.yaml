@@ -1,4 +1,5 @@
-# Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 3 (SM-CNS-001 v7, R13).
+# Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 4 (SM-CNS-001 v7 + R14).
+# rev. 4 (2026-09-27): SEC-CNS-012 re-verificación N-01…N-09, AUDIT-H01-rev3 y decisiones R14-A/B/C de Carlos.
 # rev. 3 (2026-09-27): decisiones de Carlos R13-1…R13-5 y R13-7 aplicadas (R10, R11, R12, RH2v, R9 sin re-escalar, R8h y RH3 con R13-4, erratum R13-3).
 # rev. 2 (2026-09-27): SEC-CNS-012 P1-01 (parte técnica), P1-03, P1-05, P1-06 (parte técnica),
 # P2-05…P2-08, P2-11, P2-17; AUDIT-H01 F-A08, F-A09, F-A11, F-A18. Semántica reservada a Carlos:
@@ -10,7 +11,7 @@ title: "State machine Revocation (IT0): OTP, RECOVERY CHANNEL_LINK y RECOVERY HU
 smId: SM-CNS-001
 smSection: "§5, §5.0, §5.1, §5.2 (RC3/RC3a/R12/RH2/RH2v/RH3), §7 — v7"
 aggregateType: Revocation
-version: "0.3.0"
+version: "0.4.0"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -20,7 +21,7 @@ commonSpec: specs/state-machines/common.spec.yaml
 reviewInputs: ["SEC-CNS-012 (SEC-review-CA116.md)", "AUDIT-H01.md"]
 governedBy:
   - "SM-CNS-001 v6 §5 (R1–R9), §5.0 (enlace de gestión), §5.1 (RV0, R1r–R3r), §5.2 (RC3, RH2, RH3), §7 (INV-6…INV-11) — ACCEPTED subconjunto IT0"
-  - "SM-CNS-001 v7 (R10, R11, R12, RH2v, R8h, RH3 cuatro ojos, erratum §5.0, INV-16/INV-17) — contenido aprobado por Carlos en R13 (CARLOS r3 :112-120); enmienda PROPOSED hasta re-revisión y cierre"
+  - "SM-CNS-001 v7 (R10, R11, R12, RH2v, R8h, RH3 cuatro ojos, erratum §5.0, INV-16/INV-17) — contenido aceptado por Carlos en R13 + R14 (CARLOS r3 :112-120 y sección R14); cierre formal tras la última re-revisión (R14-I)"
   - "[N-SM] §6 Revocation enmendada por DEC-BR-017 §0 (0.1–0.8; publicada en Notion, Fase 4)"
   - "DEC-BR-017 §1–§10 (ACCEPTED 2026-09-25) — vocabulario canónico §6"
   - "DEC-BR-006 (RULE-CNS-025, RULE-CNS-026, RULE-CNS-027; LEGAL DECISION 1–7) — ACEPTADA 2026-09-23"
@@ -44,7 +45,7 @@ scope:
     Disponible en cualquier estado de Study, tenant, SchoolParticipation, Enrollment,
     ConsentContext (incluido PAUSED) y BillingSubscription (DEFERRED): solo exige tenant existente
     y cadena del titular (R0.6, INV-6).
-  blocksDataReal: "Sí: LD-02, LD-03 (definitivos de RH3 y R8h), LD-04, LD-05, LD-12, LD-22, LD-23 y el cierre formal de SM v7 deben resolverse antes de datos reales."
+  blocksDataReal: "Sí: LD-02, LD-03 (definitivos de RH3 y R8h), LD-04, LD-05, LD-12, LD-22, LD-23, el cierre formal de SM v7 y la re-evaluación de NF-21 (R14-G) antes de datos reales."
 
 vocabulary: # DEC-BR-017 §6; la lista blanca rechaza cualquier otro valor (incluidos los de la tabla de correspondencia)
   id: CFG-RV-VOCABULARY
@@ -66,6 +67,7 @@ attributes:
   - tenantRef
   - chainRef # decisionChainKey resuelta en servidor
   - consentId
+  - revokedDecisionRef # R14-C: consentId de la decisión GRANTED que esta Revocation revoca; derivado en servidor; la cadena (decisionChainKey) se conserva
   - scope
   - authPath
   - recoveryMethod
@@ -101,8 +103,8 @@ flags:
 knownConflicts:
   - id: OPEN-RV-05
     topic: "Alcance del handle MANAGE_ENTRY (SEC-CNS-012 P1-04)"
-    sideA: "SM-CNS-001 §5.0 (SM:128) y ADR-006 §6.1 (A6:57): el handle 'habilita solo' V1 MANAGE/REVOCATION y RV0 (= GRD-RV-20)."
-    sideB: "SM-CNS-001 §5.2 RC1 (SM:147), RC2u (SM:149), RC3 (SM:150) y DEC-BR-017 §3 (R5-4, decidido por Carlos): el mismo handle abre el caso, vuelve a la página del caso y expresa la intención."
+    sideA: "SM-CNS-001 §5.0 (SM:131) y ADR-006 §6.1 (A6:57): el handle 'habilita solo' V1 MANAGE/REVOCATION y RV0 (= GRD-RV-20)."
+    sideB: "SM-CNS-001 §5.2 RC1 (SM:152), RC2u (SM:154), RC3 (SM:155) y DEC-BR-017 §3 (R5-4, decidido por Carlos): el mismo handle abre el caso, vuelve a la página del caso y expresa la intención."
     resolution: "DECIDIDO por Carlos (R13-3, CARLOS r3 :116): erratum SM-CNS-001 v7 §5.0 y ADR-006 §6.1 — el handle /m/ habilita V1, RV0 (trigger del portador), RC1, RC2u y RC3/RC3a, siempre al canal ligado. GRD-RV-20 refleja el alcance final."
     status: DECIDED
     blocksDataReal: false
@@ -172,16 +174,17 @@ transitions:
     routeClass: RIGHTS
     httpPost: true
     guards: [GRD-CM-01, GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-01, GRD-RV-02, GRD-RV-04, GRD-RV-08, GRD-RV-19, GRD-RV-21, GRD-RV-23]
+    revokedDecisionRef: "la decisión GRANTED vigente de la cadena, fijada en servidor (R14-C)"
     effects: ["Solo con POST explícito 'quiero revocar' desde sesión MANAGE verificada (V3 scope MANAGE desde el handle de /m/) cuyo parentRef es la cadena a revocar; abrir una página no crea solicitud."]
     emits: [REVOCATION_REQUESTED]
     payloadValues: {scope: ALL, authPath: OTP, initiatedVia: "derivado en servidor (GRD-RV-25 no aplica: sin caso → DECISION_MAKER)", originPurposeRef: "código de finalidad o ALL"}
     idempotencyKey: revocationRef
     errors: [ERR-CM-01, ERR-CM-09, ERR-RV-01, ERR-RV-04, ERR-RV-14]
     governedBy: ["SM-CNS-001 §5 R1", "DEC-BR-017 §1 (S4-06c)", "REQ-CNS-TBD-02 AC-02.1", "SEC-CNS-012 P1-05"]
-    testIds: [TEST-CNS-230]
+    testIds: [TEST-CNS-230, TEST-CNS-414, TEST-CNS-415, TEST-CNS-416]
   - id: R1r
     from: [null, REQUESTED]
-    fromNote: "∅, o una REQUESTED(authPath OTP) abierta de la misma cadena, que pasa a authPath RECOVERY (SM:136). Desde VERIFIED/CONFIRMED: no definido (OPEN-RV-02)."
+    fromNote: "∅, o la REQUESTED abierta de la decisión vigente con cualquier authPath (OTP o HUMAN_ASSISTED; SEC N-02, R13-1). Desde VERIFIED rige R10; desde CONFIRMED, R11."
     to: REQUESTED
     command: RevokeWithRecoveryLink
     authPath: RECOVERY
@@ -199,27 +202,27 @@ transitions:
     payloadValues: {scope: ALL, authPath: RECOVERY, recoveryMethod: CHANNEL_LINK, originPurposeRef: ALL, initiatedVia: "derivado en servidor (GRD-RV-25)", recoveryRef: required}
     idempotencyKey: "Idempotency-Key + handle RECOVERY (recoveryRef N:1 hacia la revocationRef abierta)"
     errors: [ERR-RV-05, ERR-RV-06, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.1 R1r", "DEC-BR-017 §2, §6", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "ADR-006 §6.2", "SEC-CNS-012 P2-06, P2-17"]
-    testIds: [TEST-CNS-231, TEST-CNS-337, TEST-CNS-339]
+    governedBy: ["SM-CNS-001 v7 §5.1 R1r (cualquier authPath)", "SEC-CNS-012 re-verificación N-02", "DEC-BR-017 §2, §6", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "ADR-006 §6.2", "SEC-CNS-012 P2-06, P2-17"]
+    testIds: [TEST-CNS-231, TEST-CNS-337, TEST-CNS-339, TEST-CNS-400]
   - id: RC3
     from: null
-    fromNote: "Solo si la cadena no tiene Revocation abierta (SM:150). Con una Revocation ya abierta en cualquier estado no terminal aplica R12 (R13-1)."
+    fromNote: "Solo si la cadena no tiene Revocation abierta (SM:155). Con una Revocation ya abierta en cualquier estado no terminal aplica R12 (R13-1)."
     to: REQUESTED
     command: "Lado Revocation de rights-case RC3 (intención expresa del DecisionMaker en la página del caso)"
     authPath: RECOVERY
     recoveryMethod: HUMAN_ASSISTED
     sameLotAs: "rights-case:RC3"
-    actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)", note: "SM v7 P-v7-3: el DecisionMaker queda probado por RH2"}
+    actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)", note: "P-v7-3 ACCEPTED (R14-A): el DecisionMaker queda probado por RH2"}
     routeClass: RIGHTS
     httpPost: true
-    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RC-08]
+    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RC-08, GRD-RC-14]
     effects: ["Mismo lote atómico que la transición RC3 del RightsCase; caseRef 1:1 con la revocationRef."]
     emits: [REVOCATION_REQUESTED]
     payloadValues: {scope: ALL, authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, initiatedVia: "derivado en servidor del origin del caso (GRD-RV-25)", caseRef: required}
     idempotencyKey: "revocationRef (caseRef 1:1)"
     errors: [ERR-RV-04, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5.2 RC3", "DEC-BR-017 §3, §6 (F-510)", "AUDIT F-H01-02"]
-    testIds: [TEST-CNS-294]
+    testIds: [TEST-CNS-294, TEST-CNS-398]
   - id: R2
     from: REQUESTED
     to: VERIFIED
@@ -265,7 +268,7 @@ transitions:
       approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef), tercer humano"
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RC-10, GRD-RC-12]
+    guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
     effects:
       - "Dos pasos en sesiones distintas, SERIALIZABLE; ambos con step-up (P-36) y aserción del IdP (GRD-RC-12); el efecto exige ambas aserciones ATTESTED por integrity_verifier (INV-13)."
       - "El sistema no evalúa suficiencia de la verificación: registra el guion versionado (placeholder LD-02)."
@@ -274,7 +277,7 @@ transitions:
     idempotencyKey: "(revocationRef, proposal_ref)"
     errors: [ERR-RV-07, ERR-RV-08, ERR-RC-04, ERR-RC-05, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5.2 RH2", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
-    testIds: [TEST-CNS-235, TEST-CNS-309]
+    testIds: [TEST-CNS-235, TEST-CNS-309, TEST-CNS-413]
   - id: R3
     from: VERIFIED
     to: CONFIRMED
@@ -311,24 +314,26 @@ transitions:
   - id: RH3
     from: VERIFIED
     to: CONFIRMED
-    command: "record_case_confirmation (función SECURITY DEFINER)"
+    command: "record_case_confirmation + cosign_case_confirmation (funciones SECURITY DEFINER; R14-B)"
     authPath: RECOVERY
     recoveryMethod: HUMAN_ASSISTED
     actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE"}
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    status: "Interino IT0 DECIDIDO (R13-4): cuatro ojos, dos RIGHTS_OPERATOR distintos. Regla definitiva = LEGAL DECISION LD-03 (OPEN-RV-06)."
-    guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RC-10, GRD-RC-12]
+    status: "Interino IT0 DECIDIDO (R13-4, R14-B): cuatro ojos, dos RIGHTS_OPERATOR distintos, mínimo 4 personas sin reutilización entre roles. Regla definitiva de quién escribe la confirmación = LEGAL DECISION LD-03 (OPEN-RV-06)."
+    guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
+    stepUp: "OPEN-RV-10: P-36 no cubre record_case_confirmation ni cosign_case_confirmation; se quitó GRD-RC-12 de RH3 hasta que Carlos lo decida"
     effects:
       - "Registra la confirmación expresa que el DecisionMaker dio en la página del caso; exige las aserciones de RH2 ATTESTED."
-      - "Cuatro ojos (R13-4): la registra un RIGHTS_OPERATOR y la co-firma otro RIGHTS_OPERATOR distinto, cada uno con su sesión CASE y grant atestado del caso y con step-up; sin co-firma no hay efecto. Mínimo de humanos: NF-19 / LIM-RC-03."
+      - "Solo tras una RH2/RH2v ATTESTED de la misma (revocationRef, caseRef), posterior al último RC3/RC3a (GRD-RV-10; SEC N-04)."
+      - "Cuatro ojos (R13-4, R14-B): la registra un RIGHTS_OPERATOR y la co-firma otro RIGHTS_OPERATOR distinto con cosign_case_confirmation; el grant del co-firmante se revalida en la tx de RH3; ninguno de los dos es aprobador de la RH2/RH2v ni de un grant del caso; sin co-firma no hay efecto."
       - "En la misma tx se encola APPLY_REVOCATION (GRD-RV-24)."
     emits: [REVOCATION_CONFIRMED]
     payloadValues: {recordedByRef: required}
     idempotencyKey: revocationRef
     errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4", "ADR-006 §6.3", "LD-03", "SEC-CNS-012 P1-07"]
-    testIds: [TEST-CNS-238, TEST-CNS-386, TEST-CNS-387]
+    governedBy: ["SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 re-verificación N-04", "ADR-006 §6.3", "LD-03", "SEC-CNS-012 P1-07"]
+    testIds: [TEST-CNS-238, TEST-CNS-386, TEST-CNS-387, TEST-CNS-402, TEST-CNS-403, TEST-CNS-404, TEST-CNS-413]
   - id: R4
     from: CONFIRMED
     to: APPLIED
@@ -336,7 +341,7 @@ transitions:
     actor: {actorType: HUMAN, actorRole: DECISION_MAKER, executor: "worker (job idempotente)", note: "el actor de la revocación es siempre el DecisionMaker (DEC-BR-017 §8)"}
     routeClass: RIGHTS
     httpPost: false
-    guards: [GRD-RV-11, GRD-RV-19, GRD-RV-23, GRD-RV-24]
+    guards: [GRD-RV-11, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-28]
     effects:
       - "Job at-least-once, idempotente por revocationRef, con reintentos hasta APPLIED; el worker lo toma de inmediato. No existe CONFIRMED sin su job (INV-RV-09)."
       - "En una tx: consent-decision C6 (CONSENT_REVOKED scope ALL) + RECEIPT_CREATED + outbox consent.revoked; effectiveAt = hora del append (RULE-CNS-025)."
@@ -344,13 +349,15 @@ transitions:
       - "Con falla de clave/integridad se acepta igual (P16; LD-05). Efecto más restrictivo definido técnicamente: desde el append, AuthorizationCheck devuelve NOT_AUTHORIZED para la cadena, con registro durable y reconciliación de la firma pendiente (SEC P2-07)."
       - "Acuse inmediato con revocationRef y recibo al canal ligado (REQ-CNS-033). Por RECOVERY, además aviso de 'revocación registrada' al canal ligado; la opción 'yo no hice esto' NO se emite en IT0 (rights-case RC1c enabled: false; LD-03/LD-04)."
       - "Aviso al colegio: no se envía (default PROVISIONAL, LD-23)."
-      - "Si hay RightsCase de la cadena: en IN_VERIFICATION habilita rights-case RC4.RESOLVED; en CONTACTING habilita RC5 (R13-1). En OPEN (solo CHANNEL_UNREACHABLE sin retorno) sigue abierto: NF-21."
+      - "Revoca solo la decisión revokedDecisionRef (R14-C); una revocación de un ciclo anterior en APPLIED/DOWNSTREAM_PENDING/DELIVERED no interfiere."
+      - "Actor DECISION_MAKER en CONSENT_REVOKED solo si lo precede una verificación probada (R2, R2r, R10, RH2, RH2v; R14-A, NF-20; GRD-RV-28)."
+      - "Si hay RightsCase del mismo ciclo: en IN_VERIFICATION habilita rights-case RC4.RESOLVED; en CONTACTING habilita RC5 (R13-1). En OPEN (solo CHANNEL_UNREACHABLE sin retorno) sigue abierto: limitación conocida LIM-RC-04 (R14-G)."
     emits: [CONSENT_REVOKED, RECEIPT_CREATED, consent.revoked]
     sameLotAs: "consent-decision:C6"
     idempotencyKey: "revocationRef (un solo CONSENT_REVOKED efectivo por cadena)"
     errors: [ERR-RV-16, ERR-CD-05]
     governedBy: ["SM-CNS-001 §5 R4, §4.2, §5.2 (S4-07)", "RULE-CNS-025", "REQ-CNS-033", "DEC-BR-017 §7", "REQ-CNS-TBD-05 AC-05.3, AC-05.4", "LD-05", "LD-23", "SEC-CNS-012 P1-01 (técnico), P2-05, P2-07"]
-    testIds: [TEST-CNS-239, TEST-CNS-331, TEST-CNS-336]
+    testIds: [TEST-CNS-239, TEST-CNS-331, TEST-CNS-336, TEST-CNS-412, TEST-CNS-417]
   - id: R5
     from: APPLIED
     to: DOWNSTREAM_PENDING
@@ -399,25 +406,25 @@ transitions:
     from: [REQUESTED, VERIFIED, CONFIRMED]
     to: FAILED
     command: WithdrawRevocationRequest
-    authPath: OTP
+    authPathIndependent: true # SEC N-03 / R14-A: depende de la sesión RIGHTS vigente de la cadena (GRD-RV-21), no del authPath proyectado
     actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
     routeClass: RIGHTS
     httpPost: true
     guards: [GRD-CM-01, GRD-CM-02, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-08, GRD-RV-15, GRD-RV-19, GRD-RV-21, GRD-RV-23]
     effects:
-      - "Solo retiro explícito del solicitante con sesión RIGHTS vigente ligada a la cadena de esta revocación (authPath OTP); se admite una solicitud nueva."
+      - "Solo retiro explícito del solicitante con sesión RIGHTS vigente ligada a la cadena de esta revocación, cualquiera sea el authPath proyectado (un R12 de un portador no lo bloquea); se admite una solicitud nueva."
       - "Serialización con R4 (GRD-RV-23): gana la primera tx que confirma; si APPLY_REVOCATION ya fue tomado o aplicado, R8 falla con ERR-RV-15; si R8 gana, el job de R4 termina sin efecto (ERR-RV-16)."
-      - "Si hay RightsCase: en IN_VERIFICATION habilita rights-case RC4.WITHDRAWN; en CONTACTING habilita RC6 (R13-1)."
+      - "Si hay RightsCase del mismo ciclo: en IN_VERIFICATION habilita rights-case RC4.WITHDRAWN; en CONTACTING habilita RC6 (R13-1)."
     emits: [REVOCATION_FAILED]
     payloadValues: {reasonCode: WITHDRAWN_BY_REQUESTER}
     idempotencyKey: revocationRef
     errors: [ERR-RV-11, ERR-RV-14, ERR-RV-15, ERR-RV-04, ERR-CM-09]
     governedBy: ["SM-CNS-001 §5 R8", "DEC-BR-017 §0.3, §5", "REQ-CNS-TBD-06 AC-06.2", "SEC-CNS-012 P1-05, P1-06 (técnico)"]
-    testIds: [TEST-CNS-243, TEST-CNS-330, TEST-CNS-332, TEST-CNS-333]
+    testIds: [TEST-CNS-243, TEST-CNS-330, TEST-CNS-332, TEST-CNS-333, TEST-CNS-401]
   - id: R8h
     from: [REQUESTED, VERIFIED, CONFIRMED]
     to: FAILED
-    command: WithdrawHumanAssistedRevocation
+    command: "WithdrawHumanAssistedRevocation (retiro pedido sin sesión RIGHTS vigente de la cadena, p. ej. solo con el handle desde la página del caso)"
     authPath: RECOVERY
     recoveryMethod: HUMAN_ASSISTED
     enabled: false
@@ -461,6 +468,7 @@ transitions:
     routeClass: RIGHTS
     httpPost: true
     guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-06, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-27]
+    raceRule: "R10 ∥ R3: tras el conflicto de expectedSequence se re-evalúa en la misma tx; si la Revocation quedó CONFIRMED se aplica R11 (sin consumir el token); nunca se consume el token sin efecto (SEC N-06)"
     effects:
       - "R13-1: la Revocation abierta (p. ej. VERIFIED con la sesión OTP expirada o el OTP bloqueado) recibe una verificación adicional; token consumido en la tx; el estado no retrocede (INV-16)."
       - "En el mismo POST sigue R3r (VERIFIED → CONFIRMED) y el job de R4."
@@ -469,25 +477,25 @@ transitions:
     idempotencyKey: "Idempotency-Key + handle RECOVERY (recoveryRef N:1)"
     errors: [ERR-RV-05, ERR-RV-06, ERR-RV-19, ERR-CM-09]
     governedBy: ["SM-CNS-001 v7 §5.1 R10", "CARLOS r3 R13-1", "SEC-CNS-012 P1-01 (opción A)"]
-    testIds: [TEST-CNS-380]
+    testIds: [TEST-CNS-380, TEST-CNS-407]
   - id: R11
     from: CONFIRMED
     to: CONFIRMED
+    kind: NOOP # SEC N-05: sin efecto sobre la evidencia
     command: "(mismo POST único de R1r) enlace sobre una Revocation abierta en CONFIRMED"
     authPath: RECOVERY
     recoveryMethod: CHANNEL_LINK
     actor: {actorType: HUMAN, actorRole: DECISION_MAKER, credential: "portador del handle RECOVERY"}
     routeClass: RIGHTS
     httpPost: true
-    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-06, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-27]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-06, GRD-RV-18, GRD-RV-23, GRD-RV-24, GRD-RV-27]
     effects:
-      - "R13-1: token consumido; se registra el control del canal y se garantiza (idempotente) el job APPLY_REVOCATION; no se re-confirma ni retrocede."
-    emits: [REVOCATION_VERIFIED]
-    payloadValues: {authPath: RECOVERY, recoveryMethod: CHANNEL_LINK, recoveryRef: required, assuranceLevel: "placeholder LD-02"}
+      - "Respuesta uniforme 'en curso'; NO consume el token ni emite evento de ledger (SEC N-05); solo verifica (idempotente) que el job APPLY_REVOCATION existe."
+    emits: []
     idempotencyKey: "Idempotency-Key + handle RECOVERY"
     errors: [ERR-RV-05, ERR-RV-19, ERR-CM-09]
-    governedBy: ["SM-CNS-001 v7 §5.1 R11", "CARLOS r3 R13-1"]
-    testIds: [TEST-CNS-381]
+    governedBy: ["SM-CNS-001 v7 §5.1 R11 (v7b)", "CARLOS r3 R13-1", "SEC-CNS-012 re-verificación N-05"]
+    testIds: [TEST-CNS-381, TEST-CNS-406]
   - id: R12
     from: [REQUESTED, VERIFIED, CONFIRMED]
     to: [REQUESTED, VERIFIED, CONFIRMED]
@@ -495,20 +503,22 @@ transitions:
     command: "Lado Revocation de rights-case RC3a (intención en la página del caso con Revocation ya abierta)"
     authPath: RECOVERY
     recoveryMethod: HUMAN_ASSISTED
-    actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)", note: "SM v7 P-v7-3"}
+    actor: {ref: UNVERIFIED_BEARER, writtenBy: "web (nunca el operador)", note: "P-v7-3 ACCEPTED (R14-A)"}
     routeClass: RIGHTS
     httpPost: true
-    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28, GRD-RC-08]
+    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-19, GRD-RV-23, GRD-RV-25, GRD-RV-27, GRD-RV-28, GRD-RC-08, GRD-RC-14]
     effects:
       - "R13-1: agrega REVOCATION_REQUESTED sobre la misma revocationRef con authPath RECOVERY / HUMAN_ASSISTED y caseRef (1:1); el estado de la Revocation no cambia (INV-16)."
-      - "Sobre REQUESTED(OTP): authPath pasa a RECOVERY/HUMAN_ASSISTED y R2 (OTP) sigue admitido; el authPath efectivo es el de la verificación que precede a la confirmación (P-v7-1, GRD-RV-28; propuesta fail-closed pendiente de cierre de Carlos)."
+      - "P-v7-1 ACCEPTED (R14-A): registra la vía adjunta HUMAN_ASSISTED sin sobrescribir el authPath proyectado; R2 (OTP) sigue admitido; el authPath efectivo lo fija GRD-RV-28."
+      - "P-v7-2 ACCEPTED (R14-A): no reinicia requestedAt ni limpia flags (SEC N-03)."
+      - "El caso lo resuelve el servidor desde la cadena del handle; un caseRef del cliente se ignora (GRD-RC-14, SEC N-01)."
       - "Sobre VERIFIED: la verificación humana continúa con RH2v. Sobre CONFIRMED: R4 corre por job durable; el caso cierra con RC4/RC5."
     emits: [REVOCATION_REQUESTED]
     payloadValues: {scope: ALL, authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, initiatedVia: "derivado en servidor (GRD-RV-25)", caseRef: required}
     idempotencyKey: "(revocationRef, caseRef)"
     errors: [ERR-RV-19, ERR-CM-09]
     governedBy: ["SM-CNS-001 v7 §5.2 R12, RC3a", "CARLOS r3 R13-1", "AUDIT F-H01-02"]
-    testIds: [TEST-CNS-382, TEST-CNS-389]
+    testIds: [TEST-CNS-382, TEST-CNS-389, TEST-CNS-398, TEST-CNS-401, TEST-CNS-411]
   - id: RH2v
     from: VERIFIED
     to: VERIFIED
@@ -521,7 +531,7 @@ transitions:
       approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef), tercer humano"
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RC-10, GRD-RC-12]
+    guards: [GRD-CM-06, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15]
     effects:
       - "R13-1: mismos dos pasos, step-up y tres humanos que RH2; verificación adicional sin retroceso (INV-16); luego RH3 con cuatro ojos."
     emits: [REVOCATION_VERIFIED]
@@ -550,7 +560,7 @@ transitions:
       - "Crea tenant_resolve.recovery_token(token_hash, tenant_id, chain_ref, recovery_ref, expires_at, consumed_at): token P-31, TTL P-15, purpose REVOCATION_RECOVERY; envío SOLO al channelRef ya ligado."
       - "K vigentes por cadena (P-16); una emisión nueva no invalida las vigentes; al llegar a K rige la ventana P-17. Los límites se cuentan aparte de la idempotencia."
       - "Superar la ventana: respuesta uniforme con opción de pedir caso humano (RC1 LIMIT_REACHED solo a pedido del portador); nunca deniega."
-      - "Un /r/ expirado no crea handle: 'pedir otro' (AC-03.3) se realiza desde el handle de /m/ con trigger REQUESTER_ASKED hasta el erratum de OPEN-RV-05."
+      - "Un /r/ expirado no crea handle: 'pedir otro' (AC-03.3) se realiza desde el handle de /m/ con trigger REQUESTER_ASKED (alcance del handle según erratum R13-3)."
     emits: [RECOVERY_TOKEN_ISSUED]
     idempotencyKey: "clave por request: (tenant_id, chainRef, trigger, requestRef) — requestRef = Idempotency-Key del POST (portador) o caseRef (sistema); SEC P1-03"
     errors: [ERR-RV-12, ERR-RV-02, ERR-CM-09]
@@ -579,16 +589,16 @@ guards:
     testIds: [TEST-CNS-230]
   - id: GRD-RV-02
     name: chain_granted
-    rule: "La cadena resuelta en servidor tiene una ConsentDecision GRANTED/PARTIALLY_GRANTED vigente (precondición de R1, R1r, RC3 y RV0)."
+    rule: "La cadena resuelta en servidor tiene una ConsentDecision GRANTED/PARTIALLY_GRANTED vigente (precondición de R1, R1r, RC3 y RV0); esa decisión es el revokedDecisionRef de la nueva Revocation, fijado en servidor (R14-C)."
     onFail: ERR-RV-02
     governedBy: ["SM-CNS-001 §5 R1, §5.1", "REQ-CNS-TBD-03 AC-03.2"]
     testIds: [TEST-CNS-230, TEST-CNS-245]
   - id: GRD-RV-04
     name: single_open_revocation_per_chain
-    rule: "≤1 Revocation no terminal por decisionChainKey, impuesto por UNIQUE parcial (tenant_id, chain_ref) WHERE state NOT IN ('COMPLETED','FAILED'); peticiones concurrentes (R1 ∥ R1r ∥ RC3) → una sola crea, las demás se adjuntan a la abierta; recoveryRef N:1 y caseRef 1:1."
+    rule: "R14-C: ≤1 Revocation no terminal por decisión GRANTED revocada, impuesto por UNIQUE parcial (tenant_id, revoked_decision_ref) WHERE state NOT IN ('COMPLETED','FAILED'); la decisionChainKey se conserva. Una revocación de un ciclo anterior (APPLIED, DOWNSTREAM_PENDING, DELIVERED) no absorbe la del consentimiento nuevo. Peticiones concurrentes sobre la misma decisión (R1 ∥ R1r ∥ RC3) → una sola crea, las demás se adjuntan; recoveryRef N:1 y caseRef 1:1."
     onFail: null # no es error: la petición se adjunta a la revocación abierta (idempotencia)
-    governedBy: ["SM-CNS-001 §5, §7", "DEC-BR-017 §0.6", "REQ-CNS-TBD-06 AC-06.2", "SEC-CNS-012 P2-05"]
-    testIds: [TEST-CNS-251, TEST-CNS-335]
+    governedBy: ["SM-CNS-001 v7 §5, §7", "CARLOS r3 R14-C", "DEC-BR-017 §0.6", "REQ-CNS-TBD-06 AC-06.2", "SEC-CNS-012 P2-05", "AUDIT-H01-rev3 N-01"]
+    testIds: [TEST-CNS-251, TEST-CNS-335, TEST-CNS-414, TEST-CNS-415, TEST-CNS-416]
   - id: GRD-RV-05
     name: fresh_revocation_otp_same_chain
     rule: "R2 exige un V3 scope REVOCATION con verification.parentRef = revocation.chainRef, del mismo decisionMakerRef y posterior a R1; una verificación MANAGE previa no basta (doble OTP deliberado). Cada verificationRef verifica a lo sumo una revocación (UNIQUE sobre revocation.verificationRef)."
@@ -621,10 +631,10 @@ guards:
     testIds: [TEST-CNS-235]
   - id: GRD-RV-10
     name: rh3_requires_attested_rh2
-    rule: "record_case_confirmation solo con las aserciones de RH2 ATTESTED; recordedByRef desde la sesión CASE."
-    onFail: ERR-RV-08
-    governedBy: ["SM-CNS-001 §5.2 RH3", "ADR-006 §6.3", "INV-13"]
-    testIds: [TEST-CNS-238]
+    rule: "record_case_confirmation solo con las aserciones ATTESTED de una RH2/RH2v de la MISMA (revocationRef, caseRef), posterior al último RC3/RC3a del caso; una VERIFIED por OTP con caso adjunto no pasa a RH3 sin esa verificación humana; recordedByRef desde la sesión CASE (SEC N-04)."
+    onFail: ERR-RV-20
+    governedBy: ["SM-CNS-001 v7 §5.2 RH3", "ADR-006 §6.3", "INV-13", "SEC-CNS-012 re-verificación N-04"]
+    testIds: [TEST-CNS-238, TEST-CNS-402]
   - id: GRD-RV-11
     name: apply_in_one_tx
     rule: "C6 + RECEIPT_CREATED + outbox en una tx; effectiveAt = hora del append; expectedSequence con reintento (§4.2). Falla de clave/integridad no bloquea (P16, LD-05)."
@@ -651,7 +661,7 @@ guards:
     testIds: [TEST-CNS-242]
   - id: GRD-RV-15
     name: explicit_withdrawal_only
-    rule: "FAILED solo por retiro explícito del solicitante con sesión RIGHTS de la cadena (R8, authPath OTP); ningún timer, OTP inválido, OTP agotado ni expiración produce FAILED."
+    rule: "FAILED solo por retiro explícito del solicitante con sesión RIGHTS vigente de la cadena (R8), sin depender del authPath proyectado (SEC N-03); ningún timer, OTP inválido, OTP agotado ni expiración produce FAILED."
     onFail: ERR-RV-11
     governedBy: ["DEC-BR-017 §0.3, §5", "SM-CNS-001 §5 R8, INV-10"]
     testIds: [TEST-CNS-243, TEST-CNS-249]
@@ -699,10 +709,10 @@ guards:
     testIds: [TEST-CNS-325]
   - id: GRD-RV-23
     name: aggregate_serialization
-    rule: "Toda transición de Revocation toma el lock de la proyección de la revocación y verifica expectedSequence en la misma tx. R8 y R4 son mutuamente excluyentes: gana la primera tx que confirma; R8 con APPLY_REVOCATION ya tomado o aplicado falla con ERR-RV-15; el job de R4 sobre una revocación que ya no está CONFIRMED termina sin efecto con ERR-RV-16."
+    rule: "Toda transición de Revocation toma el lock de la proyección de la revocación y verifica expectedSequence en la misma tx. R8 y R4 son mutuamente excluyentes: gana la primera tx que confirma; R8 con APPLY_REVOCATION ya tomado o aplicado falla con ERR-RV-15; el job de R4 sobre una revocación que ya no está CONFIRMED termina sin efecto con ERR-RV-16. Perdedor de una carrera (SEC N-06): se re-evalúa en la misma tx contra el estado nuevo (R10 → R11 si ya está CONFIRMED; RC3 → RC3a si ya hay Revocation abierta); nunca se consume un token sin efecto."
     onFail: ERR-RV-15
-    governedBy: ["SEC-CNS-012 P1-06 (técnico), P2-05", "SM-CNS-001 §4.2"]
-    testIds: [TEST-CNS-333, TEST-CNS-335]
+    governedBy: ["SEC-CNS-012 P1-06 (técnico), P2-05", "SEC-CNS-012 re-verificación N-06", "SM-CNS-001 §4.2"]
+    testIds: [TEST-CNS-333, TEST-CNS-335, TEST-CNS-407, TEST-CNS-408]
   - id: GRD-RV-24
     name: durable_apply_job
     rule: "R3, R3r y RH3 encolan ops.job(kind = APPLY_REVOCATION, revocationRef) en la misma tx que REVOCATION_CONFIRMED; el job es idempotente por revocationRef, at-least-once, con reintentos y alerta si supera el umbral operativo; no existe CONFIRMED sin job."
@@ -718,22 +728,22 @@ guards:
 
   - id: GRD-RV-26
     name: rh3_four_eyes
-    rule: "Interino IT0 (R13-4): RH3 surte efecto solo con dos RIGHTS_OPERATOR distintos (registra uno, co-firma otro), cada uno con su sesión CASE vigente y grant atestado del caso, ambos con step-up (P-36), además de las exclusiones de R7-4/R7-5; el que co-firma ≠ el que registra (CHECK y función). Sin co-firma, sin efecto (caso abierto, nunca FAILED). Regla definitiva: LD-03."
+    rule: "Interino IT0 (R13-4, R14-B): RH3 surte efecto solo con dos RIGHTS_OPERATOR distintos (registra uno con record_case_confirmation, co-firma otro con cosign_case_confirmation), cada uno con su sesión CASE vigente y un grant atestado del caso revalidado en la tx de RH3; recorder y co-firmante ∉ {aprobadores de RH2/RH2v, aprobadores de grants del caso}, comparado por sub atestado; CHECK cosigned_by_ref <> recorded_by_ref. Mínimo 4 personas reales sin reutilización (GRD-RC-15). Step-up de la co-firma: OPEN-RV-10 (P-36 no lo cubre). Sin co-firma, sin efecto (caso abierto, nunca FAILED). Regla definitiva: LD-03."
     onFail: ERR-RV-18
-    governedBy: ["CARLOS r3 R13-4", "SM-CNS-001 v7 §5.2 RH3, INV-17", "SEC-CNS-012 P1-07"]
-    testIds: [TEST-CNS-386, TEST-CNS-387]
+    governedBy: ["CARLOS r3 R13-4, R14-B", "SM-CNS-001 v7 §5.2 RH3, INV-17", "SEC-CNS-012 P1-07", "SEC-CNS-012 re-verificación N-04", "AUDIT-H01-rev3 N-08"]
+    testIds: [TEST-CNS-386, TEST-CNS-387, TEST-CNS-403, TEST-CNS-404]
   - id: GRD-RV-27
     name: attach_to_open_revocation
-    rule: "R10, R11, R12 y RH2v solo sobre la Revocation abierta (no terminal) de la misma (tenant_id, chainRef); nunca crean otra ni hacen retroceder el estado; en COMPLETED/FAILED o sin Revocation abierta no aplican (entonces rigen R1r o RC3)."
+    rule: "R10, R11, R12 y RH2v solo sobre la Revocation abierta de la decisión GRANTED vigente de la cadena (R14-C), en estado previo a APPLIED (REQUESTED, VERIFIED, CONFIRMED; lectura P-v7-5, pendiente de Carlos); desde APPLIED+ respuesta uniforme y el caso cierra por RC4/RC5; nunca crean otra ni hacen retroceder el estado (P-v7-2 ACCEPTED, R14-A); sin Revocation abierta rigen R1r o RC3."
     onFail: ERR-RV-19
-    governedBy: ["CARLOS r3 R13-1", "SM-CNS-001 v7 §5 (P-v7-2), INV-16"]
-    testIds: [TEST-CNS-384]
+    governedBy: ["CARLOS r3 R13-1, R14-A, R14-C", "SM-CNS-001 v7 §5 (P-v7-2, P-v7-5), INV-16", "AUDIT-H01-rev3 N-06"]
+    testIds: [TEST-CNS-384, TEST-CNS-411, TEST-CNS-423]
   - id: GRD-RV-28
     name: effective_auth_path_from_verification
-    rule: "El authPath/recoveryMethod de CONSENT_REVOKED y del receipt es el del REVOCATION_VERIFIED que precede a la confirmación, nunca el de la solicitud; una RH2/RH2v solo es aceptable si la Revocation tiene un REVOCATION_REQUESTED HUMAN_ASSISTED con caseRef (propuesta P-v7-1, fail-closed)."
+    rule: "P-v7-1 y NF-20 ACCEPTED (R14-A): el authPath/recoveryMethod de CONSENT_REVOKED y del receipt es el del REVOCATION_VERIFIED que precede a la confirmación, nunca el de la solicitud; el adjunto no sobrescribe el authPath proyectado; una RH2/RH2v solo es aceptable si la Revocation tiene un REVOCATION_REQUESTED HUMAN_ASSISTED con caseRef; CONSENT_REVOKED lleva actor DECISION_MAKER solo si lo precede una verificación probada (R2, R2r, R10, RH2 o RH2v). Aplica en R12, RH2, RH2v, RH3 y R4."
     onFail: ERR-RV-13
-    governedBy: ["SM-CNS-001 v7 (P-v7-1)", "DEC-BR-017 §6", "SM-CNS-001 §5.1 R1r (precedente, SM:136)"]
-    testIds: [TEST-CNS-389]
+    governedBy: ["SM-CNS-001 v7 (P-v7-1, P-v7-3)", "CARLOS r3 R14-A", "DEC-BR-017 §6", "SM-CNS-001 §5.1 R1r (precedente)"]
+    testIds: [TEST-CNS-389, TEST-CNS-412]
 
 errors:
   - id: ERR-RV-01
@@ -762,7 +772,7 @@ errors:
     testIds: [TEST-CNS-263]
   - id: ERR-RV-05
     code: RECOVERY_TOKEN_INVALID
-    response: "Respuesta uniforme (segundo uso, expirado o de otro tenant), sin revelar revocationRef. Si expiró, la respuesta indica usar el enlace de gestión para pedir otro (REQUESTER_ASKED desde /m/); desde /r/ expirado no se emite nada (OPEN-RV-05)."
+    response: "Respuesta uniforme (segundo uso, expirado o de otro tenant), sin revelar revocationRef. Si expiró, la respuesta indica usar el enlace de gestión para pedir otro (REQUESTER_ASKED desde /m/, alcance R13-3); un /r/ expirado no crea handle ni emite nada."
     emitsEvent: none
     governedBy: ["REQ-CNS-TBD-03 AC-03.3", "DEC-BR-017 §5", "SEC-CNS-012 P1-03, P2-06"]
     testIds: [TEST-CNS-231, TEST-CNS-337]
@@ -833,6 +843,12 @@ errors:
     governedBy: ["SEC-CNS-012 P1-06", "LD-03"]
     testIds: [TEST-CNS-334]
 
+  - id: ERR-RV-20
+    code: RH3_NOT_BOUND_TO_RH2
+    response: "Sin efecto: no existe una RH2/RH2v ATTESTED de la misma (revocationRef, caseRef) posterior al último RC3/RC3a"
+    emitsEvent: none
+    governedBy: ["SEC-CNS-012 re-verificación N-04"]
+    testIds: [TEST-CNS-402]
   - id: ERR-RV-18
     code: RH3_FOUR_EYES_REQUIRED
     response: "Sin efecto: falta la co-firma de un segundo RIGHTS_OPERATOR distinto, o co-firma el mismo principal; el caso sigue abierto"
@@ -850,12 +866,12 @@ events:
   - id: REVOCATION_REQUESTED
     stream: LEDGER
     emittedBy: [R1, R1r, RC3, R12, "rights-case:RC3", "rights-case:RC3a"]
-    payload: [revocationRef, scope, authPath, recoveryMethod, originPurposeRef, initiatedVia, recoveryRef, caseRef] # recoveryMethod?, recoveryRef? (CHANNEL_LINK), caseRef? (HUMAN_ASSISTED)
+    payload: [revocationRef, revokedDecisionRef, scope, authPath, recoveryMethod, originPurposeRef, initiatedVia, recoveryRef, caseRef] # revokedDecisionRef: R14-C (campo nuevo, derivado P-02 para DEC-BR-017 §6); recoveryMethod?, recoveryRef?, caseRef?
     governedBy: ["DEC-BR-017 §6"]
     testIds: [TEST-CNS-230, TEST-CNS-231, TEST-CNS-294]
   - id: REVOCATION_VERIFIED
     stream: LEDGER
-    emittedBy: [R2, R2r, RH2, R10, R11, RH2v]
+    emittedBy: [R2, R2r, RH2, R10, RH2v]
     payload: [revocationRef, authPath, recoveryMethod, assuranceLevel, verificationRef, recoveryRef, caseRef, verifiedByRef, secondApproverRef]
     governedBy: ["DEC-BR-017 §6"]
     testIds: [TEST-CNS-233, TEST-CNS-234, TEST-CNS-235]
@@ -925,7 +941,7 @@ invariants:
     governedBy: ["SM-CNS-001 §7 INV-11", "ADR-002 §10", "DEC-BR-017 §3", "SEC-CNS-005 TS-17"]
     testIds: [TEST-CNS-250]
   - id: INV-RV-01
-    statement: "≤1 Revocation no terminal por cadena (UNIQUE parcial); idempotencia por revocationRef en todas las vías; recoveryRef N:1 y caseRef 1:1; un solo CONSENT_REVOKED efectivo por cadena; cada verificationRef verifica a lo sumo una revocación."
+    statement: "≤1 Revocation no terminal por decisión revocada (revokedDecisionRef, UNIQUE parcial; R14-C); idempotencia por revocationRef en todas las vías; recoveryRef N:1 y caseRef 1:1; un solo CONSENT_REVOKED efectivo por decisión revocada; cada verificationRef verifica a lo sumo una revocación."
     governedBy: ["SM-CNS-001 §7", "DEC-BR-017 §0.6", "REQ-CNS-TBD-06 AC-06.2", "SEC-CNS-012 P1-05, P2-05"]
     testIds: [TEST-CNS-251, TEST-CNS-329, TEST-CNS-335]
   - id: INV-RV-02
@@ -964,6 +980,10 @@ invariants:
     statement: "Interino IT0: ningún RH3 surte efecto sin la co-firma de un segundo RIGHTS_OPERATOR distinto del que la registra."
     governedBy: ["SM-CNS-001 v7 §7 INV-17", "CARLOS r3 R13-4"]
     testIds: [TEST-CNS-386]
+  - id: INV-RV-10
+    statement: "R14-C: re-consentir sobre la misma decisionChainKey y revocar la decisión nueva siempre llega a APPLIED, aunque la revocación del ciclo anterior siga en APPLIED, DOWNSTREAM_PENDING (incluido deliveryFailed) o DELIVERED; cada Revocation revoca solo su revokedDecisionRef."
+    governedBy: ["CARLOS r3 R14-C", "SM-CNS-001 v7 §5, §7 (NF-22)", "RULE-CNS-TBD-02", "AUDIT-H01-rev3 N-01"]
+    testIds: [TEST-CNS-414, TEST-CNS-415, TEST-CNS-416, TEST-CNS-417]
   - id: INV-RV-09
     statement: "Toda Revocation CONFIRMED tiene un job APPLY_REVOCATION pendiente o ya aplicado; no existe CONFIRMED huérfano, y una caída entre la confirmación y R4 termina en APPLIED al reanudar el worker."
     governedBy: ["SEC-CNS-012 P1-01 (técnico)", "SM-CNS-001 R0.1"]
@@ -975,7 +995,7 @@ failClosed: >
   Fallos de guard en R1–R3/R8/RH2/RH3 rechazan sin evento y conservan el estado. R4 es la única
   transición que se acepta con falla de clave (INV-RV-07). Ante duda sobre quién revoca o sobre
   la suficiencia de la verificación, el sistema no decide: el caso queda abierto (LD-02, LD-03).
-  Donde la vía de salida no está definida (OPEN-RV-02) la revocación conserva su estado; nunca FAILED.
+  Las vías de salida de VERIFIED/CONFIRMED están definidas (R10, R11, R12, RH2v; R13-1); si ninguna es ejecutable (p. ej. dotación <4 personas, GRD-RC-15), la revocación conserva su estado y el caso queda abierto; nunca FAILED.
 
 legalDecisions:
   - {id: LD-02, topic: "Verificación suficiente por RECOVERY (CHANNEL_LINK y HUMAN_ASSISTED), assuranceLevel, equivalencia con 'same strength', guion versionado", owner: Carlos, blocksDataReal: true}
@@ -1000,4 +1020,17 @@ openItems:
   - {id: OPEN-RV-05, item: "Alcance del handle MANAGE_ENTRY: DECIDIDO R13-3; erratum aplicado en SM v7 §5.0 y ADR-006 §6.1; GRD-RV-20.", owner: Carlos, status: DECIDED, blocksDataReal: false}
   - {id: OPEN-RV-06, item: "RH3: interino IT0 DECIDIDO R13-4 (cuatro ojos, GRD-RV-26); regla definitiva de quién escribe la confirmación = LEGAL DECISION LD-03. Impacto en el mínimo de humanos: NF-19.", owner: Carlos, status: "DECIDED interino (R13-4); definitivo LEGAL DECISION (LD-03)", blocksDataReal: true}
   - {id: OPEN-RV-07, item: "R8h: interino IT0 DECIDIDO R13-4 (enabled: false); regla definitiva = LEGAL DECISION LD-03.", owner: Carlos, status: "DECIDED interino (R13-4); definitivo LEGAL DECISION (LD-03)", blocksDataReal: true}
+  - id: OPEN-RV-09
+    item: "Re-consentimiento sobre la misma decisionChainKey (AUDIT-H01-rev3 N-01): DECIDIDO R14-C — cada Revocation se liga a la decisión GRANTED que revoca (revokedDecisionRef); la cadena se conserva. Implementado en GRD-RV-02, GRD-RV-04, GRD-RV-27, INV-RV-01, INV-RV-10."
+    owner: Carlos
+    status: DECIDED
+    blocksDataReal: false
+  - {id: OPEN-RV-10, item: "Step-up de record_case_confirmation y cosign_case_confirmation (RH3): P-36 no lo cubre; decidir si se agrega a P-36 (cambio de parámetro, vuelve a Carlos) (AUDIT-H01-rev3 N-07).", owner: "lampone-security → Carlos", status: OPEN, blocksDataReal: true}
+  - {id: P-v7-1, item: "RC3a/R12: vía adjunta sin sobrescribir el authPath proyectado; authPath efectivo = el de la verificación previa a la confirmación (GRD-RV-28).", owner: Carlos, status: "ACCEPTED (R14-A)"}
+  - {id: P-v7-2, item: "Un adjunto nunca hace retroceder el estado, no reinicia requestedAt ni limpia flags (GRD-RV-27, INV-16).", owner: Carlos, status: "ACCEPTED (R14-A)"}
+  - {id: P-v7-4, item: "Cuatro ojos en RH3 = dos RIGHTS_OPERATOR distintos; mínimo 4 personas (GRD-RV-26, GRD-RC-15).", owner: Carlos, status: "ACCEPTED (R14-A, R14-B)"}
+  - {id: P-v7-5, item: "'Cualquier estado no terminal' de R13-1 leído como 'previo a APPLIED' (REQUESTED, VERIFIED, CONFIRMED); desde APPLIED el caso cierra por RC4/RC5 (AUDIT-H01-rev3 N-06).", owner: Carlos, status: "PENDING-Carlos"}
+  - {id: NF-19, item: "Mínimo de humanos para HUMAN_ASSISTED: 4 personas reales (2 RIGHTS_OPERATOR + 2 aprobadores, sin reutilización); derivados en S/R14-derivados.md.", owner: Carlos, status: "DECIDED (R14-B)"}
+  - {id: NF-20, item: "Actor DECISION_MAKER en CONSENT_REVOKED solo con verificación probada previa (GRD-RV-28).", owner: Carlos, status: "DECIDED (R14-A)"}
+  - {id: NF-22, item: "Re-consentimiento y unicidad de la revocación: por decisión revocada (= OPEN-RV-09).", owner: Carlos, status: "DECIDED (R14-C)"}
   - {id: OPEN-RV-08, item: "'Yo no hice esto' tras R4: DECIDIDO R13-2 (enabled: false en IT0, rights-case RC1c); destino = LEGAL DECISION LD-03/LD-04. AC-05.3 de REQ-REC queda diferido en IT0 por R13-2.", owner: Carlos, status: "DECIDED (R13-2); destino LEGAL DECISION (LD-03/LD-04)", blocksDataReal: true}
