@@ -1,0 +1,5 @@
+test_id,layer,file,test_name,governed_by,status
+TEST-CNS-900,unit,tests/unit/framework/example.test.ts,"dedupe: quita duplicados preservando el primer orden",SPEC-CNS-TEST-FRAMEWORK,ACTIVE
+TEST-CNS-900,unit,tests/unit/framework/example.test.ts,"dedupe: lista vacía devuelve lista vacía",SPEC-CNS-TEST-FRAMEWORK,ACTIVE
+TEST-CNS-901,integration,tests/integration/postgres-smoke.test.ts,"integración: el service container de PostgreSQL responde SELECT 1",SPEC-CNS-TEST-FRAMEWORK;ADR-002,ACTIVE
+TEST-CNS-902,contract,tests/contract/ports/example-port.contract.ts,"ExampleCounterPort contract (in-memory + array-log): 4 casos x 2 adaptadores",SPEC-CNS-TEST-FRAMEWORK;ADR-001 §11 regla (4),ACTIVE

@@ -1,0 +1,267 @@
+specId: SPEC-CNS-TEST-FRAMEWORK
+title: "Marco de tests en CI (unit / integration / contract)"
+status: DRAFT
+governedBy:
+  - "JIRA CA-118 (H03, épica CA-115): 'CI corre unit, integración y contrato; formato de evidencia definido' (DEC-BR-014 E5)"
+  - "DEC-BR-014-iteracion-0.md E5 (backlog IT0) y §4 (controles synthetic-only: CHECK data_class='SYNTHETIC', allowlist de email, DLP)"
+  - "ADR-001-application-stack.md §5 (supply chain: lockfile congelado, versiones exactas, allowlist de dependencias con owner, sin scripts de ciclo de vida, edad mínima 7 días), §10 (Node LTS fijado en engines, imagen base por digest) y §11 regla (4) ('cada puerto tiene una suite de contrato que pasan todos sus adaptadores')"
+  - "ADR-002-database.md (PostgreSQL, 'versión mayor vigente' — sin versión exacta ni digest fijados; ver openItems)"
+  - "ADR-003-deployment-platform.md C14 (GitHub Actions con Actions fijadas por SHA, jobs de PR sin secretos, toolchain sin credenciales de deploy, CODEOWNERS) y Tests required (TS-31: workflow sin CODEOWNERS → bloqueado)"
+  - "SEC-threat-model-IT0.md §6 (TS-08 lockfile/devDeps/sin scripts; X3 synthetic-only TS-30 sin credenciales de proveedor en CI)"
+  - "SEC-parameters-IT0.md (ningún parámetro citado aquí; CA-118 no introduce sesión, OTP ni credencial de producto)"
+jiraStory: CA-118
+owner: lampone-dev
+reviewers:
+  - lampone-qa # dueño de TEST-CNS-### una vez existan tests de dominio
+  - lampone-security # revisión pendiente de la allowlist de dependencias y del job de integración (credenciales efímeras, sin secretos)
+  - carlosoyarzun # CODEOWNERS humano (ver .github/CODEOWNERS)
+
+context: >
+  H03 monta el marco de tests que corre en LOCAL y en CI antes de que exista código de
+  dominio en src/ (que sigue bloqueado por H21/CA-136, ya mergeado, y por el resto de
+  historias de IT0). Por eso todos los tests de este spec son ejemplos mínimos fuera
+  del dominio (tests/unit/framework/**, tests/contract/ports/example-port.*, un puerto
+  ficticio) o un smoke test de infraestructura (tests/integration/postgres-smoke).
+  Alcance IT0: LOCAL + CI, solo datos sintéticos (DEC-BR-014 §4); nada de este spec
+  toca STAGING ni datos reales.
+
+scope:
+  included:
+    - "Tres capas de tests con node:test nativo: unit, integration, contract (sin frameworks de test adicionales, ADR-001 §5)"
+    - "Convención de ubicación, nombre y descubrimiento de archivos por capa"
+    - "Formato de evidencia JSON Lines por corrida, sin PII, append-only por archivo"
+    - "Registro de trazabilidad test ↔ ID gobernante (TEST-CNS-###/REQ-CNS-###/SEC-CNS-###/ADR-###) en traceability/"
+    - "Harness de integración: service container de PostgreSQL en CI, credenciales efímeras, un smoke test que verifica una sola cosa"
+    - "Harness de contrato: una suite de casos reutilizable que corre contra N adaptadores del mismo puerto (ADR-001 §11 regla 4), con un puerto de ejemplo fuera de src/"
+    - "Allowlist de dependencias directas con owner humano (ADR-001 §5), y su chequeo en CI"
+    - "Jobs de CI: unit, integration, contract, dependency-allowlist"
+  excluded:
+    - "Cualquier test o fixture de dominio real (consent, evidence, suppression, etc.): llega con el código de dominio y sus propios TEST-CNS-### (lampone-qa)"
+    - "El guardrail Ports & Adapters (CA-136/H21, ya implementado en tools/guardrails/ports-adapters/): este spec no lo modifica, solo lo referencia como convención a seguir"
+    - "E2E/UI (Playwright u otro): fuera de alcance de H03; si se necesita, es una historia aparte con su propia justificación de dependencia (ADR-001 §5)"
+    - "Pin por digest exacto de la imagen de PostgreSQL: ADR-002 fija solo 'versión mayor vigente', no una versión ni digest concretos (ver openItems)"
+
+layers:
+  - id: unit
+    location: "tests/unit/**/*.test.ts"
+    purpose: "Funciones y módulos puros o casi puros, sin I/O real (DB, red, filesystem más allá de fixtures locales)."
+    runner: "node --test nativo, vía tools/testing/run-tests.ts unit tests/unit"
+    npmScript: "test:unit"
+    ciJob: unit
+    example: "tests/unit/framework/example.test.ts (placeholder, se retira con el primer test unitario de dominio)"
+  - id: integration
+    location: "tests/integration/**/*.test.ts"
+    purpose: "I/O real contra un servicio externo (hoy: solo PostgreSQL vía service container de CI o docker compose local). Nunca contra staging ni datos reales (DEC-BR-014 §4)."
+    runner: "node --test nativo, vía tools/testing/run-tests.ts integration tests/integration"
+    npmScript: "test:integration"
+    ciJob: integration
+    example: "tests/integration/postgres-smoke.test.ts: se omite (skip, no falla) si TEST_DATABASE_URL no está definida"
+  - id: contract
+    location: "tests/contract/**/*.test.ts"
+    purpose: "Una suite de casos por puerto (ADR-001 §11) que corre, sin cambios, contra cada adaptador del puerto (ADR-001 §11 regla 4: 'cada puerto tiene una suite de contrato que pasan todos sus adaptadores')."
+    runner: "node --test nativo, vía tools/testing/run-tests.ts contract tests/contract"
+    npmScript: "test:contract"
+    ciJob: contract
+    convention: >
+      Por puerto: un archivo `<puerto>.contract.ts` que exporta
+      `run<Puerto>Contract(adapterName, factory)` con los casos (usa node:test
+      internamente) y un archivo `<puerto>.test.ts` que lo registra contra cada
+      adaptador (fake en memoria y adaptador IT0, como exige ADR-001 §11 regla 4).
+      Cuando existan puertos reales en src/server/ports/**, sus adaptadores en
+      src/infra/adapters/** se importan desde el *.test.ts de tests/contract/ports/.
+    example: >
+      tests/contract/ports/example-port.ts (puerto ficticio ExampleCounterPort, no un
+      puerto real de ADR-001 §11), tests/contract/ports/example-port.contract.ts (casos)
+      y tests/contract/ports/adapters/{in-memory,array-log}.adapter.ts (dos
+      implementaciones distintas que pasan la misma suite), registrados en
+      example-port.test.ts.
+
+runner:
+  tool: "node --test (node:test nativo de Node.js)"
+  rationale: >
+    ADR-001 §5 pide requisitos por efecto, no por herramienta, y minimizar
+    dependencias; node:test ya es la convención del repo (CA-136/H21, tests/guardrails)
+    y no agrega ninguna dependencia. No se adopta Jest, Vitest, Mocha ni ningún otro
+    framework para H03: harían falta varias dependencias nuevas (runner, matchers,
+    a veces un transformador) sin necesidad, contra ADR-001 §5.
+  discovery: >
+    tools/testing/run-tests.ts recorre el árbol de la capa con node:fs (no glob de
+    shell: los scripts de npm corren con /bin/sh, que no soporta "**" de forma
+    portable) buscando "*.test.ts" (también admite .mts/.mjs/.js por si algún test no
+    necesita TypeScript), ignora "fixtures/" y "node_modules/", no sigue symlinks
+    (fail-closed, igual que tools/guardrails/ports-adapters), y si no hay archivos
+    termina en éxito con un aviso (no bloquea CI si una capa aún no tiene tests).
+  reporters: >
+    Cada capa corre con dos reporters de node:test en paralelo (soportado de forma
+    nativa con pares --test-reporter/--test-reporter-destination): "spec" hacia stdout
+    (salida humana en logs de CI) y tools/testing/evidence-reporter.ts hacia el archivo
+    de evidencia de la corrida (ver "Evidence format").
+
+traceability:
+  location: "traceability/test-matrix.csv"
+  format: >
+    CSV con columnas: test_id,layer,file,test_name,governed_by,status. `test_id` es el
+    ID canónico (TEST-CNS-### para tests de dominio; el rango TEST-CNS-900..999 queda
+    reservado para tests del propio marco/framework, no de dominio — ver la nota de
+    reserva más abajo). `governed_by` es una lista separada por ";" de IDs
+    (REQ-CNS-###, RULE-CNS-###, SEC-CNS-###, ADR-###, DEC-BR-###). `status` es
+    DRAFT/ACTIVE/RETIRED. Cada test nuevo de dominio agrega o actualiza una fila; los
+    tests del propio framework (900-999) se retiran de la matriz cuando se retira el
+    test. Mantenido por lampone-qa; lampone-dev solo agrega la fila de los tests que
+    implementa junto con su spec/ADR gobernante.
+  idReservation: >
+    TEST-CNS-900..999: reservado para tests que verifican el marco de tests mismo
+    (esta spec), nunca para tests de dominio. Evita colisión con la numeración real de
+    TEST-CNS-### que asigna lampone-qa por ADR/spec.
+  namingConvention: >
+    El nombre de cada test (primer argumento de test()) debe empezar con su ID
+    gobernante exacto seguido de un espacio y una descripción breve (ej.
+    "TEST-CNS-045 revocación: ..."), porque tools/testing/evidence-reporter.ts extrae
+    los IDs del nombre por regex y los vuelca en el campo "governedBy" de cada línea de
+    evidencia; un test sin ID en el nombre queda con governedBy=[] en la evidencia (no
+    falla el test, pero rompe la trazabilidad automática y debe corregirse en revisión).
+
+evidenceFormat:
+  what: "JSON Lines (un objeto JSON por línea), un archivo por corrida de capa: evidence/test-runs/<layer>-<runId>.jsonl"
+  producedBy: "tools/testing/evidence-reporter.ts (reporter nativo de node:test, no un test runner nuevo)"
+  schema: "test-evidence/v1"
+  fields:
+    - { name: schema, value: "\"test-evidence/v1\"" }
+    - { name: runId, description: "GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT en CI; local-<uuid> fuera de CI" }
+    - { name: commitSha, description: "GITHUB_SHA en CI; `git rev-parse HEAD` local; 'UNKNOWN' si no hay git" }
+    - { name: recordedAt, description: "ISO 8601 UTC, hora de emisión de la línea (no de inicio de la corrida)" }
+    - { name: layer, description: "unit | integration | contract" }
+    - { name: file, description: "ruta relativa al repo del archivo de test" }
+    - { name: testName, description: "nombre completo del test, incluido el ID gobernante" }
+    - { name: testNumber, description: "número de test dentro del proceso de node:test" }
+    - { name: durationMs, description: "duración del caso" }
+    - { name: result, description: "pass | fail | skip | todo" }
+    - { name: governedBy, description: "IDs extraídos de testName por regex (TEST-CNS-###, REQ-CNS-###, RULE-CNS-###, SEC-CNS-###, API-CNS-###, PRIV-CNS-###, UX-CNS-###, DEC-CNS-###, DEC-BR-###, ADR-###)" }
+    - { name: error, description: "null si no falló; si falló, { code, message } con el mensaje truncado a 200 caracteres — nunca el stack completo ni valores de datos" }
+  piiPolicy: >
+    Cero PII por diseño: no hay campo de usuario, tenant, email, RUT ni ningún dato de
+    sujeto (los tests de este spec son sobre el propio marco/infraestructura, no sobre
+    datos, y así debe seguir siendo cuando lleguen tests de dominio: ningún test de
+    dominio debe volcar valores reales al nombre del test ni al mensaje de error que
+    termina en evidencia — esa disciplina es responsabilidad de quien escriba el test,
+    lampone-qa la revisa).
+  appendOnly: >
+    Cada corrida escribe un archivo nuevo (nombrado por runId, único por definición);
+    ningún proceso reabre ni reescribe un archivo de una corrida anterior. La propiedad
+    "append-only" es a nivel de archivo-por-corrida, no de un log único creciente: eso
+    evita que una corrida corrompa la evidencia de otra y simplifica el paralelismo de
+    jobs de CI (cada job de capa escribe su propio archivo).
+  storageDecision: >
+    DECISIÓN Y JUSTIFICACIÓN (lampone-dev, sujeta a revisión de lampone-security /
+    Carlos): la evidencia de test runs NO se commitea al repo, ni siquiera en CI.
+    evidence/test-runs/ está en .gitignore. Motivos: (1) evidence/ hasta ahora está
+    vacío salvo su README ("Estado: vacía (pre-build)"); volcar un archivo por cada
+    corrida de cada PR generaría cientos de archivos JSONL en el árbol versionado sin
+    valor de auditoría a largo plazo (a diferencia del ledger de integridad de
+    ADR-002, que sí es evidencia evidentiary); (2) evita el riesgo de que un mensaje de
+    error de un test futuro de dominio filtre algo sensible al historial de git, que es
+    prácticamente irreversible, mientras que un artefacto de CI tiene retención
+    acotada; (3) es la evidencia de una corrida de CI, no la evidencia de runtime de
+    consentimiento/revocación que sí exige el Master Plan en evidence/ (SEC-CNS-###,
+    PRIV-CNS-###). En su lugar: cada job de CI sube evidence/test-runs/*.jsonl como
+    artefacto de GitHub Actions (actions/upload-artifact, retención por defecto del
+    repo) y el nombre del artefacto incluye el runId y el job; el enlace al artefacto
+    (no su contenido) puede citarse en el PR o en Jira. En LOCAL, el archivo queda en
+    disco (gitignorado) para depuración y se puede borrar en cualquier momento. Si
+    Carlos prefiere evidencia commiteada (p. ej. para una auditoría externa de G-IT0-EXIT),
+    es un cambio de un renglón en .gitignore y en este documento, no de código.
+
+integrationHarness:
+  postgres:
+    ciService: >
+      El job "integration" de .github/workflows/tests.yml levanta un service container
+      `postgres:16` (imagen oficial, sin credenciales embebidas) fijado por el digest
+      del índice multi-arch resuelto el 2026-09-27
+      (sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54,
+      postgres 16.15 sobre debian:trixie-slim). El usuario/contraseña/DB los define el
+      propio job como variables efímeras del step (no secrets de GitHub, no hay nada
+      que proteger: es una instancia desechable, solo para el smoke test, sin red hacia
+      ningún otro entorno). Nunca corre en el mismo job que sube artefactos con
+      credenciales de despliegue (ADR-003 C14).
+    smokeTest: "tests/integration/postgres-smoke.test.ts: SELECT 1, una sola verificación (conectividad + que el servidor responde), sin esquema ni fixtures."
+    localDev: >
+      Si hay Docker disponible, el desarrollador levanta un Postgres local (docker
+      compose de infra/ una vez exista, o `docker run postgres:16`) y exporta
+      TEST_DATABASE_URL antes de `npm run test:integration`; sin la variable, el test
+      se omite (skip), no falla, así que `npm run ci` sigue pasando en un clon limpio
+      sin Docker.
+  openItems:
+    - >
+      ADR-002 fija "PostgreSQL (versión mayor vigente)", no una versión exacta ni un
+      digest de imagen. postgres:16 (16.15) es una elección PROVISIONAL de este spec
+      para que el job de integración exista y sea reproducible (digest fijado), sujeta
+      a que ADR-002/ADR-003 (o una revisión de lampone-architect) confirme la versión
+      mayor vigente antes de datos reales; si cambia, este spec y el digest del
+      workflow se actualizan juntos.
+
+contractHarness:
+  status: >
+    Ejemplo funcional con un puerto ficticio (ExampleCounterPort, no un puerto real de
+    ADR-001 §11) porque src/server/ports/** aún no existe (ningún puerto real está
+    implementado; eso llega con el código de dominio). Cuando exista el primer puerto
+    real, su suite de contrato sigue exactamente el patrón de
+    tests/contract/ports/example-port.*.
+
+dependencyAllowlist:
+  location: "tools/guardrails/dependency-allowlist.json"
+  governedBy: "ADR-001 §5, ADR-001 §11 nota final; openItem diferido de CA-136/SEC-CNS-010 ('Allowlist de dependencias con owner... diferida a H03')"
+  scope: "Dependencias DIRECTAS de package.json (dependencies + devDependencies); no resuelve transitivos (eso ya lo cubre tools/guardrails/ports-adapters/manifest.ts para SDKs 'forbidden')"
+  check: "tools/guardrails/dependency-allowlist-check.ts (script npm guardrail:dependency-allowlist): falla si package.json o package-lock.json (packages[\"\"]) declaran una dependencia directa ausente del allowlist, o con una versión distinta de la fijada en el allowlist."
+  humanReviewGate: >
+    El checker automático NO decide si una dependencia es aceptable: solo verifica que
+    lo declarado coincida con el allowlist. La aprobación humana (ADR-001 §5: "toda
+    dependencia propuesta por un agente IA requiere revisión humana") ocurre al
+    revisar el PR que modifica tools/guardrails/dependency-allowlist.json, protegido
+    por CODEOWNERS (Carlos + revisor humano de seguridad pendiente de designar, igual
+    que tools/guardrails/ports-adapters/). Las tres entradas actuales (typescript,
+    @types/node, pg) quedan con status "pending-human-review" hasta esa revisión.
+
+npmScripts:
+  - { name: "test:unit", command: "node tools/testing/run-tests.ts unit tests/unit" }
+  - { name: "test:integration", command: "node tools/testing/run-tests.ts integration tests/integration" }
+  - { name: "test:contract", command: "node tools/testing/run-tests.ts contract tests/contract" }
+  - { name: "guardrail:dependency-allowlist", command: "node tools/guardrails/dependency-allowlist-check.ts" }
+  - { name: "ci", note: "extendido, no roto: sigue typecheck → test (guardrail P&A) → guardrail:ports-adapters, y ahora agrega guardrail:dependency-allowlist → test:unit → test:integration → test:contract" }
+
+ciJobs:
+  workflow: ".github/workflows/tests.yml"
+  jobs:
+    - { name: unit, description: "npm ci --ignore-scripts, typecheck, test:unit" }
+    - { name: integration, description: "npm ci --ignore-scripts, service container postgres:16@sha256:..., credenciales efímeras del step, test:integration con TEST_DATABASE_URL" }
+    - { name: contract, description: "npm ci --ignore-scripts, test:contract" }
+    - { name: dependency-allowlist, description: "npm ci --ignore-scripts, guardrail:dependency-allowlist" }
+  conventions: "Actions fijadas por SHA, permissions: contents: read, sin secretos, npm ci --ignore-scripts, Node 24.21.0 (mismo patrón que .github/workflows/guardrails.yml de CA-136)."
+
+testCases:
+  - id: TC-FRAMEWORK-01
+    layer: unit
+    file: "tests/unit/framework/example.test.ts"
+    expect: PASS
+    reason: "Ejemplo mínimo fuera de dominio; demuestra que la capa unit corre y produce evidencia."
+  - id: TC-FRAMEWORK-02
+    layer: integration
+    file: "tests/integration/postgres-smoke.test.ts"
+    expect: "PASS (con TEST_DATABASE_URL) o SKIP (sin ella)"
+    reason: "El job de integración de CI siempre tiene TEST_DATABASE_URL (service container); local sin Docker se omite sin romper npm run ci."
+  - id: TC-FRAMEWORK-03
+    layer: contract
+    file: "tests/contract/ports/example-port.test.ts"
+    expect: PASS
+    reason: "La misma suite de 4 casos corre contra 2 adaptadores distintos (8 tests), demostrando ADR-001 §11 regla (4)."
+  - id: TC-FRAMEWORK-04
+    layer: n/a
+    file: "tools/guardrails/dependency-allowlist-check.ts"
+    expect: "FAIL si se declara una dependencia directa fuera del allowlist o con versión distinta"
+    reason: "Verificado manualmente durante la implementación (ver reporte de PR); no tiene fixture automatizada en esta versión (openItem)."
+
+openItems:
+  - "TC-FRAMEWORK-04 (guardrail de allowlist) no tiene test automatizado con fixture, solo verificación manual documentada en el PR; considerar una fixture de package.json temporal si lampone-qa lo prioriza."
+  - "postgres:16@sha256:... es una elección provisional (ver integrationHarness.postgres.openItems); no cierra la versión de ADR-002."
+  - "Las 3 entradas de dependency-allowlist.json quedan 'pending-human-review' hasta que Carlos (o el revisor humano de seguridad que designe) apruebe el PR de CODEOWNERS."
+  - "No se verificó end-to-end en esta implementación el job de integración contra un Postgres real vía Docker local: el daemon de Docker no estaba disponible en el entorno de desarrollo usado; se verificó el camino de 'skip' sin TEST_DATABASE_URL y la lógica de conexión se revisó por lectura. Pendiente de una corrida real (CI, que sí tiene el service container, o un desarrollador con Docker activo) antes de cerrar H03."
+  - "El rango reservado TEST-CNS-900..999 para tests del propio framework es una convención de esta spec, no una decisión de Notion; si lampone-qa ya tiene un esquema de numeración distinto para TEST-CNS-###, esta reserva debe conciliarse con él antes de asignar los primeros TEST-CNS-### reales."
