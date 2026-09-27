@@ -1,14 +1,25 @@
-# Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3).
+# Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4f (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3; F-011/SEC-CNS-013/F-CT-10/F-CT-11 fixes 2026-09-27).
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de RC1).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en RC1), N2-03 (unicidad por ciclo); AUDIT-H01-rev4 M-04.
 # No es la RightsRequest de [N-SM] §7 (A5 F-511). Sin estado de expiración ni de rechazo:
 # nunca deniega. Toda acción del operador es una función SECURITY DEFINER con actor desde su sesión.
+# rev. 4d: F-011 (auditoría CA-116, P2) — RC2u pasa a httpPost: true (POST explícito con CSRF desde /m/), corrigiendo el disparo previo por GET (INV-CM-08, DEC-BR-017 §2). Ver changeNote en la transición RC2u.
+# rev. 4e: SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c) — RC3, RC3a, RC4.RESOLVED,
+# RC4.WITHDRAWN, RC5, RC6 y RC2u suman GRD-CM-01/06/07/10 y GRD-RV-20 según corresponda, con sus errors;
+# RC1 fuente BEARER suma GRD-CM-07; RC2 suma GRD-CM-15 (N-4c-02). RC2u mantenía actor SYSTEM_GUARD
+# (cambio a UNVERIFIED_BEARER pendiente de F-005/DEC-BR-018; ver nota PENDING en la transición). Sin
+# cambio de semántica de consentimiento/revocación/elegibilidad.
+# rev. 4f (2026-09-27, Carlos aprobó PR #6): F-CT-10 (P1) — RC2u pasa a actor {ref: UNVERIFIED_BEARER},
+# resolviendo el PENDING de rev. 4e (F-005, DEC-BR-018): SYSTEM_GUARD contradecía GRD-CM-15 y TEST-CNS-445
+# (el ledger nunca registra SYSTEM_GUARD desde web); RC2u siempre fue un POST web del portador. F-CT-11
+# (P2) revisado: ERR-CM-01 en RC4.RESOLVED/WITHDRAWN/RC5/RC6 es legítimo (onFail de GRD-CM-06, ya en sus
+# guards desde rev. 4e); falso positivo, sin cambios. Ver changeNote de RC2u.
 specId: SPEC-CNS-SM-RIGHTS-CASE
 title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
 smId: SM-CNS-001
 smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
 aggregateType: RightsCase
-version: "0.4.2"
+version: "0.4.5"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -167,7 +178,7 @@ transitions:
     httpPostNote: "Solo la fuente BEARER es un POST; la apertura SYSTEM (R9) es interna (SEC N2-01)."
     guards: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04] # comunes a ambas fuentes
     guardsBySource: # SEC-CNS-012 re-verificación rev. 4 N2-01: una lista plana hacía fallar la fuente SYSTEM (sin credencial, CSRF ni handle)
-      BEARER: [GRD-CM-01, GRD-CM-10, GRD-RC-05, GRD-RC-14]
+      BEARER: [GRD-CM-01, GRD-CM-07, GRD-CM-10, GRD-RC-05, GRD-RC-14] # SEC-CNS-013 N-4c-03: faltaba GRD-CM-07 (actor derivado y permitido)
       SYSTEM: [GRD-RV-16, GRD-RC-16, GRD-CM-15] # N3-01: fuente = rol worker dentro de la tx de R9, nunca un campo de la request
     handleScope: "R13-3 (erratum SM v7 §5.0 / ADR-006 §6.1): el handle /m/ habilita RC1"
     effects:
@@ -181,8 +192,8 @@ transitions:
     emitsCondition: {REVOCATION_ESCALATED: "solo fuente BEARER con Revocation abierta de la decisión del ciclo"}
     payloadValues: {reasonCode: "origin", initiatedVia: DECISION_MAKER}
     idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
-    errors: [ERR-RC-01, ERR-RC-02, ERR-RC-11, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "RULE-CNS-TBD-02", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01"]
+    errors: [ERR-RC-01, ERR-RC-02, ERR-RC-11, ERR-CM-09, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "RULE-CNS-TBD-02", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01", "SEC-CNS-013 N-4c-03"]
     testIds: [TEST-CNS-291, TEST-CNS-344, TEST-CNS-397, TEST-CNS-425, TEST-CNS-426, TEST-CNS-427, TEST-CNS-444, TEST-CNS-445]
   - id: RC1c
     from: null
@@ -209,35 +220,40 @@ transitions:
     actor: {actorType: SYSTEM_GUARD}
     routeClass: RIGHTS
     httpPost: false
-    guards: [GRD-RC-06, GRD-RV-22, GRD-RV-17]
+    guards: [GRD-RC-06, GRD-RV-22, GRD-RV-17, GRD-CM-15] # SEC-CNS-013 N-4c-02: fuente SYSTEM sin GRD-CM-15
     effects:
       - "Ejecuta RV0 (revocation) al canal ligado sin handle (GRD-RV-22): trigger SCHOOL_REPORTED si el caso tiene origin SCHOOL_REPORTED, si no CASE_CONTACT. Es el único RV0 del caso en su apertura (AUDIT F-A10)."
       - "El enlace es ya la vía CHANNEL_LINK (R1r). Si la revocación termina por R1r sin RC3, el caso cierra por RC5 (tras R4) o RC6 (tras R8) desde CONTACTING (R13-1)."
     emits: [RIGHTS_CASE_CONTACTING, RECOVERY_TOKEN_ISSUED]
     payloadValues: {recoveryRef: required}
     idempotencyKey: caseRef
-    errors: [ERR-RV-12]
-    governedBy: ["SM-CNS-001 §5.2 RC2, §5.1 RV0 (SM:138)", "DEC-BR-017 §3 (S3-12), §8", "SEC-CNS-012 P1-03"]
+    errors: [ERR-RV-12, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §5.2 RC2, §5.1 RV0 (SM:138)", "DEC-BR-017 §3 (S3-12), §8", "SEC-CNS-012 P1-03", "SEC-CNS-013 N-4c-02"]
     testIds: [TEST-CNS-292, TEST-CNS-325]
   - id: RC2u
     from: OPEN
     to: CONTACTING
-    command: "(sistema) el solicitante vuelve con su /m/ a la página del caso"
+    command: "ConfirmCaseReturnViaHandle (POST explícito del solicitante desde la página del caso servida por /m/; F-011)"
     condition: "origin = CHANNEL_UNREACHABLE"
-    actor: {actorType: SYSTEM_GUARD}
+    actor: {ref: UNVERIFIED_BEARER, note: "F-CT-10 (Carlos, 2026-09-27): RC2u es un POST web; el actor SYSTEM_GUARD anterior contradecía GRD-CM-15 (el ledger nunca registra SYSTEM_GUARD desde el entrypoint web) y TEST-CNS-445. R13-5 (SM v7 R0.2) ya declara actorRole UNVERIFIED_BEARER para el portador de /m/; common.spec.yaml:99 ya listaba RC2u en el 'may' del portador."}
     routeClass: RIGHTS
-    httpPost: false
+    httpPost: true
+    httpPostNote: "F-011 (auditoría CA-116, P2): el GET de /m/ solo renderiza la página del caso (INV-CM-08, common.spec.yaml:340); RC2u solo transiciona con un POST explícito del solicitante desde esa página, con CSRF (GRD-CM-10). Antes disparaba con el GET de retorno, lo que un escáner de enlaces habría podido gatillar (DEC-BR-017 §2)."
     handleScope: "R13-3: el handle /m/ habilita RC2u"
-    guards: [GRD-RC-07, GRD-RC-14]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-20, GRD-RC-07, GRD-RC-14] # SEC-CNS-013: guards de sesión/tenant/actor del portador, igual que RC1/RC3/RC3a
     effects:
       - "Sin RV0 ni envío al correo que el solicitante declara no tener (R6-3 prevalece sobre S5-13); RV0 solo si él lo pide después."
       - "La página muestra solo 'en revisión' y el paso del guion versionado (placeholder LD-02); sin plazo prometido (R7-2)."
       - "Sin /m/ no hay retorno: FLAG-overdue (LIM-RC-01)."
+      - "Fallo de GRD-RC-07 (origin ≠ CHANNEL_UNREACHABLE): respuesta uniforme ERR-RC-01 sin evento (SEC-CNS-013)."
     emits: [RIGHTS_CASE_CONTACTING] # sin recoveryRef
     idempotencyKey: caseRef
-    errors: [ERR-RC-01]
-    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3, R7-2", "DEC-BR-017 §3"]
+    errors: [ERR-CM-01, ERR-CM-09, ERR-CM-10, ERR-RC-01, ERR-RC-09, ERR-RV-02]
+    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3, R7-2", "DEC-BR-017 §3", "SEC-CNS-013"]
     testIds: [TEST-CNS-293, TEST-CNS-399]
+    changeNote: "F-011 (auditoría de contradicciones CA-116, P2, 2026-09-27): se corrige RC2u para que solo dispare por POST explícito con CSRF (GRD-CM-10) desde la página del caso servida por /m/, siguiendo el patrón de sesión ya usado por las transiciones hermanas de rights-case iniciadas por el portador (GRD-RC-14, ya listado aquí, y GRD-CM-10 como en RC1/RC3/RC3a). Antes era SYSTEM_GUARD con httpPost: false, disparando con el simple GET de retorno, lo que contradecía INV-CM-08 (common.spec.yaml:340, 'un GET nunca transiciona') y DEC-BR-017 §2 (un escáner de enlaces que abriera /m/ habría generado RIGHTS_CASE_CONTACTING). Evento emitido (RIGHTS_CASE_CONTACTING) y estado destino (CONTACTING) no cambian: sin cambio de semántica de consentimiento/revocación/elegibilidad.
+      SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c): suma GRD-CM-01 (tenant resuelto en servidor), GRD-CM-06 (route class RIGHTS), GRD-CM-07 (actor derivado y permitido) y GRD-RV-20 (management link vigente) a los guards de RC2u, con sus errors (ERR-CM-01, ERR-CM-10, ERR-RV-02), completando el mismo patrón de sesión que ya tienen RC1/RC3/RC3a.
+      F-CT-10 (P1, Carlos 2026-09-27; F-005, DEC-BR-018): resuelve lo que SEC-CNS-013 dejaba PENDING — RC2u pasa de actor SYSTEM_GUARD a actor {ref: UNVERIFIED_BEARER}. El SYSTEM_GUARD anterior contradecía GRD-CM-15 (ninguna función SYSTEM_GUARD tiene EXECUTE para el entrypoint web) y TEST-CNS-445 (el ledger nunca registra SYSTEM_GUARD desde web); RC2u siempre fue un POST web del portador, nunca una función interna disparada por otra transición (a diferencia de RC1 fuente SYSTEM vía R9, o RV0-sistema). GRD-CM-15 y su lista de funciones no listaban RC2u como fuente SYSTEM, así que no se le quita nada ahí. command renombrado de '(sistema) el solicitante vuelve...' a ConfirmCaseReturnViaHandle por coherencia con el nuevo actor. Evento (RIGHTS_CASE_CONTACTING) y estado destino (CONTACTING) siguen sin cambio: sin cambio de semántica de consentimiento/revocación/elegibilidad."
   - id: RC3
     from: CONTACTING
     to: IN_VERIFICATION
@@ -247,13 +263,14 @@ transitions:
     httpPost: true
     sameLotAs: "revocation:RC3"
     handleScope: "R13-3: el handle /m/ habilita RC3"
-    guards: [GRD-CM-10, GRD-RC-08, GRD-RC-13, GRD-RC-14]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-20, GRD-RC-08, GRD-RC-13, GRD-RC-14] # SEC-CNS-013
     effects: ["Solo si no hay Revocation abierta: crea REQUESTED (revocation RC3, RECOVERY/HUMAN_ASSISTED) en el mismo lote; caseRef 1:1. Con Revocation ya abierta aplica RC3a (R13-1)."]
     emits: [REVOCATION_REQUESTED]
     idempotencyKey: "(caseRef, revocationRef)"
-    errors: [ERR-RV-04]
-    governedBy: ["SM-CNS-001 §5.2 RC3", "DEC-BR-017 §3, §6 (F-510)", "ADR-006 §6.3 (RC3 la escribe web)"]
+    errors: [ERR-RV-04, ERR-CM-01, ERR-CM-09, ERR-CM-10, ERR-RC-09, ERR-RV-02]
+    governedBy: ["SM-CNS-001 §5.2 RC3", "DEC-BR-017 §3, §6 (F-510)", "ADR-006 §6.3 (RC3 la escribe web)", "SEC-CNS-013"]
     testIds: [TEST-CNS-294, TEST-CNS-398, TEST-CNS-408]
+    changeNote: "SEC-CNS-013 (P1, propuesta re-evaluada contra rev. 4c): suma GRD-CM-01/06/07/10 (ya cubría CM-10) y GRD-RV-20 (management link vigente: GRD-RC-14 solo cubre el caseRef, no el handle rotado/revocado). errors += ERR-CM-01, ERR-CM-09, ERR-CM-10, ERR-RC-09 (propuesta) y ERR-RV-02 (onFail de GRD-RV-20, completitud F-SEC-013-02). Sin cambio de semántica."
   - id: RC3a
     from: CONTACTING
     to: IN_VERIFICATION
@@ -263,14 +280,15 @@ transitions:
     routeClass: RIGHTS
     httpPost: true
     handleScope: "R13-3: el handle /m/ habilita RC3/RC3a"
-    guards: [GRD-CM-10, GRD-RC-08, GRD-RC-14, GRD-RV-27]
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-20, GRD-RC-08, GRD-RC-14, GRD-RV-27] # SEC-CNS-013
     effects: ["R13-1: no crea otra Revocation; la adjunta con revocation R12 en el mismo lote (caseRef 1:1). La verificación continúa por RH2 (REQUESTED) o RH2v (VERIFIED); en CONFIRMED el job de R4 la aplica y el caso cierra por RC4.RESOLVED."]
     emits: [REVOCATION_REQUESTED]
     note: "Mismo único append que revocation R12 (mismo lote)."
     idempotencyKey: "(caseRef, revocationRef)"
-    errors: [ERR-RV-19, ERR-CM-09]
-    governedBy: ["SM-CNS-001 v7 §5.2 RC3a", "CARLOS r3 R13-1"]
+    errors: [ERR-RV-19, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RV-04, ERR-RC-09, ERR-RV-02]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC3a", "CARLOS r3 R13-1", "SEC-CNS-013"]
     testIds: [TEST-CNS-390, TEST-CNS-398, TEST-CNS-411]
+    changeNote: "SEC-CNS-013 (P1, propuesta re-evaluada contra rev. 4c): mismo fix que RC3 (GRD-CM-01/06/07/10, GRD-RV-20). errors += ERR-CM-01, ERR-CM-10, ERR-RV-04, ERR-RC-09 (propuesta) y ERR-RV-02 (onFail de GRD-RV-20, completitud F-SEC-013-02). Sin cambio de semántica."
   - id: RC4.RESOLVED
     smId: RC4 # SM-CNS-001 §5.2 define una sola RC4 con outcome RESOLVED | WITHDRAWN; aquí se separa por outcome
     from: IN_VERIFICATION
@@ -280,14 +298,15 @@ transitions:
     actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-09, GRD-RC-10] # SEC-CNS-013
     effects: ["Solo tras R4 APPLIED de la revocationRef del caso."]
     emits: [RIGHTS_CASE_CLOSED]
     payloadValues: {outcome: RESOLVED}
     idempotencyKey: caseRef
-    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RC4", "ADR-006 §6.3"]
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09, ERR-CM-01, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §5.2 RC4", "ADR-006 §6.3", "SEC-CNS-013"]
     testIds: [TEST-CNS-295]
+    changeNote: "F-CT-11 (P2, revisado 2026-09-27): falso positivo — ERR-CM-01 en errors SI corresponde: GRD-CM-06 (route_class_rights) esta en guards desde SEC-CNS-013 y su onFail es ERR-CM-01 (common.spec.yaml). No se agrega GRD-CM-01 ni se quita ERR-CM-01."
   - id: RC4.WITHDRAWN
     smId: RC4
     from: IN_VERIFICATION
@@ -296,14 +315,15 @@ transitions:
     actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-09, GRD-RC-10] # SEC-CNS-013
     effects: ["Solo tras REVOCATION_FAILED {WITHDRAWN_BY_REQUESTER} de la revocationRef del caso. En IT0 solo alcanzable si la revocación tiene authPath OTP (R8h enabled: false, OPEN-RV-07)."]
     emits: [RIGHTS_CASE_CLOSED]
     payloadValues: {outcome: WITHDRAWN}
     idempotencyKey: caseRef
-    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
-    governedBy: ["SM-CNS-001 §5.2 RC4, §5 R8"]
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09, ERR-CM-01, ERR-CM-10]
+    governedBy: ["SM-CNS-001 §5.2 RC4, §5 R8", "SEC-CNS-013"]
     testIds: [TEST-CNS-296]
+    changeNote: "F-CT-11 (P2, revisado 2026-09-27): falso positivo — ERR-CM-01 en errors SI corresponde: GRD-CM-06 (route_class_rights) esta en guards desde SEC-CNS-013 y su onFail es ERR-CM-01 (common.spec.yaml). No se agrega GRD-CM-01 ni se quita ERR-CM-01."
 
   - id: RC5
     from: CONTACTING
@@ -312,14 +332,15 @@ transitions:
     actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-09, GRD-RC-10] # SEC-CNS-013
     effects: ["R13-1: p. ej. RV0 de RC2 → R1r…R4 por CHANNEL_LINK sin pasar por RC3; el caso no queda abierto para siempre."]
     emits: [RIGHTS_CASE_CLOSED]
     payloadValues: {outcome: RESOLVED}
     idempotencyKey: caseRef
-    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
-    governedBy: ["SM-CNS-001 v7 §5.2 RC5", "CARLOS r3 R13-1", "AUDIT F-A01"]
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09, ERR-CM-01, ERR-CM-10]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC5", "CARLOS r3 R13-1", "AUDIT F-A01", "SEC-CNS-013"]
     testIds: [TEST-CNS-391, TEST-CNS-409]
+    changeNote: "F-CT-11 (P2, revisado 2026-09-27): falso positivo — ERR-CM-01 en errors SI corresponde: GRD-CM-06 (route_class_rights) esta en guards desde SEC-CNS-013 y su onFail es ERR-CM-01 (common.spec.yaml). No se agrega GRD-CM-01 ni se quita ERR-CM-01."
   - id: RC6
     from: CONTACTING
     to: WITHDRAWN
@@ -327,14 +348,15 @@ transitions:
     actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
     routeClass: RIGHTS
     httpPost: true # consola PLATFORM
-    guards: [GRD-CM-10, GRD-RC-09, GRD-RC-10]
+    guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-09, GRD-RC-10] # SEC-CNS-013
     effects: ["R13-1: retiro explícito (R8, authPath OTP) fuera del caso."]
     emits: [RIGHTS_CASE_CLOSED]
     payloadValues: {outcome: WITHDRAWN}
     idempotencyKey: caseRef
-    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09]
-    governedBy: ["SM-CNS-001 v7 §5.2 RC6", "CARLOS r3 R13-1", "AUDIT F-A01"]
+    errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09, ERR-CM-01, ERR-CM-10]
+    governedBy: ["SM-CNS-001 v7 §5.2 RC6", "CARLOS r3 R13-1", "AUDIT F-A01", "SEC-CNS-013"]
     testIds: [TEST-CNS-392, TEST-CNS-409]
+    changeNote: "F-CT-11 (P2, revisado 2026-09-27): falso positivo — ERR-CM-01 en errors SI corresponde: GRD-CM-06 (route_class_rights) esta en guards desde SEC-CNS-013 y su onFail es ERR-CM-01 (common.spec.yaml). No se agrega GRD-CM-01 ni se quita ERR-CM-01."
 
 guards:
   - id: GRD-RC-01
@@ -375,9 +397,9 @@ guards:
     testIds: [TEST-CNS-292]
   - id: GRD-RC-07
     name: channel_unreachable_no_send
-    rule: "origin = CHANNEL_UNREACHABLE: ningún RV0 ni envío al canal ligado hasta R4 salvo pedido posterior del solicitante; transición solo cuando vuelve con su /m/."
+    rule: "origin = CHANNEL_UNREACHABLE: ningún RV0 ni envío al canal ligado hasta R4 salvo pedido posterior del solicitante; transición solo con el POST explícito del solicitante desde la página del caso servida por /m/ (F-011), nunca con el GET que solo renderiza esa página (INV-CM-08)."
     onFail: null # guard de disparo
-    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3", "SEC-CNS-005 TS-24b"]
+    governedBy: ["SM-CNS-001 §5.2 RC2u", "CARLOS r3 R6-3", "SEC-CNS-005 TS-24b", "F-011"]
     testIds: [TEST-CNS-293]
   - id: GRD-RC-08
     name: intent_by_decision_maker_on_case_page
