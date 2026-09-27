@@ -83,14 +83,17 @@
       "to": "CONFIRMED",
       "via": "POST /platform/rights-cases/{caseRef}/confirmation y .../confirmation/cosign",
       "pending": [
-        "F-003"
+        "F-003",
+        "OPEN-RV-11",
+        "OPEN-RV-10",
+        "LD-03"
       ]
     },
     {
       "id": "R4",
       "from": "CONFIRMED",
       "to": "APPLIED",
-      "via": "worker APPLY_REVOCATION (job durable)"
+      "via": "worker APPLY_REVOCATION (job durable); acceptsIntegrityFailure: GRD-RV-29 deriva authPath/actor sin rechazar (INV-RV-07)"
     },
     {
       "id": "R5",
@@ -140,7 +143,7 @@
         "CONFIRMED"
       ],
       "to": "(self)",
-      "via": "worker (TTL P-19) y rights-case RC1 REQUEST_EXPIRED"
+      "via": "worker (TTL P-19) → rights-case RC1 fuente SYSTEM (REQUEST_EXPIRED) en la misma tx (GRD-RC-16, GRD-CM-15)"
     },
     {
       "id": "R10",
@@ -230,6 +233,14 @@
         "verificationRef": {
           "$ref": "common.schema.json#/$defs/Ref"
         },
+        "verifiedAuthPath": {
+          "$ref": "common.schema.json#/$defs/AuthPath",
+          "description": "Proyección del último REVOCATION_VERIFIED, escrita en su misma tx; NOT NULL desde VERIFIED (SEC N2-02, GRD-RV-29). R4 deriva de aquí authPath y actor de CONSENT_REVOKED sin rechazar (INV-RV-07)."
+        },
+        "verifiedRecoveryMethod": {
+          "$ref": "common.schema.json#/$defs/RecoveryMethod",
+          "description": "Ídem; NOT NULL si verifiedAuthPath = RECOVERY."
+        },
         "effectiveAt": {
           "$ref": "common.schema.json#/$defs/Timestamp"
         },
@@ -280,7 +291,50 @@
         "state",
         "sequence"
       ],
-      "description": "Disponible en cualquier estado de tenant, Study, SchoolParticipation, Enrollment, ConsentContext y BillingSubscription: solo exige tenant existente y cadena del titular (eligibility_to_revoke; INV-6). Ningún modelo decide la revocación ni la suficiencia de RECOVERY (LD-02, LD-03)."
+      "description": "Disponible en cualquier estado de tenant, Study, SchoolParticipation, Enrollment, ConsentContext y BillingSubscription: solo exige tenant existente y cadena del titular (eligibility_to_revoke; INV-6). Ningún modelo decide la revocación ni la suficiencia de RECOVERY (LD-02, LD-03).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "VERIFIED",
+                  "CONFIRMED",
+                  "APPLIED",
+                  "DOWNSTREAM_PENDING",
+                  "DELIVERED",
+                  "COMPLETED"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "required": [
+              "verifiedAuthPath"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verifiedAuthPath": {
+                "const": "RECOVERY"
+              }
+            },
+            "required": [
+              "verifiedAuthPath"
+            ]
+          },
+          "then": {
+            "required": [
+              "verifiedRecoveryMethod"
+            ]
+          }
+        }
+      ]
     }
   }
 }

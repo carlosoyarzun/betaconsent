@@ -727,14 +727,33 @@
         },
         "recordedByRef": {
           "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "cosignedByRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "description": "Co-firmante de RH3 (segundo RIGHTS_OPERATOR distinto, F-R14-04). Ref opaca del principal de plataforma; nunca email, nombre ni sub del IdP."
         }
       },
       "required": [
         "revocationRef"
       ],
-      "description": "recordedByRef solo en HUMAN_ASSISTED (RH3). La co-firma no está en la lista blanca de la spec (FINDING F-CT-06).",
+      "description": "recordedByRef y cosignedByRef solo en HUMAN_ASSISTED (RH3), ambos o ninguno; R3 y R3r no llevan ninguno (lista blanca, INV-CM-05). cosignedByRef ≠ recordedByRef (CHECK de DB, INV-RV-11; no expresable en JSON Schema): un append de RH3 sin cosignedByRef o con ambos iguales falla sin CONFIRMED ni job.",
       "x-pending": [
-        "F-003"
+        "F-003",
+        "OPEN-RV-11 (PENDING-CARLOS: cosignedByRef como campo nuevo de DEC-BR-017 §6 y del payload de SM v7 §5.2 RH3)"
+      ],
+      "dependentRequired": {
+        "recordedByRef": [
+          "cosignedByRef"
+        ],
+        "cosignedByRef": [
+          "recordedByRef"
+        ]
+      },
+      "x-governed-by": [
+        "revocation.spec REVOCATION_CONFIRMED, INV-RV-11",
+        "F-R14-04",
+        "CARLOS r3 R14-B",
+        "DEC-BR-017 §6"
       ]
     },
     "REVOCATION_DOWNSTREAM_EMITTED": {

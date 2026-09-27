@@ -829,7 +829,7 @@
       "required": [
         "origin"
       ],
-      "description": "RC1 fromHandle. REQUEST_EXPIRED solo lo abre R9 (sistema).",
+      "description": "RC1 fuente BEARER. REQUEST_EXPIRED solo lo abre la fuente SYSTEM (R9, GRD-RC-16): el enum lo excluye y la fuente se deriva de la identidad de ejecución, nunca de este body (GRD-CM-15).",
       "if": {
         "properties": {
           "origin": {
@@ -990,6 +990,24 @@
       "x-pending": [
         "F-003 (RH3 con 4 personas y co-firma)",
         "OPEN-RV-10 (step-up de record/cosign)",
+        "LD-03 (regla definitiva de quién escribe la confirmación)"
+      ],
+      "description": "RH3 paso 1 (record_case_confirmation). recordedByRef se deriva de la sesión CASE del RIGHTS_OPERATOR, nunca de un campo del body (GRD-CM-07, SEC-CNS-013)."
+    },
+    "CosignCaseConfirmationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "RH3 paso 2 (cosign_case_confirmation) por un segundo RIGHTS_OPERATOR distinto. Sin campos: cosignedByRef (REVOCATION_CONFIRMED, INV-RV-11) se deriva de la sesión CASE del co-firmante y recordedByRef del registro del paso 1; nunca vienen del body (GRD-CM-07, SEC-CNS-013). La co-firma se liga a la confirmación registrada del caso de la sesión (GRD-RV-26).",
+      "x-derived-server-side": [
+        "cosignedByRef",
+        "recordedByRef",
+        "revocationRef",
+        "caseRef"
+      ],
+      "x-pending": [
+        "OPEN-RV-10 (step-up de record/cosign)",
+        "OPEN-RV-11 (cosignedByRef en DEC-BR-017 §6: derivado pendiente)",
         "LD-03 (regla definitiva de quién escribe la confirmación)"
       ]
     },

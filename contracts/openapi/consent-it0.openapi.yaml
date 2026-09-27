@@ -41,12 +41,18 @@ info:
     (ISSUANCE_DECISION | STAFF_ADMIN | RIGHTS | PLATFORM), `x-eligibility`,
     `x-actor`, `x-guards`, `x-pending` (decisiones abiertas; ninguna se resuelve aquí),
     `x-not-exposed` (transiciones sin superficie HTTP y por qué).
+    Transiciones con más de una fuente (convención guardsBySource de common.spec; SEC-CNS-012
+    N2-01): `x-actor.bySource` y `x-guards-by-source` (common + una lista por fuente) las
+    transcriben; `x-guards` lista los guards efectivos de la fuente HTTP de la operación
+    (`x-actor.source`) = comunes ∪ esa fuente. Las fuentes SYSTEM y FIXTURE no tienen superficie
+    HTTP: la fuente se deriva de la identidad de ejecución (rol de DB + entrypoint), nunca de un
+    campo, header ni marca de la request (GRD-CM-15, INV-CM-11).
   x-pending:
     - "OPEN-CT-04: rango API-CNS-100…199 propuesto; reconciliar con el registro de Notion. API-CNS-001 reservado (AuthorizationCheck del consumidor)."
     - "P-26 / SEC-CNS-006: nombres de cookie __Host- y de la cabecera CSRF son ilustrativos hasta fijarse."
     - "OPEN-CT-08 (nuevo): las specs no fijan los códigos HTTP exactos por error; los status de este borrador son propuesta."
     - "F-CT-09 (nuevo, P2): listas de guards de las specs sin GRD-CM-06/GRD-CM-07/GRD-CM-01 en transiciones RIGHTS (RC3, RC3a, RH3, RC4-RC6; GRD-CM-01 también en RH2). El contrato declara la clase RIGHTS pero no añade guards; reconciliar en las specs (coordinar con lampone-security)."
-    - "OPEN-CT-09 (nuevo): I1 idempotencyKey (tenantRef, clientRequestId) sin clientRequestId en el body; se transcribe como cabecera Idempotency-Key. Cosign de RH3 sin schema de request propio (EmptyCommand)."
+    - "OPEN-CT-09: I1 idempotencyKey (tenantRef, clientRequestId) sin clientRequestId en el body; se transcribe como cabecera Idempotency-Key. (La parte 'cosign RH3 sin schema propio' se cerró: CosignCaseConfirmationRequest.)"
 servers:
   - url: http://localhost:8080
     description: LOCAL / CI únicamente (DEC-BR-014; ADR-003 rev. 7). Sin proveedor cloud, sin staging ni producción (NOT PROVISIONED).
@@ -214,12 +220,13 @@ paths:
       x-api-id: API-CNS-101
       tags: [redemption]
       summary: Canje del enlace de invitación (crea handle LANDING, 303 sin token)
-      description: Valida el hash del token, crea el handle LANDING (P-12), fija la cookie y redirige. No transiciona Invitation (la transición I4 ocurre en POST /invitation/open).
-      x-governed-by: ["invitation.spec I4 effects", "INV-CM-08", "SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20", "SEC-CNS-006 P-12"]
+      description: Valida el hash del token y, tras resolver el tenant y antes de crear el handle, GRD-IV-13 (participación o Enrollment de la invitación CLOSED, o job CASCADE_CANCEL_INVITATION pendiente → 404 uniforme de ERR-IV-01, sin handle, sin Set-Cookie y sin evento). Si pasa, crea el handle LANDING (P-12), fija la cookie y redirige. No transiciona Invitation (la transición I4 ocurre en POST /invitation/open).
+      x-governed-by: ["invitation.spec I4 effects, GRD-IV-13", "INV-CM-08", "SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20", "SEC-CNS-006 P-12", "SEC-CNS-012 re-verificación rev. 4b (3)(iii)"]
       x-state-transition: none
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "eligibility_to_participate (GRD-CM-05; DEC-BR-016 §8) evaluada al canjear; desconocido = false"
-      x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace)"]
+      x-redeem-guards: [GRD-IV-13] # chequeo del canje (no transiciona); falla → 404 uniforme
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace)", "OPEN-TC-07 (PENDING-CARLOS: GRD-IV-13 es la condición (iii) de GRD-TC-08)"]
       parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
       responses:
         '303': {$ref: '#/components/responses/RedeemSeeOther'}
@@ -269,12 +276,21 @@ paths:
       x-api-id: API-CNS-105
       tags: [staff]
       summary: EN0 — abrir Enrollment (null → ACTIVE)
-      x-governed-by: ["tenant-context.spec EN0", "DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2"]
+      x-governed-by: ["tenant-context.spec EN0 (guardsBySource)", "DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-06; rev. 4b N3-01"]
       x-state-transition: {machine: Enrollment, id: EN0, from: null, to: ACTIVE}
       x-route-class: STAFF_ADMIN
       x-eligibility: "no evalúa la fórmula de elegibilidad (AUDIT-H01-rev3 N-13); membership TENANT vigente"
-      x-actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN (DEC-BR-016 §4); en IT0 también por fixture"}
+      x-actor:
+        source: STAFF
+        bySource:
+          STAFF: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN en la consola STAFF (DEC-BR-016 §4)"}
+          FIXTURE: {actorType: FIXTURE, note: "seed sintético solo LOCAL/CI (R14-F; GRD-CM-14); sin superficie HTTP (x-not-exposed)"}
+        note: "Esta operación es siempre la fuente STAFF (GRD-CM-15): una request con actorType FIXTURE o marca de seed se evalúa como STAFF o se rechaza con ERR-CM-10; nunca registra FIXTURE (TEST-CNS-446)."
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-03]
+      x-guards-by-source:
+        common: [GRD-CM-07, GRD-CM-13, GRD-TC-03]
+        STAFF: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
+        FIXTURE: [GRD-CM-14, GRD-CM-15] # sin superficie HTTP
       x-idempotency: "(tenant_id, subject_ref, participation_ref)"
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
@@ -300,13 +316,23 @@ paths:
       tags: [staff]
       summary: EN1 — cerrar Enrollment (ACTIVE → CLOSED; cancela invitaciones no terminales en la misma tx, I9 ENROLLMENT_CLOSED)
       description: Ningún motivo es retiro de consentimiento; sin consent.revoked ni transición de ConsentDecision (INV-7, INV-CD-06).
-      x-governed-by: ["tenant-context.spec EN1", "SM-CNS-001 §6", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06", "CARLOS r3 R14-E (Q-18 opción A)"]
-      x-state-transition: {machine: Enrollment, id: EN1, from: ACTIVE, to: CLOSED, sideEffects: ["invitation I9 ENROLLMENT_CLOSED (SYSTEM_GUARD, misma tx)"]}
+      x-governed-by: ["tenant-context.spec EN1 (guardsBySource)", "SM-CNS-001 §6", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06", "CARLOS r3 R14-E (Q-18 opción A)", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05, N2-06; rev. 4b N3-01"]
+      x-state-transition: {machine: Enrollment, id: EN1, from: ACTIVE, to: CLOSED, sideEffects: ["invitation I9 ENROLLMENT_CLOSED (fuente SYSTEM, GRD-CM-15; misma tx con locks GRD-TC-08; falla propia de una invitación → job CASCADE_CANCEL_INVITATION, OPEN-TC-07)"]}
       x-route-class: STAFF_ADMIN
       x-eligibility: "no evalúa la fórmula de elegibilidad"
-      x-actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo; fixture solo en LOCAL/CI (R14-F)"}
-      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-04]
+      x-actor:
+        source: STAFF
+        bySource:
+          STAFF: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo en la consola STAFF (DEC-BR-016 §4)"}
+          FIXTURE: {actorType: FIXTURE, note: "seed sintético solo LOCAL/CI (R14-F; GRD-CM-14); sin superficie HTTP (x-not-exposed)"}
+        note: "Esta operación es siempre la fuente STAFF (GRD-CM-15); nunca registra FIXTURE (TEST-CNS-446)."
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-04, GRD-TC-08]
+      x-guards-by-source:
+        common: [GRD-CM-07, GRD-CM-13, GRD-TC-04, GRD-TC-08]
+        STAFF: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
+        FIXTURE: [GRD-CM-14, GRD-CM-15] # sin superficie HTTP
       x-idempotency: "(tenant_id, enrollment_ref, sequence)"
+      x-pending: ["OPEN-TC-07 (PENDING-CARLOS: reintento de la cascada por job frente a R14-E 'misma transacción'; tope/backoff en SEC-CNS-006)"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/EnrollmentRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
       requestBody:
@@ -369,7 +395,7 @@ paths:
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "eligibility_to_participate (GRD-CM-05; DEC-BR-016 §8; I1 incluida por R0.5 / AUDIT F-A06)"
       x-actor: {actorType: HUMAN, actorRole: INVITER}
-      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11]
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11, GRD-TC-07]
       x-idempotency: "(tenantRef, clientRequestId); clientRequestId = Idempotency-Key"
       x-pending: ["LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)", "F-012 (contextRef de LectorPro como configuración de adapter)"]
       security: [{staffSession: []}]
@@ -432,7 +458,7 @@ paths:
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "eligibility_to_participate (GRD-CM-05)"
       x-actor: {actorType: HUMAN, actorRole: INVITER, evaluatedBy: SYSTEM_GUARD}
-      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05]
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05, GRD-TC-07]
       x-idempotency: "invitationRef"
       x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace)", "DEC-BR-004 / EXT-C"]
       security: [{staffSession: []}]
@@ -462,7 +488,7 @@ paths:
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "eligibility_to_participate (GRD-CM-05)"
       x-actor: {actorType: HUMAN, actorRole: INVITER}
-      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05, GRD-IV-06]
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05, GRD-IV-06, GRD-TC-07]
       x-idempotency: "(invitationRef, rotationNo)"
       x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
       security: [{staffSession: []}]
@@ -492,8 +518,12 @@ paths:
       x-state-transition: {machine: Invitation, id: I9, from: [DRAFT, READY, SENT, OPENED, VERIFIED], to: CANCELLED}
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "sin fórmula para cancelar: el guard de I9 no incluye GRD-CM-05 (cancelar nunca se bloquea por elegibilidad)"
-      x-actor: {actorType: HUMAN, actorRole: INVITER}
+      x-actor: {source: HUMAN, actorType: HUMAN, actorRole: INVITER}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-IV-10]
+      x-guards-by-source:
+        common: [GRD-CM-07, GRD-IV-10]
+        HUMAN: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
+        SYSTEM: [GRD-TC-08, GRD-CM-15] # PARTICIPATION_CLOSED/ENROLLMENT_CLOSED: sin superficie HTTP
       x-idempotency: "(invitationRef, reasonCode)"
       x-pending: ["LD-01 (CONTESTED_BY_RECIPIENT deshabilitado)"]
       security: [{staffSession: []}]
@@ -525,7 +555,7 @@ paths:
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "eligibility_to_participate (GRD-CM-05)"
       x-actor: {ref: UNVERIFIED_BEARER}
-      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-IV-07, GRD-IV-08]
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-IV-07, GRD-IV-08, GRD-IV-13, GRD-TC-07] # GRD-IV-13 se evalúa en el canje GET /i/ (sin handle si falla)
       x-idempotency: "invitationRef (INVITATION_OPENED una sola vez)"
       x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
       security: [{landingHandle: []}]
@@ -722,7 +752,7 @@ paths:
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "eligibility_to_participate (GRD-CM-05)"
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER}
-      x-guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-07, GRD-CD-08, GRD-CD-11, GRD-CD-12]
+      x-guards: [GRD-CM-02, GRD-CM-05, GRD-CM-08, GRD-CM-09, GRD-CM-10, GRD-CD-01, GRD-CD-03, GRD-CD-05, GRD-CD-06, GRD-CD-07, GRD-CD-08, GRD-CD-11, GRD-CD-12, GRD-TC-07]
       x-idempotency: "Idempotency-Key + consentId + payloadHash"
       x-pending: ["Q-13 (detalle por finalidad del DECLINED)", "LD-06"]
       security: [{landingHandle: []}]
@@ -752,8 +782,12 @@ paths:
       x-state-transition: {machine: Invitation, id: I9, from: VERIFIED, to: CANCELLED, reasonCode: SUBJECT_MISMATCH_REPORTED, note: "precondición verificado (EXT-C)"}
       x-route-class: ISSUANCE_DECISION
       x-eligibility: "sin fórmula para cancelar (I9 no incluye GRD-CM-05)"
-      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
+      x-actor: {source: HUMAN, actorType: HUMAN, actorRole: DECISION_MAKER, precondition: "verificado (EXT-C)"}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-IV-10]
+      x-guards-by-source:
+        common: [GRD-CM-07, GRD-IV-10]
+        HUMAN: [GRD-CM-01, GRD-CM-02, GRD-CM-10]
+        SYSTEM: [GRD-TC-08, GRD-CM-15] # sin superficie HTTP
       x-idempotency: "(invitationRef, reasonCode)"
       x-pending: ["DEC-BR-004 / EXT-C"]
       security: [{landingHandle: []}]
@@ -925,11 +959,14 @@ paths:
       tags: [bearer-rights]
       summary: Único POST con handle RECOVERY — R1r+R2r+R3r, o R10+R3r, o R11 (sin efecto)
       description: |
-        Consume el recoveryRef una vez y lo adjunta a la única revocación abierta de la cadena (N:1).
+        Consume el recoveryRef una vez y lo adjunta a la única revocación abierta de la decisión a la
+        que el token está ligado (N:1; SEC N2-04: token.revoked_decision_ref = decisión del ciclo
+        vigente, GRD-RV-06). Un token ligado a la decisión de un ciclo anterior da la respuesta
+        uniforme de ERR-RV-05, no se consume y no emite nada.
         Replay solo con la misma Idempotency-Key y el mismo handle dentro de P-18; cualquier otro uso
         de un token consumido da la respuesta uniforme de ERR-RV-05, nunca la revocationRef (SEC P2-06).
         initiatedVia se deriva en servidor (SEC P2-17).
-      x-governed-by: ["revocation.spec R1r, R2r, R3r, R10, R11", "SM-CNS-001 v7 §5.1", "DEC-BR-017 §2, §6", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "ADR-006 §6.2", "SEC-CNS-012 P2-06, P2-17, N-02, N-05", "CARLOS r3 R13-1"]
+      x-governed-by: ["revocation.spec R1r, R2r, R3r, R10, R11", "SM-CNS-001 v7 §5.1", "DEC-BR-017 §2, §6", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "ADR-006 §6.2", "SEC-CNS-012 P2-06, P2-17, N-02, N-05", "SEC-CNS-012 re-verificación rev. 4 N2-04", "CARLOS r3 R13-1, R14-C"]
       x-state-transition:
         - {machine: Revocation, id: R1r, from: [null, REQUESTED], to: REQUESTED}
         - {machine: Revocation, id: R2r, from: REQUESTED, to: VERIFIED}
@@ -964,7 +1001,7 @@ paths:
       x-api-id: API-CNS-136
       tags: [platform]
       summary: RH2/RH2v paso 1 — propose_case_verification (RIGHTS_OPERATOR, sesión CASE, step-up)
-      description: El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02; INV-CM-07). Sin efecto sobre Revocation hasta la aprobación.
+      description: El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02; INV-CM-07). Sin efecto sobre Revocation hasta la aprobación. Dotación nominal atestada mínima de 4 personas (≥2 RIGHTS_OPERATOR distintos y ≥2 aprobadores distintos, sin reutilización entre roles; GRD-RC-15, R14-B); si no, ERR-RC-10 y el caso sigue abierto.
       x-governed-by: ["revocation.spec RH2, RH2v", "SM-CNS-001 §5.2 RH2, v7 RH2v", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5, R13-1", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
       x-state-transition: {machine: Revocation, id: [RH2, RH2v], step: propose, effect: none}
       x-route-class: RIGHTS
@@ -995,8 +1032,8 @@ paths:
       x-api-id: API-CNS-137
       tags: [platform]
       summary: RH2/RH2v paso 2 — approve_case_verification (PRIVACY_LEGAL o SECURITY, tercer humano) → REQUESTED|VERIFIED → VERIFIED
-      description: REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto.
-      x-governed-by: ["revocation.spec RH2, RH2v", "GRD-RV-09", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38"]
+      description: REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto. En la misma tx se proyectan verifiedAuthPath y verifiedRecoveryMethod (SEC N2-02, GRD-RV-29). Dotación mínima de 4 personas (GRD-RC-15, R14-B; ERR-RC-10).
+      x-governed-by: ["revocation.spec RH2, RH2v", "GRD-RV-09", "GRD-RC-15", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38", "CARLOS r3 R14-B"]
       x-state-transition:
         - {machine: Revocation, id: RH2, from: REQUESTED, to: VERIFIED}
         - {machine: Revocation, id: RH2v, from: VERIFIED, to: VERIFIED}
@@ -1028,7 +1065,7 @@ paths:
       x-api-id: API-CNS-138
       tags: [platform]
       summary: RH3 paso 1 — record_case_confirmation (RIGHTS_OPERATOR, sesión CASE); sin efecto sin co-firma
-      description: Interino IT0 (R13-4, R14-B) — cuatro ojos, dos RIGHTS_OPERATOR distintos, mínimo 4 personas sin reutilización entre roles. La regla definitiva es LEGAL DECISION LD-03.
+      description: Interino IT0 (R13-4, R14-B) — cuatro ojos, dos RIGHTS_OPERATOR distintos (registra uno, co-firma otro; cualquiera de los dos puede ser el proponente de RH2, AUDIT-H01-rev4 M-04), ninguno aprobador de RH2/RH2v ni de un grant del caso; mínimo 4 personas (≥2 RIGHTS_OPERATOR y ≥2 aprobadores distintos, GRD-RC-15) sin reutilización entre roles. recordedByRef se deriva de la sesión CASE, nunca del body (GRD-CM-07). La regla definitiva es LEGAL DECISION LD-03.
       x-governed-by: ["revocation.spec RH3", "SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 N-04, P1-07", "ADR-006 §6.3", "LD-03"]
       x-state-transition: {machine: Revocation, id: RH3, step: record, effect: none}
       x-route-class: RIGHTS
@@ -1059,22 +1096,22 @@ paths:
       x-api-id: API-CNS-139
       tags: [platform]
       summary: RH3 paso 2 — cosign_case_confirmation por un segundo RIGHTS_OPERATOR distinto (VERIFIED → CONFIRMED)
-      description: Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Encola APPLY_REVOCATION en la misma tx.
-      x-governed-by: ["revocation.spec RH3", "CARLOS r3 R14-B", "INV-17", "LD-03"]
+      description: Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Encola APPLY_REVOCATION en la misma tx. REVOCATION_CONFIRMED registra recordedByRef y cosignedByRef (refs opacas UUIDv4 del principal de plataforma, distintas entre sí e iguales a las columnas de la confirmación; INV-RV-11, F-R14-04); sin cosignedByRef el append falla y no hay efecto. cosignedByRef se deriva de la sesión CASE del co-firmante, nunca del body (GRD-CM-07).
+      x-governed-by: ["revocation.spec RH3, REVOCATION_CONFIRMED, INV-RV-11", "CARLOS r3 R14-B", "INV-17", "F-R14-04", "LD-03"]
       x-state-transition: {machine: Revocation, id: RH3, from: VERIFIED, to: CONFIRMED, step: cosign, sideEffects: ["job durable APPLY_REVOCATION"]}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, cosignedByRef: "segundo RIGHTS_OPERATOR distinto, sesión CASE propia"}
       x-guards: [GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
       x-idempotency: "revocationRef"
-      x-pending: ["F-003", "F-CT-06 (co-firma RH3 fuera de la lista blanca de eventos del ledger)", "OPEN-RV-10", "LD-03"]
+      x-pending: ["F-003", "OPEN-RV-11 (PENDING-CARLOS: cosignedByRef es campo nuevo de la lista blanca de DEC-BR-017 §6 y cambia el payload de SM v7 §5.2 RH3; derivados pendientes)", "OPEN-RV-10", "LD-03"]
       security: [{caseSession: []}]
       parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CosignCaseConfirmationRequest'}
       responses:
         '200':
           description: Co-firma registrada; revocationState = CONFIRMED si se cumplen los cuatro ojos.
@@ -1100,7 +1137,7 @@ paths:
       x-eligibility: "eligibility_to_revoke: no lee *.active de tenant, participación, matrícula ni contexto (INV-CM-06)"
       x-actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN/INVITER vía acceso staff IT0_ONLY"}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-03]
-      x-idempotency: "(tenant_id, chainRef) — ≤1 no terminal"
+      x-idempotency: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
       x-pending: ["LD-03 (quién opera y con qué base)", "LD-20 / DEC-BR-005"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
@@ -1122,15 +1159,24 @@ paths:
       operationId: openRightsCase
       x-api-id: API-CNS-146
       tags: [bearer-rights]
-      summary: RC1 fromHandle — abrir caso humano (null → OPEN); REQUEST_EXPIRED solo lo abre R9
+      summary: RC1 fuente BEARER — abrir caso humano (null → OPEN); REQUEST_EXPIRED solo lo abre la fuente SYSTEM (R9)
       description: Respuesta «en revisión» idéntica exista o no la cadena, o si el input se rechaza (ERR-RC-01, ERR-RC-02); nunca «denegado»; sin plazo prometido (INV-RC-03). caseContact solo en el body, solo dominios reservados en IT0.
-      x-governed-by: ["rights-case.spec RC1", "SM-CNS-001 §5.2 RC1, §5 R9", "DEC-BR-017 §3, §4", "CARLOS r3 R5-4, R6-3", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "AUDIT F-A03, F-A11"]
+      x-governed-by: ["rights-case.spec RC1 (guardsBySource)", "SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-03; rev. 4b N3-01"]
       x-state-transition: {machine: RightsCase, id: RC1, from: null, to: OPEN}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {ref: UNVERIFIED_BEARER}
+      x-actor:
+        source: BEARER
+        bySource:
+          BEARER: {ref: UNVERIFIED_BEARER, note: "POST desde el handle /m/ o /r/ (R13-5)"}
+          SYSTEM: {actorType: SYSTEM_GUARD, note: "solo desde R9 en la misma tx (GRD-RC-16); sin superficie HTTP (x-not-exposed)"}
+        note: "Una request que declare origin REQUEST_EXPIRED, actorType SYSTEM_GUARD o una marca de fuente se rechaza sin caso ni evento (GRD-CM-15, TEST-CNS-445)."
       x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RC-05, GRD-RC-14]
-      x-idempotency: "(tenant_id, chainRef) — ≤1 no terminal"
+      x-guards-by-source:
+        common: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04]
+        BEARER: [GRD-CM-01, GRD-CM-10, GRD-RC-05, GRD-RC-14]
+        SYSTEM: [GRD-RV-16, GRD-RC-16, GRD-CM-15] # sin superficie HTTP
+      x-idempotency: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
       x-uniform-response: "200 InReviewAck para éxito, caso ya abierto, cadena inexistente e input rechazado"
       x-pending: ["F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"]
       security: [{manageHandle: []}]
@@ -1217,18 +1263,19 @@ x-not-exposed:
   - {id: RC2u, machine: RightsCase, reason: "La spec la declara httpPost false y disparada por el retorno por /m/; un GET no puede transicionar (INV-CM-08) y no hay POST compatible. Sin superficie HTTP en este borrador.", pending: ["F-CT-01", "F-011", "F-006", "OPEN-CT-01"]}
   - {id: RC2, machine: RightsCase, reason: "worker (primera acción; RV0 al canal ligado con trigger CASE_CONTACT/SCHOOL_REPORTED)"}
   - {id: RC1c, machine: RightsCase, reason: "deshabilitada (R13-2; LD-03/LD-04)", pending: ["F-004", "LD-03", "LD-04"]}
-  - {id: RC1.fromR9, machine: RightsCase, reason: "interno desde R9 (REQUEST_EXPIRED)"}
+  - {id: "RC1 (fuente SYSTEM)", machine: RightsCase, reason: "SYSTEM_GUARD desde R9 en la misma tx (origin REQUEST_EXPIRED); sin handle, POST ni CSRF; tenant, chainRef y revokedDecisionRef del registro de la Revocation (GRD-RC-16); fuente = rol worker (GRD-CM-15). Si falla, R9 y RC1 se revierten y el job se reintenta (ERR-RC-11); nunca FAILED ni cierre.", guards: [GRD-CM-06, GRD-RC-01, GRD-RC-02, GRD-RC-04, GRD-RV-16, GRD-RC-16, GRD-CM-15]}
   - {id: [TN1, TN2], machine: TenantStatus, reason: "sin operación HTTP: fixture (LOCAL/CI) o migración revisada (DEC-BR-014 §5)", pending: ["F-007", "F-CT-07 (TENANT_STATUS_CHANGED sin estado destino)"]}
   - {id: [SP1, SP2, SP3, SP4], machine: SchoolParticipation, reason: "sin operación HTTP (SP4 + I9 PARTICIPATION_CLOSED en la misma tx)", pending: ["F-007"]}
+  - {id: "[EN0, EN1] (fuente FIXTURE)", machine: Enrollment, reason: "seed sintético solo LOCAL/CI por el rol de seed del bootstrap LOCAL (GRD-CM-13, GRD-CM-14, GRD-CM-15); sin POST ni CSRF; tenant desde el manifiesto de seed. La superficie HTTP de EN0/EN1 es solo la fuente STAFF (API-CNS-105/106).", guards: [GRD-CM-07, GRD-CM-13, GRD-CM-14, GRD-CM-15], pending: ["F-007", "OPEN-CM-08"]}
   - {id: CX1, machine: ConsentContextReadiness, reason: "SYSTEM_GUARD; fixture o migración en IT0"}
   - {id: [I5, I6, I7], machine: Invitation, reason: "internas: mismo lote que V3 / C3 / C5"}
   - {id: I7u, machine: Invitation, reason: "deshabilitada (NF-03 / Q-15)"}
   - {id: I8, machine: Invitation, reason: "worker SYSTEM_GUARD (expiración lazy + barrido)"}
-  - {id: "I9 (PARTICIPATION_CLOSED, ENROLLMENT_CLOSED, CONTESTED_BY_RECIPIENT)", machine: Invitation, reason: "internas en la tx de SP4/EN1; CONTESTED_BY_RECIPIENT deshabilitado (LD-01)"}
+  - {id: "I9 (PARTICIPATION_CLOSED, ENROLLMENT_CLOSED, CONTESTED_BY_RECIPIENT)", machine: Invitation, reason: "fuente SYSTEM (SYSTEM_GUARD) en la tx de SP4/EN1, bajo SAVEPOINT y locks de GRD-TC-08, fuente = rol worker (GRD-CM-15); falla propia de una invitación → job CASCADE_CANCEL_INVITATION (idempotente, rol worker). CONTESTED_BY_RECIPIENT deshabilitado (LD-01).", guards: [GRD-CM-07, GRD-IV-10, GRD-TC-08, GRD-CM-15], pending: ["OPEN-TC-07", "LD-01"]}
   - {id: [V4, V5, V6, V6r, V6c, V6a], machine: DecisionMakerVerification, reason: "internas/worker; V6a es contabilidad del padre"}
   - {id: [C4, C7, C8, M3], machine: ConsentDecision, reason: "deshabilitadas (F-025; EXT-E / F-023; EXT-E / Q-16; LD-01)"}
   - {id: C6, machine: ConsentDecision, reason: "interna: mismo lote que Revocation R4"}
-  - {id: [R4, R5, R6, R7, R9], machine: Revocation, reason: "worker (APPLY_REVOCATION, consent.revoked, ACK, erasure.confirmed, TTL P-19)", pending: ["OPEN-CT-02 (firma/transporte outbox, ACK y erasure.confirmed)", "F-CT-04 (consent.revoked sin subjectRef)"]}
+  - {id: [R4, R5, R6, R7, R9], machine: Revocation, reason: "worker (APPLY_REVOCATION, consent.revoked, ACK, erasure.confirmed, TTL P-19). R4 acceptsIntegrityFailure: GRD-RV-29 deriva authPath/recoveryMethod/actor de la proyección verificada sin rechazar (SEC N2-02, INV-RV-07). R9 abre rights-case RC1 fuente SYSTEM en la misma tx (SEC N2-01).", pending: ["OPEN-CT-02 (firma/transporte outbox, ACK y erasure.confirmed)", "F-CT-04 (consent.revoked sin subjectRef)"]}
   - {id: R8h, machine: Revocation, reason: "deshabilitada (R13-4; LD-03)"}
 x-pending-global:
   - "LD-15 (retención de eventos de seguridad emitidos por V1/V2/V3/RV0)"

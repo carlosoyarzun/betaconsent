@@ -289,7 +289,7 @@
         "ERR-RC-06": "SCHOOL_CANNOT_EXECUTE_REVOCATION",
         "ERR-RC-10": "ROSTER_INSUFFICIENT"
       },
-      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-TC-01 y ERR-TC-02 son de worker o fixture."
+      "description": "Códigos externos de Problem. Los errores de respuesta uniforme (ERR-CM-01, ERR-IV-01, ERR-OT-01, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-07, ERR-RC-09) NO tienen código externo. ERR-CM-11 es de arranque (sin HTTP). ERR-IV-08, ERR-RV-17 y ERR-RC-08 corresponden a transiciones deshabilitadas sin operación. ERR-RV-10, ERR-RV-16, ERR-RC-11 (SYSTEM_ESCALATION_RETRY, fuente SYSTEM de RC1), ERR-TC-01 y ERR-TC-02 son de worker o fixture."
     },
     "RightsPaths": {
       "const": [

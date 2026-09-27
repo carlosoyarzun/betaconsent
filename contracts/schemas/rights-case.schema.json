@@ -29,7 +29,7 @@
       "id": "RC1",
       "from": null,
       "to": "OPEN",
-      "via": "POST /rights-case/open; interno desde R9",
+      "via": "POST /rights-case/open (fuente BEARER); fuente SYSTEM desde R9 en la misma tx, sin HTTP (GRD-RC-16, GRD-CM-15)",
       "pending": [
         "F-006"
       ]
@@ -122,6 +122,13 @@
         "chainRef": {
           "$ref": "common.schema.json#/$defs/Ref"
         },
+        "revokedDecisionRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "description": "Decisión del ciclo del caso, fijada en servidor al abrir (GRD-RC-02) y nunca modificada (R14-C, SEC N2-03). UNIQUE parcial (tenant_id, chain_ref, revoked_decision_ref) de casos no terminales.",
+          "x-pending": [
+            "F-002 (revokedDecisionRef, R14-C, sin enmienda en Notion)"
+          ]
+        },
         "revocationRef": {
           "oneOf": [
             {
@@ -168,12 +175,13 @@
         "caseRef",
         "tenantRef",
         "chainRef",
+        "revokedDecisionRef",
         "origin",
         "initiatedVia",
         "state",
         "sequence"
       ],
-      "description": "Sin estado de expiración ni de rechazo; nunca deniega (INV-RC-01). PARKED no existe (LD-04). case_contact vive solo en pii.case_contact y no forma parte de la proyección."
+      "description": "Sin estado de expiración ni de rechazo; nunca deniega (INV-RC-01). PARKED no existe (LD-04). case_contact vive solo en pii.case_contact y no forma parte de la proyección. ≤1 caso no terminal por ciclo (tenant_id, chainRef, revokedDecisionRef; GRD-RC-02)."
     }
   }
 }

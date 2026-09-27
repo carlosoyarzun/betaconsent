@@ -79,19 +79,25 @@
         "SUSPENDED"
       ],
       "to": "CLOSED",
-      "via": "sin operación HTTP (+ I9 PARTICIPATION_CLOSED en la misma tx)"
+      "via": "sin operación HTTP (+ I9 PARTICIPATION_CLOSED fuente SYSTEM en la misma tx, GRD-TC-08)",
+      "pending": [
+        "OPEN-TC-07"
+      ]
     },
     {
       "id": "EN0",
       "from": null,
       "to": "ACTIVE",
-      "via": "POST /staff/enrollments"
+      "via": "POST /staff/enrollments (fuente STAFF); fuente FIXTURE por seed LOCAL/CI sin HTTP (GRD-CM-14, GRD-CM-15)"
     },
     {
       "id": "EN1",
       "from": "ACTIVE",
       "to": "CLOSED",
-      "via": "POST /staff/enrollments/{enrollmentRef}/close"
+      "via": "POST /staff/enrollments/{enrollmentRef}/close (fuente STAFF); fuente FIXTURE por seed sin HTTP; + I9 ENROLLMENT_CLOSED fuente SYSTEM en la misma tx (GRD-TC-08)",
+      "pending": [
+        "OPEN-TC-07"
+      ]
     },
     {
       "id": "CX1",

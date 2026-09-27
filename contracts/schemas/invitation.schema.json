@@ -50,7 +50,7 @@
       "id": "I4",
       "from": "SENT",
       "to": "OPENED",
-      "via": "POST /invitation/open"
+      "via": "POST /invitation/open (el canje GET /i/ aplica GRD-IV-13)"
     },
     {
       "id": "I5",
@@ -99,7 +99,11 @@
         "VERIFIED"
       ],
       "to": "CANCELLED",
-      "via": "POST /staff/invitations/{invitationRef}/cancel; POST /decision/subject-mismatch; interno en la tx de SP4/EN1"
+      "via": "POST /staff/invitations/{invitationRef}/cancel y POST /decision/subject-mismatch (fuente HUMAN); fuente SYSTEM en la tx de SP4/EN1 o job CASCADE_CANCEL_INVITATION, sin HTTP (GRD-TC-08, GRD-CM-15)",
+      "pending": [
+        "OPEN-TC-07",
+        "LD-01"
+      ]
     }
   ],
   "$defs": {
