@@ -1,4 +1,7 @@
 # Reglas transversales de las máquinas de estado IT0 (H01 / CA-116), rev. 4 (SM-CNS-001 v7 + R14-A, R14-F).
+# rev. 4d (2026-09-27): SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c): aclara GRD-CM-07
+# para recordedActor fijo (RH2/RH2v/RH3) y añade a ERR-CM-10 la nota de respuesta externa uniforme en
+# rutas del portador; suma RV0-sistema y RC2 a la lista de funciones cubiertas por GRD-CM-15.
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (fuente SYSTEM/FIXTURE desde la identidad de ejecución: GRD-CM-15, INV-CM-11).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (convención guardsBySource), N2-02 (rejectsOnIntegrity), N2-06 (FIXTURE: CHECK de DB, environment de catálogo, canal de seed).
 # rev. 2 (2026-09-27): correcciones de SEC-CNS-012 (SEC-review-CA116) y AUDIT-H01.
@@ -8,7 +11,7 @@ specId: SPEC-CNS-SM-COMMON
 title: "State machines IT0 — reglas transversales (tenancy, clases de ruta, ledger, actor, fail-closed)"
 smId: SM-CNS-001
 smSection: "§0, §1, §7 (el §6 se modela en tenant-context.spec.yaml, solo en lo que afecta a las cinco máquinas)"
-version: "0.4.2"
+version: "0.4.3"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -198,9 +201,9 @@ guards:
     testIds: [TEST-CNS-107, TEST-CNS-116, TEST-CNS-315]
   - id: GRD-CM-07
     name: actor_derived_and_allowed
-    rule: "Actor derivado de la identidad autenticada; rol permitido por transición; actor IA o identidad de servicio como HUMAN → rechazo por CHECK."
+    rule: "Actor derivado de la identidad autenticada; rol permitido por transición; actor IA o identidad de servicio como HUMAN → rechazo por CHECK. SEC-CNS-013: con recordedActor fijo (RH2, RH2v, RH3), el guard se aplica a los principales ejecutores (verifiedByRef, secondApproverRef, recordedByRef, cosignedByRef), derivados de la sesión y principal_kind HUMAN; actorType/actorRole del evento lo fija la spec, nunca un parámetro."
     onFail: ERR-CM-10
-    governedBy: ["SM-CNS-001 R0.2, INV-12", "DEC-BR-014 §6", "DEC-BR-017 §8", "MP §32"]
+    governedBy: ["SM-CNS-001 R0.2, INV-12", "DEC-BR-014 §6", "DEC-BR-017 §8", "MP §32", "SEC-CNS-013"]
     testIds: [TEST-CNS-106]
   - id: GRD-CM-08
     name: idempotency_key
@@ -247,13 +250,13 @@ guards:
     testIds: [TEST-CNS-429, TEST-CNS-441]
   - id: GRD-CM-15
     name: source_from_execution_identity
-    rule: "SEC N3-01: la fuente de guardsBySource se deriva de la identidad de ejecución (rol de DB de la conexión + entrypoint del proceso), nunca de un campo, header, parámetro, reasonCode, origin ni actorType enviado en la request. BEARER/STAFF/HUMAN = entrypoint web con app_rw (consola PLATFORM: platform_rw) y sesión resuelta por session_hash. SYSTEM = rol worker, solo dentro de la tx de la transición que la dispara (R9 → RC1; SP4/EN1 → I9) o en el job durable de kind cerrado que la reintenta (ops.claim_due_jobs; GRD-TC-08). FIXTURE = rol de seed del bootstrap LOCAL (GRD-CM-14). Las funciones de las ramas SYSTEM y FIXTURE (RC1 desde R9, cascada I9 y su job, EN0/EN1 por seed; nombres en H02 / ADR-006 §6) son SECURITY DEFINER con REVOKE EXECUTE FROM PUBLIC y sin EXECUTE para app_rw ni platform_rw (chequeo de catálogo, igual que CONTEXT_READINESS en GRD-TC-05). Una request HTTP que declare origin REQUEST_EXPIRED, reasonCode PARTICIPATION_CLOSED/ENROLLMENT_CLOSED, actorType SYSTEM_GUARD/FIXTURE o una marca de fuente se rechaza sin efecto ni evento; la base rechaza la llamada con permission denied si el código la intentara."
+    rule: "SEC N3-01: la fuente de guardsBySource se deriva de la identidad de ejecución (rol de DB de la conexión + entrypoint del proceso), nunca de un campo, header, parámetro, reasonCode, origin ni actorType enviado en la request. BEARER/STAFF/HUMAN = entrypoint web con app_rw (consola PLATFORM: platform_rw) y sesión resuelta por session_hash. SYSTEM = rol worker, solo dentro de la tx de la transición que la dispara (R9 → RC1; SP4/EN1 → I9; RightsCase RC2 tras RC1; RV0 con trigger CASE_CONTACT/SCHOOL_REPORTED, SEC-CNS-013 N-4c-01/N-4c-02) o en el job durable de kind cerrado que la reintenta (ops.claim_due_jobs; GRD-TC-08). FIXTURE = rol de seed del bootstrap LOCAL (GRD-CM-14). Las funciones de las ramas SYSTEM y FIXTURE (RC1 desde R9, RC2, RV0-sistema, cascada I9 y su job, EN0/EN1 por seed; nombres en H02 / ADR-006 §6) son SECURITY DEFINER con REVOKE EXECUTE FROM PUBLIC y sin EXECUTE para app_rw ni platform_rw (chequeo de catálogo, igual que CONTEXT_READINESS en GRD-TC-05). Una request HTTP que declare origin REQUEST_EXPIRED, reasonCode PARTICIPATION_CLOSED/ENROLLMENT_CLOSED, actorType SYSTEM_GUARD/FIXTURE o una marca de fuente se rechaza sin efecto ni evento; la base rechaza la llamada con permission denied si el código la intentara."
     onFail: ERR-CM-10
-    governedBy: ["SEC-CNS-012 re-verificación rev. 4b N3-01", "SM-CNS-001 R0.2 (actor derivado en servidor)", "ADR-002 §5 (roles app_rw, worker, platform_rw)", "ADR-006 §2 (EXECUTE por job_kind), §6 (allowlist SECURITY DEFINER)", "CARLOS r3 R14-F"]
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4b N3-01", "SM-CNS-001 R0.2 (actor derivado en servidor)", "ADR-002 §5 (roles app_rw, worker, platform_rw)", "ADR-006 §2 (EXECUTE por job_kind), §6 (allowlist SECURITY DEFINER)", "CARLOS r3 R14-F", "SEC-CNS-013 N-4c-01, N-4c-02"]
     testIds: [TEST-CNS-444, TEST-CNS-445, TEST-CNS-446]
     testNotes:
-      TEST-CNS-444: "Catálogo: las funciones de las ramas SYSTEM (RC1 desde R9, cascada I9 y job CASCADE_CANCEL_INVITATION) y FIXTURE (EN0/EN1 por seed) no tienen EXECUTE para PUBLIC, app_rw ni platform_rw; llamarlas con esas conexiones da permission denied y no deja fila ni evento."
-      TEST-CNS-445: "HTTP intenta la rama SYSTEM: POST RC1 con handle válido y origin=REQUEST_EXPIRED / actorType=SYSTEM_GUARD / marca de fuente, y POST I9 en la consola STAFF con reasonCode PARTICIPATION_CLOSED o ENROLLMENT_CLOSED → rechazo (ERR-CM-10 o ERR-RC-02) sin caso, sin cancelación y sin evento; el ledger nunca registra SYSTEM_GUARD desde el entrypoint web."
+      TEST-CNS-444: "Catálogo: las funciones de las ramas SYSTEM (RC1 desde R9, RC2, RV0-sistema con trigger CASE_CONTACT/SCHOOL_REPORTED, cascada I9 y job CASCADE_CANCEL_INVITATION) y FIXTURE (EN0/EN1 por seed) no tienen EXECUTE para PUBLIC, app_rw ni platform_rw; llamarlas con esas conexiones da permission denied y no deja fila ni evento."
+      TEST-CNS-445: "HTTP intenta la rama SYSTEM: POST RC1 con handle válido y origin=REQUEST_EXPIRED / actorType=SYSTEM_GUARD / marca de fuente, POST I9 en la consola STAFF con reasonCode PARTICIPATION_CLOSED o ENROLLMENT_CLOSED, y POST RV0 desde web con trigger=CASE_CONTACT/SCHOOL_REPORTED (SEC-CNS-013 N-4c-01) → rechazo (ERR-CM-10 o ERR-RC-02) sin caso, sin cancelación, sin envío y sin evento; el ledger nunca registra SYSTEM_GUARD desde el entrypoint web."
       TEST-CNS-446: "HTTP intenta la rama FIXTURE: POST EN0/EN1 en la consola STAFF con actorType=FIXTURE o marca de seed, en LOCAL y en DEV → se evalúa como STAFF (sin credencial: 404/CSRF) o se rechaza con ERR-CM-10; nunca actor FIXTURE en el ledger; el proceso web no tiene la credencial del rol de seed."
 
 errors:
@@ -314,9 +317,9 @@ errors:
     testIds: [TEST-CNS-119]
   - id: ERR-CM-10
     code: ACTOR_NOT_ALLOWED
-    response: "Rechazo determinista (rol no autorizado para la transición, actor IA, identidad de servicio, FIXTURE fuera de LOCAL/CI según R14-F o fuera de la lista blanca de GRD-CM-14)"
+    response: "Rechazo determinista (rol no autorizado para la transición, actor IA, identidad de servicio, FIXTURE fuera de LOCAL/CI según R14-F o fuera de la lista blanca de GRD-CM-14). En rutas del portador la respuesta externa es la uniforme de ERR-CM-01 (AC-07.1), como ERR-CM-02 (SEC-CNS-013)."
     emitsEvent: none
-    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6", "CARLOS r3 R14-F", "SEC-CNS-012 re-verificación rev. 4 N2-06"]
+    governedBy: ["SM-CNS-001 R0.2, §4.1 (4), INV-9, INV-12", "DEC-BR-017 §8", "DEC-BR-014 §6", "CARLOS r3 R14-F", "SEC-CNS-012 re-verificación rev. 4 N2-06", "SEC-CNS-013"]
     testIds: [TEST-CNS-106, TEST-CNS-311, TEST-CNS-441]
   - id: ERR-CM-11
     code: STARTUP_REFUSED_NON_SYNTHETIC
