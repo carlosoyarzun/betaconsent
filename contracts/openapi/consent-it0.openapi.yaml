@@ -352,3 +352,288 @@ paths:
         '403': {$ref: '#/components/responses/CsrfRejected'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
         '409': {$ref: '#/components/responses/Problem'}
+  # ---------------------------------------------------------------------------
+  # invitation (I1, I2, I3, I3r, I9 por INVITER, I4). I5–I8 internos: x-not-exposed.
+  # ---------------------------------------------------------------------------
+  /staff/invitations:
+    post:
+      operationId: createInvitation
+      x-api-id: API-CNS-110
+      tags: [staff]
+      summary: I1 — crear Invitation (null → DRAFT)
+      description: Sin tenantRef ni organizationRef en el body; el tenant del inviter se resuelve en servidor (GRD-CM-01).
+      x-governed-by: ["invitation.spec I1", "SM-CNS-001 §2 I1, R0.5", "DEC-BR-016 §4", "DEC-BR-015:42", "AUDIT F-A06, F-A07"]
+      x-state-transition: {machine: Invitation, id: I1, from: null, to: DRAFT}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05; DEC-BR-016 §8; I1 incluida por R0.5 / AUDIT F-A06)"
+      x-actor: {actorType: HUMAN, actorRole: INVITER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11]
+      x-idempotency: "(tenantRef, clientRequestId); clientRequestId = Idempotency-Key"
+      x-pending: ["LD-20 / DEC-BR-005 (GRD-IV-01: una invitación no terminal por sujeto y contexto)"]
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyRequired'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CreateInvitationRequest'}
+      responses:
+        '201':
+          description: Invitation DRAFT.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InvitationCreated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /staff/invitations/{invitationRef}/ready:
+    post:
+      operationId: markInvitationReady
+      x-api-id: API-CNS-111
+      tags: [staff]
+      summary: I2 — marcar lista (DRAFT → READY); expiresAt lo fija el servidor (P-10)
+      x-governed-by: ["invitation.spec I2", "SM-CNS-001 §2 I2, R0.5", "AUDIT F-A06"]
+      x-state-transition: {machine: Invitation, id: I2, from: DRAFT, to: READY}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: INVITER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-03]
+      x-idempotency: "(invitationRef, sequence)"
+      x-pending: ["EXT-B / DEC-BR-002 / LD-21 / F-014 (canal esperado del colegio y recipientChannelRef)", "F-CT-05 (expiresAt en I2 vs SENT + P-10)"]
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/InvitationRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/MarkInvitationReadyRequest'}
+      responses:
+        '200':
+          description: Invitation READY.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InvitationReady'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /staff/invitations/{invitationRef}/send:
+    post:
+      operationId: sendInvitation
+      x-api-id: API-CNS-112
+      tags: [staff]
+      summary: I3 — enviar (READY → SENT); el token nunca vuelve en la respuesta
+      description: El token se entrega solo por el adaptador de email IT0 (sink/allowlist, DEC-BR-014 §4.2; sin SMTP externo); solo persiste tokenHash (INV-IV-03).
+      x-governed-by: ["invitation.spec I3", "SM-CNS-001 §2 I3", "RULE-CNS-022", "DEC-BR-013", "SEC-CNS-006 P-31", "DEC-BR-014 §4, §6"]
+      x-state-transition: {machine: Invitation, id: I3, from: READY, to: SENT}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: INVITER, evaluatedBy: SYSTEM_GUARD}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05]
+      x-idempotency: "invitationRef"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace)", "DEC-BR-004 / EXT-C"]
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/InvitationRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Invitation SENT.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InvitationSent'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /staff/invitations/{invitationRef}/resend:
+    post:
+      operationId: resendInvitation
+      x-api-id: API-CNS-113
+      tags: [staff]
+      summary: I3r — reenviar (SENT → SENT) con rotación del token
+      x-governed-by: ["invitation.spec I3r", "SM-CNS-001 §2 I3r", "DEC-BR-017 E-04", "SEC-CNS-006 P-11, P-30"]
+      x-state-transition: {machine: Invitation, id: I3r, from: SENT, to: SENT}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {actorType: HUMAN, actorRole: INVITER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-04, GRD-IV-05, GRD-IV-06]
+      x-idempotency: "(invitationRef, rotationNo)"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/InvitationRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Invitation SENT con rotationNo incrementado.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InvitationSent'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /staff/invitations/{invitationRef}/cancel:
+    post:
+      operationId: cancelInvitationByStaff
+      x-api-id: API-CNS-114
+      tags: [staff]
+      summary: I9 por INVITER (DRAFT|READY|SENT|OPENED|VERIFIED → CANCELLED)
+      description: reasonCode INVITER_WITHDRAWN o TOKEN_COMPROMISED. SUBJECT_MISMATCH_REPORTED va por POST /decision/subject-mismatch; PARTICIPATION_CLOSED/ENROLLMENT_CLOSED son internos (SP4/EN1); CONTESTED_BY_RECIPIENT deshabilitado (LD-01).
+      x-governed-by: ["invitation.spec I9", "SM-CNS-001 §2 I9, §2.1 M3, §6", "DEC-BR-017 E-04"]
+      x-state-transition: {machine: Invitation, id: I9, from: [DRAFT, READY, SENT, OPENED, VERIFIED], to: CANCELLED}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "sin fórmula para cancelar: el guard de I9 no incluye GRD-CM-05 (cancelar nunca se bloquea por elegibilidad)"
+      x-actor: {actorType: HUMAN, actorRole: INVITER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-IV-10]
+      x-idempotency: "(invitationRef, reasonCode)"
+      x-pending: ["LD-01 (CONTESTED_BY_RECIPIENT deshabilitado)"]
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/InvitationRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CancelInvitationByStaffRequest'}
+      responses:
+        '200':
+          description: Invitation CANCELLED.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InvitationCancelled'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /invitation/open:
+    post:
+      operationId: openInvitation
+      x-api-id: API-CNS-115
+      tags: [bearer-invitation]
+      summary: I4 — primer POST con handle LANDING (SENT → OPENED)
+      description: Acuse sin menor, colegio, finalidades ni estado (UNVERIFIED_BEARER.mayNot). INVITATION_OPENED una sola vez.
+      x-governed-by: ["invitation.spec I4", "SM-CNS-001 §2 I4, §2.2", "ADR-001 §2", "SEC F23", "SEC-CNS-006 P-12"]
+      x-state-transition: {machine: Invitation, id: I4, from: SENT, to: OPENED}
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05)"
+      x-actor: {ref: UNVERIFIED_BEARER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-IV-07, GRD-IV-08]
+      x-idempotency: "invitationRef (INVITATION_OPENED una sola vez)"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
+      security: [{landingHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Acuse mínimo.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/InvitationOpenedAck'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+  # ---------------------------------------------------------------------------
+  # otp-challenge / DecisionMakerVerification (V1, V2/V3, V2r). V4–V6c internos.
+  # ---------------------------------------------------------------------------
+  /otp/request:
+    post:
+      operationId: requestOtp
+      x-api-id: API-CNS-120
+      tags: [bearer-otp]
+      summary: V1 — solicitar código (NOT_STARTED → CODE_SENT) al canal ligado
+      description: Sin canal ni padre en el body; el código va SOLO al channelRef ligado (GRD-OT-02) y el padre se resuelve desde el handle (GRD-OT-01). Respuesta genérica uniforme (ERR-OT-01, ERR-OT-08).
+      x-governed-by: ["otp-challenge.spec V1 (guardsByScope)", "SM-CNS-001 §3 V1, §2.1 M1, M4, §5.0", "DEC-BR-017 §1", "SEC-CNS-006 P-01, P-02, P-08"]
+      x-state-transition: {machine: DecisionMakerVerification, id: V1, from: NOT_STARTED, to: CODE_SENT}
+      x-route-class: "ISSUANCE_DECISION si scope = DECISION; RIGHTS si scope ∈ {REVOCATION, MANAGE}"
+      x-eligibility: "scope DECISION → eligibility_to_participate (GRD-CM-05); scope REVOCATION/MANAGE → eligibility_to_revoke (GRD-CM-06, nunca *.active)"
+      x-actor: {ref: UNVERIFIED_BEARER}
+      x-idempotency: "(tenantRef, parentRef, scope, requestedByHandleRef) — uno activo"
+      x-pending: ["DEC-BR-004 / EXT-C", "DEC-BR-003 / EXT-A / LD-01"]
+      security: [{landingHandle: []}, {manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RequestOtpRequest'}
+      responses:
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  /otp/submit:
+    post:
+      operationId: submitOtp
+      x-api-id: API-CNS-121
+      tags: [bearer-otp]
+      summary: V2/V3 — enviar código (CODE_SENT → CODE_SENT | VERIFIED); V4/V6/V6r/V6c internos
+      description: |
+        V3 (acierto) rota el ID de sesión (P-30) y, en scope DECISION, dispara I5 (OPENED → VERIFIED)
+        en el mismo lote. Verificar no es consentir (INV-OT-01; INV-IV-05). El código es writeOnly.
+        El rechazo no revela intentos restantes ni estado del presupuesto; en scope REVOCATION/MANAGE
+        lleva rightsPathsAvailable y nunca «denegado» (ERR-OT-07).
+      x-governed-by: ["otp-challenge.spec V2, V3, V4, V6, V6r, V6c", "SM-CNS-001 §3 V2, V3, §3.1", "SEC-CNS-006 P-03, P-04, P-27, P-28, P-30", "AUDIT F-A02", "SEC-CNS-012 P2-02"]
+      x-state-transition:
+        - {machine: DecisionMakerVerification, id: V2, from: CODE_SENT, to: CODE_SENT}
+        - {machine: DecisionMakerVerification, id: V3, from: CODE_SENT, to: VERIFIED, sideEffects: ["invitation I5 (scope DECISION)"]}
+        - {machine: DecisionMakerVerification, id: V4, from: CODE_SENT, to: LOCKED, internal: true}
+        - {machine: DecisionMakerVerification, id: V6, from: CODE_SENT, to: FAILED, internal: true}
+        - {machine: DecisionMakerVerification, id: V6r, from: CODE_SENT, to: FAILED, internal: true}
+        - {machine: DecisionMakerVerification, id: V6c, from: CODE_SENT, to: FAILED, internal: true, sideEffects: ["rotación de /m/ (FAILURE_CAP)"]}
+      x-route-class: "según scope (igual que V1)"
+      x-eligibility: "según scope (igual que V1)"
+      x-actor: {ref: UNVERIFIED_BEARER, onSuccess: {actorType: HUMAN, actorRole: DECISION_MAKER}}
+      x-idempotency: "verificationRef (un solo consumo)"
+      x-pending: ["OPEN-OT-02 (forma exacta de la respuesta de V2)"]
+      security: [{landingHandle: []}, {manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SubmitOtpRequest'}
+      responses:
+        '200':
+          description: V3 — verificado.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/OtpVerified'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '422':
+          description: V2/V4/V5/V6/V6r/V6c — rechazo sin detalle de intentos ni presupuesto.
+          content:
+            application/problem+json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/OtpRejected'}
+  /otp/resend:
+    post:
+      operationId: resendOtp
+      x-api-id: API-CNS-122
+      tags: [bearer-otp]
+      summary: V2r — reenviar código (CODE_SENT → CODE_SENT) al canal ligado
+      x-governed-by: ["otp-challenge.spec V2r", "SM-CNS-001 §3 V2r", "SEC-CNS-006 P-06", "DEC-BR-017 E-05"]
+      x-state-transition: {machine: DecisionMakerVerification, id: V2r, from: CODE_SENT, to: CODE_SENT}
+      x-route-class: "según scope (igual que V1)"
+      x-eligibility: "según scope (igual que V1)"
+      x-actor: {ref: UNVERIFIED_BEARER}
+      x-idempotency: "(verificationRef, resendCount)"
+      security: [{landingHandle: []}, {manageHandle: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '202': {$ref: '#/components/responses/UniformAccepted'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
