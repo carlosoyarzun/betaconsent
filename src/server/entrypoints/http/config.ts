@@ -15,11 +15,14 @@ export interface RightsCaseHttpConfig {
   readonly csrfCookieName: string;
   /** Cabecera CSRF (contracts/openapi parameters.CsrfToken: X-CSRF-Token). */
   readonly csrfHeaderName: string;
+  /** Cookie de sesión del flujo invitación/otp/decisión (D5, PENDING de P-26; ver consent-session.ts). */
+  readonly sessionCookieName: string;
 }
 
 const DEFAULT_MANAGE_HANDLE_COOKIE_NAME = "__Host-cns-manage";
 const DEFAULT_CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const DEFAULT_CSRF_HEADER_NAME = "x-csrf-token";
+const DEFAULT_SESSION_COOKIE_NAME = "__Host-cns-session";
 
 /**
  * Construye la configuración del entrypoint. `allowedOrigin` debe venir siempre de
@@ -39,5 +42,6 @@ export function loadRightsCaseHttpConfig(overrides: Partial<RightsCaseHttpConfig
     manageHandleCookieName: overrides.manageHandleCookieName ?? DEFAULT_MANAGE_HANDLE_COOKIE_NAME,
     csrfCookieName: overrides.csrfCookieName ?? DEFAULT_CSRF_COOKIE_NAME,
     csrfHeaderName: overrides.csrfHeaderName ?? DEFAULT_CSRF_HEADER_NAME,
+    sessionCookieName: overrides.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAME,
   };
 }
