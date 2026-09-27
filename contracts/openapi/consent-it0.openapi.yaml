@@ -600,6 +600,11 @@ paths:
       x-route-class: "ISSUANCE_DECISION si scope = DECISION; RIGHTS si scope ∈ {REVOCATION, MANAGE}"
       x-eligibility: "scope DECISION → eligibility_to_participate (GRD-CM-05); scope REVOCATION/MANAGE → eligibility_to_revoke (GRD-CM-06, nunca *.active)"
       x-actor: {ref: UNVERIFIED_BEARER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-10, GRD-OT-01, GRD-OT-02, GRD-OT-03, GRD-OT-08, GRD-OT-11, GRD-OT-12] # comunes; más x-guards-by-scope
+      x-guards-by-scope:
+        DECISION: [GRD-CM-05, GRD-OT-14]
+        REVOCATION: [GRD-CM-06]
+        MANAGE: [GRD-CM-06]
       x-idempotency: "(tenantRef, parentRef, scope, requestedByHandleRef) — uno activo"
       x-pending: ["DEC-BR-004 / EXT-C", "DEC-BR-003 / EXT-A / LD-01"]
       security: [{landingHandle: []}, {manageHandle: []}]
@@ -635,6 +640,7 @@ paths:
       x-route-class: "según scope (igual que V1)"
       x-eligibility: "según scope (igual que V1)"
       x-actor: {ref: UNVERIFIED_BEARER, onSuccess: {actorType: HUMAN, actorRole: DECISION_MAKER}}
+      x-guards: [GRD-CM-02, GRD-CM-10, GRD-OT-03, GRD-OT-04, GRD-OT-05, GRD-OT-07, GRD-OT-13] # V2 ∪ V3 (GRD-CM-02 solo V3)
       x-idempotency: "verificationRef (un solo consumo)"
       x-pending: ["OPEN-OT-02 (forma exacta de la respuesta de V2)"]
       security: [{landingHandle: []}, {manageHandle: []}]
@@ -668,6 +674,7 @@ paths:
       x-route-class: "según scope (igual que V1)"
       x-eligibility: "según scope (igual que V1)"
       x-actor: {ref: UNVERIFIED_BEARER}
+      x-guards: [GRD-CM-10, GRD-OT-02, GRD-OT-06, GRD-OT-13]
       x-idempotency: "(verificationRef, resendCount)"
       security: [{landingHandle: []}, {manageHandle: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
@@ -1005,7 +1012,7 @@ paths:
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: RECOVERY, credential: "portador del handle RECOVERY (P-18)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-06, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-25, GRD-RV-27]
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-06, GRD-RV-07, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-25, GRD-RV-27] # unión R1r/R2r/R3r/R10/R11
       x-idempotency: "Idempotency-Key + handle RECOVERY (recoveryRef N:1 hacia la revocationRef abierta)"
       x-pending: ["F-002", "OPEN-RV-13 (R1r, R10, R11 sin GRD-CM-07; fuera de alcance de SEC-CNS-013)"]
       security: [{recoveryHandle: []}]
