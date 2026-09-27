@@ -11,7 +11,9 @@ import { createInMemoryInvitationRepository } from "../../../infra/adapters/in-m
 import { createInMemoryLedgerAdapter } from "../../../infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
+import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
+import type { Environment } from "../../modules/common/types.ts";
 import type { InvitationPorts } from "../../modules/invitation/invitation.ts";
 import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/otp-challenge.ts";
 import type { ConsentDecisionPorts } from "../../modules/consent-decision/consent-decision.ts";
@@ -34,6 +36,13 @@ export interface ConsentFlowHttpServerOptions {
   readonly sessionSecret?: Buffer;
   /** P-01/P-02/P-03 (otp-policy.config.ts); requerido si no se inyectan `ports` propios. */
   readonly otpPolicy?: OtpPolicy;
+  /**
+   * Entorno de ejecución (GRD-CM-13). Solo cuando es exactamente "LOCAL" este servidor expone
+   * GET /__dev/otp-sink (dev.ts, D4/D5 report a Carlos: sink de depuración, cero PII más allá
+   * de la ya presente en el canal sintético de la invitación). Cualquier otro valor, incluido
+   * "undefined", deja la ruta fuera (fail-closed).
+   */
+  readonly environment?: Environment;
 }
 
 export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy): ConsentFlowPorts {
@@ -109,6 +118,19 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0];
+
+    if (req.method === "GET" && path === "/__dev/otp-sink") {
+      if (options.environment !== "LOCAL") {
+        // Fail-closed (GRD-CM-13): fuera de LOCAL esta ruta no existe, ni siquiera como 403.
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      const sink = ports.otp.channel as InMemoryOtpChannelSink;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ sent: sink.sent }));
+      return;
+    }
 
     if (req.method !== "POST") {
       res.writeHead(404, { "content-type": "application/json" });
