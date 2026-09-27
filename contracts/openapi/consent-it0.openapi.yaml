@@ -1,0 +1,354 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Consent App IT0 — API HTTP (borrador)
+  version: 0.1.0-draft
+  x-api-id: API-CNS-100
+  x-status: DRAFT
+  x-it0-only: true
+  x-data-class: SYNTHETIC_ONLY
+  x-spec-source: specs/state-machines/*.spec.yaml rev. 4 (CA-116; main e1908ed)
+  x-governed-by:
+    - specs/state-machines/common.spec.yaml (routeClasses, GRD-CM-*, INV-CM-*)
+    - specs de las 6 máquinas (transiciones con httpPost true)
+    - SM-CNS-001 v6/v7
+    - DEC-BR-014 §4, §5, §6 (Iteración 0; solo datos sintéticos)
+    - DEC-BR-015 §1 (tenant = colegio), DEC-BR-016 §8, DEC-BR-017 §1-§8
+    - ADR-001 §2, ADR-002, ADR-006 §6
+    - SEC-CNS-005 rev. 5, SEC-CNS-006 rev. 5
+  x-human-gate: "Ningún contrato está aprobado; cierre = human gate de Carlos."
+  description: |
+    Transcripción del diseño de rutas de `contracts/README.md` y de las `x-transitions`
+    de las proyecciones JSON Schema (API-CNS-186…191). Operaciones API-CNS-101…160.
+
+    Reglas transversales (verificables por lint):
+    - Cero PII en path y query: solo referencias opacas UUIDv4 (INV-CM-09) o tokens
+      opacos de canje. Nunca email, teléfono, nombre ni RUT.
+    - Ningún request acepta `tenantRef` ni `organization*`: el tenant se resuelve en
+      servidor desde la credencial (GRD-CM-01; DEC-BR-015 §1). Los bodies usan
+      `additionalProperties: false`.
+    - Todo POST exige CSRF + Origin/Host exacto (GRD-CM-10; ERR-CM-09).
+    - Ningún GET consume un token ni transiciona un agregado (INV-CM-08): /i/, /m/, /r/
+      se canjean con 303 a una ruta sin token.
+    - `eligibility_to_participate != eligibility_to_revoke` (INV-CM-06): las rutas
+      RIGHTS nunca leen `*.active` de tenant, estudio, participación, matrícula ni contexto.
+    - Respuestas RIGHTS uniformes: nunca «denegado»; siempre `rightsPathsAvailable`
+      (RULE-CNS-TBD-02; INV-RV-05; INV-OT-06).
+    - Secretos (código OTP, aserciones de step-up) son `writeOnly` y nunca se loguean.
+
+    Convenciones de extensiones:
+    `x-governed-by`, `x-state-transition` (IDs de las specs), `x-route-class`
+    (ISSUANCE_DECISION | STAFF_ADMIN | RIGHTS | PLATFORM), `x-eligibility`,
+    `x-actor`, `x-guards`, `x-pending` (decisiones abiertas; ninguna se resuelve aquí),
+    `x-not-exposed` (transiciones sin superficie HTTP y por qué).
+  x-pending:
+    - "OPEN-CT-04: rango API-CNS-100…199 propuesto; reconciliar con el registro de Notion. API-CNS-001 reservado (AuthorizationCheck del consumidor)."
+    - "P-26 / SEC-CNS-006: nombres de cookie __Host- y de la cabecera CSRF son ilustrativos hasta fijarse."
+    - "OPEN-CT-08 (nuevo): las specs no fijan los códigos HTTP exactos por error; los status de este borrador son propuesta."
+servers:
+  - url: http://localhost:8080
+    description: LOCAL / CI únicamente (DEC-BR-014; ADR-003 rev. 7). Sin proveedor cloud, sin staging ni producción (NOT PROVISIONED).
+tags:
+  - name: redemption
+    description: Canje GET de enlaces /i/, /m/, /r/ (sin transición; INV-CM-08).
+  - name: staff
+    description: Consola STAFF del colegio (tenant). Cookie y CSRF propios (GRD-CM-10).
+  - name: bearer-invitation
+    description: Portador del enlace de invitación (UNVERIFIED_BEARER hasta V3).
+  - name: bearer-otp
+    description: Verificación OTP del canal ligado (otp-challenge).
+  - name: bearer-decision
+    description: Decisión de consentimiento (consent-decision).
+  - name: bearer-rights
+    description: Rutas RIGHTS del titular (gestión, revocación, recuperación, caso humano).
+  - name: platform
+    description: Consola PLATFORM y sesión CASE (RIGHTS_OPERATOR, PRIVACY_LEGAL, SECURITY, CONTEXT_OWNER).
+security: []
+components:
+  securitySchemes:
+    landingHandle:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-landing
+      description: Handle LANDING creado por GET /i/{token} (P-12); tras V3 scope DECISION el ID de sesión rota (P-30) y la sesión queda verificada para C1…C5.
+      x-pending: ["P-26 (nombre de cookie)"]
+    manageHandle:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-manage
+      description: Handle MANAGE_ENTRY creado por GET /m/{token} (P-14); habilita V1 scope MANAGE/REVOCATION, RV0 del portador, RC1, RC3/RC3a (CFG-RV-MANAGEMENT-LINK). Tras V3 queda sesión MANAGE verificada (P-28).
+      x-pending: ["P-26 (nombre de cookie)", "F-006 (alcance del handle /m/ ampliado a RC1/RC2u/RC3)"]
+    recoveryHandle:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-recovery
+      description: Handle RECOVERY creado por GET /r/{token} sin consumir (P-18); solo válido para POST /recovery/revoke.
+      x-pending: ["P-26 (nombre de cookie)"]
+    staffSession:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-staff
+      description: Sesión de consola STAFF con membership TENANT vigente (GRD-CM-01/02/07). Acceso staff IT0_ONLY.
+      x-pending: ["P-26 (nombre de cookie)", "LD-03 (quién opera RC0 y con qué base)"]
+    platformSession:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-platform
+      description: Sesión PLATFORM propia (PRIVACY_LEGAL, SECURITY, CONTEXT_OWNER); step-up P-36 por acción.
+      x-pending: ["P-26 (nombre de cookie)", "APR-IDP (parámetros del IdP: PENDING — Carlos / studio)", "OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)"]
+    caseSession:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-case
+      description: Sesión CASE del RIGHTS_OPERATOR ligada a un caseRef (ADR-006 §6.3); el actor se deriva de la sesión, nunca de un parámetro.
+      x-pending: ["P-26 (nombre de cookie)", "APR-IDP"]
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Token CSRF de la consola/superficie correspondiente; además Origin/Host por igualdad exacta (GRD-CM-10). Falta o no coincide → ERR-CM-09 sin efecto.
+      schema: {type: string, minLength: 16, maxLength: 256, pattern: "^[A-Za-z0-9._~-]+$"}
+      x-governed-by: ["GRD-CM-10", "SEC-CNS-006 P-26", "SEC-CNS-005 T-03, T-04"]
+      x-pending: ["P-26 (nombre de la cabecera)"]
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Ligada a (tenantRef, principal, operación), almacenada solo como hash con TTL P-33 (GRD-CM-08). Misma key + otro payloadHash → ERR-CM-07.
+      schema: {$ref: '../schemas/common.schema.json#/$defs/IdempotencyKey'}
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Opcional; la idempotencia natural de la transición la fija el servidor (ver `x-idempotency`). Si se envía, aplica GRD-CM-08.
+      schema: {$ref: '../schemas/common.schema.json#/$defs/IdempotencyKey'}
+    RedemptionToken:
+      name: token
+      in: path
+      required: true
+      description: Token opaco de canje (credencial de un solo propósito, sin PII). Solo se persiste su hash; nunca se loguea ni se reenvía a terceros (Referrer-Policy no-referrer).
+      schema: {type: string, minLength: 32, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$"}
+      x-sensitive: "credencial; nunca se loguea"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace: bloquea todo uso con datos reales)"]
+    InvitationRef:
+      name: invitationRef
+      in: path
+      required: true
+      schema: {$ref: '../schemas/common.schema.json#/$defs/Ref'}
+    EnrollmentRef:
+      name: enrollmentRef
+      in: path
+      required: true
+      schema: {$ref: '../schemas/common.schema.json#/$defs/Ref'}
+    CaseRef:
+      name: caseRef
+      in: path
+      required: true
+      description: Debe coincidir con el caseRef ligado a la sesión CASE (ADR-006 §6.3); si no, 404 uniforme.
+      schema: {$ref: '../schemas/common.schema.json#/$defs/Ref'}
+    ProposalRef:
+      name: proposalRef
+      in: path
+      required: true
+      schema: {$ref: '../schemas/common.schema.json#/$defs/Ref'}
+    ContextRef:
+      name: contextRef
+      in: path
+      required: true
+      schema: {$ref: '../schemas/common.schema.json#/$defs/Ref'}
+  headers:
+    Location:
+      description: Ruta relativa sin token (p. ej. /welcome, /manage, /recover).
+      schema: {type: string, pattern: "^/[a-z-]+$"}
+    SetCookie:
+      description: Cookie __Host- del handle (Secure; HttpOnly; SameSite; Path=/), P-26.
+      schema: {type: string}
+  responses:
+    RedeemSeeOther:
+      description: Canje válido. Crea el handle, fija la cookie y redirige a una ruta sin token. No consume el token ni transiciona (INV-CM-08).
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+        Set-Cookie: {$ref: '#/components/headers/SetCookie'}
+    UniformNotFound:
+      description: 404 uniforme (mismo cuerpo, código y tiempo acotado) para token o ref inexistente, expirado, rotado o de otro tenant/contexto (ERR-CM-01, ERR-IV-01).
+      content:
+        application/json:
+          schema: {$ref: '../schemas/common.schema.json#/$defs/UniformNotFound'}
+    CsrfRejected:
+      description: ERR-CM-09 (CSRF_REJECTED), sin efecto.
+      content:
+        application/problem+json:
+          schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
+    Problem:
+      description: Error sin texto libre ni PII (INV-CM-05). `code` del enum ErrorCode.
+      content:
+        application/problem+json:
+          schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
+    RightsProblem:
+      description: Error en ruta RIGHTS. Nunca «denegado»; siempre ofrece las tres vías (RightsPaths).
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - {$ref: '../schemas/common.schema.json#/$defs/Problem'}
+              - required: [rightsPathsAvailable]
+    UniformAccepted:
+      description: Respuesta genérica idéntica exista o no el canal, la cadena, el caso o el límite (ERR-OT-01, ERR-OT-07, ERR-OT-08, ERR-RV-02, ERR-RV-05, ERR-RV-12, ERR-RV-19, ERR-RC-01, ERR-RC-02, ERR-RC-09).
+      content:
+        application/json:
+          schema: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
+  schemas:
+    Problem: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
+    UniformAccepted: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
+    EmptyCommand: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+paths:
+  # ---------------------------------------------------------------------------
+  # Canje de enlaces (GET sin transición; INV-CM-08)
+  # ---------------------------------------------------------------------------
+  /i/{token}:
+    get:
+      operationId: redeemInvitationLink
+      x-api-id: API-CNS-101
+      tags: [redemption]
+      summary: Canje del enlace de invitación (crea handle LANDING, 303 sin token)
+      description: Valida el hash del token, crea el handle LANDING (P-12), fija la cookie y redirige. No transiciona Invitation (la transición I4 ocurre en POST /invitation/open).
+      x-governed-by: ["invitation.spec I4 effects", "INV-CM-08", "SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20", "SEC-CNS-006 P-12"]
+      x-state-transition: none
+      x-route-class: ISSUANCE_DECISION
+      x-eligibility: "eligibility_to_participate (GRD-CM-05; DEC-BR-016 §8) evaluada al canjear; desconocido = false"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace)"]
+      parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
+      responses:
+        '303': {$ref: '#/components/responses/RedeemSeeOther'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  /m/{token}:
+    get:
+      operationId: redeemManagementLink
+      x-api-id: API-CNS-102
+      tags: [redemption]
+      summary: Canje del enlace de gestión (crea handle MANAGE_ENTRY, 303 a /manage)
+      description: resolve_management_token(token_hash) → (tenant_id, chain_ref). Solo credencial + existencia del tenant; nunca *.active. No transiciona ni consume el token.
+      x-governed-by: ["revocation.spec managementLink (CFG-RV-MANAGEMENT-LINK)", "INV-CM-08", "SM-CNS-001 §5.0", "ADR-006 §6.1", "DEC-BR-017 §1", "SEC-CNS-006 P-13, P-14"]
+      x-state-transition: none
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06): solo existencia del tenant y chainRef; nunca lee *.active"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01", "F-006 (alcance del handle /m/)", "F-011 / F-CT-01 (RC2u no se dispara aquí: un GET no transiciona)"]
+      parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
+      responses:
+        '303': {$ref: '#/components/responses/RedeemSeeOther'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  /r/{token}:
+    get:
+      operationId: redeemRecoveryLink
+      x-api-id: API-CNS-103
+      tags: [redemption]
+      summary: Canje del enlace de recuperación (crea handle RECOVERY sin consumir el token)
+      description: Crea el handle RECOVERY (P-18) sin consumir; el consumo ocurre solo en POST /recovery/revoke. Un /r/ expirado no crea handle ni emite nada (ERR-RV-05).
+      x-governed-by: ["revocation.spec R1r effects", "INV-CM-08", "SM-CNS-001 v7 §5.1", "DEC-BR-017 §2", "ADR-006 §6.2"]
+      x-state-transition: none
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
+      parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
+      responses:
+        '303': {$ref: '#/components/responses/RedeemSeeOther'}
+        '200':
+          description: Token inválido, usado, expirado o de otro tenant → respuesta uniforme (ERR-RV-05) que indica usar el enlace de gestión; sin handle ni evento.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
+  # ---------------------------------------------------------------------------
+  # tenant-context (EN0, EN1, CX2). TN*, SP*, CX1 sin HTTP: ver x-not-exposed.
+  # ---------------------------------------------------------------------------
+  /staff/enrollments:
+    post:
+      operationId: openEnrollment
+      x-api-id: API-CNS-105
+      tags: [staff]
+      summary: EN0 — abrir Enrollment (null → ACTIVE)
+      x-governed-by: ["tenant-context.spec EN0", "DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2"]
+      x-state-transition: {machine: Enrollment, id: EN0, from: null, to: ACTIVE}
+      x-route-class: STAFF_ADMIN
+      x-eligibility: "no evalúa la fórmula de elegibilidad (AUDIT-H01-rev3 N-13); membership TENANT vigente"
+      x-actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN (DEC-BR-016 §4); en IT0 también por fixture"}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-03]
+      x-idempotency: "(tenant_id, subject_ref, participation_ref)"
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/OpenEnrollmentRequest'}
+      responses:
+        '201':
+          description: Enrollment ACTIVE.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EnrollmentOpened'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /staff/enrollments/{enrollmentRef}/close:
+    post:
+      operationId: closeEnrollment
+      x-api-id: API-CNS-106
+      tags: [staff]
+      summary: EN1 — cerrar Enrollment (ACTIVE → CLOSED; cancela invitaciones no terminales en la misma tx, I9 ENROLLMENT_CLOSED)
+      description: Ningún motivo es retiro de consentimiento; sin consent.revoked ni transición de ConsentDecision (INV-7, INV-CD-06).
+      x-governed-by: ["tenant-context.spec EN1", "SM-CNS-001 §6", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06", "CARLOS r3 R14-E (Q-18 opción A)"]
+      x-state-transition: {machine: Enrollment, id: EN1, from: ACTIVE, to: CLOSED, sideEffects: ["invitation I9 ENROLLMENT_CLOSED (SYSTEM_GUARD, misma tx)"]}
+      x-route-class: STAFF_ADMIN
+      x-eligibility: "no evalúa la fórmula de elegibilidad"
+      x-actor: {actorType: HUMAN, actorRole: INVITER, note: "TENANT_ADMIN registra el motivo; fixture solo en LOCAL/CI (R14-F)"}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-CM-10, GRD-CM-13, GRD-TC-04]
+      x-idempotency: "(tenant_id, enrollment_ref, sequence)"
+      security: [{staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/EnrollmentRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CloseEnrollmentRequest'}
+      responses:
+        '200':
+          description: Enrollment CLOSED.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EnrollmentClosed'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /platform/consent-contexts/{contextRef}/reactivate:
+    post:
+      operationId: reactivateConsentContext
+      x-api-id: API-CNS-107
+      tags: [platform]
+      summary: CX2 — reactivar ConsentContext (PAUSED → ACTIVE), solo HUMAN
+      x-governed-by: ["tenant-context.spec CX2", "SM-CNS-001 §6", "CARLOS r3 R7-1", "DEC-BR-015:45", "ADR-006 §2", "SEC-CNS-005 T-62, TS-16j"]
+      x-state-transition: {machine: ConsentContextReadiness, id: CX2, from: PAUSED, to: ACTIVE}
+      x-route-class: PLATFORM
+      x-eligibility: "no evalúa la fórmula; nunca toca ConsentDecision ni la vía de revocación"
+      x-actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, alt: "PRIVACY_LEGAL (OPEN-TC-06)", note: "nunca SYSTEM_GUARD, modelo ni agente"}
+      x-guards: [GRD-CM-07, GRD-CM-10, GRD-TC-05, GRD-TC-06]
+      x-idempotency: "(contextRef, sequence)"
+      x-pending: ["OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "OPEN-TC-05 / ADR-011 / DEC-BR-009 (almacén de auditoría PLATFORM; reasonCode sin enum)", "OPEN-TC-01", "OPEN-TC-03", "F-007 (transiciones de tenant/participación sin superficie HTTP)"]
+      security: [{platformSession: []}]
+      parameters: [{$ref: '#/components/parameters/ContextRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ReactivateContextRequest'}
+      responses:
+        '200':
+          description: Contexto ACTIVE.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ContextReactivated'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/Problem'}
