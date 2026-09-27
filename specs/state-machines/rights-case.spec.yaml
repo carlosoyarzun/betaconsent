@@ -15,12 +15,13 @@
 # (el ledger nunca registra SYSTEM_GUARD desde web); RC2u siempre fue un POST web del portador. F-CT-11
 # (P2) revisado: ERR-CM-01 en RC4.RESOLVED/WITHDRAWN/RC5/RC6 es legítimo (onFail de GRD-CM-06, ya en sus
 # guards desde rev. 4e); falso positivo, sin cambios. Ver changeNote de RC2u.
+# rev. 4h (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra OPEN-RV-12 (revocation.spec.yaml) en RC0 (GRD-CM-02: errors += ERR-CM-02) y en los dos huecos que la nota de OPEN-RV-12 daba por corregidos sin estarlo: RC1 (GRD-RC-14, fuente BEARER: errors += ERR-RC-09), RC2 (GRD-RV-22: errors += ERR-RV-02). Sin cambio de guards existentes, actores, estados ni semántica.
 specId: SPEC-CNS-SM-RIGHTS-CASE
 title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
 smId: SM-CNS-001
 smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
 aggregateType: RightsCase
-version: "0.4.5"
+version: "0.4.6"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -161,7 +162,7 @@ transitions:
     emits: [RIGHTS_CASE_OPENED]
     payloadValues: {reasonCode: SCHOOL_REPORTED, initiatedVia: SCHOOL_REPORT}
     idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
-    errors: [ERR-RC-06, ERR-RC-07, ERR-CM-09, ERR-CM-10]
+    errors: [ERR-CM-02, ERR-RC-06, ERR-RC-07, ERR-CM-09, ERR-CM-10]
     governedBy: ["SM-CNS-001 §5.2 RC0", "DEC-BR-017 §8", "REQ-CNS-TBD-08 AC-08.2", "SEC-CNS-006 P-35", "LD-03", "AUDIT F-A10", "SEC-CNS-012 P2-10"]
     testIds: [TEST-CNS-290, TEST-CNS-342, TEST-CNS-343]
   - id: RC1
@@ -193,9 +194,10 @@ transitions:
     emitsCondition: {REVOCATION_ESCALATED: "solo fuente BEARER con Revocation abierta de la decisión del ciclo"}
     payloadValues: {reasonCode: "origin", initiatedVia: DECISION_MAKER}
     idempotencyKey: "(tenant_id, chainRef, revokedDecisionRef) — ≤1 no terminal por ciclo (GRD-RC-02, SEC N2-03)"
-    errors: [ERR-RC-01, ERR-RC-02, ERR-RC-11, ERR-CM-09, ERR-CM-10]
-    governedBy: ["SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "RULE-CNS-TBD-02", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01", "SEC-CNS-013 N-4c-03"]
+    errors: [ERR-RC-01, ERR-RC-02, ERR-RC-11, ERR-CM-09, ERR-CM-10, ERR-RC-09]
+    governedBy: ["SM-CNS-001 §5.2 RC1 (SM:152), §5 R9", "DEC-BR-017 §3, §4, §5", "CARLOS r3 R5-4, R6-3, R14-C", "REQ-CNS-TBD-06 AC-06.1, AC-06.5", "RULE-CNS-TBD-02", "AUDIT F-A03, F-A11", "SEC-CNS-012 re-verificación rev. 4 N2-01", "SEC-CNS-013 N-4c-03", "SEC-CNS-014"]
     testIds: [TEST-CNS-291, TEST-CNS-344, TEST-CNS-397, TEST-CNS-425, TEST-CNS-426, TEST-CNS-427, TEST-CNS-444, TEST-CNS-445]
+    changeNote: "SEC-CNS-014 (2026-09-27, aprobado por Carlos, cierra OPEN-RV-12 sobre esta transición): errors += ERR-RC-09 (onFail de GRD-RC-14, fuente BEARER). Sin cambio de semántica."
   - id: RC1c
     from: null
     to: OPEN
@@ -228,9 +230,10 @@ transitions:
     emits: [RIGHTS_CASE_CONTACTING, RECOVERY_TOKEN_ISSUED]
     payloadValues: {recoveryRef: required}
     idempotencyKey: caseRef
-    errors: [ERR-RV-12, ERR-CM-10]
-    governedBy: ["SM-CNS-001 §5.2 RC2, §5.1 RV0 (SM:138)", "DEC-BR-017 §3 (S3-12), §8", "SEC-CNS-012 P1-03", "SEC-CNS-013 N-4c-02"]
+    errors: [ERR-RV-12, ERR-CM-10, ERR-RV-02]
+    governedBy: ["SM-CNS-001 §5.2 RC2, §5.1 RV0 (SM:138)", "DEC-BR-017 §3 (S3-12), §8", "SEC-CNS-012 P1-03", "SEC-CNS-013 N-4c-02", "SEC-CNS-014"]
     testIds: [TEST-CNS-292, TEST-CNS-325]
+    changeNote: "SEC-CNS-014 (2026-09-27, aprobado por Carlos, cierra OPEN-RV-12 sobre esta transición): errors += ERR-RV-02 (onFail de GRD-RV-22). Sin cambio de semántica."
   - id: RC2u
     from: OPEN
     to: CONTACTING

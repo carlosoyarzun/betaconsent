@@ -2,12 +2,13 @@
 # rev. 4b (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — citas CARLOS r3 R13-7 puras pasan a DEC-BR-018 (R13-7). Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # Parámetros SOLO por referencia a SEC-CNS-006 (P-xx aprobados); ningún valor se fija aquí.
 # El sistema no decide la validez del OTP como juicio: la comparación es código determinista.
+# rev. 4c (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en V1/V3 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 specId: SPEC-CNS-SM-OTP-CHALLENGE
 title: "State machine DecisionMakerVerification / OTP challenge (IT0)"
 smId: SM-CNS-001
 smSection: "§3, §3.1, R0.7"
 aggregateType: DecisionMakerVerification
-version: "0.4.0"
+version: "0.4.1"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -122,7 +123,7 @@ transitions:
       - "El challenge queda ligado al handle/sesión que lo pidió (requestedByHandleRef); V1 repetido desde el mismo handle es idempotente, desde otro handle da la respuesta uniforme sin tocar el challenge vigente (GRD-OT-08)."
     emits: [OTP_ISSUED]
     idempotencyKey: "(tenantRef, parentRef, scope, requestedByHandleRef) — uno activo"
-    errors: [ERR-OT-01, ERR-OT-08, ERR-CM-05, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-OT-01, ERR-OT-08, ERR-CM-05, ERR-CM-09]
     governedBy: ["SM-CNS-001 §3 V1, §2.1 M1, M4, §5.0", "DEC-BR-017 §1", "SEC-CNS-006 P-01, P-02, P-08"]
     testIds: [TEST-CNS-150, TEST-CNS-319, TEST-CNS-320]
   - id: V2
@@ -174,7 +175,7 @@ transitions:
       - "scope = REVOCATION: habilita R2 solo si es posterior a R1 (revocation GRD-RV-05)."
     emits: [DECISION_MAKER_CHANNEL_VERIFIED]
     idempotencyKey: "verificationRef (un solo consumo)"
-    errors: [ERR-OT-05, ERR-OT-03, ERR-OT-06, ERR-OT-07, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-OT-05, ERR-OT-03, ERR-OT-06, ERR-OT-07, ERR-CM-09]
     governedBy: ["SM-CNS-001 §3 V3, §3.1, 'Atomicidad' (SM:70)", "SEC-CNS-006 P-04, P-27, P-28, P-30", "AUDIT F-A02", "SEC-CNS-012 P2-02"]
     testIds: [TEST-CNS-153, TEST-CNS-318]
   - id: V4

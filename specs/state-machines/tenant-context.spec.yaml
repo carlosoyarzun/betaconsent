@@ -9,11 +9,12 @@
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente FIXTURE de EN0/EN1) y condiciones (i)–(iii) de GRD-TC-08 (OPEN-TC-07 DECIDED, DEC-BR-018).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-05 (locks de la cascada Q-18, GRD-TC-07/08), N2-06 (GRD-CM-14), N2-01 (guardsBySource en EN0/EN1).
 # Lo que §6 no aplica a IT0 se lista en coverage.notCovered y no se declara cubierto.
+# rev. 4f (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 (revocation.spec.yaml) en tenant-context.Enrollment EN0/EN1 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica.
 specId: SPEC-CNS-SM-TENANT-CONTEXT
 title: "Contexto de tenant (Tenant status, SchoolParticipation, Enrollment, readiness de ConsentContext): efectos sobre las máquinas IT0"
 smId: SM-CNS-001
 smSection: "§6 (D1, F-211), R0.4–R0.6"
-version: "0.4.3"
+version: "0.4.4"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -278,7 +279,7 @@ submachines:
         effects: ["Guard E empieza a cumplirse para el subjectRef en esa participación."]
         emits: [ENROLLMENT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, subject_ref, participation_ref)"
-        errors: [ERR-CM-09, ERR-CM-10, ERR-TC-03]
+        errors: [ERR-CM-02, ERR-CM-09, ERR-CM-10, ERR-TC-03]
         governedBy: ["DEC-BR-014 §1", "DEC-BR-016 §4", "ADR-006 §2", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-06"]
         testIds: [TEST-CNS-364, TEST-CNS-429, TEST-CNS-444, TEST-CNS-446]
       - id: EN1
@@ -304,7 +305,7 @@ submachines:
           - "eligibility.changed no se emite (E-10 PROPOSED, Q-18)."
         emits: [ENROLLMENT_STATUS_CHANGED]
         idempotencyKey: "(tenant_id, enrollment_ref, sequence)"
-        errors: [ERR-CM-09, ERR-CM-10, ERR-TC-04]
+        errors: [ERR-CM-02, ERR-CM-09, ERR-CM-10, ERR-TC-04]
         governedBy: ["SM-CNS-001 §6 (SM:173)", "DEC-BR-016 §7", "DR2 D1", "INV-7", "INV-CD-06", "SEC-CNS-012 re-verificación rev. 4 N2-01, N2-05, N2-06"]
         testIds: [TEST-CNS-365, TEST-CNS-419, TEST-CNS-429, TEST-CNS-437, TEST-CNS-438, TEST-CNS-444, TEST-CNS-446, TEST-CNS-449, TEST-CNS-450]
   - machine: ConsentContextReadiness

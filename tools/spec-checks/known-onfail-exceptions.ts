@@ -43,28 +43,11 @@ export interface KnownOnFailGap {
 }
 
 export const KNOWN_ONFAIL_GAPS: readonly KnownOnFailGap[] = [
-  // --- PRIORITARIO (SEC-CNS-014): GRD-CM-02 (Guard T, cross-tenant), 21 filas ---
-  { unit: "invitation", transition: "I2", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I3", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I3r", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I4", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I5", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I6", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I7", guard: "GRD-CM-02" },
-  { unit: "invitation", transition: "I9", guard: "GRD-CM-02" },
-  { unit: "otp-challenge", transition: "V1", guard: "GRD-CM-02" },
-  { unit: "otp-challenge", transition: "V3", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C1", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C2", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C3", guard: "GRD-CM-02" },
-  { unit: "consent-decision", transition: "C5", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R1", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R2", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R3", guard: "GRD-CM-02" },
-  { unit: "revocation", transition: "R8", guard: "GRD-CM-02" },
-  { unit: "rights-case", transition: "RC0", guard: "GRD-CM-02" },
-  { unit: "tenant-context.Enrollment", transition: "EN0", guard: "GRD-CM-02" },
-  { unit: "tenant-context.Enrollment", transition: "EN1", guard: "GRD-CM-02" },
+  // --- GRD-CM-02 (Guard T, cross-tenant): las 21 filas originales se cerraron el 2026-09-27
+  // (SEC-CNS-014, aprobado por Carlos): se agregó ERR-CM-02 a errors[] en las 21 transiciones
+  // (invitation I2/I3/I3r/I4/I5/I6/I7/I9, otp-challenge V1/V3, consent-decision C1/C2/C3/C5,
+  // revocation R1/R2/R3/R8, rights-case RC0, tenant-context.Enrollment EN0/EN1). Ya no son
+  // excepciones: el checker exige errors ⊇ onFail(GRD-CM-02) en esas transiciones.
   // --- Resto de GRD-CM-* (CM-01 15, CM-07 10, CM-06 9, CM-10 8, CM-05 4, CM-09 2, CM-03/04/08 1) ---
   { unit: "invitation", transition: "I1", guard: "GRD-CM-08" },
   { unit: "invitation", transition: "I2", guard: "GRD-CM-01" },
@@ -146,21 +129,15 @@ export const KNOWN_ONFAIL_GAPS: readonly KnownOnFailGap[] = [
   { unit: "revocation", transition: "R1r", guard: "GRD-RV-19" },
   { unit: "revocation", transition: "R1r", guard: "GRD-RV-23" },
   { unit: "revocation", transition: "R1r", guard: "GRD-RV-25" },
-  { unit: "revocation", transition: "RC3", guard: "GRD-RV-19" },
-  { unit: "revocation", transition: "RC3", guard: "GRD-RV-23" },
-  { unit: "revocation", transition: "RC3", guard: "GRD-RV-25" },
   { unit: "revocation", transition: "R2", guard: "GRD-RV-08" },
   { unit: "revocation", transition: "R2", guard: "GRD-RV-19" },
   { unit: "revocation", transition: "R2", guard: "GRD-RV-23" },
   { unit: "revocation", transition: "R2r", guard: "GRD-RV-18" },
   { unit: "revocation", transition: "R2r", guard: "GRD-RV-19" },
   { unit: "revocation", transition: "R2r", guard: "GRD-RV-23" },
-  { unit: "revocation", transition: "RH2", guard: "GRD-RV-23" },
   { unit: "revocation", transition: "R3", guard: "GRD-RV-23" },
   { unit: "revocation", transition: "R3r", guard: "GRD-RV-18" },
   { unit: "revocation", transition: "R3r", guard: "GRD-RV-23" },
-  { unit: "revocation", transition: "RH3", guard: "GRD-RV-23" },
-  { unit: "revocation", transition: "RH3", guard: "GRD-RV-28" },
   { unit: "revocation", transition: "R4", guard: "GRD-RV-19" },
   { unit: "revocation", transition: "R4", guard: "GRD-RV-23" },
   { unit: "revocation", transition: "R5", guard: "GRD-RV-23" },
@@ -172,16 +149,13 @@ export const KNOWN_ONFAIL_GAPS: readonly KnownOnFailGap[] = [
   { unit: "revocation", transition: "R10", guard: "GRD-RV-23" },
   { unit: "revocation", transition: "R11", guard: "GRD-RV-18" },
   { unit: "revocation", transition: "R11", guard: "GRD-RV-23" },
-  { unit: "revocation", transition: "R12", guard: "GRD-RV-19" },
-  { unit: "revocation", transition: "R12", guard: "GRD-RV-23" },
-  { unit: "revocation", transition: "R12", guard: "GRD-RV-25" },
-  { unit: "revocation", transition: "R12", guard: "GRD-RV-28" },
-  { unit: "revocation", transition: "R12", guard: "GRD-RC-08" },
-  { unit: "revocation", transition: "R12", guard: "GRD-RC-14" },
-  { unit: "revocation", transition: "RH2v", guard: "GRD-RV-23" },
   { unit: "rights-case", transition: "RC0", guard: "GRD-RC-01" },
-  { unit: "rights-case", transition: "RC1", guard: "GRD-RC-14" },
-  { unit: "rights-case", transition: "RC2", guard: "GRD-RV-22" },
+  // --- Los 15 huecos "corregidos puntualmente" según OPEN-RV-12 (revocation.spec.yaml, texto de la
+  // rev. previa) se cerraron el 2026-09-27 (SEC-CNS-014, aprobado por Carlos): revocation RH2
+  // (GRD-RV-23), RH2v (GRD-RV-23), RH3 (GRD-RV-23, GRD-RV-28), R12 (GRD-RV-19, GRD-RV-23,
+  // GRD-RV-25, GRD-RV-28, GRD-RC-08, GRD-RC-14), RC3 (GRD-RV-19, GRD-RV-23, GRD-RV-25);
+  // rights-case RC1 (GRD-RC-14), RC2 (GRD-RV-22). Se agregó el onFail exacto de cada guard a
+  // errors[] de la transición correspondiente. Ya no son excepciones.
 ];
 
 export function isKnownOnFailGap(unit: string, transition: string, guard: string): boolean {
