@@ -1,0 +1,1 @@
+{ "name": "fixture", "imports": { "#infra/*": "./src/infra/*" } }

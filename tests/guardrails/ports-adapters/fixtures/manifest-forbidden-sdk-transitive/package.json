@@ -1,0 +1,1 @@
+{ "name": "fixture", "dependencies": { "some-lib": "1.0.0" } }

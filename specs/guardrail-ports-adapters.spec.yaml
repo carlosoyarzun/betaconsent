@@ -1,0 +1,351 @@
+specId: SPEC-CNS-GUARDRAIL-PORTS-ADAPTERS
+title: "Guardrail CI Ports & Adapters"
+status: DRAFT
+governedBy:
+  - "ADR-001 §11 (Ports & Adapters), rev. 7, ACCEPTED 2026-09-26 (R11-A (2))"
+  - "CA-136 (H21, épica CA-115): requisito previo al primer commit en src/ (R9-4 C3, R11-F712)"
+  - "SEC-CNS-010 (SEC-review-CA136, lampone-security, 2026-09-26): BLOQUEADO con 9 P1 sobre la primera versión; esta revisión corrige P1-01..P1-08 (P1-09 es human gate de Carlos, no técnico)"
+jiraStory: CA-136
+owner: lampone-dev
+reviewers:
+  - lampone-security # re-revisión pendiente sobre esta versión (corrige P1-01..P1-08 de SEC-CNS-010)
+  - carlosoyarzun # CODEOWNERS humano de tools/guardrails/, .github/, package.json/package-lock.json/tsconfig.json/tests/guardrails/ y esta spec
+
+context: >
+  El dominio y la aplicación (src/server/modules/**, src/server/platform/**,
+  src/server/ports/**) no deben conocer SDKs de proveedor de infraestructura; solo
+  src/infra/adapters/** los implementa (ADR-001 §11). Este guardrail automatiza esa
+  regla en CI para que ningún commit la viole en silencio. Es condición previa al
+  primer commit de código de producto en src/ (R11-F712); por eso vive fuera de src/,
+  en tools/guardrails/ports-adapters/.
+
+scope:
+  included:
+    - "Detección de imports de módulos de la deny-list fuera de src/infra/adapters/** (modo adapters-only) o en cualquier parte de src/** (modo forbidden)"
+    - "Primitivas peligrosas que permiten evadir la detección por especificador literal (require dinámico, aliasing, globals, eval, createRequire), fail-closed en todo src/**"
+    - "Reglas de límites de capa por ALLOWLIST: solo src/server/entrypoints/** y src/infra/** pueden importar src/infra/**; src/client/** nunca importa src/server/** ni src/infra/**"
+    - "Especificadores no resolubles (no relativos-dentro-de-la-raíz, no builtin, no paquete declarado) → violación"
+    - "Reglas de manifiesto: SDK sin adaptador consumidor, alias npm:, dependencias no-registry (file:/link:/git/URL), transitivos forbidden en package-lock.json"
+    - "Estructura del árbol: symlinks bajo src/ y directorios node_modules/dist/build/coverage bajo src/"
+    - "Configuración de alias no soportada (tsconfig paths/baseUrl, package.json imports/workspaces)"
+  excluded:
+    - "Resolución real de alias de paquete no relativos (tsconfig paths/baseUrl, package.json imports/workspaces): su sola presencia en la configuración es una violación (CONFIG_ALIAS_NOT_SUPPORTED), no se resuelven. Ver 'openItems'."
+    - "La allowlist de dependencias con owner de ADR-001 §5 (aún no implementada; ver 'openItems')"
+    - "Cualquier código de dominio en src/ (CA-136 es previo a eso)"
+
+denyList:
+  location: tools/guardrails/ports-adapters/deny-list.json
+  status: FINAL_IT0
+  note: >
+    Lista final IT0 fijada por lampone-security en SEC-CNS-010 (2026-09-26), con campo
+    `mode` por entrada: "adapters-only" (solo importable desde src/infra/adapters/**,
+    exige adaptador consumidor y, cuando exista, entrada en la allowlist §5) o "forbidden"
+    (prohibido en todo src/**, incluidos los adaptadores, en package.json y en
+    package-lock.json —incl. transitivo y alias npm:— durante IT0). Quitar una entrada
+    "forbidden" requiere DEC y CODEOWNERS (Carlos + revisor humano de seguridad; un agente
+    IA nunca es code owner). Categorías: cloud-aws/gcp/azure/other-object-storage
+    (adapters-only), secrets-kms-hsm (adapters-only), identity-oidc (adapters-only) /
+    identity-provider-server (forbidden), egress-http-generic (adapters-only),
+    event-transport (adapters-only), email-smtp-sink-only=nodemailer (adapters-only) /
+    email-vendor (forbidden), sms-otp-vendor (forbidden), telemetry-saas (forbidden),
+    analytics-flags (forbidden), ai-llm-saas (forbidden). Ver el JSON para la lista completa.
+
+rules:
+  - id: RULE-GUARDRAIL-01
+    name: deny-list-adapters-only
+    description: >
+      Falla si un archivo fuera de src/infra/adapters/** importa (import estático,
+      `export ... from`, `import()`/`require()`/`createRequire(...)(...)` con literal,
+      `declare module "pkg"`, `/// <reference types="pkg" />`, o `import("pkg").Tipo` en
+      posición de tipo) un módulo cuyo nombre de paquete (resuelto desde el especificador,
+      incl. subpaths, scopes con wildcard y normalizado a minúsculas) coincide con una
+      entrada modo "adapters-only" de la deny-list.
+    passesWhen: "el mismo import ocurre dentro de src/infra/adapters/**"
+  - id: RULE-GUARDRAIL-01B
+    name: deny-list-forbidden
+    description: >
+      Falla si cualquier archivo de src/** (incluidos los adaptadores), package.json o
+      package-lock.json (incl. transitivo) hace referencia a un paquete modo "forbidden"
+      de la deny-list. No existe ubicación válida para estos SDKs durante IT0
+      (SEC-CNS-010 P1-06).
+  - id: RULE-GUARDRAIL-02
+    name: dangerous-primitives-fail-closed
+    description: >
+      En todo src/** (incluidos los adaptadores) falla ante: import()/require()/
+      createRequire(...)(...) con argumento no literal (variable, concatenación, template
+      con sustituciones); cualquier referencia a `require` que no sea un
+      `require('literal')` directo (alias, `.call`/`.apply`, paso como valor), salvo
+      `require.resolve('literal')`; cualquier `<x>.require` (module.require,
+      process.mainModule.require, globalThis/global/window.require, Module._load, o
+      cualquier otra propiedad `.require`); `eval(...)`, `Function(...)`/`new Function(...)`;
+      `import.meta.resolve(...)`. Fuera de src/infra/adapters/** además falla ante:
+      cualquier import de `module`/`node:module`, `vm`/`node:vm`, `child_process`/
+      `node:child_process`; cualquier identificador o propiedad `createRequire` (import,
+      alias, `x.createRequire`), como referencia, se llame o no de inmediato.
+      (SEC-CNS-010 P1-01.)
+  - id: RULE-GUARDRAIL-03
+    name: layer-boundary-allowlist-infra
+    description: >
+      ALLOWLIST (no deny-list): solo src/server/entrypoints/** y src/infra/** pueden
+      resolver, mediante import relativo, hacia src/infra/**. Cualquier otro directorio
+      bajo src/ (existente o nuevo) que lo haga es violación (SEC-CNS-010 P1-04).
+  - id: RULE-GUARDRAIL-04
+    name: layer-boundary-client-vs-server-infra
+    description: >
+      src/client/** nunca importa (de forma relativa) src/server/** ni src/infra/**.
+  - id: RULE-GUARDRAIL-05
+    name: unresolved-specifier-fail-closed
+    description: >
+      Todo especificador que no sea (a) relativo y resoluble dentro de la raíz escaneada,
+      (b) un builtin de Node (`node:` o `module.builtinModules`), o (c) el nombre exacto
+      de un paquete declarado en package.json (dependencies/devDependencies/optional/peer)
+      → violación UNRESOLVED_SPECIFIER. Cubre alias de tsconfig, subpath imports (`#foo`),
+      rutas absolutas, URLs `file://` y especificadores "pelados" que imitan una ruta
+      interna (`src/infra/...`). (SEC-CNS-010 P1-03.)
+  - id: RULE-GUARDRAIL-06
+    name: config-alias-not-supported
+    description: >
+      Falla si algún tsconfig*.json en la raíz define `compilerOptions.paths` o `baseUrl`,
+      o si package.json define `imports` o `workspaces`: este guardrail no resuelve alias
+      de import ni workspaces, así que no puede garantizar sus reglas mientras existan
+      (SEC-CNS-010 P1-03).
+  - id: RULE-GUARDRAIL-07
+    name: tree-structure-fail-closed
+    description: >
+      Bajo src/, todo symlink (archivo o directorio) es violación y no se sigue; todo
+      directorio node_modules/dist/build/coverage es violación (pero SÍ se recorre su
+      contenido, fail-closed); un error de lectura del árbol distinto de "la raíz src/ no
+      existe" se propaga (no se traga como árbol vacío). (SEC-CNS-010 P1-02.)
+  - id: RULE-GUARDRAIL-08
+    name: manifest-sdk-without-adapter
+    description: >
+      Si package.json declara (dependencies/devDependencies/optionalDependencies/
+      peerDependencies/bundleDependencies) un paquete que coincide con la deny-list modo
+      "adapters-only", debe existir al menos un import de ese paquete dentro de
+      src/infra/adapters/**; si no, falla.
+  - id: RULE-GUARDRAIL-09
+    name: manifest-alias-and-nonregistry
+    description: >
+      Falla si una dependencia usa un especificador `npm:` que resuelve (con o sin
+      versión) a un paquete de la deny-list (el alias evade la detección por nombre); y,
+      por separado, falla ante cualquier dependencia no-registry (`file:`, `link:`,
+      `git...`, URL http(s)): no auditable como SDK de proveedor, prohibida durante IT0.
+      Para deny-list modo "forbidden", además se revisa package-lock.json (lockfile v3,
+      `packages`) incluidos transitivos. (SEC-CNS-010 P1-05.)
+
+implementation:
+  language: "TypeScript, ejecutado directamente por Node LTS con type-stripping nativo (sin ts-node/tsx)"
+  entrypoint: tools/guardrails/ports-adapters/check.ts
+  library: tools/guardrails/ports-adapters/guardrail.ts (runGuardrail(root))
+  parser: "TypeScript compiler API (ts.createSourceFile + AST walk), no expresiones regulares"
+  nodeVersion: "24.21.0 (engines.node y actions/setup-node en guardrails.yml; SEC-CNS-010 P1-07, publicado 2026-09-07, ≥7 días)"
+  dependencies:
+    - { name: typescript, version: "6.0.3", kind: devDependency, owner: lampone-dev }
+    - { name: "@types/node", version: "24.13.4", kind: devDependency, owner: lampone-dev }
+  constraints:
+    - "Sin scripts postinstall/preinstall en package.json"
+    - "Versiones exactas (sin rangos ^ ni ~), lockfile (package-lock.json) commiteado"
+    - "Sin dependencias de runtime nuevas; solo devDependencies"
+
+testCases:
+  location: tests/guardrails/ports-adapters/*.test.ts
+  fixtures: tests/guardrails/ports-adapters/fixtures/**
+  cases:
+    - id: TC-01
+      fixture: static-import-deny-violation
+      expect: FAIL
+      reason: "src/server/modules/** importa @aws-sdk/client-s3 con import estático"
+    - id: TC-02
+      fixture: export-from-violation
+      expect: FAIL
+      reason: "export ... from '@aws-sdk/client-s3' fuera de adapters"
+    - id: TC-03
+      fixture: dynamic-import-literal-violation
+      expect: FAIL
+      reason: "import('@aws-sdk/client-s3') dinámico con literal fuera de adapters"
+    - id: TC-04
+      fixture: require-violation
+      expect: FAIL
+      reason: "require('nodemailer') fuera de adapters"
+    - id: TC-05
+      fixture: create-require-violation
+      expect: FAIL
+      reason: "module.createRequire(...)(...) contra aws-sdk/clients/s3 fuera de adapters"
+    - id: TC-06
+      fixture: subpath-violation
+      expect: FAIL
+      reason: "import de subpath aws-sdk/clients/s3 (no el nombre exacto del paquete) fuera de adapters"
+    - id: TC-07
+      fixture: adapter-import-allowed
+      expect: PASS
+      reason: "el mismo SDK, importado desde src/infra/adapters/**, con adaptador consumidor en el manifiesto"
+    - id: TC-08
+      fixture: layer-violation-modules-import-infra
+      expect: FAIL
+      reason: "src/server/modules/** importa src/infra/adapters/** de forma relativa"
+    - id: TC-09
+      fixture: layer-violation-platform-import-infra
+      expect: FAIL
+      reason: "src/server/platform/** importa src/infra/** de forma relativa"
+    - id: TC-10
+      fixture: layer-violation-ports-import-infra
+      expect: FAIL
+      reason: "src/server/ports/** importa src/infra/** de forma relativa"
+    - id: TC-11
+      fixture: layer-violation-client-import-server
+      expect: FAIL
+      reason: "src/client/** importa src/server/** de forma relativa"
+    - id: TC-12
+      fixture: layer-violation-client-import-infra
+      expect: FAIL
+      reason: "src/client/** importa src/infra/** de forma relativa"
+    - id: TC-13
+      fixture: manifest-sdk-without-adapter
+      expect: FAIL
+      reason: "package.json declara @google-cloud/storage sin adaptador consumidor bajo src/infra/adapters/**"
+    - id: TC-14
+      fixture: clean-repo
+      expect: PASS
+      reason: "árbol completo (modules, platform, ports, client, infra/adapters) sin violaciones"
+    - id: TC-15
+      fixture: real-repo-empty-src
+      expect: PASS
+      reason: "el comando del guardrail corriendo sobre el repo real, con src/ vacío, pasa"
+    - id: TC-16
+      fixture: entrypoint-import-infra-allowed
+      expect: PASS
+      reason: "src/server/entrypoints/** SÍ puede importar src/infra/** (allowlist, P1-04)"
+    - id: TC-17
+      fixture: manifest-npm-alias-sdk
+      expect: FAIL
+      reason: "dependencia \"s3\": \"npm:@aws-sdk/client-s3@3.0.0\" (alias que evade la detección por nombre, P1-05)"
+    - id: TC-18
+      fixture: manifest-nonregistry-dependency
+      expect: FAIL
+      reason: "dependencia file: (no-registry, no auditable, P1-05)"
+    - id: TC-19
+      fixture: manifest-forbidden-sdk
+      expect: FAIL
+      reason: "twilio (modo forbidden) declarado en package.json, P1-06"
+    - id: TC-20
+      fixture: forbidden-mode-in-adapters
+      expect: FAIL
+      reason: "twilio (forbidden) importado incluso desde src/infra/adapters/**: no hay ubicación válida, P1-06"
+    - id: TC-21
+      fixture: manifest-forbidden-sdk-transitive
+      expect: FAIL
+      reason: "@sentry/node transitivo en package-lock.json (forbidden), P1-05"
+    - id: TC-22
+      fixture: config-alias-not-supported-tsconfig
+      expect: FAIL
+      reason: "tsconfig.json con paths/baseUrl: el guardrail no resuelve alias, P1-03"
+    - id: TC-23
+      fixture: config-alias-not-supported-package-imports
+      expect: FAIL
+      reason: "package.json con \"imports\": el guardrail no resuelve subpath imports, P1-03"
+    - id: TC-24
+      fixture: evasion-corpus-sec-cns-010
+      expect: FAIL
+      reason: >
+        Corpus de 28 técnicas de evasión de lampone-security (SEC-CNS-010): require
+        dinámico (alias, .call, template, concat, mainModule, globalThis/module.require,
+        eval/Function, import.meta.resolve, createRequire con y sin alias,
+        process.getBuiltinModule), extensiones .js/.mjs/.cjs/.jsx/.mts/.vue/.d.ts, import
+        type en posición de tipo, declare module + reference types, mayúsculas/minúsculas,
+        especificadores no relativos (ruta bare, subpath #, absoluta, file://), paquete
+        local no declarado, symlink de archivo y de directorio, node_modules/dist
+        vendorizados bajo src/. Los 30 puntos de evasión (28 casos + 2 estructurales)
+        deben producir al menos una violación cada uno; el control "infra-evil" (nombre de
+        directorio que imita "infra" pero no lo es) no debe fallar por sí solo.
+
+openItems:
+  - "Allowlist de dependencias con owner (ADR-001 §5, ADR-001 §11 regla 3): diferida a H03; no implementada en esta versión del guardrail."
+  - "Resolución real de alias de import no relativos (tsconfig paths/baseUrl, package.json imports/workspaces): en vez de resolverlos, su sola presencia es una violación (CONFIG_ALIAS_NOT_SUPPORTED, RULE-GUARDRAIL-06)."
+  - "Herramienta elegida: TypeScript compiler API + recorrido de archivos propio (sin ESLint ni dependency-cruiser), por minimizar dependencias (ADR-001 §5); revisar si lampone-security prefiere una herramienta dedicada."
+  - "SEC-CNS-010 P1-09 (human gate de Carlos: ruleset de main, segundo code owner de seguridad, excepción de push): no es responsabilidad de este guardrail; condiciona el merge, no la apertura del PR."
+  - >
+    Este guardrail es un control contra el acoplamiento accidental a SDKs de proveedor y
+    contra las evasiones conocidas (corpus 1 y 2 de SEC-CNS-010, 40 casos entre ambos); no
+    es un analizador de flujo de datos y no puede cubrir toda ofuscación deliberada posible
+    (p.ej. reconstruir un identificador carácter por carácter, o algo como
+    `["c","o","n","s","t","r","...` concatenado). Esa evasión deliberada residual se cubre,
+    de forma parcial, con CODEOWNERS/revisión humana (SEC-CNS-010 P1-08/P1-09, sujeta al
+    ruleset de main pendiente en P1-09) y con la regla de manifiesto (RULE-GUARDRAIL-08/09):
+    "sin el SDK instalado no hay nada que cargar en runtime" aplica solo a los SDKs
+    `forbidden` y a los SDKs sin adaptador consumidor, NO a un SDK `adapters-only` ya
+    instalado (p.ej. `nodemailer` del sink), que el dominio podría cargar de forma ofuscada.
+    El egress deny-by-default de ADR-003 §3 (c) aún no existe en LOCAL ni en el runner de
+    CI (se verifica en STAGING, bloqueado por H19), así que en IT0 no compensa esta
+    evasión.
+
+  - >
+    RIESGO RESIDUAL — PENDIENTE DE ACEPTACIÓN DE CARLOS (PR CA-136):
+    (1) el guardrail no detecta evasión deliberada por construcción dinámica en runtime
+    (p.ej. un identificador armado carácter por carácter) de un SDK `adapters-only` ya
+    instalado por un adaptador; los SDKs `forbidden` y los SDKs sin adaptador no están
+    instalados;
+    (2) hasta que exista el ruleset de `main` (P1-09) y el egress de ADR-003 §3 (c) en
+    STAGING, el único control es la revisión humana del PR; en IT0 el impacto se limita a
+    datos sintéticos, sin credenciales de proveedor;
+    (3) aceptado para IT0 LOCAL + CI; se revalúa antes de STAGING o datos reales (gate H19 /
+    ADR-010), dueño lampone-security.
+
+reVerification:
+  - round: 1
+    date: "2026-09-26"
+    verdict: "BLOQUEADO (9 P1)"
+    resolved: [P1-01, P1-02, P1-03, P1-04, P1-05, P1-06, P1-07, P1-08]
+    deferredToCarlos: [P1-09]
+  - round: 2
+    date: "2026-09-26"
+    verdict: "BLOQUEADO (residuo de P1-01/P1-03: R-01, R-02, R-03; más P2 de gitignore y lockfile)"
+    findings:
+      - id: R-01
+        summary: >
+          El scanner original solo detectaba la LLAMADA a construcciones peligrosas, no la
+          REFERENCIA. Evasiones no cubiertas: acceso computado (`module["require"]`,
+          `getBuiltinModule("module")["createRequire"]`), eval indirecto (`(0,eval)`,
+          `globalThis.eval`, `const e = eval`), `.constructor`/`["constructor"]` como vía
+          hacia Function, destructuring (`const { createRequire: cr } = ...`),
+          `Reflect.apply`/`Reflect.construct` con eval/Function como argumento,
+          `new Worker(code, { eval: true })`, `module.constructor._load(...)`,
+          `process.binding`/`dlopen`/`_linkedBinding`.
+        fix: >
+          import-scanner.ts ahora trata `eval`/`Function`/`createRequire`/
+          `getBuiltinModule`/`_load`/`binding`/`_linkedBinding`/`dlopen`/`mainModule`/
+          `constructor` como referencias (identificador, propiedad por nombre, propiedad
+          computada con literal, BindingElement de destructuring), no solo llamadas; agrega
+          detección de `Reflect.apply`/`Reflect.construct` con estos objetivos; agrega
+          `worker_threads`/`inspector` a DANGEROUS_BUILTIN_SPECIFIERS. Ver
+          RULE-GUARDRAIL-02 actualizada.
+      - id: R-02
+        summary: >
+          classifySpecifier acotaba contra `root` completo (que incluye tools/, tests/,
+          etc.), no contra `src/`, y comparaba por prefijo de cadena, no por segmentos de
+          ruta. Un import relativo como `../../../tools/shim.ts` o
+          `../../../node_modules/@aws-sdk/client-s3/index.js` escapaba de src/ sin que se
+          detectara, y podía reexportar un SDK denegado desde un archivo fuera del árbol
+          escaneado.
+        fix: >
+          layer-rules.ts acota contra `resolve(root, "src")` con `path.relative` (no
+          `startsWith`), y además falla si la ruta resuelta contiene un segmento
+          `node_modules` en cualquier posición. Ver RULE-GUARDRAIL-05 actualizada.
+      - id: R-03
+        summary: >
+          El guardrail leía tsconfig*.json con `JSON.parse`, que no entiende JSONC
+          (comentarios, comas finales) ni sigue `extends`; un tsconfig válido para `tsc`
+          con esas construcciones, o con `paths`/`baseUrl` heredado vía `extends`, pasaba en
+          silencio (catch descartado).
+        fix: >
+          guardrail.ts usa `ts.readConfigFile` (JSONC) + `ts.parseJsonConfigFileContent`
+          (resuelve `extends`); un error de parseo o de resolución de `extends` es, en sí
+          mismo, una violación (CONFIG_ALIAS_NOT_SUPPORTED). Ver RULE-GUARDRAIL-06
+          actualizada.
+      - id: P2-gitignore
+        summary: "La negación de .gitignore usaba un glob `fixtures/**/node_modules|dist/`, que dejaría de ignorar el node_modules real de cualquier fixture futura con su propio npm install."
+        fix: "Negación acotada a las rutas exactas de los 3 stubs versionados (2 del corpus 1, 1 del corpus 2 y 1 de la fixture individual r02-relative-into-nodemodules)."
+      - id: P2-lockfile
+        summary: "manifest.ts ignoraba el campo `name` de cada entrada del lockfile (no detecta un alias npm: transitivo) y devolvía un Set vacío si no había lockfile v3 (fail-open silencioso)."
+        fix: "checkLockfile() usa `entry.name` cuando existe (antes del segmento de ruta node_modules/<segmento>) y devuelve un estado explícito \"missing\"/\"unsupported-version\" que el guardrail reporta como violación MANIFEST_LOCKFILE_MISSING_OR_UNSUPPORTED."
+    corpus2Location: "tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/ (+ fixtures individuales r01-*/r02-*/r03-*)"
+    verdictAfterFix: "Pendiente de re-revisión de lampone-security sobre esta ronda."

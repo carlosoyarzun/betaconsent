@@ -1,0 +1,1 @@
+{ "name": "fixture", "dependencies": { "s3": "npm:@aws-sdk/client-s3@3.0.0" } }

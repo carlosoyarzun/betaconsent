@@ -21,3 +21,28 @@ coverage/
 __pycache__/
 *.pyc
 .venv/
+
+# Excepción (SEC-CNS-010 P2: acotada a las 2 rutas exactas, no un glob "**", porque las
+# fixtures declaran SDKs en su propio package.json y un "npm i" dentro de una fixture debe
+# seguir ignorado): el corpus de evasión de CA-136 versiona a propósito 2 stubs de 1 línea
+# bajo directorios llamados node_modules/dist dentro de src/, para probar que el guardrail
+# los escanea igual (no son dependencias reales).
+!tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/src/server/modules/node_modules/
+!tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/src/server/modules/node_modules/@aws-sdk/
+!tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/src/server/modules/node_modules/@aws-sdk/client-s3/
+!tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/src/server/modules/node_modules/@aws-sdk/client-s3/index.js
+!tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/src/server/modules/dist/
+!tests/guardrails/ports-adapters/fixtures/evasion-corpus-sec-cns-010/src/server/modules/dist/x.ts
+
+# Corpus 2 (SEC-CNS-010 re-verificación, R-02): node_modules a nivel de la raíz de la
+# fixture (fuera de src/), usado como target de un import relativo que escapa de src/.
+!tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/node_modules/
+!tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/node_modules/@aws-sdk/
+!tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/node_modules/@aws-sdk/client-s3/
+!tests/guardrails/ports-adapters/fixtures/evasion2-corpus-sec-cns-010/node_modules/@aws-sdk/client-s3/index.js
+
+# Fixture individual R-02 (import relativo que escapa de src/ hacia node_modules/).
+!tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/
+!tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/
+!tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/client-s3/
+!tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/client-s3/index.js
