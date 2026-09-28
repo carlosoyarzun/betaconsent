@@ -1,4 +1,5 @@
-// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-138 (POST
+// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-139 (POST .../confirmation/cosign,
+// CosignCaseConfirmationRequest, revocation.spec RH3 paso 2, GRD-RV-26/ERR-RV-18) y API-CNS-138 (POST
 // /platform/rights-cases/{caseRef}/confirmation, security: caseSession), RecordCaseConfirmationRequest/
 // CaseConfirmationAck (api-payloads.schema.json); specs/state-machines/revocation.spec.yaml RH3
 // paso 1 (GRD-RV-10/ERR-RV-20); specs/state-machines/rights-case.spec.yaml GRD-RC-15/ERR-RC-10.
@@ -21,7 +22,7 @@ import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
-import { recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../modules/revocation/revocation.ts";
+import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../modules/revocation/revocation.ts";
 import type { RightsCaseRepositoryPort } from "../../ports/rights-case-repository.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { Environment } from "../../modules/common/types.ts";
@@ -50,6 +51,7 @@ const RIGHTS_PATHS_AVAILABLE = ["OTP", "RECOVERY_LINK", "HUMAN_CASE"] as const;
 const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
   "ERR-CM-06": "INVALID_TRANSITION",
   "ERR-CM-10": "ACTOR_NOT_ALLOWED",
+  "ERR-RV-18": "RH3_FOUR_EYES_REQUIRED",
   "ERR-RV-20": "RH3_NOT_BOUND_TO_RH2",
   "ERR-RC-10": "ROSTER_INSUFFICIENT",
 };
@@ -146,6 +148,60 @@ export function handleRecordCaseConfirmation(
     // CaseConfirmationAck: sin co-firma, cosign = AWAITING_COSIGN y revocationState = VERIFIED
     // (nunca CONFIRMED en este paso: x-state-transition step:record, effect:none).
     return { status: 200, body: { cosign: "AWAITING_COSIGN", revocationState: recorded.status } };
+  } catch (err) {
+    if (err instanceof DomainError) {
+      if (err.code === "ERR-CM-01") return uniformNotFound();
+      return problem(409, err.code);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /platform/rights-cases/{caseRef}/confirmation/cosign (API-CNS-139, RH3 paso 2). Mismo
+// patrón que el paso 1; cosignedByRef SIEMPRE de la sesión CASE (GRD-CM-07), nunca del body.
+// ---------------------------------------------------------------------------
+export function handleCosignCaseConfirmation(
+  request: RawConsentRequest,
+  caseRefFromPath: string,
+  ports: CaseConfirmationPorts,
+  config: RightsCaseHttpConfig,
+  caseSessionKey: Buffer,
+): HttpResult {
+  const csrfFailure = checkCaseCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+
+  const cookies = parseCookies(request.cookieHeader);
+  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
+  if (!session) return uniformNotFound();
+  if (session.caseRef !== caseRefFromPath) return uniformNotFound();
+
+  if (session.role !== "RIGHTS_OPERATOR") {
+    // LEGAL DECISION LD-03: revocation.spec RH3 / API-CNS-139 exigen "segundo RIGHTS_OPERATOR
+    // distinto" como piso técnico interino (R13-4, R14-B); un APPROVER no co-firma. La regla
+    // definitiva de quién tiene autoridad legal para co-firmar es human gate de Carlos, no de
+    // este código.
+    return actorNotAllowed();
+  }
+
+  // CosignCaseConfirmationRequest: additionalProperties: false, sin propiedades. Cualquier campo
+  // (p. ej. cosignedByRef para suplantar al co-firmante) se rechaza, no se ignora.
+  const body = request.body;
+  const isEmptyObject = body === undefined || (typeof body === "object" && body !== null && !Array.isArray(body) && Object.keys(body).length === 0);
+  if (!isEmptyObject) {
+    return problem(422, "ERR-CM-06");
+  }
+
+  const rightsCase = ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
+  if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
+    return uniformNotFound();
+  }
+
+  try {
+    const cosigned = cosignCaseConfirmation(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, {
+      cosignedByPrincipalRef: session.principalRef,
+    });
+    return { status: 200, body: { cosign: "COSIGNED", revocationState: cosigned.status } };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();

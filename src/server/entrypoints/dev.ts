@@ -198,14 +198,22 @@ server.listen(port, "127.0.0.1", () => {
   // "Enviar enlace de recuperación" (POST /manage/recovery-link) y lee el enlace /r/<token> real
   // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
   console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
-  // CA-128 (API-CNS-138, RH3 paso 1): caso ya abierto con RH2 atestado (RH3_CASE_REF); probar
-  // record_case_confirmation a mano con curl (dos pasos: login de staff sintético, luego POST).
-  console.log(`RH3 paso 1 (API-CNS-138, sin co-firma): caso ${RH3_CASE_REF} ya abierto con RH2 atestado. Probar con curl:`);
+  // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
+  // (RH3_CASE_REF). Cuatro ojos: registra staff-synthetic-01 y co-firma otro RIGHTS_OPERATOR
+  // distinto (staff-synthetic-02; un APPROVER no co-firma, revocation.spec RH3). Cada persona
+  // usa su propio cookie jar.
+  const staffLogin = (principalRef: string, jar: string): string =>
+    `  curl -i -c ${jar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"tenantId":"${TENANT_ID}","caseRef":"${RH3_CASE_REF}","principalRef":"${principalRef}"}'`;
+  console.log(`RH3 paso 1 (API-CNS-138, sin efecto hasta co-firma): caso ${RH3_CASE_REF}. Probar con curl:`);
+  console.log(staffLogin("staff-synthetic-01", "/tmp/cns-case-op1.txt"));
+  console.log(`  # copia el valor de __Host-cns-case-csrf del Set-Cookie de arriba en <CSRF1>, luego:`);
   console.log(
-    `  curl -i -c /tmp/cns-case-cookies.txt -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"tenantId":"${TENANT_ID}","caseRef":"${RH3_CASE_REF}","principalRef":"staff-synthetic-01"}'`,
+    `  curl -i -b /tmp/cns-case-op1.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF1>" -H 'content-type: application/json' -d '{"confirmationGivenOnCasePage":true}'`,
   );
-  console.log(`  # copia el valor de __Host-cns-case-csrf del Set-Cookie de arriba en <CSRF>, luego:`);
+  console.log(`RH3 paso 2 (API-CNS-139, co-firma por un segundo RIGHTS_OPERATOR distinto -> CONFIRMED):`);
+  console.log(staffLogin("staff-synthetic-02", "/tmp/cns-case-op2.txt"));
+  console.log(`  # copia el valor de __Host-cns-case-csrf de este segundo login en <CSRF2>, luego:`);
   console.log(
-    `  curl -i -b /tmp/cns-case-cookies.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF>" -H 'content-type: application/json' -d '{"confirmationGivenOnCasePage":true}'`,
+    `  curl -i -b /tmp/cns-case-op2.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation/cosign -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF2>" -H 'content-type: application/json' -d '{}'`,
   );
 });
