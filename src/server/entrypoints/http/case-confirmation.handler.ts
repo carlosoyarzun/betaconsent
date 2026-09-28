@@ -37,23 +37,44 @@ export interface CaseConfirmationPorts {
   readonly staffIdentity: StaffIdentityPort;
 }
 
+/** contracts/openapi API-CNS-138 responses: 403/409/4XX -> RightsProblem (allOf Problem +
+ * required: [rightsPathsAvailable]); 200 IN_REVIEW de /rights-case/resume usa el mismo trío
+ * (rights-case-resume.handler.ts RIGHTS_PATHS_AVAILABLE). "Nunca «denegado»": toda respuesta
+ * de error de una ruta RIGHTS ofrece las tres vías. */
+const RIGHTS_PATHS_AVAILABLE = ["OTP", "RECOVERY_LINK", "HUMAN_CASE"] as const;
+
+/** DomainErrorCode (ERR-XX-NN interno) -> ErrorCode externo (contracts/schemas/common.schema.json
+ * $defs/ErrorCode): el código interno NUNCA sale tal cual en un Problem (mismo criterio que
+ * EXTERNAL_ERROR_CODE de consent-flow.handler.ts). Falta de mapeo es un bug de este archivo,
+ * nunca un code inventado: lanza en vez de filtrar un ERR-XX-NN crudo al cliente. */
+const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
+  "ERR-CM-06": "INVALID_TRANSITION",
+  "ERR-CM-10": "ACTOR_NOT_ALLOWED",
+  "ERR-RV-20": "RH3_NOT_BOUND_TO_RH2",
+  "ERR-RC-10": "ROSTER_INSUFFICIENT",
+};
+
 function uniformNotFound(): HttpResult {
   return { status: 404, body: { status: 404 } };
 }
 
 function csrfRejected(): HttpResult {
-  return { status: 403, body: { code: "CSRF_REJECTED", status: 403, correlationId: randomUUID() } };
+  return { status: 403, body: { code: "CSRF_REJECTED", status: 403, correlationId: randomUUID(), rightsPathsAvailable: RIGHTS_PATHS_AVAILABLE } };
 }
 
 /** ERR-CM-10 (ACTOR_NOT_ALLOWED): expuesto de forma distinguible solo en consolas STAFF/
  * PLATFORM/CASE (contracts/openapi, "ACTOR_NOT_ALLOWED solo se expone en las consolas STAFF,
  * PLATFORM y CASE"), nunca en rutas del portador. */
 function actorNotAllowed(): HttpResult {
-  return { status: 403, body: { code: "ERR-CM-10", status: 403, correlationId: randomUUID() } };
+  return problem(403, "ERR-CM-10");
 }
 
-function problem(status: 409 | 422, code: string): HttpResult {
-  return { status, body: { code, status, correlationId: randomUUID() } };
+function problem(status: 403 | 409 | 422, domainErrorCode: string): HttpResult {
+  const code = EXTERNAL_ERROR_CODE[domainErrorCode];
+  if (!code) {
+    throw new Error(`case-confirmation.handler: sin mapeo externo para ${domainErrorCode} (EXTERNAL_ERROR_CODE)`);
+  }
+  return { status, body: { code, status, correlationId: randomUUID(), rightsPathsAvailable: RIGHTS_PATHS_AVAILABLE } };
 }
 
 function checkCaseCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): HttpResult | null {
@@ -100,10 +121,16 @@ export function handleRecordCaseConfirmation(
     return actorNotAllowed();
   }
 
-  const body = request.body as { confirmationGivenOnCasePage?: unknown } | undefined;
-  if (body?.confirmationGivenOnCasePage !== true) {
-    // RecordCaseConfirmationRequest exige el campo const true; sin él, rechazo determinista
-    // (mismo criterio que confirmTotalWithdrawal en revocation-flow.handler.ts).
+  // RecordCaseConfirmationRequest (api-payloads.schema.json): additionalProperties: false,
+  // única propiedad permitida confirmationGivenOnCasePage (const true). recordedByRef NUNCA es
+  // un campo aceptado (se deriva de la sesión, GRD-CM-07); un cliente que lo envíe (p. ej. para
+  // intentar suplantar al firmante) viola el schema y se rechaza aquí, no se ignora en
+  // silencio (mismo criterio que confirmTotalWithdrawal en revocation-flow.handler.ts para el
+  // caso base de "falta el campo").
+  const body = request.body as Record<string, unknown> | undefined;
+  const bodyKeys = body && typeof body === "object" ? Object.keys(body) : [];
+  const hasOnlyAllowedKeys = bodyKeys.every((key) => key === "confirmationGivenOnCasePage");
+  if (!hasOnlyAllowedKeys || body?.confirmationGivenOnCasePage !== true) {
     return problem(422, "ERR-CM-06");
   }
 

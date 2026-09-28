@@ -22,7 +22,7 @@ import { attestHumanAssistedVerification } from "../../../src/server/modules/rev
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { StaffIdentityPort, StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import type { Environment } from "../../../src/server/modules/common/types.ts";
-import { validateApiPayload, type ValidationResult } from "../../contract/schema-lite.ts";
+import { validateApiPayload, validateCommon, type ValidationResult } from "../../contract/schema-lite.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CASE_SESSION_COOKIE_NAME = "__Host-cns-case";
@@ -45,6 +45,15 @@ const FULL_ROSTER: readonly StaffPrincipal[] = [
 
 function assertValid(result: ValidationResult): void {
   assert.ok(result.ok, `violaciones de esquema:\n${result.errors.join("\n")}`);
+}
+
+/** RightsProblem (contracts/openapi: allOf [Problem, required rightsPathsAvailable]) no es un
+ * $def independiente de common.schema.json (solo un allOf inline del OpenAPI, que schema-lite
+ * no implementa); valida contra Problem y además exige rightsPathsAvailable con las tres vías
+ * (RightsPaths). */
+function assertRightsProblem(body: unknown): void {
+  assertValid(validateCommon("Problem", body));
+  assert.deepEqual((body as { rightsPathsAvailable?: unknown }).rightsPathsAvailable, ["OTP", "RECOVERY_LINK", "HUMAN_CASE"]);
 }
 
 function getAllSetCookies(res: Response): string[] {
@@ -215,7 +224,9 @@ test("TEST-CNS-638: sesión CASE con rol APPROVER (no RIGHTS_OPERATOR) -> ERR-CM
       csrfHeader: login.caseCsrfCookie,
     });
     assert.equal(res.status, 403);
-    assert.equal((await res.json() as { code: string }).code, "ERR-CM-10");
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "ACTOR_NOT_ALLOWED"); // ErrorCode externo (ERR-CM-10 interno)
+    assertRightsProblem(body);
   } finally {
     await fx.close();
   }
@@ -231,7 +242,7 @@ test("TEST-CNS-639: /__dev/staff-login ausente fuera de LOCAL -> 404 (GRD-CM-13)
   }
 });
 
-test("TEST-CNS-640: recordedByRef enviado en el body se ignora — el ledger/proyección usa siempre el de la sesión (GRD-CM-07)", async () => {
+test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de RecordCaseConfirmationRequest -> 422 rechazado, NUNCA persistido ni usado (GRD-CM-07)", async () => {
   const fx = await setUp({ chainRef: "chain-640", caseRef: "case-640", revocationRef: "rv-640" });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
@@ -241,10 +252,90 @@ test("TEST-CNS-640: recordedByRef enviado en el body se ignora — el ledger/pro
       caseCsrfCookie: login.caseCsrfCookie,
       origin: ALLOWED_ORIGIN,
       csrfHeader: login.caseCsrfCookie,
-      body: { confirmationGivenOnCasePage: true, recordedByRef: "attacker-claims-someone-else" },
+      // Reproduce el curl de verificación: body con confirmationGivenOnCasePage=true Y
+      // recordedByRef="staff-synthetic-02" (distinto del principal de la sesión,
+      // staff-synthetic-01). RecordCaseConfirmationRequest solo admite
+      // confirmationGivenOnCasePage (additionalProperties: false); un campo extra, sea cual sea
+      // su valor, viola el schema del contrato y se rechaza — nunca se acepta "ignorando" el
+      // campo.
+      body: { confirmationGivenOnCasePage: true, recordedByRef: "staff-synthetic-02" },
+    });
+    assert.equal(res.status, 422);
+    const problemBody = (await res.json()) as { code: string; status: number };
+    assert.equal(problemBody.code, "INVALID_TRANSITION");
+    assertRightsProblem(problemBody);
+
+    // Sin efecto: RH3 paso 1 sigue sin registrar nada (ni el de la sesión ni el del body).
+    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    assert.equal(stored?.recordedByRef, undefined);
+  } finally {
+    await fx.close();
+  }
+});
+
+test("TEST-CNS-645: body limpio (sin recordedByRef) -> recordedByRef persistido es SIEMPRE el de la sesión CASE, nunca uno del cliente (GRD-CM-07)", async () => {
+  const fx = await setUp({ chainRef: "chain-645", caseRef: "case-645", revocationRef: "rv-645" });
+  try {
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const res = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef,
+      caseSessionCookie: login.caseSessionCookie,
+      caseCsrfCookie: login.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN,
+      csrfHeader: login.caseCsrfCookie,
+      body: { confirmationGivenOnCasePage: true },
     });
     assert.equal(res.status, 200);
     const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    // La sesión de staff-login fue staff-synthetic-01: el registro persistido usa ese principal,
+    // derivado exclusivamente de handleRecordCaseConfirmation -> session.principalRef
+    // (case-confirmation.handler.ts) -> recordCaseConfirmationPendingCosign ctx.recordedByPrincipalRef
+    // (revocation.ts), nunca de un campo del body (que aquí ni siquiera lo lleva).
+    assert.equal(stored?.recordedByRef, "staff-synthetic-01");
+  } finally {
+    await fx.close();
+  }
+});
+
+test("TEST-CNS-646: repetir la misma confirmación (mismo operador, mismo caso) es idempotente — no duplica el registro ni emite un segundo evento", async () => {
+  const fx = await setUp({ chainRef: "chain-646", caseRef: "case-646", revocationRef: "rv-646" });
+  try {
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+
+    const first = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef,
+      caseSessionCookie: login.caseSessionCookie,
+      caseCsrfCookie: login.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN,
+      csrfHeader: login.caseCsrfCookie,
+    });
+    assert.equal(first.status, 200);
+
+    const second = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef,
+      caseSessionCookie: login.caseSessionCookie,
+      caseCsrfCookie: login.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN,
+      csrfHeader: login.caseCsrfCookie,
+    });
+    assert.equal(second.status, 200);
+    assert.deepEqual(await second.json(), { cosign: "AWAITING_COSIGN", revocationState: "VERIFIED" });
+
+    // x-idempotency: revocationRef (contracts/openapi API-CNS-138). RH3 paso 1 (effect: none,
+    // TEST-CNS-635) nunca emite REVOCATION_CONFIRMED; el único evento del agregado sigue siendo
+    // el REVOCATION_VERIFIED que sembró setUp() (RH2/attestHumanAssistedVerification) — dos POST
+    // idénticos de record_case_confirmation no agregan un segundo evento ni duplican el
+    // registro: el segundo POST reemplaza el mismo campo recordedByRef del mismo
+    // RevocationRecord, no crea uno paralelo (revocation.ts recordCaseConfirmationPendingCosign:
+    // `{...found, recordedByRef: ctx.recordedByPrincipalRef}` + `revocationRepo.save`, upsert
+    // por (tenantId, revocationRef)).
+    const allEvents = fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef);
+    assert.equal(allEvents.length, 1);
+    assert.equal(allEvents[0]?.eventType, "REVOCATION_VERIFIED");
+    const confirmedEvents = allEvents.filter((e) => e.eventType === "REVOCATION_CONFIRMED");
+    assert.equal(confirmedEvents.length, 0);
+    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    assert.equal(stored?.status, "VERIFIED");
     assert.equal(stored?.recordedByRef, "staff-synthetic-01");
   } finally {
     await fx.close();
@@ -302,7 +393,9 @@ test("TEST-CNS-643: dotación insuficiente (<4 personas) -> ERR-RC-10 (GRD-RC-15
       csrfHeader: login.caseCsrfCookie,
     });
     assert.equal(res.status, 409);
-    assert.equal((await res.json() as { code: string }).code, "ERR-RC-10");
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "ROSTER_INSUFFICIENT"); // ErrorCode externo (ERR-RC-10 interno)
+    assertRightsProblem(body);
   } finally {
     await fx.close();
   }
