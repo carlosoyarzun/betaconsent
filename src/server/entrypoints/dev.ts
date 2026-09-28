@@ -27,6 +27,8 @@ import {
   LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY,
   LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG,
   LOCAL_ONLY_DEV_STAFF_ROSTER,
+  LOCAL_ONLY_DEV_TENANT_ID,
+  LOCAL_ONLY_DEV_SUBJECT_REF,
 } from "./dev-local-config.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
@@ -58,9 +60,9 @@ const relationshipConfig = loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIO
 const ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig);
 const sessionSecret = randomBytes(32);
 
-const TENANT_ID = "tenant-dev";
+const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 const INVITATION_REF = "inv-dev-001";
-const SUBJECT_REF = "dev-subject@example.invalid";
+const SUBJECT_REF = LOCAL_ONLY_DEV_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
 createInvitation(ports.invitation, TENANT_ID, "INVITER", {
