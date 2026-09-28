@@ -44,7 +44,7 @@ export function renderWelcomePage(): string {
     </section>
     <button type="button" class="lp-btn lp-btn-primary lp-welcome-cta" id="continue-btn" aria-disabled="false" aria-busy="false">Continuar</button>
     <a href="mailto:ayuda@example.invalid" class="lp-link lp-welcome-help">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a>
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos abrir esta invitación.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
@@ -74,7 +74,7 @@ export function renderWelcomeUniformErrorPage(): string {
 <body>
   <main class="lp-page-container lp-welcome-page" aria-labelledby="welcome-h1">
     <h1 id="welcome-h1">Bienvenida a la invitación</h1>
-    <div role="alert" aria-live="assertive" id="error-uniform">
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
       <p>No pudimos abrir esta invitación.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>

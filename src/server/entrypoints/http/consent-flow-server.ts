@@ -232,6 +232,14 @@ function serializeSessionCookie(config: RightsCaseHttpConfig, value: string): st
   return `${config.sessionCookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
 
+/** FINDING P1 (Carlos, prueba en navegador): invalida una cookie de sesión previa que ya no
+ * corresponde al handle recién resuelto (o al handle inválido) de GET /welcome/GET /manage —
+ * Max-Age=0 fuerza al navegador a borrarla, para que "el último enlace abierto manda" (mismo
+ * criterio que /recovery/confirm, PR #23) y una recarga posterior no la reviva. */
+function serializeClearSessionCookie(config: RightsCaseHttpConfig): string {
+  return `${config.sessionCookieName}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
 /** P1: contracts/openapi/consent-it0.openapi.yaml fija application/problem+json en
  * components.responses.CsrfRejected (403), components.responses.Problem (409/422 genérico) y
  * en el 422 de /otp/submit (OtpRejected); el resto (incluida UniformNotFound, 404) es
@@ -347,24 +355,26 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path === "/welcome") {
-      // UX-CNS-001 (SEC-CNS-014, INV-CM-08): GET /welcome resuelve en solo lectura, con la
-      // sesión LANDING existente si ya la hay, o (primera visita tras el 303 de GET /i/{token})
-      // contra el hash del handle INVITATION_LANDING vigente (resolveWelcomeLandingSession,
-      // GRD-IV-07 evaluado AQUÍ, no en el GET de canje). Sin sesión ni handle elegible: 404
-      // byte-idéntico (INV-CM-05: sin distinguir inexistente/expirado/de otro tenant), nunca un
-      // 404 crudo del framework.
+      // UX-CNS-001 (SEC-CNS-014, INV-CM-08, FINDING P1): GET /welcome resuelve en solo lectura.
+      // El handle INVITATION_LANDING vigente (fijado por el GET /i/{token} MÁS RECIENTE) SIEMPRE
+      // manda sobre una sesión previa (resolveWelcomeLandingSession, "el último enlace abierto
+      // manda"); GRD-IV-07 se evalúa AQUÍ, no en el GET de canje. Sin sesión ni handle elegible:
+      // 404 byte-idéntico (INV-CM-05: sin distinguir inexistente/expirado/de otro tenant), nunca
+      // un 404 crudo del framework, y cualquier sesión previa queda invalidada.
       const cookies = parseCookies(headerValue(req.headers.cookie));
       const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       const view = resolveWelcomeLandingSession(ports, sessionSecret, existingSession, invitationHandleKey, cookies, config.invitationHandleCookieName);
       writeHtmlSecurityHeaders(res);
-      if (!view) {
+      if (!view.session) {
+        if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
         res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
         res.end(renderWelcomeUniformErrorPage());
         return;
       }
       // Cookie CSRF del double-submit (csrf.ts): legible por welcome.js, distinta de la cookie
-      // de sesión (siempre HttpOnly). Si esta llamada recién resolvió el handle (primera
-      // visita), también fija la cookie de sesión real (view.sessionCookieToSet).
+      // de sesión (siempre HttpOnly). Si esta llamada recién resolvió una sesión NUEVA (primera
+      // visita, o un enlace distinto al de la sesión previa), también fija la cookie de sesión
+      // real (view.sessionCookieToSet), que sobrescribe cualquier sesión previa por sí sola.
       const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
       if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
       res.setHeader("Set-Cookie", cookiesToSet);
@@ -445,11 +455,12 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path === "/manage") {
-      // UX-CNS-004 §1 (33:2 entrada / 33:21 estado / 59:3 error, SEC-CNS-014): una sola ruta,
-      // que resuelve en solo lectura con la sesión MANAGE existente si ya la hay, o (primera
-      // visita tras el 303 de GET /m/{token}) contra el hash del handle MANAGE_ENTRY vigente
-      // (resolveManageLandingSession, GRD-CM-01 evaluado AQUÍ, no en el GET de canje). Sin
-      // sesión ni handle elegible: 404 byte-idéntico (frame 59:3), nunca un 404 crudo.
+      // UX-CNS-004 §1 (33:2 entrada / 33:21 estado / 59:3 error, SEC-CNS-014, FINDING P1): una
+      // sola ruta, que resuelve en solo lectura. El handle MANAGE_ENTRY vigente (fijado por el
+      // GET /m/{token} MÁS RECIENTE) SIEMPRE manda sobre una sesión previa
+      // (resolveManageLandingSession, "el último enlace abierto manda"); GRD-CM-01 se evalúa
+      // AQUÍ, no en el GET de canje. Sin sesión ni handle elegible: 404 byte-idéntico (frame
+      // 59:3), nunca un 404 crudo, y cualquier sesión previa queda invalidada.
       const cookies = parseCookies(headerValue(req.headers.cookie));
       const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       const view = resolveManageLandingSession(
@@ -461,7 +472,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         config.manageEntryHandleCookieName,
       );
       writeHtmlSecurityHeaders(res);
-      if (!view) {
+      if (!view.session) {
+        if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
         res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
         res.end(renderManageUniformErrorPage());
         return;

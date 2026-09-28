@@ -199,20 +199,36 @@ export function handleRedeemInvitationLink(
 }
 
 // ---------------------------------------------------------------------------
-// GET /welcome (UX-CNS-001, SEC-CNS-014, INV-CM-08). Solo lectura: si ya hay una sesión LANDING
-// vigente (sessionCookieName), la reutiliza sin volver a tocar la BD (segunda visita, o ya
-// avanzó a V1/C1); si no, evalúa GRD-IV-07 contra el hash del handle INVITATION_LANDING vigente
-// (fijado por GET /i/{token}) y, si resuelve, crea recién aquí la sesión real. Sin handle válido
-// -> `null` (el caller sirve el 404 byte-idéntico de renderWelcomeUniformErrorPage).
+// GET /welcome (UX-CNS-001, SEC-CNS-014, INV-CM-08). Solo lectura. FINDING P1 (Carlos,
+// prueba en navegador): el handle INVITATION_LANDING vigente (fijado por el GET /i/{token} MÁS
+// RECIENTE) SIEMPRE manda sobre una sesión previa — "el último enlace abierto manda", mismo
+// criterio que /recovery/confirm (que solo lee la cookie de recuperación, PR #23). Si el handle
+// resuelve a una identidad DISTINTA de la sesión existente (otro invitationRef/tenantId, p. ej.
+// el enlace de un segundo hijo), se descarta la sesión vieja y se crea una nueva; si resuelve a
+// la MISMA identidad, se reutiliza la sesión existente tal cual (preserva progreso — OTP ya
+// solicitado, decisionMakerRef, consentId — que un handle sin cambios no puede reconstruir). Si
+// el handle está presente pero es inválido (inexistente/expirado), la sesión previa se borra
+// SIEMPRE (aunque fuera válida): nunca se reutiliza el contexto de un enlace distinto al que el
+// usuario acaba de abrir. Solo cuando NO hay handle en absoluto se cae de vuelta a la sesión
+// existente (navegación dentro del mismo flujo, sin volver a pasar por GET /i/{token}).
 // ---------------------------------------------------------------------------
 export interface WelcomeLandingView {
-  readonly session: ConsentSessionPayload;
-  /** Presente solo cuando esta llamada resolvió el handle recién ahora (primera visita tras el
-   * 303 de GET /i/{token}): el caller debe fijar esta cookie de sesión en la respuesta. */
+  readonly session: ConsentSessionPayload | null;
+  /** Presente solo cuando esta llamada resolvió una sesión NUEVA (handle recién resuelto, sea la
+   * primera visita o un enlace distinto al de la sesión previa): el caller debe fijar esta
+   * cookie en la respuesta. */
   readonly sessionCookieToSet?: string;
+  /** true cuando hay que invalidar una cookie de sesión previa (handle presente pero inválido,
+   * o handle presente y válido mas de una identidad DISTINTA de la sesión previa): el caller
+   * debe fijar `Set-Cookie` con Max-Age=0 para esa cookie. */
+  readonly clearSessionCookie?: boolean;
 }
 
 const INVITATION_LANDING_HANDLE_TYPE: LinkHandleType = "INVITATION_LANDING";
+
+function sameInvitationIdentity(session: ConsentSessionPayload, tenantId: string, invitationRef: string): boolean {
+  return session.tenantId === tenantId && session.invitationRef === invitationRef;
+}
 
 export function resolveWelcomeLandingSession(
   ports: Pick<ConsentFlowPorts, "invitation">,
@@ -221,16 +237,27 @@ export function resolveWelcomeLandingSession(
   invitationHandleKey: Buffer,
   cookies: Readonly<Record<string, string>>,
   invitationHandleCookieName: string,
-): WelcomeLandingView | null {
+): WelcomeLandingView {
+  const handle = decodeLinkHandle(invitationHandleKey, INVITATION_LANDING_HANDLE_TYPE, cookies[invitationHandleCookieName]);
+  if (handle) {
+    const found = resolveInvitationForRedeemByHash(ports.invitation, handle.h);
+    if (!found) {
+      // Handle inválido: nunca reutiliza una sesión previa, la que sea (P1: "el último enlace
+      // abierto manda" incluye el caso "el último enlace es inválido").
+      return { session: null, clearSessionCookie: Boolean(existingSession) };
+    }
+    if (existingSession && existingSession.invitationRef && sameInvitationIdentity(existingSession, found.tenantId, found.invitationRef)) {
+      // Mismo enlace que ya generó esta sesión: preserva el progreso (OTP, decisión) en vez de
+      // reconstruir una sesión LANDING "en blanco" en cada recarga.
+      return { session: existingSession };
+    }
+    const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
+    return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
+  }
   if (existingSession && existingSession.invitationRef) {
     return { session: existingSession };
   }
-  const handle = decodeLinkHandle(invitationHandleKey, INVITATION_LANDING_HANDLE_TYPE, cookies[invitationHandleCookieName]);
-  if (!handle) return null;
-  const found = resolveInvitationForRedeemByHash(ports.invitation, handle.h);
-  if (!found) return null;
-  const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
-  return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
+  return { session: null };
 }
 
 // ---------------------------------------------------------------------------

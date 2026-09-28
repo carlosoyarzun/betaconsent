@@ -41,7 +41,7 @@ export function renderManageEntryPage(): string {
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos continuar.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
@@ -77,7 +77,7 @@ export function renderManageStatusPage(): string {
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos continuar.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
@@ -102,7 +102,7 @@ export function renderManageUniformErrorPage(): string {
 <body>
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
     <h1 id="manage-h1">Gestiona tu consentimiento</h1>
-    <div role="alert" aria-live="assertive" id="error-uniform">
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
       <p>Este enlace ya no está disponible.</p>
       <p>Puede que ya no sea válido. Esto no significa que se haya perdido tu posibilidad de gestionar tu consentimiento.</p>
     </div>

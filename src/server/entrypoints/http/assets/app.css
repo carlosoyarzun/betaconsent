@@ -62,6 +62,22 @@
   display: none;
 }
 
+/* FINDING P1 (Carlos, prueba en navegador con dev.ts): las tres pantallas de error uniforme
+   (9:12 /welcome, 59:3 /manage, 33:106 /recovery/confirm) mostraban el texto plano sin la caja
+   de alerta roja que sí llevan en Figma. No existe una clase .lp-alert-* en design-system/
+   (grep confirmado); esta utilidad vive en el CSS de la app, mismo criterio que .lp-verify-cta,
+   reutilizando los tokens de feedback ya existentes en design-system/css/tokens.css
+   (--lp-color-feedback-error / -bg), sin inventar valores nuevos. Aplica a todo
+   #error-uniform (los tres estados uniformes y sus contrapartes ocultas que revocation.js/
+   manage.js/welcome.js muestran en cliente ante el mismo error). */
+.lp-alert-error {
+  border: 1px solid var(--lp-color-feedback-error, #EF4444);
+  background: var(--lp-color-feedback-error-bg, rgba(239, 68, 68, 0.12));
+  color: var(--lp-color-feedback-error, #EF4444);
+  border-radius: var(--lp-radius-md, 8px);
+  padding: var(--lp-spacing-16, 16px);
+}
+
 /* /decision (UX-CNS-003, handoff decision-handoff.md §2/§7): no existen .lp-checkbox/.lp-radio
    en design-system/css/components.css (P1 del handoff); estas utilidades nuevas viven en el CSS
    de la app, mismo criterio que .lp-verify-cta. Carlos, 2026-09-27: CTA a 44px (misma decisión

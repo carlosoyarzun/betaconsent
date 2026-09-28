@@ -123,20 +123,34 @@ export function handleRedeemManagementLink(
 }
 
 // ---------------------------------------------------------------------------
-// GET /manage (UX-CNS-004, SEC-CNS-014, INV-CM-08). Solo lectura: si ya hay una sesión MANAGE
-// vigente (sessionCookieName, p. ej. ya avanzó a V1/V3), la reutiliza sin volver a tocar la BD;
-// si no, evalúa TenantHandlePort.resolveByHash contra el hash del handle MANAGE_ENTRY vigente
-// (fijado por GET /m/{token}) y, si resuelve, crea recién aquí la sesión real. Sin handle válido
-// -> `null` (el caller sirve el 404 byte-idéntico de renderManageUniformErrorPage, frame 59:3).
+// GET /manage (UX-CNS-004, SEC-CNS-014, INV-CM-08). Solo lectura. FINDING P1 (Carlos, prueba en
+// navegador): el handle MANAGE_ENTRY vigente (fijado por el GET /m/{token} MÁS RECIENTE) SIEMPRE
+// manda sobre una sesión previa — "el último enlace abierto manda", mismo criterio que
+// /recovery/confirm (PR #23). Si el handle resuelve a una identidad DISTINTA de la sesión
+// existente (otro chainRef, p. ej. el enlace de gestión de un segundo hijo), se descarta la
+// sesión vieja y se crea una nueva; si resuelve a la MISMA identidad, se reutiliza la sesión
+// existente (preserva progreso — V3 MANAGE, revocationRef — que el handle no reconstruye). Si el
+// handle está presente pero inválido (inexistente/rotado), la sesión previa se borra SIEMPRE.
+// Solo cuando NO hay handle en absoluto se cae de vuelta a la sesión existente (navegación
+// dentro del mismo flujo, sin volver a pasar por GET /m/{token}).
 // ---------------------------------------------------------------------------
 export interface ManageLandingView {
-  readonly session: ConsentSessionPayload;
-  /** Presente solo cuando esta llamada resolvió el handle recién ahora (primera visita tras el
-   * 303 de GET /m/{token}): el caller debe fijar esta cookie de sesión en la respuesta. */
+  readonly session: ConsentSessionPayload | null;
+  /** Presente solo cuando esta llamada resolvió una sesión NUEVA (handle recién resuelto, sea la
+   * primera visita o un enlace distinto al de la sesión previa): el caller debe fijar esta
+   * cookie en la respuesta. */
   readonly sessionCookieToSet?: string;
+  /** true cuando hay que invalidar una cookie de sesión previa (handle presente pero inválido, o
+   * handle presente y válido mas de una identidad DISTINTA de la sesión previa): el caller debe
+   * fijar `Set-Cookie` con Max-Age=0 para esa cookie. */
+  readonly clearSessionCookie?: boolean;
 }
 
 const MANAGE_ENTRY_HANDLE_TYPE: LinkHandleType = "MANAGE_ENTRY";
+
+function sameManageIdentity(session: ConsentSessionPayload, tenantId: string, chainRef: string, revokedDecisionRef: string): boolean {
+  return session.tenantId === tenantId && session.chainRef === chainRef && session.revokedDecisionRef === revokedDecisionRef;
+}
 
 export function resolveManageLandingSession(
   ports: Pick<RevocationFlowPorts, "tenantHandle">,
@@ -145,20 +159,28 @@ export function resolveManageLandingSession(
   manageHandleKey: Buffer,
   cookies: Readonly<Record<string, string>>,
   manageEntryHandleCookieName: string,
-): ManageLandingView | null {
+): ManageLandingView {
+  const handle = decodeLinkHandle(manageHandleKey, MANAGE_ENTRY_HANDLE_TYPE, cookies[manageEntryHandleCookieName]);
+  if (handle) {
+    const resolved = ports.tenantHandle.resolveByHash(handle.h);
+    if (!resolved) {
+      // Handle inválido: nunca reutiliza una sesión previa, la que sea.
+      return { session: null, clearSessionCookie: Boolean(existingSession) };
+    }
+    if (existingSession && existingSession.chainRef && sameManageIdentity(existingSession, resolved.tenantId, resolved.chainRef, resolved.revokedDecisionRef)) {
+      return { session: existingSession };
+    }
+    const session: ConsentSessionPayload = {
+      tenantId: resolved.tenantId,
+      chainRef: resolved.chainRef,
+      revokedDecisionRef: resolved.revokedDecisionRef,
+    };
+    return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
+  }
   if (existingSession && existingSession.chainRef) {
     return { session: existingSession };
   }
-  const handle = decodeLinkHandle(manageHandleKey, MANAGE_ENTRY_HANDLE_TYPE, cookies[manageEntryHandleCookieName]);
-  if (!handle) return null;
-  const resolved = ports.tenantHandle.resolveByHash(handle.h);
-  if (!resolved) return null;
-  const session: ConsentSessionPayload = {
-    tenantId: resolved.tenantId,
-    chainRef: resolved.chainRef,
-    revokedDecisionRef: resolved.revokedDecisionRef,
-  };
-  return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
+  return { session: null };
 }
 
 // ---------------------------------------------------------------------------
