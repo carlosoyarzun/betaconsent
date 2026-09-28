@@ -43,7 +43,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
     channel: createInMemoryOtpChannelSink(),
     ledger,
     invitation: invitationPorts,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),
   };
   const consentPorts: ConsentDecisionPorts = {

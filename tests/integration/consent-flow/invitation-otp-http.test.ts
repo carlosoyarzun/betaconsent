@@ -28,7 +28,7 @@ const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+channel-1@example.invalid";
 
 // LOCAL-only sintético (D4, no es default de producción): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 
 interface Harness {
   readonly baseUrl: string;
@@ -219,6 +219,84 @@ test("TEST-CNS-503: código incorrecto en /otp/submit -> 422 uniforme, sin filtr
     // tests/contract/http/consent-flow-http-contract.test.ts TEST-CNS-519).
     assert.equal(body.code, "OTP_CODE_REJECTED");
     assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-503")?.state, "OPENED");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-548: V2r vía HTTP — POST /otp/resend responde 202 UniformAccepted y reemplaza el código en el sink; el nuevo código verifica", async () => {
+  const harness = await startServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-548", "subject-548@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
+    const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
+    const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionAfterOpen;
+
+    const sink = harness.ports.otp.channel as InMemoryOtpChannelSink;
+    const oldCode = sink.sent[sink.sent.length - 1]?.code ?? "";
+
+    const resent = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
+    assert.equal(resent.status, 202);
+    assert.deepEqual(await resent.json(), { result: "RECEIVED" });
+    assert.equal(sink.sent.length, 2);
+    const newCode = sink.sent[1]?.code ?? "";
+    assert.notEqual(newCode, oldCode);
+
+    const submitted = await post(harness.baseUrl, {
+      path: "/otp/submit",
+      ...VALID_CSRF,
+      sessionCookie: sessionAfterRequest,
+      body: { code: newCode },
+    });
+    assert.equal(submitted.status, 200);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-549: POST /otp/resend sin CSRF -> 403 CSRF_REJECTED, sin reemplazar el código (GRD-CM-10)", async () => {
+  const harness = await startServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-549", "subject-549@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
+    const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
+    const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionAfterOpen;
+
+    const sink = harness.ports.otp.channel as InMemoryOtpChannelSink;
+    const sentBefore = sink.sent.length;
+
+    const res = await post(harness.baseUrl, { path: "/otp/resend", sessionCookie: sessionAfterRequest });
+    assert.equal(res.status, 403);
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "CSRF_REJECTED");
+    assert.equal(sink.sent.length, sentBefore);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-550: POST /otp/resend agota el límite (P-06) -> 409 OTP_RESEND_LIMIT (ERR-OT-09)", async () => {
+  const harness = await startServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-550", "subject-550@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
+    const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
+    const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionAfterOpen;
+
+    for (let i = 0; i < LOCAL_ONLY_TEST_OTP_POLICY.maxResends; i += 1) {
+      const ok = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
+      assert.equal(ok.status, 202);
+    }
+    const limited = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
+    assert.equal(limited.status, 409);
+    const body = (await limited.json()) as { code: string };
+    assert.equal(body.code, "OTP_RESEND_LIMIT");
   } finally {
     await harness.close();
   }

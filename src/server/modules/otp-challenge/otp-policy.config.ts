@@ -11,6 +11,11 @@
 // (fail-closed, mismo patrón que loadRightsCaseHttpConfig/CNS_ALLOWED_ORIGIN). Los únicos
 // valores sintéticos permitidos viven en `dev.ts` y en tests, marcados LOCAL_ONLY_* y nunca
 // reutilizados como default de esta función.
+//
+// P-06 (maxResends, Carlos 2026-09-27, /verify + POST /otp/resend): mismo patrón exacto que
+// P-01/P-02/P-03: sin valor aprobado en SEC-CNS-006 (grep de "P-06" en specs/ y contracts/ el
+// 2026-09-27 no encuentra un número aprobado), así que tampoco tiene default de producción
+// aquí. `CNS_OTP_MAX_RESENDS` es la única fuente además del override explícito.
 
 import type { OtpPolicy } from "./otp-challenge.ts";
 
@@ -18,6 +23,7 @@ export interface OtpPolicyConfigOverrides {
   readonly codeLength?: number;
   readonly ttlMs?: number;
   readonly maxAttempts?: number;
+  readonly maxResends?: number;
 }
 
 function readIntEnv(name: string): number | undefined {
@@ -39,16 +45,17 @@ export function loadOtpPolicyConfig(overrides: OtpPolicyConfigOverrides = {}): O
   const codeLength = overrides.codeLength ?? readIntEnv("CNS_OTP_CODE_LENGTH");
   const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_OTP_TTL_MS");
   const maxAttempts = overrides.maxAttempts ?? readIntEnv("CNS_OTP_MAX_ATTEMPTS");
+  const maxResends = overrides.maxResends ?? readIntEnv("CNS_OTP_MAX_RESENDS");
 
-  if (codeLength === undefined || ttlMs === undefined || maxAttempts === undefined) {
+  if (codeLength === undefined || ttlMs === undefined || maxAttempts === undefined || maxResends === undefined) {
     throw new Error(
-      "Política OTP incompleta: P-01 (CNS_OTP_CODE_LENGTH), P-02 (CNS_OTP_TTL_MS) y P-03 " +
-        "(CNS_OTP_MAX_ATTEMPTS) no tienen un valor aprobado en specs/contracts (ver cabecera de " +
-        "este archivo). No hay default de producción: PENDING — Carlos debe fijar P-01/P-02/P-03 " +
-        "en SEC-CNS-006 antes de un entrypoint real. dev.ts y los tests pueden pasar overrides " +
-        "explícitos marcados LOCAL-only.",
+      "Política OTP incompleta: P-01 (CNS_OTP_CODE_LENGTH), P-02 (CNS_OTP_TTL_MS), P-03 " +
+        "(CNS_OTP_MAX_ATTEMPTS) y P-06 (CNS_OTP_MAX_RESENDS) no tienen un valor aprobado en " +
+        "specs/contracts (ver cabecera de este archivo). No hay default de producción: PENDING " +
+        "— Carlos debe fijar P-01/P-02/P-03/P-06 en SEC-CNS-006 antes de un entrypoint real. " +
+        "dev.ts y los tests pueden pasar overrides explícitos marcados LOCAL-only.",
     );
   }
 
-  return { codeLength, ttlMs, maxAttempts };
+  return { codeLength, ttlMs, maxAttempts, maxResends };
 }

@@ -27,7 +27,7 @@ import {
   resolveInvitationForRedeem,
   type InvitationPorts,
 } from "../../modules/invitation/invitation.ts";
-import { requestOtp, submitOtp, type OtpChallengePorts } from "../../modules/otp-challenge/otp-challenge.ts";
+import { requestOtp, resendOtp, submitOtp, type OtpChallengePorts } from "../../modules/otp-challenge/otp-challenge.ts";
 import {
   recordRequiredSteps,
   startDecision,
@@ -81,6 +81,7 @@ const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
   "ERR-OT-02": "OTP_CODE_REJECTED",
   "ERR-OT-03": "OTP_EXPIRED_OR_CONSUMED",
   "ERR-OT-04": "OTP_LOCKED",
+  "ERR-OT-09": "OTP_RESEND_LIMIT",
   "ERR-CD-01": "ALREADY_DECIDED",
   "ERR-CD-02": "PURPOSE_SELECTION_INVALID",
   "ERR-CD-04": "DECISION_STEPS_INCOMPLETE",
@@ -223,6 +224,39 @@ export function handleRequestOtp(
   // UniformAccepted (contracts/common.schema.json $defs/UniformAccepted): result es la
   // constante "RECEIVED" (P1: no "ACCEPTED").
   return { status: 202, body: { result: "RECEIVED" }, setSessionCookie: encodeSession(sessionSecret, nextSession) };
+}
+
+// ---------------------------------------------------------------------------
+// POST /otp/resend (V2r). API-CNS-122. Reemplaza el código sin reiniciar attempts ni el
+// presupuesto (GRD-OT-06); requiere sesión con verificationRef (mismo challenge que V1 creó).
+// ---------------------------------------------------------------------------
+export function handleResendOtp(
+  request: RawConsentRequest,
+  ports: Pick<ConsentFlowPorts, "otp">,
+  config: RightsCaseHttpConfig,
+  sessionSecret: Buffer,
+): HttpResult {
+  const csrfFailure = checkCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+
+  const session = readSession(request, config, sessionSecret);
+  if (!session || !session.verificationRef) return uniformNotFound();
+
+  try {
+    resendOtp(ports.otp, session.tenantId, session.verificationRef);
+  } catch (err) {
+    if (err instanceof DomainError) {
+      if (err.code === "ERR-CM-01") return uniformNotFound();
+      if (err.code === "ERR-OT-09") return problem(409, err.code);
+      // ERR-OT-03/ERR-OT-04 (challenge terminal): respuesta uniforme (mismo patrón que
+      // ERR-OT-01/ERR-OT-08 en V1, sin distinguir del éxito genérico de UniformAccepted).
+    } else {
+      throw err;
+    }
+  }
+  // UniformAccepted (contracts/common.schema.json $defs/UniformAccepted): mismo cuerpo que
+  // POST /otp/request (result: "RECEIVED"); no fija cookie nueva (la sesión no cambia en V2r).
+  return { status: 202, body: { result: "RECEIVED" } };
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ import {
   handleOpenInvitation,
   handleRedeemInvitationLink,
   handleRequestOtp,
+  handleResendOtp,
   handleSubmitDecision,
   handleSubmitOtp,
   type ConsentFlowPorts,
@@ -251,6 +252,9 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         break;
       case "/otp/request":
         result = handleRequestOtp(request, ports, config, sessionSecret);
+        break;
+      case "/otp/resend":
+        result = handleResendOtp(request, ports, config, sessionSecret);
         break;
       case "/otp/submit":
         result = handleSubmitOtp(request, ports, config, sessionSecret);

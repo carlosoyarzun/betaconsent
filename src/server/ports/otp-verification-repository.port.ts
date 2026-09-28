@@ -19,6 +19,9 @@ export interface OtpVerificationRecord {
   readonly expiresAt: Date;
   readonly consumedAt?: Date;
   readonly state: OtpVerificationState;
+  /** V2r (ResendOtp): cuántas veces se reemplazó el código. No reinicia `attempts` ni el
+   * presupuesto (GRD-OT-06); nace en 0. */
+  readonly resendCount: number;
 }
 
 export interface OtpVerificationRepositoryPort {

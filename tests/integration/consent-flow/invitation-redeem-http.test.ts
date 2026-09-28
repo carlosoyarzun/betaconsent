@@ -21,7 +21,7 @@ const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+channel-redeem@example.invalid";
 
 // LOCAL-only sintético (D4, no es default de producción): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 
 interface Harness {
   readonly baseUrl: string;
