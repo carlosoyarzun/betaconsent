@@ -423,3 +423,100 @@ test("TEST-CNS-524: POST /rights-case/resume sin CSRF responde Problem (403, com
     await harness.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// content-type de Problem/CsrfRejected/OtpRejected (P1: contracts/openapi/consent-it0
+// .openapi.yaml fija application/problem+json en components.responses.CsrfRejected (~L196-200),
+// components.responses.Problem (~L201-205) y /otp/submit '422' OtpRejected (~L660-664); el
+// transporte respondía siempre application/json).
+// ---------------------------------------------------------------------------
+
+test("TEST-CNS-532: POST /invitation/open sin CSRF responde con content-type application/problem+json (CsrfRejected)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-532", "subject-532@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const res = await post(harness.baseUrl, { path: "/invitation/open", sessionCookie: landingSession });
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("content-type"), "application/problem+json");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-533: POST /otp/submit con código incorrecto responde con content-type application/problem+json (OtpRejected)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-533", "subject-533@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
+    const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
+    const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME];
+
+    const res = await post(harness.baseUrl, {
+      path: "/otp/submit",
+      ...VALID_CSRF,
+      sessionCookie: sessionAfterRequest,
+      body: { code: "000000" },
+    });
+    assert.equal(res.status, 422);
+    assert.equal(res.headers.get("content-type"), "application/problem+json");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-534: POST /decision/submit con finalidad requerida faltante responde con content-type application/problem+json (Problem)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-534", "subject-534@example.invalid");
+    const incompletePurposes = GRANT_ALL.slice(1);
+    const res = await post(harness.baseUrl, {
+      path: "/decision/submit",
+      ...VALID_CSRF,
+      sessionCookie: verifiedSession,
+      body: { purposes: incompletePurposes },
+    });
+    assert.equal(res.status, 422);
+    assert.equal(res.headers.get("content-type"), "application/problem+json");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-535: POST /rights-case/resume sin CSRF responde con content-type application/problem+json (CsrfRejected)", async () => {
+  const harness = await startRightsCaseServer();
+  try {
+    seedOpenChannelUnreachableCase(harness.ports, "handle-535");
+    const res = await postResume(harness.baseUrl, { manageHandle: "handle-535" });
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("content-type"), "application/problem+json");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-536: POST /invitation/open válido sigue respondiendo application/json (regresión: no todo pasó a problem+json)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-536", "subject-536@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "application/json");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-537: GET /i/{token} inexistente (UniformNotFound, 404) sigue respondiendo application/json, no problem+json (contracts/openapi UniformNotFound)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const res = await fetch(`${harness.baseUrl}/i/this-token-does-not-exist`, { redirect: "manual" });
+    assert.equal(res.status, 404);
+    assert.equal(res.headers.get("content-type"), "application/json");
+  } finally {
+    await harness.close();
+  }
+});
