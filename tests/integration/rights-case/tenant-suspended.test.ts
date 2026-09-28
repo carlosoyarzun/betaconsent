@@ -18,6 +18,8 @@ import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
+import { withSyntheticFallback } from "../../contract/synthetic-decision.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 
@@ -66,11 +68,12 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
     rightsCaseRepo,
     revocationRepo,
     ledger,
+    outbox: createInMemoryOutboxAdapter(),
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     // SEC-CNS-014 (FINDING P1-01): ajeno a RC3/RH2/RH3/R4 bajo prueba aquí, uno vacío basta.
-    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
+    consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
   };
 
   // RC3

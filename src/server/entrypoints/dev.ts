@@ -157,6 +157,8 @@ server.listen(port, "127.0.0.1", () => {
   // "Enviar enlace de recuperación" (POST /manage/recovery-link) y lee el enlace /r/<token> real
   // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
   console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
+  // CA-127: R4 encola consent.revoked en el outbox in-memory; se lee aquí (solo LOCAL, sin entrega: R5).
+  console.log(`Leer los eventos del outbox: GET ${baseUrl}/__dev/outbox-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
   // (RH3_CASE_REF). Cuatro ojos: registra staff-synthetic-01 y co-firma otro RIGHTS_OPERATOR
   // distinto (staff-synthetic-02; un APPROVER no co-firma, revocation.spec RH3). Cada persona

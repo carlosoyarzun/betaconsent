@@ -19,6 +19,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DomainError } from "../common/errors.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { OutboxPort } from "../../ports/outbox.port.ts";
 import type { RecoveryTokenRecord, RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
 import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
@@ -28,6 +29,8 @@ import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
   readonly ledger: LedgerPort;
+  /** CA-127: outbox transaccional; R4 encola consent.revoked (revocation.spec R4 emits, GRD-RV-11). */
+  readonly outbox: OutboxPort;
   /** CA-116 PR 2 (RV0 BEARER, GET /r/{token}, POST /recovery/revoke). */
   readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
   readonly recoveryLinkChannel: RecoveryLinkChannelPort;
@@ -405,9 +408,13 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   if (!verifiedAuthPath || !revokedDecisionRef || (verifiedAuthPath === "RECOVERY" && !verifiedRecoveryMethod)) {
     throw new DomainError("ERR-CM-06");
   }
-  const applied: RevocationRecord = { ...found, status: "APPLIED" };
-  ports.revocationRepo.save(applied);
-  ports.ledger.append({
+  // CA-127: todo lo que puede fallar va antes de la primera escritura. contextRef y subjectRef
+  // del sobre salen de la decisión revocada; si no existe, falla cerrado sin escrituras.
+  const decision = ports.consentDecisionRepo.findByConsentId(tenantId, revokedDecisionRef);
+  if (!decision) {
+    throw new DomainError("ERR-CM-06");
+  }
+  const rev = ports.ledger.append({
     eventType: "CONSENT_REVOKED",
     tenantId,
     aggregateType: "Revocation",
@@ -437,6 +444,21 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
     payload: { receiptRef: revocationRef, managementLinkIssued: false },
     idempotencyKey: `${revocationRef}:receipt`,
   });
+  // effectiveAt se lee del registro devuelto: ante dedupe es el original (un solo reloj).
+  const effectiveAt = (rev.payload as { effectiveAt: string }).effectiveAt;
+  ports.outbox.enqueue({
+    tenantId,
+    eventType: "consent.revoked",
+    contextRef: decision.contextRef,
+    subjectRef: decision.subjectRef,
+    occurredAt: effectiveAt,
+    payload: { revocationRef, scope: "ALL", effectiveAt },
+    dedupeKey: `${revocationRef}:consent.revoked`,
+  });
+  // La proyección se guarda al final: si algo falla queda CONFIRMED y el reintento converge
+  // (ledger y outbox deduplican) sin duplicados. La tx real llega con el adaptador Postgres.
+  const applied: RevocationRecord = { ...found, status: "APPLIED" };
+  ports.revocationRepo.save(applied);
   return applied;
 }
 
