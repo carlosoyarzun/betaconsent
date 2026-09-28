@@ -30,7 +30,7 @@ const allowedOrigin = process.env.CNS_ALLOWED_ORIGIN ?? `http://127.0.0.1:${port
 
 // D4: P-01/P-02/P-03 no tienen valor aprobado en specs/contracts; este override es
 // LOCAL-only, nunca un default de producción (ver otp-policy.config.ts).
-const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: 6, ttlMs: 5 * 60_000, maxAttempts: 3 };
+const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: 6, ttlMs: 5 * 60_000, maxAttempts: 3, maxResends: 3 };
 const otpPolicy = loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY);
 
 const ports = createDefaultConsentFlowPorts(otpPolicy);

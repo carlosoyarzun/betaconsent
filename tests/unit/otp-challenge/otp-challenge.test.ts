@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
 import { createInvitation, markInvitationReady, openInvitation, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
-import { requestOtp, submitOtp } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
+import { requestOtp, resendOtp, submitOtp } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
 import type { OtpChallengePorts } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
@@ -30,7 +30,7 @@ function makeOtpPorts(ledger = createInMemoryLedgerAdapter()): { invitationPorts
     channel: createInMemoryOtpChannelSink(),
     ledger,
     invitation: invitationPorts,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),
   };
   return { invitationPorts, otpPorts };
@@ -160,4 +160,69 @@ test("TEST-CNS-489: V3 con verificationRef de otro tenant -> 404 uniforme ERR-CM
     () => submitOtp(otpPorts, "tenant-2", "ver-1", "000000", "dm-1"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
   );
+});
+
+test("TEST-CNS-545: V2r reemplaza el código sin reiniciar attempts ni el canal ligado (GRD-OT-06); el código viejo deja de servir", () => {
+  const { invitationPorts, otpPorts } = makeOtpPorts();
+  openedInvitation(invitationPorts);
+  requestOtp(otpPorts, "tenant-1", "ver-1", "inv-1", CHANNEL_REF);
+  const sink = otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
+  const oldCode = sink.sent[0]?.code ?? "";
+
+  assert.throws(
+    () => submitOtp(otpPorts, "tenant-1", "ver-1", "000000", "dm-1"),
+    (err: unknown) => err instanceof DomainError && err.code === "ERR-OT-02",
+  );
+  const afterOneFail = otpPorts.otpRepo.findByRef("tenant-1", "ver-1");
+  assert.equal(afterOneFail?.attempts, 1);
+
+  const resent = resendOtp(otpPorts, "tenant-1", "ver-1");
+  assert.equal(resent.state, "CODE_SENT");
+  assert.equal(resent.attempts, 1); // NO reinicia attempts (GRD-OT-06)
+  assert.equal(resent.resendCount, 1);
+  assert.equal(sink.sent.length, 2);
+  const newCode = sink.sent[1]?.code ?? "";
+  assert.notEqual(newCode, oldCode);
+
+  // El código viejo ya no verifica; el nuevo sí.
+  assert.throws(
+    () => submitOtp(otpPorts, "tenant-1", "ver-1", oldCode, "dm-1"),
+    (err: unknown) => err instanceof DomainError && err.code === "ERR-OT-02",
+  );
+  const verified = submitOtp(otpPorts, "tenant-1", "ver-1", newCode, "dm-1");
+  assert.equal(verified.state, "VERIFIED");
+});
+
+test("TEST-CNS-546: V2r agota el límite de reenvíos (P-06, maxResends) -> ERR-OT-09, sin tocar el challenge", () => {
+  const { invitationPorts, otpPorts } = makeOtpPorts();
+  openedInvitation(invitationPorts);
+  requestOtp(otpPorts, "tenant-1", "ver-1", "inv-1", CHANNEL_REF);
+
+  for (let i = 0; i < otpPorts.policy.maxResends; i += 1) {
+    resendOtp(otpPorts, "tenant-1", "ver-1");
+  }
+  assert.throws(
+    () => resendOtp(otpPorts, "tenant-1", "ver-1"),
+    (err: unknown) => err instanceof DomainError && err.code === "ERR-OT-09",
+  );
+  const record = otpPorts.otpRepo.findByRef("tenant-1", "ver-1");
+  assert.equal(record?.resendCount, otpPorts.policy.maxResends);
+  assert.equal(record?.state, "CODE_SENT");
+});
+
+test("TEST-CNS-547: V2r sobre un challenge LOCKED responde ERR-OT-04 sin reemitir código", () => {
+  const { invitationPorts, otpPorts } = makeOtpPorts();
+  openedInvitation(invitationPorts);
+  requestOtp(otpPorts, "tenant-1", "ver-1", "inv-1", CHANNEL_REF);
+  for (let i = 0; i < otpPorts.policy.maxAttempts; i += 1) {
+    assert.throws(() => submitOtp(otpPorts, "tenant-1", "ver-1", "000000", "dm-1"));
+  }
+  const sink = otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
+  const sentBefore = sink.sent.length;
+
+  assert.throws(
+    () => resendOtp(otpPorts, "tenant-1", "ver-1"),
+    (err: unknown) => err instanceof DomainError && err.code === "ERR-OT-04",
+  );
+  assert.equal(sink.sent.length, sentBefore);
 });

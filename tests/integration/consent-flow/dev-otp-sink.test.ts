@@ -14,7 +14,7 @@ import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../.
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 
 async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTION" | undefined): Promise<{
   baseUrl: string;

@@ -36,7 +36,7 @@ const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+channel-contract@example.invalid";
 
 // LOCAL-only sintético (D4, no es default de producción): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
 
 function assertValid(result: ValidationResult): void {
@@ -231,6 +231,52 @@ test("TEST-CNS-517: POST /otp/request responde UniformAccepted ({result: RECEIVE
     assert.equal(res.status, 202);
     const body = await res.json();
     assertValid(validateCommon("UniformAccepted", body));
+  } finally {
+    await harness.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /otp/resend (API-CNS-122, V2r)
+// ---------------------------------------------------------------------------
+
+test("TEST-CNS-551: POST /otp/resend responde UniformAccepted ({result: RECEIVED}), mismo esquema que /otp/request (common.schema.json)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-551", "subject-551@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
+    const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
+    const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionAfterOpen;
+
+    const res = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
+    assert.equal(res.status, 202);
+    const body = await res.json();
+    assertValid(validateCommon("UniformAccepted", body));
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-552: POST /otp/resend agotado el límite (P-06) responde Problem (409, common.schema.json) con content-type application/problem+json", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const token = seedSentInvitation(harness.ports, "inv-552", "subject-552@example.invalid");
+    const landingSession = await redeem(harness.baseUrl, token);
+    const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
+    const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
+    const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
+    const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionAfterOpen;
+
+    for (let i = 0; i < LOCAL_ONLY_TEST_OTP_POLICY.maxResends; i += 1) {
+      await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
+    }
+    const res = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
+    assert.equal(res.status, 409);
+    assert.match(res.headers.get("content-type") ?? "", /application\/problem\+json/);
+    const body = await res.json();
+    assertValid(validateCommon("Problem", body));
   } finally {
     await harness.close();
   }

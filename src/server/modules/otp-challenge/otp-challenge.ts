@@ -8,6 +8,13 @@
 // parámetros P-01 (longitud), P-02 (TTL) y P-03 (intentos máx.) de SEC-CNS-006 no se fijan
 // aquí (esta spec no fija valores); el llamador los inyecta vía `OtpPolicy`. Ver reporte de
 // la tarea para el detalle de lo diferido.
+//
+// V2r (resendOtp, Carlos 2026-09-27): agrega el subconjunto mínimo de V2r (reemplaza el
+// código sin reiniciar `attempts` ni el presupuesto, GRD-OT-06). P-06 (límite de reenvíos) no
+// tiene valor aprobado en SEC-CNS-006: se modela como `maxResends` en `OtpPolicy`, exigido por
+// `otp-policy.config.ts` y sin default de producción (mismo patrón que P-01/P-02/P-03). No
+// implementa GRD-OT-13 (challenge_bound_to_request_handle: sin infraestructura de handles HTTP
+// en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
 
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 
@@ -27,6 +34,9 @@ export interface OtpPolicy {
   readonly maxAttempts: number;
   /** P-02 (no fijado aquí): vigencia del código en milisegundos. */
   readonly ttlMs: number;
+  /** P-06 (no fijado aquí, sin valor aprobado en SEC-CNS-006): reenvíos máximos (V2r,
+   * GRD-OT-06) antes de ERR-OT-09. */
+  readonly maxResends: number;
 }
 
 export interface OtpChallengePorts {
@@ -104,6 +114,7 @@ export function requestOtp(
     attempts: 0,
     expiresAt: new Date(Date.now() + ports.policy.ttlMs),
     state: "CODE_SENT",
+    resendCount: 0,
   };
   ports.otpRepo.save(record);
   ports.channel.send({ channelRef, verificationRef, code }); // INV-OT-02: el código en claro no sale de aquí.
@@ -194,4 +205,47 @@ export function submitOtp(
     idempotencyKey: `${verificationRef}:failed:${attempts}`,
   });
   throw new DomainError("ERR-OT-02");
+}
+
+/**
+ * V2r: CODE_SENT -> CODE_SENT (ResendOtp). Reemplaza codeHash sin reiniciar `attempts` ni el
+ * presupuesto (GRD-OT-06); mismo canal ligado (GRD-OT-02, ya validado al emitir el challenge
+ * original). No implementa GRD-OT-13 (bound_to_request_handle): ver nota de alcance arriba.
+ */
+export function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, verificationRef: string): OtpVerificationRecord {
+  const found = requireVerification(ports, tenantId, verificationRef);
+
+  if (found.state === "LOCKED") {
+    throw new DomainError("ERR-OT-04");
+  }
+  if (found.state !== "CODE_SENT" || found.consumedAt) {
+    // VERIFIED (ya consumido) o EXPIRED: replay de un challenge terminal (INV-OT-07 análogo).
+    throw new DomainError("ERR-OT-03");
+  }
+  if (found.expiresAt.getTime() <= Date.now()) {
+    ports.otpRepo.save({ ...found, state: "EXPIRED" });
+    throw new DomainError("ERR-OT-03");
+  }
+
+  if (found.resendCount >= ports.policy.maxResends) {
+    // GRD-OT-06 (resend_limits, P-06): límite alcanzado, el challenge no cambia.
+    throw new DomainError("ERR-OT-09");
+  }
+
+  const code = generateCode(ports.policy.codeLength);
+  const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
+  const resent: OtpVerificationRecord = { ...found, codeHash, resendCount: found.resendCount + 1 };
+  ports.otpRepo.save(resent);
+  ports.channel.send({ channelRef: found.channelRef, verificationRef, code }); // INV-OT-02: nunca en claro fuera de aquí.
+  ports.ledger.append({
+    eventType: "OTP_ISSUED",
+    tenantId,
+    aggregateType: "DecisionMakerVerification",
+    aggregateId: verificationRef,
+    actorType: "HUMAN",
+    actorRole: "UNVERIFIED_BEARER",
+    payload: { verificationRef, scope: "DECISION" },
+    idempotencyKey: `${verificationRef}:resend:${resent.resendCount}`,
+  });
+  return resent;
 }

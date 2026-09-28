@@ -23,6 +23,7 @@ export type DomainErrorCode =
   | "ERR-OT-03" // OTP_EXPIRED_OR_CONSUMED (GRD-OT-05)
   | "ERR-OT-04" // OTP_LOCKED (GRD-OT-04, V4)
   | "ERR-OT-08" // OTP_CHANNEL_NOT_BOUND (GRD-OT-02)
+  | "ERR-OT-09" // OTP_RESEND_LIMIT (GRD-OT-06, V2r)
   // specs/state-machines/consent-decision.spec.yaml
   | "ERR-CD-01" // ALREADY_DECIDED (GRD-CD-08)
   | "ERR-CD-02" // PURPOSE_SELECTION_INVALID (GRD-CD-06/07)
