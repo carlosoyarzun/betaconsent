@@ -174,7 +174,9 @@ export function requestRevocation(ports: RevocationPorts, tenantId: string, inpu
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
     payload: { scope: "ALL", authPath: "OTP", originPurposeRef: "ALL" },
-    idempotencyKey: input.revocationRef,
+    // ":r1" (mismo motivo que ":r3" en confirmRevocation más abajo): evita colisionar con otro
+    // idempotencyKey plano `revocationRef` del mismo agregado.
+    idempotencyKey: `${input.revocationRef}:r1`,
   });
   return record;
 }
@@ -233,7 +235,11 @@ export function confirmRevocation(ports: RevocationPorts, tenantId: string, revo
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
     payload: {},
-    idempotencyKey: revocationRef,
+    // ":r3" evita colisionar con el idempotencyKey plano `revocationRef` de R4/applyRevocation
+    // más abajo (mismo aggregateId "Revocation"/revocationRef): dos idempotencyKey iguales en el
+    // mismo agregado deduplicarían CONSENT_REVOKED contra REVOCATION_CONFIRMED (ledger dedupe es
+    // por (tenantId, aggregateType, aggregateId, idempotencyKey), no por eventType).
+    idempotencyKey: `${revocationRef}:r3`,
   });
   return applyRevocationSync(ports, tenantId, revocationRef);
 }
@@ -259,7 +265,7 @@ export function withdrawRevocation(ports: RevocationPorts, tenantId: string, rev
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
     payload: { reasonCode: "WITHDRAWN_BY_REQUESTER" },
-    idempotencyKey: revocationRef,
+    idempotencyKey: `${revocationRef}:r8`,
   });
   return failed;
 }
