@@ -81,92 +81,18 @@ export function attestHumanAssistedVerification(
   return verified;
 }
 
-export interface CaseConfirmationExecutionContext {
-  /** Ref opaca del RIGHTS_OPERATOR que registra, derivada de su sesión (nunca del body). */
-  readonly recordedByPrincipalRef: string;
-  /** Ref opaca del segundo RIGHTS_OPERATOR que co-firma (cuatro ojos, R14-B). */
-  readonly cosignedByPrincipalRef: string;
-}
-
-/**
- * Campos que un llamador podría intentar enviar en el cuerpo de la request; se aceptan solo
- * para probar que esta función los IGNORA (TEST-CNS-465): recordedByRef/cosignedByRef salen
- * siempre de `ctx`, nunca de este objeto.
- */
-export interface CaseConfirmationUntrustedRequestFields {
-  readonly recordedByRef?: string;
-  readonly cosignedByRef?: string;
-}
-
-/**
- * RH3 (record_case_confirmation + cosign_case_confirmation), simplificada a los guards bajo
- * prueba en este slice: GRD-CM-01/06 (tenant/ruta), GRD-RV-10 (RH2/RH2v ATTESTED previa de la
- * misma (revocationRef, caseRef)) y el origen de recordedByRef/cosignedByRef (F-R14-04,
- * INV-RV-11) desde la sesión autenticada del ejecutor, nunca de un campo de la request.
- */
-export function recordCaseConfirmation(
-  ports: RevocationPorts,
-  tenantId: string,
-  revocationRef: string,
-  caseRef: string,
-  ctx: CaseConfirmationExecutionContext,
-  _untrustedRequestFields?: CaseConfirmationUntrustedRequestFields,
-): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
-  if (found.caseRef !== caseRef) {
-    throw new DomainError("ERR-CM-01");
-  }
-
-  const attested = found.attestedVerification;
-  if (
-    found.status !== "VERIFIED" ||
-    !attested ||
-    attested.revocationRef !== revocationRef ||
-    attested.caseRef !== caseRef
-  ) {
-    // GRD-RV-10 onFail: RH3 sin RH2/RH2v ATTESTED previa de esta misma (revocationRef, caseRef).
-    throw new DomainError("ERR-RV-20");
-  }
-
-  const confirmed: RevocationRecord = {
-    ...found,
-    status: "CONFIRMED",
-    // F-R14-04 / INV-RV-11: SIEMPRE derivados de ctx (sesión autenticada), nunca del body.
-    recordedByRef: ctx.recordedByPrincipalRef,
-    cosignedByRef: ctx.cosignedByPrincipalRef,
-  };
-  ports.revocationRepo.save(confirmed);
-  ports.ledger.append({
-    eventType: "REVOCATION_CONFIRMED",
-    tenantId,
-    aggregateType: "Revocation",
-    aggregateId: revocationRef,
-    actorType: "HUMAN",
-    actorRole: "DECISION_MAKER",
-    recordedByRef: ctx.recordedByPrincipalRef,
-    cosignedByRef: ctx.cosignedByPrincipalRef,
-    payload: { caseRef },
-    idempotencyKey: `${revocationRef}:rh3`,
-  });
-  return confirmed;
-}
-
 // ---------------------------------------------------------------------------
-// CA-128 (API-CNS-138, RH3 paso 1 — record_case_confirmation, sin co-firma). A diferencia de
-// recordCaseConfirmation (arriba, alcance IT0 previo TEST-CNS-463..465: fusiona registro +
-// co-firma en una sola llamada y transiciona directo a CONFIRMED), esta función implementa el
+// CA-128 (API-CNS-138, RH3 paso 1 — record_case_confirmation, sin co-firma). Esta función implementa el
 // paso 1 LITERAL de la spec (x-state-transition: {id: RH3, step: record, effect: none}):
 // registra recordedByRef SIN transicionar el estado de la Revocation ni emitir
 // REVOCATION_CONFIRMED (ledger-event-payloads.schema.json: recordedByRef/cosignedByRef son
 // "ambos o ninguno" vía dependentRequired; registrar solo uno haría fallar el append). La
 // Revocation permanece VERIFIED hasta que un segundo RIGHTS_OPERATOR distinto co-firme
-// (API-CNS-139, cosign_case_confirmation — fuera de alcance de CA-128).
+// (API-CNS-139, cosignCaseConfirmation, abajo).
 //
-// FINDING P2 (duplicación spec↔code, reportada al Supervisor, no resuelta aquí): este archivo
-// ahora modela RH3 con dos semánticas distintas (recordCaseConfirmation atómica vs.
-// recordCaseConfirmationPendingCosign en dos pasos). Ninguna prueba existente ejercita ambas a
-// la vez; se documenta para que lampone-architect reconcilie cuando se implemente API-CNS-139
-// (probablemente retirando la variante atómica o dejándola solo como helper de test).
+// Reconciliación (CA-128, API-CNS-139): la variante atómica previa (recordCaseConfirmation,
+// registro + co-firma en una llamada) se retiró; RH3 tiene una única semántica en dos pasos
+// (record -> cosignCaseConfirmation). TEST-CNS-463..465 se reescribieron sobre los dos pasos.
 // ---------------------------------------------------------------------------
 
 export interface CaseConfirmationRecordContext {
@@ -234,6 +160,75 @@ export function recordCaseConfirmationPendingCosign(
   };
   ports.revocationRepo.save(recorded);
   return recorded;
+}
+
+export interface CaseConfirmationCosignContext {
+  /** Ref opaca del segundo RIGHTS_OPERATOR que co-firma, derivada de su sesión CASE (nunca del
+   * body, GRD-CM-07). */
+  readonly cosignedByPrincipalRef: string;
+}
+
+/**
+ * RH3 paso 2 (cosign_case_confirmation), API-CNS-139: VERIFIED -> CONFIRMED. Guards de este
+ * slice: GRD-CM-01/06 (tenant/caseRef), GRD-RV-10 (ERR-RV-20), GRD-RC-15 (ERR-RC-10) y
+ * GRD-RV-26 (ERR-RV-18): exige una confirmación previa registrada (paso 1) y un co-firmante
+ * distinto de recordedByRef (CHECK cosigned_by_ref <> recorded_by_ref, INV-RV-11). El rol
+ * RIGHTS_OPERATOR del co-firmante lo verifica el llamador HTTP (LEGAL DECISION LD-03: la regla
+ * definitiva de quién escribe/co-firma la confirmación no la decide este código).
+ * Idempotente por revocationRef: repetir sobre una Revocation ya CONFIRMED/APPLIED devuelve el
+ * registro sin reemitir REVOCATION_CONFIRMED. APPLY_REVOCATION (R4) lo ejecuta un worker
+ * aparte (applyRevocation); aquí no se aplica de forma síncrona.
+ */
+export function cosignCaseConfirmation(
+  ports: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  ctx: CaseConfirmationCosignContext,
+): RevocationRecord {
+  const found = requireRevocation(ports, tenantId, revocationRef);
+  if (found.caseRef !== caseRef) {
+    throw new DomainError("ERR-CM-01");
+  }
+  if ((found.status === "CONFIRMED" || found.status === "APPLIED") && found.cosignedByRef) {
+    return found;
+  }
+
+  const attested = found.attestedVerification;
+  if (
+    found.status !== "VERIFIED" ||
+    !attested ||
+    attested.revocationRef !== revocationRef ||
+    attested.caseRef !== caseRef
+  ) {
+    throw new DomainError("ERR-RV-20");
+  }
+
+  assertNominalRosterMinimum(staffIdentity);
+
+  // GRD-RV-26: sin confirmación registrada (paso 1) o con el mismo principal -> sin efecto.
+  const recordedByRef = found.recordedByRef;
+  if (!recordedByRef || recordedByRef === ctx.cosignedByPrincipalRef) {
+    throw new DomainError("ERR-RV-18");
+  }
+
+  const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
+  ports.revocationRepo.save(confirmed);
+  ports.ledger.append({
+    eventType: "REVOCATION_CONFIRMED",
+    tenantId,
+    aggregateType: "Revocation",
+    aggregateId: revocationRef,
+    actorType: "HUMAN",
+    actorRole: "DECISION_MAKER",
+    recordedByRef,
+    cosignedByRef: ctx.cosignedByPrincipalRef,
+    // ledger-event-payloads.schema.json REVOCATION_CONFIRMED (RH3): ambos o ninguno.
+    payload: { revocationRef, recordedByRef, cosignedByRef: ctx.cosignedByPrincipalRef },
+    idempotencyKey: `${revocationRef}:rh3`,
+  });
+  return confirmed;
 }
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ export type DomainErrorCode =
   | "ERR-RC-09" // CASE_NOT_BOUND_TO_HANDLE — respuesta uniforme sin efecto
   | "ERR-RC-10" // GRD-RC-15 onFail (ROSTER_INSUFFICIENT) — dotación <4 personas o reutilización de rol
   | "ERR-RV-05" // RECOVERY_TOKEN_INVALID (GRD-RV-06 onFail) — respuesta uniforme, sin consumir el token
+  | "ERR-RV-18" // GRD-RV-26 onFail (RH3_FOUR_EYES_REQUIRED: falta confirmación previa o co-firma el mismo principal)
   | "ERR-RV-20" // GRD-RV-10 onFail (RH3 sin RH2/RH2v ATTESTED previa)
   // specs/state-machines/invitation.spec.yaml
   | "ERR-IV-01" // INVITATION_TOKEN_NOT_RESOLVED — 404 uniforme (GRD-IV-07)
