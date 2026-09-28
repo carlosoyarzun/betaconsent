@@ -67,6 +67,8 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`Consent App (IT0, LOCAL) escuchando en ${baseUrl}`);
   // API-CNS-101 (P-12): el flujo empieza con el GET de canje, nunca con el token suelto (cero
   // PII/credenciales en logs fuera de esta URL sintética de LOCAL, dominio example.invalid).
-  console.log(`Enlace de invitación sintético (canje de un solo uso, GET /i/{token}): ${baseUrl}/i/${token}`);
+  // UX-CNS-001: el canje redirige a /welcome (INV-CM-08, no transiciona ahí).
+  console.log(`Abre esta URL en tu navegador para comenzar el flujo (canje de un solo uso, GET /i/{token}):`);
+  console.log(`  ${baseUrl}/i/${token}`);
   console.log(`Leer el OTP emitido: GET ${baseUrl}/__dev/otp-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
 });
