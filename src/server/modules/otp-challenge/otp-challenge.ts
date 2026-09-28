@@ -61,7 +61,7 @@ function generateCode(length: number): string {
   return code;
 }
 
-function requireVerification(ports: OtpChallengePorts, tenantId: TenantId, verificationRef: string): OtpVerificationRecord {
+function requireVerification(ports: Omit<OtpChallengePorts, "invitation">, tenantId: TenantId, verificationRef: string): OtpVerificationRecord {
   const found = ports.otpRepo.findByRef(tenantId, verificationRef);
   if (!found) {
     throw new DomainError("ERR-CM-01");
@@ -202,6 +202,145 @@ export function submitOtp(
     actorType: "HUMAN",
     actorRole: "UNVERIFIED_BEARER",
     payload: { verificationRef, scope: "DECISION" },
+    idempotencyKey: `${verificationRef}:failed:${attempts}`,
+  });
+  throw new DomainError("ERR-OT-02");
+}
+
+// ---------------------------------------------------------------------------
+// CA-116 (revocación IT0, UX-CNS-004): subconjunto mínimo de V1/V3 para scope REVOCATION/MANAGE
+// (routeClass RIGHTS, padre = chainRef). A diferencia de requestOtp/submitOtp (scope DECISION),
+// estas funciones NO dependen de InvitationPorts: el llamador (consent-flow.handler.ts) ya
+// resolvió el chainRef y validó GRD-OT-01 byScope (REVOCATION: chain con GRANTED vigente;
+// MANAGE: chain existente con alguna decisión) usando el propio handle MANAGE_ENTRY ya
+// resuelto por TenantHandlePort al crear la sesión (GET /m/{token}); repetir esa validación
+// aquí exigiría inyectar ConsentDecisionPorts en este módulo, fuera del subconjunto mínimo de
+// este slice (ver reporte de la tarea). channelRef es un valor opaco derivado del chainRef
+// (nunca del cliente, GRD-OT-02 trivialmente satisfecho porque es siempre el mismo valor
+// para el mismo chainRef). No implementa V2r, V6/V6a/V6r/V6c (presupuesto/rotación) ni
+// GRD-OT-13 (bound_to_request_handle): mismo alcance mínimo que requestOtp/submitOtp arriba.
+// ---------------------------------------------------------------------------
+
+/** V1 byScope REVOCATION/MANAGE: NOT_STARTED -> CODE_SENT. */
+export function requestRightsOtp(
+  ports: Omit<OtpChallengePorts, "invitation">,
+  tenantId: TenantId,
+  verificationRef: string,
+  scope: "REVOCATION" | "MANAGE",
+  chainRef: string,
+  channelRef: string,
+): OtpVerificationRecord {
+  const active = ports.otpRepo.findActiveByParent(tenantId, chainRef, scope);
+  if (active) {
+    // GRD-OT-08 (subconjunto): idempotente, mismo challenge activo.
+    return active;
+  }
+
+  const code = generateCode(ports.policy.codeLength);
+  const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
+  const record: OtpVerificationRecord = {
+    verificationRef,
+    tenantId,
+    scope,
+    parentRef: chainRef,
+    channelRef,
+    codeHash,
+    attempts: 0,
+    expiresAt: new Date(Date.now() + ports.policy.ttlMs),
+    state: "CODE_SENT",
+    resendCount: 0,
+  };
+  ports.otpRepo.save(record);
+  ports.channel.send({ channelRef, verificationRef, code }); // INV-OT-02.
+  ports.ledger.append({
+    eventType: "OTP_ISSUED",
+    tenantId,
+    aggregateType: "DecisionMakerVerification",
+    aggregateId: verificationRef,
+    actorType: "HUMAN",
+    actorRole: "UNVERIFIED_BEARER",
+    payload: { verificationRef, scope },
+    idempotencyKey: `${verificationRef}:issued`,
+  });
+  return record;
+}
+
+/**
+ * V3/V2/V4 byScope REVOCATION/MANAGE: intenta verificar el código. A diferencia de submitOtp
+ * (scope DECISION), NO dispara I5 (no hay Invitation que verificar); el efecto scope-específico
+ * (fijar session.manageDecisionMakerRef, habilitar R2) lo hace el llamador HTTP con el
+ * `OtpVerificationRecord` devuelto.
+ */
+export function submitRightsOtp(
+  ports: Omit<OtpChallengePorts, "invitation">,
+  tenantId: TenantId,
+  verificationRef: string,
+  scope: "REVOCATION" | "MANAGE",
+  code: string,
+): OtpVerificationRecord {
+  const found = requireVerification(ports, tenantId, verificationRef);
+  if (found.scope !== scope) {
+    // ERR-OT-05 (OTP_SCOPE_MISUSE): VERIFIED de un scope no sirve para otro.
+    throw new DomainError("ERR-OT-01");
+  }
+
+  if (found.state === "LOCKED") {
+    throw new DomainError("ERR-OT-04");
+  }
+  if (found.state === "VERIFIED" || found.consumedAt) {
+    throw new DomainError("ERR-OT-03");
+  }
+  if (found.expiresAt.getTime() <= Date.now()) {
+    ports.otpRepo.save({ ...found, state: "EXPIRED" });
+    throw new DomainError("ERR-OT-03");
+  }
+
+  const attempts = found.attempts + 1;
+  const candidateHash = hashCode(ports.secret, verificationRef, code);
+  const storedHash = Buffer.from(found.codeHash, "hex");
+  const isCorrect = candidateHash.length === storedHash.length && timingSafeEqual(candidateHash, storedHash);
+
+  if (isCorrect) {
+    const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
+    ports.otpRepo.save(verified);
+    ports.ledger.append({
+      eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
+      tenantId,
+      aggregateType: "DecisionMakerVerification",
+      aggregateId: verificationRef,
+      actorType: "HUMAN",
+      actorRole: "DECISION_MAKER",
+      payload: { verificationRef, parentRef: found.parentRef, scope, method: "EMAIL_OTP" },
+      idempotencyKey: `${verificationRef}:verified`,
+    });
+    return verified;
+  }
+
+  if (attempts >= ports.policy.maxAttempts) {
+    const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
+    ports.otpRepo.save(locked);
+    ports.ledger.append({
+      eventType: "OTP_LOCKED",
+      tenantId,
+      aggregateType: "DecisionMakerVerification",
+      aggregateId: verificationRef,
+      actorType: "SYSTEM_GUARD",
+      payload: { verificationRef, scope },
+      idempotencyKey: `${verificationRef}:locked`,
+    });
+    throw new DomainError("ERR-OT-04");
+  }
+
+  const failed: OtpVerificationRecord = { ...found, attempts, state: "CODE_SENT" };
+  ports.otpRepo.save(failed);
+  ports.ledger.append({
+    eventType: "OTP_FAILED",
+    tenantId,
+    aggregateType: "DecisionMakerVerification",
+    aggregateId: verificationRef,
+    actorType: "HUMAN",
+    actorRole: "UNVERIFIED_BEARER",
+    payload: { verificationRef, scope },
     idempotencyKey: `${verificationRef}:failed:${attempts}`,
   });
   throw new DomainError("ERR-OT-02");
