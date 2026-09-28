@@ -10,12 +10,15 @@ import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 
 /** CA-116 PR 2: RevocationPorts ganó recoveryTokenRepo/recoveryLinkChannel/recoveryTokenPolicy
  * (RV0 BEARER + GET /r/{token} + POST /recovery/revoke), ajenos a RH2/RH3 (fuente RECOVERY
- * HUMAN_ASSISTED); este helper completa el tipo sin que cada test tenga que repetirlo. */
+ * HUMAN_ASSISTED); este helper completa el tipo sin que cada test tenga que repetirlo.
+ * `consentDecisionRepo` (SEC-CNS-014, FINDING P1-01): tampoco lo ejercitan RH2/RH3, uno vacío
+ * basta. */
 function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
   return {
     revocationRepo,
@@ -23,6 +26,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
+    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
   };
 }
 

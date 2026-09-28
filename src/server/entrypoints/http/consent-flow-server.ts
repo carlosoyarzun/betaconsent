@@ -26,6 +26,7 @@ import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/o
 import type { ConsentDecisionPorts } from "../../modules/consent-decision/consent-decision.ts";
 import type { RecoveryTokenPolicy } from "../../modules/revocation/recovery-token-policy.config.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import {
   handleOpenInvitation,
@@ -132,10 +133,16 @@ const DEFAULT_TEST_RECOVERY_TOKEN_POLICY: RecoveryTokenPolicy = { ttlMs: 15 * 60
  * + POST /recovery/revoke (R1r/R2r/R3r/R10/R11). `ledger` compartido con
  * `createDefaultConsentFlowPorts` (mismo proceso in-memory) si el caller lo pasa; si no, uno
  * nuevo. El `TenantHandlePort` nace vacío: dev.ts y los tests siembran handles con `.issue()`
- * (import { createInMemoryTenantHandleAdapter } directamente para poder sembrar). */
+ * (import { createInMemoryTenantHandleAdapter } directamente para poder sembrar).
+ * `consentDecisionRepo` (SEC-CNS-014, FINDING P1-01): por defecto uno in-memory vacío, propio
+ * de este proceso (suficiente para los tests que nunca ejercitan revokeWithRecoveryLink); los
+ * callers que SÍ lo hacen (createConsentFlowHttpServer, dev.ts, recovery-http.test.ts) deben
+ * pasar el mismo `ports.decision.repo` del flujo de consentimiento, para que
+ * `findActiveGrantByChain` vea la GRANTED real de la cadena. */
 export function createDefaultRevocationFlowPorts(
   recoveryTokenPolicy: RecoveryTokenPolicy = DEFAULT_TEST_RECOVERY_TOKEN_POLICY,
   ledger: LedgerPort = createInMemoryLedgerAdapter(),
+  consentDecisionRepo: ConsentDecisionRepositoryPort = createInMemoryConsentDecisionRepository(),
 ): RevocationFlowPorts {
   return {
     tenantHandle: createInMemoryTenantHandleAdapter(),
@@ -145,6 +152,7 @@ export function createDefaultRevocationFlowPorts(
       recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
       recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
       recoveryTokenPolicy,
+      consentDecisionRepo,
     },
     rightsCase: { rightsCaseRepo: createInMemoryRightsCaseRepository(), ledger },
   };
@@ -225,7 +233,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig);
     })();
-  const revocationPorts = options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger);
+  const revocationPorts =
+    options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
