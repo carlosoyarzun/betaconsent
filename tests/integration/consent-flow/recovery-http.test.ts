@@ -288,7 +288,12 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
 
     const secondToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-592");
     const { recoveryCookie: secondCookie } = await redeemRecoveryToken(baseUrl, secondToken);
-    const { csrfToken: secondCsrf } = await renderRecoveryConfirm(baseUrl, secondCookie);
+    // C6 (GRD-RV-06): con la decisión ya REVOKED el render de /recovery/confirm da el error
+    // uniforme (404, sin CSRF); el POST directo (mismo par CSRF del primero) sigue uniforme.
+    const { res: secondRender, csrfToken: noCsrf } = await renderRecoveryConfirm(baseUrl, secondCookie);
+    assert.equal(secondRender.status, 404);
+    assert.equal(noCsrf, undefined);
+    const secondCsrf = firstCsrf;
     const secondRevoke = await post(baseUrl, {
       path: "/recovery/revoke",
       ...VALID_CSRF_ORIGIN,

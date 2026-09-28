@@ -3,7 +3,8 @@
 
 import type { TenantId } from "../modules/common/types.ts";
 
-export type ConsentDecisionState = "PENDING" | "GRANTED" | "DECLINED";
+export type ConsentDecisionState = "PENDING" | "GRANTED" | "DECLINED" | "REVOKED";
+// REVOKED: terminal; solo la fija C6 dentro de R4 (consent-decision.spec.yaml C6, GRD-CD-09).
 
 export type PurposeChoice = "GRANT" | "DECLINE";
 
@@ -38,7 +39,8 @@ export interface ConsentDecisionRecord {
 
 export interface ConsentDecisionRepositoryPort {
   findByConsentId(tenantId: TenantId, consentId: string): ConsentDecisionRecord | null;
-  /** GRD-CD-08 (single_active_grant_per_chain): ¿hay ya GRANTED (o PARTIALLY_GRANTED, no modelado en IT0) en esta cadena? */
+  /** GRD-CD-08 (single_active_grant_per_chain): ¿hay ya GRANTED (o PARTIALLY_GRANTED, no modelado en IT0) en esta cadena?
+   * Una decisión REVOKED (C6) ya no cuenta como vigente (INV-1, INV-5). */
   findActiveGrantByChain(tenantId: TenantId, chainRef: string): ConsentDecisionRecord | null;
   save(record: ConsentDecisionRecord): void;
 }

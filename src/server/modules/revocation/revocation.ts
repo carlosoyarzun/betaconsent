@@ -411,7 +411,8 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   // CA-127: todo lo que puede fallar va antes de la primera escritura. contextRef y subjectRef
   // del sobre salen de la decisión revocada; si no existe, falla cerrado sin escrituras.
   const decision = ports.consentDecisionRepo.findByConsentId(tenantId, revokedDecisionRef);
-  if (!decision) {
+  // C6 (GRD-CD-09): solo una decisión GRANTED se revoca; REVOKED = reintento de R4 (converge).
+  if (!decision || (decision.state !== "GRANTED" && decision.state !== "REVOKED")) {
     throw new DomainError("ERR-CM-06");
   }
   const rev = ports.ledger.append({
@@ -455,6 +456,11 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
     payload: { revocationRef, scope: "ALL", effectiveAt },
     dedupeKey: `${revocationRef}:consent.revoked`,
   });
+  // C6 (consent-decision.spec.yaml): GRANTED -> REVOKED en el mismo lote que R4. Ya REVOKED
+  // (reintento): no se reproyecta; ledger y outbox ya deduplicaron arriba (sin segundo evento).
+  if (decision.state === "GRANTED") {
+    ports.consentDecisionRepo.save({ ...decision, state: "REVOKED" });
+  }
   // La proyección se guarda al final: si algo falla queda CONFIRMED y el reintento converge
   // (ledger y outbox deduplican) sin duplicados. La tx real llega con el adaptador Postgres.
   const applied: RevocationRecord = { ...found, status: "APPLIED" };
