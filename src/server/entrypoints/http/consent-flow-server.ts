@@ -37,6 +37,7 @@ import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
+import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 
 export interface ConsentFlowHttpServerOptions {
@@ -232,7 +233,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs));
+      res.end(renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion()));
       return;
     }
 

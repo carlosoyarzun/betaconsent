@@ -247,3 +247,62 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
     await harness.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Fixes de revisión en navegador (Carlos, dev.ts LOCAL): TEST-CNS-567..570.
+// ---------------------------------------------------------------------------
+
+test("TEST-CNS-567: GET /decision sirve el texto de consentimiento y la versión YA resueltos, sin esperar ningún POST /decision/steps (GRD-CD-03 servido; INV-CM-08 un GET nunca transiciona)", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-567", "subject-567@example.invalid");
+    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    // Nunca el placeholder "cargando…": el HTML servido por GET /decision ya trae la versión.
+    assert.doesNotMatch(html, /cargando/);
+    assert.match(html, /Versión vigente del texto: v1/);
+    assert.match(html, /\[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos\]/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL DECISION] de los frames 24:2/24:64 (no solo en un comentario HTML)", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-568", "subject-568@example.invalid");
+    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
+    const html = await res.text();
+    assert.match(
+      html,
+      /<p class="lp-decision-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-569: app.css da un tap target >=44px al checkbox de autoridad (#authority-declared), no solo a la fila que lo contiene (Carlos, 2026-09-27, misma decisión que /welcome y /verify)", async () => {
+  const harness = await startServer();
+  try {
+    const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
+    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-570: decision.js oculta #decision-form y mueve el foco al encabezado de confirmación en GRANTED y DECLINED (frames 27:49/27:58: la confirmación reemplaza el formulario)", async () => {
+  const harness = await startServer();
+  try {
+    const js = await (await fetch(`${harness.baseUrl}/assets/decision.js`)).text();
+    assert.match(js, /function showGranted\(receiptRef\) \{\s*hideStates\(\);\s*if \(decisionForm\) decisionForm\.hidden = true;/);
+    assert.match(js, /function showDeclined\(receiptRef\) \{\s*hideStates\(\);\s*if \(decisionForm\) decisionForm\.hidden = true;/);
+    assert.match(js, /getElementById\("granted-heading"\)/);
+    assert.match(js, /getElementById\("declined-heading"\)/);
+    assert.match(js, /heading\.focus\(\)/);
+  } finally {
+    await harness.close();
+  }
+});

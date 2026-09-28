@@ -22,6 +22,18 @@
 // todavía (fuera de alcance de CA-116 /decision). El chip "No es mi estudiante" solo bloquea el
 // envío y muestra el aviso de ayuda; no cancela la invitación (I9) del lado servidor. Pendiente
 // para un slice siguiente.
+//
+// Fix (Carlos, revisión en navegador con dev.ts, 2026-09-2x): el texto de consentimiento
+// quedaba en "cargando…" hasta que el usuario completaba el primer paso (efecto de la primera
+// llamada a POST /decision/steps), es decir después de interactuar. GRD-CD-03
+// (specs/state-machines/consent-decision.spec.yaml:286-291, "el servidor sirve el texto de la
+// versión en vigor") no exige que ese servido ocurra por POST: aquí se renderiza el MISMO
+// `ServedConsentVersion` (served-consent-version.ts) directamente en el HTML de GET /decision,
+// sin llamar recordDecisionStep ni emitir CONSENT_VERSION_VIEWED (INV-CM-08, common.spec.yaml:
+// un GET nunca transiciona). El evento de ledger sigue emitiéndose solo por el POST /decision/
+// steps que decision.js dispara antes de enviar (C2 sigue registrado normalmente).
+
+import type { ServedConsentVersion } from "./served-consent-version.ts";
 
 const HEAD = `<meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -83,9 +95,11 @@ function renderPurposeSection(p: PurposeCopy): string {
 /**
  * GET /decision con sesión verificada (post-V3, session.decisionMakerRef). `relationshipRefs`
  * viene de la MISMA config que valida el servidor (GRD-CD-04, decision-relationship.config.ts,
- * opción b de Carlos): nunca una lista distinta inventada en el HTML.
+ * opción b de Carlos): nunca una lista distinta inventada en el HTML. `servedVersion` es el
+ * MISMO `ServedConsentVersion` (served-consent-version.ts) que devuelve POST /decision/steps
+ * CONSENT_VERSION_VIEWED (GRD-CD-03): se renderiza ya resuelto, sin esperar esa llamada.
  */
-export function renderDecisionPage(relationshipRefs: readonly string[]): string {
+export function renderDecisionPage(relationshipRefs: readonly string[], servedVersion: ServedConsentVersion): string {
   const relationshipOptions = relationshipRefs
     .map((ref) => `<option value="${escapeHtml(ref)}">${escapeHtml(ref)}</option>`)
     .join("\n        ");
@@ -100,10 +114,11 @@ export function renderDecisionPage(relationshipRefs: readonly string[]): string 
     <h1 id="decision-h1">Revisa y decide</h1>
     <p>Colegio Ejemplo — Estudio Beta de LectorPro. Estás revisando esta decisión para tu hija o hijo.</p>
 
+    <div id="decision-form">
     <section class="lp-card-default lp-decision-section" aria-labelledby="consent-text-h2">
       <h2 id="consent-text-h2">Texto del consentimiento</h2>
-      <p class="lp-input-help" id="consent-version-help">Versión vigente del texto: cargando…</p>
-      <div class="lp-decision-legal-box" id="consent-text-box"><!-- [LEGAL DECISION — copy pendiente de aprobación de Carlos; el texto real lo sirve el servidor, GRD-CD-03] --></div>
+      <p class="lp-input-help" id="consent-version-help">Versión vigente del texto: ${escapeHtml(servedVersion.consentVersion)} · Aviso de privacidad: ${escapeHtml(servedVersion.privacyNoticeVersion)}</p>
+      <div class="lp-decision-legal-box" id="consent-text-box">${escapeHtml(servedVersion.text)}</div>
     </section>
 
     <section class="lp-card-default lp-decision-section" aria-labelledby="subject-h2">
@@ -129,7 +144,7 @@ export function renderDecisionPage(relationshipRefs: readonly string[]): string 
         <p class="lp-input-help" id="relationship-help"><!-- [LEGAL DECISION — enum de relación pendiente de DEC-BR-003 / EXT-A / LD-01; opción (b) de Carlos: lista de valores por configuración] --></p>
       </div>
       <label class="lp-decision-checkbox-row" for="authority-declared">
-        <input type="checkbox" id="authority-declared" />
+        <input type="checkbox" id="authority-declared" class="lp-decision-checkbox" />
         <span><!-- [LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 / EXT-A / LD-01] -->Declaro que tengo la autoridad para tomar esta decisión por el estudiante.</span>
       </label>
     </section>
@@ -137,11 +152,12 @@ export function renderDecisionPage(relationshipRefs: readonly string[]): string 
     <section class="lp-card-default lp-decision-section" aria-labelledby="purposes-h2">
       <h2 id="purposes-h2">Finalidades</h2>
       <p>Las 4 finalidades son necesarias para participar en el Estudio Beta. Si rechazas alguna, tu hija o hijo no participará.</p>
-      <p class="lp-decision-legal-note"><!-- [LEGAL DECISION — ver handoff §3: las descripciones de cada finalidad narran tratamiento de datos y podrían ser texto legalmente operativo, pendiente de aprobación de Carlos] --></p>
+      <p class="lp-decision-legal-note">[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos]</p>
 ${PURPOSES.map(renderPurposeSection).join("")}    </section>
 
     <button type="button" class="lp-btn lp-btn-primary lp-decision-cta" id="submit-btn" aria-disabled="true" aria-busy="false">Enviar decisión</button>
     <p role="status" aria-live="polite" id="submit-helper">Completa todas las secciones para continuar.</p>
+    </div>
     <p>¿Necesitas ayuda? Escríbenos a <a href="mailto:ayuda@example.invalid" class="lp-link">ayuda@example.invalid</a></p>
 
     <div role="alert" aria-live="assertive" id="error-validation" hidden>
@@ -166,13 +182,13 @@ ${PURPOSES.map(renderPurposeSection).join("")}    </section>
     </div>
 
     <div role="status" aria-live="polite" id="state-granted" hidden>
-      <h2>Listo, registramos tu decisión</h2>
+      <h2 id="granted-heading" tabindex="-1">Listo, registramos tu decisión</h2>
       <p id="granted-receipt"></p>
       <p>Nunca te mostraremos aquí el enlace para gestionar esta decisión: lo enviamos solo a la vía de contacto ya verificada.</p>
     </div>
 
     <div role="status" aria-live="polite" id="state-declined" hidden>
-      <h2>Registramos tu decisión</h2>
+      <h2 id="declined-heading" tabindex="-1">Registramos tu decisión</h2>
       <p id="declined-receipt"></p>
       <p>Tu hija o hijo no participará en el Estudio Beta.</p>
     </div>

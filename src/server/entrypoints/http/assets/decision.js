@@ -56,6 +56,7 @@
     var errorUniform = document.getElementById("error-uniform");
     var stateGranted = document.getElementById("state-granted");
     var stateDeclined = document.getElementById("state-declined");
+    var decisionForm = document.getElementById("decision-form");
     var retryBtn = document.getElementById("retry-btn");
 
     var subjectChoice = null; // "yes" | "no"
@@ -160,18 +161,32 @@
       if (errorUniform) errorUniform.hidden = false;
     }
 
+    // Frames 27:49 (GRANTED) / 27:58 (DECLINED): la confirmación REEMPLAZA el formulario, no
+    // queda debajo. Se oculta #decision-form (todas las secciones + CTA + helper) y el foco se
+    // mueve al encabezado de la confirmación (tabindex=-1, mismo patrón que un heading enfocable
+    // tras una navegación por JS sin recarga de página).
     function showGranted(receiptRef) {
       hideStates();
+      if (decisionForm) decisionForm.hidden = true;
       var el = document.getElementById("granted-receipt");
       if (el) el.textContent = "Comprobante: " + receiptRef;
-      if (stateGranted) stateGranted.hidden = false;
+      if (stateGranted) {
+        stateGranted.hidden = false;
+        var heading = document.getElementById("granted-heading");
+        if (heading) heading.focus();
+      }
     }
 
     function showDeclined(receiptRef) {
       hideStates();
+      if (decisionForm) decisionForm.hidden = true;
       var el = document.getElementById("declined-receipt");
       if (el) el.textContent = "Comprobante: " + receiptRef;
-      if (stateDeclined) stateDeclined.hidden = false;
+      if (stateDeclined) {
+        stateDeclined.hidden = false;
+        var heading = document.getElementById("declined-heading");
+        if (heading) heading.focus();
+      }
     }
 
     // Rechazo determinado por status HTTP + code del Problem (contracts/common.schema.json).

@@ -116,7 +116,18 @@
   display: flex;
   gap: 12px;
   min-height: 44px;
-  align-items: flex-start;
+  align-items: center;
+}
+
+/* Fix (Carlos, revisión en navegador con dev.ts): el checkbox nativo mide ~13px (tamaño por
+   defecto del control), muy por debajo del tap target de 44px de la decisión de Carlos,
+   2026-09-27 (misma decisión que .lp-welcome-cta/.lp-verify-cta/.lp-decision-cta). El contenedor
+   .lp-decision-checkbox-row ya mide >=44px de alto, pero el control clicable en sí debía
+   agrandarse también: se fija min-width/min-height 44px directamente en el input. */
+.lp-decision-checkbox-row .lp-decision-checkbox {
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
 }
 
 .lp-decision-cta {

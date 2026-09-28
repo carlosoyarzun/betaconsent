@@ -44,6 +44,7 @@ import type { PurposeChoice } from "../../ports/consent-decision-repository.port
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession, encodeSession, type ConsentSessionPayload } from "./consent-session.ts";
+import { getServedConsentVersion } from "./served-consent-version.ts";
 
 export interface ConsentFlowPorts {
   readonly invitation: InvitationPorts;
@@ -315,18 +316,6 @@ export function handleSubmitOtp(
 export type SubmitDecisionStepBody =
   | { readonly stepKind?: unknown; readonly relationshipRef?: unknown; readonly authorityDeclared?: unknown; readonly subjectConfirmed?: unknown };
 
-/** Servido en la respuesta de CONSENT_VERSION_VIEWED (ServedConsentVersion,
- * contracts/schemas/api-payloads.schema.json:489-516). LD-06 (consentTextHash como prueba de lo
- * mostrado) y el texto legal real siguen PENDING (marcador [LEGAL DECISION] en decision-page.ts,
- * nunca inventado aquí); este placeholder solo satisface la FORMA que exige el contrato. */
-const SERVED_CONSENT_VERSION_TEXT = "[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos]";
-const SERVED_CONSENT_VERSION = {
-  consentVersion: "v1",
-  privacyNoticeVersion: "v1",
-  consentTextHash: createHash("sha256").update(SERVED_CONSENT_VERSION_TEXT).digest("hex"),
-  text: SERVED_CONSENT_VERSION_TEXT,
-};
-
 /** Valida la forma de DecisionStepRequest (api-payloads.schema.json:413-487) contra el body
  * crudo del cliente. Cualquier forma que no calce exactamente uno de los 4 stepKind con sus
  * campos requeridos (incluido authorityDeclared/subjectConfirmed !== true, es decir sin
@@ -392,7 +381,7 @@ export function handleRecordDecisionStep(
     // DecisionStepRecorded (contracts/api-payloads.schema.json:517-562): servedVersion solo en
     // CONSENT_VERSION_VIEWED (if/then/else del schema).
     const body: Record<string, unknown> = { stepKind: step.stepKind, state: "PENDING" };
-    if (step.stepKind === "CONSENT_VERSION_VIEWED") body.servedVersion = SERVED_CONSENT_VERSION;
+    if (step.stepKind === "CONSENT_VERSION_VIEWED") body.servedVersion = getServedConsentVersion();
     return { status: 200, body, setSessionCookie: sessionCookieValue };
   } catch (err) {
     if (err instanceof DomainError) {
