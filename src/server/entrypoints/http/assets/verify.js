@@ -3,17 +3,26 @@
 // __Host-cns-csrf (sin HttpOnly, fijada por GET /verify vía csrf.ts) se copia al header
 // x-csrf-token; el servidor solo compara igualdad byte a byte (guards.ts).
 //
-// "Solicitar nuevo código" (estados expirado/bloqueado) llama POST /otp/request: la spec
-// (specs/state-machines/otp-challenge.spec.yaml V1, GRD-OT-08 single_active_challenge_
-// bound_to_handle) hace que un V1 repetido desde el mismo handle/sesión reemplace el
-// challenge existente (LOCKED/EXPIRED no cuentan como "activo") con uno nuevo (CODE_SENT,
-// attempts=0), sujeto a presupuesto (V6/V6a); no crea una invitación ni un endpoint distinto.
+// "Solicitar nuevo código" (estados expirado/bloqueado, SOLO scope DECISION) llama POST
+// /otp/request: la spec (specs/state-machines/otp-challenge.spec.yaml V1, GRD-OT-08
+// single_active_challenge_bound_to_handle) hace que un V1 repetido desde el mismo handle/sesión
+// reemplace el challenge existente (LOCKED/EXPIRED no cuentan como "activo") con uno nuevo
+// (CODE_SENT, attempts=0), sujeto a presupuesto (V6/V6a); no crea una invitación ni un endpoint
+// distinto.
 //
 // Fix (Carlos, probado en navegador con dev.ts): "Reenviar código" no daba feedback en 202 y
 // dejaba visible el error previo ("El código ingresado no es correcto…"). Ahora, en 202, limpia
 // el error del campo (aria-invalid, code-error) y anuncia un mensaje neutro por #resend-feedback
 // (aria-live=polite); en 409 OTP_RESEND_LIMIT muestra un mensaje de límite alcanzado, sin cifra
 // (P-06 sin valor aprobado en SEC-CNS-006). Copy [UX — borrador], sin frame/handoff que lo fije.
+//
+// CA-116 (revocación IT0, UX-CNS-004): esta misma página/script sirve también scope MANAGE
+// (/manage/verify) y REVOCATION (/manage/revocation/verify), vía `data-verify-scope` en <body>
+// (verify-page.ts). Tras un V3 correcto redirige a `data-verify-next` (scope-dependiente) en
+// vez del "/decision" fijo. En estado bloqueado (OTP_LOCKED) con scope MANAGE/REVOCATION,
+// INV-OT-06 exige NUNCA ofrecer "solicitar nuevo código": en su lugar se muestra
+// #state-locked-rights con dos POST reales del contrato (RV0 fuente BEARER y RC1 fuente
+// BEARER), nunca "denegado".
 (function () {
   "use strict";
 
@@ -41,6 +50,10 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    var scope = document.body.getAttribute("data-verify-scope") || "DECISION";
+    var nextRoute = document.body.getAttribute("data-verify-next") || "/decision";
+    var isRights = scope === "MANAGE" || scope === "REVOCATION";
+
     var verifyBtn = document.getElementById("verify-btn");
     var codeInput = document.getElementById("code-input");
     var codeError = document.getElementById("code-error");
@@ -49,6 +62,10 @@
     var requestNewCodeLocked = document.getElementById("request-new-code-btn-locked");
     var stateExpired = document.getElementById("state-expired");
     var stateLocked = document.getElementById("state-locked");
+    var stateLockedRights = document.getElementById("state-locked-rights");
+    var sendRecoveryLinkBtn = document.getElementById("send-recovery-link-btn");
+    var openHumanCaseBtn = document.getElementById("open-human-case-btn");
+    var rightsLockedFeedback = document.getElementById("rights-locked-feedback");
     var errorNetwork = document.getElementById("error-network");
     var errorUniform = document.getElementById("error-uniform");
     var retryBtn = document.getElementById("retry-btn");
@@ -63,6 +80,7 @@
       if (codeError) codeError.hidden = true;
       if (stateExpired) stateExpired.hidden = true;
       if (stateLocked) stateLocked.hidden = true;
+      if (stateLockedRights) stateLockedRights.hidden = true;
       if (errorNetwork) errorNetwork.hidden = true;
       if (errorUniform) errorUniform.hidden = true;
       if (resendFeedback) {
@@ -100,7 +118,13 @@
 
     function showLocked() {
       hideStates();
-      if (stateLocked) stateLocked.hidden = false;
+      // INV-OT-06: scope MANAGE/REVOCATION nunca ofrece "solicitar nuevo código"; siempre
+      // RECOVERY (RV0) y caso humano (RC1), nunca "denegado".
+      if (isRights) {
+        if (stateLockedRights) stateLockedRights.hidden = false;
+      } else if (stateLocked) {
+        stateLocked.hidden = false;
+      }
     }
 
     function showNetworkError() {
@@ -133,7 +157,7 @@
         .then(function (res) {
           setBusy(false);
           if (res.status === 200) {
-            window.location.assign("/decision");
+            window.location.assign(nextRoute);
             return null;
           }
           if (res.status === 404) {
@@ -202,10 +226,48 @@
         });
     }
 
+    function sendRecoveryLink() {
+      // RV0 fuente BEARER (POST /manage/recovery-link, API-CNS-134): sin canal en el body
+      // (GRD-RV-17); respuesta uniforme, nunca revela si el envío ocurrió.
+      postJson("/manage/recovery-link")
+        .then(function (res) {
+          if (rightsLockedFeedback) {
+            rightsLockedFeedback.hidden = false;
+            rightsLockedFeedback.textContent =
+              res.status === 202 ? "Si corresponde, enviamos un enlace a tu vía de contacto registrada." : "";
+          }
+        })
+        .catch(function () {
+          if (rightsLockedFeedback) {
+            rightsLockedFeedback.hidden = false;
+            rightsLockedFeedback.textContent = "No pudimos conectar. Inténtalo nuevamente.";
+          }
+        });
+    }
+
+    function openHumanCase() {
+      // RC1 fuente BEARER (POST /rights-case/open): "en revisión", nunca "denegado".
+      postJson("/rights-case/open")
+        .then(function (res) {
+          if (rightsLockedFeedback) {
+            rightsLockedFeedback.hidden = false;
+            rightsLockedFeedback.textContent = res.status === 200 ? "Abrimos un caso; te contactaremos." : "";
+          }
+        })
+        .catch(function () {
+          if (rightsLockedFeedback) {
+            rightsLockedFeedback.hidden = false;
+            rightsLockedFeedback.textContent = "No pudimos conectar. Inténtalo nuevamente.";
+          }
+        });
+    }
+
     verifyBtn.addEventListener("click", submitCode);
     if (resendBtn) resendBtn.addEventListener("click", resendCode);
     if (requestNewCodeExpired) requestNewCodeExpired.addEventListener("click", requestNewCode);
     if (requestNewCodeLocked) requestNewCodeLocked.addEventListener("click", requestNewCode);
+    if (sendRecoveryLinkBtn) sendRecoveryLinkBtn.addEventListener("click", sendRecoveryLink);
+    if (openHumanCaseBtn) openHumanCaseBtn.addEventListener("click", openHumanCase);
     if (retryBtn) {
       retryBtn.addEventListener("click", function () {
         if (lastAction) lastAction();

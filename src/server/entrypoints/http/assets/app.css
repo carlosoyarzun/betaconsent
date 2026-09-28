@@ -137,3 +137,46 @@
 .lp-decision-relationship-select {
   min-height: 44px;
 }
+
+/* /manage, /manage/revocation/confirm (UX-CNS-004, revocation-handoff.md §2/§7): mismo criterio
+   de tokens que /decision para acciones destructivas (.lp-btn-danger, retiro de consentimiento).
+   .lp-btn-secondary no existe en design-system/css/components.css (mismo hueco P1 ya reportado
+   en el handoff de /decision para .lp-checkbox/.lp-radio): utilidad mínima aquí, mismo criterio
+   que .lp-decision-chip para no bloquear la implementación en un cambio de design-system/. */
+.lp-btn-danger {
+  background: var(--lp-color-feedback-error, #ef4444);
+  color: #fff;
+  border: none;
+}
+
+.lp-btn-secondary {
+  background: transparent;
+  color: var(--lp-text-default, #111827);
+  border: 1px solid var(--lp-border-default, #d1d5db);
+}
+
+.lp-manage-page,
+.lp-revocation-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: var(--lp-spacing-24, 24px);
+}
+
+.lp-manage-status,
+.lp-revocation-section {
+  margin-top: var(--lp-spacing-16, 16px);
+  padding: var(--lp-spacing-16, 16px);
+  border: 1px solid var(--lp-border-default, #d1d5db);
+  border-radius: var(--lp-radius-md, 8px);
+}
+
+.lp-revocation-cta {
+  min-height: 44px; /* Carlos, 2026-09-27: misma decisión de tap target que /welcome/verify/decision */
+}
+
+/* Decisión de Carlos, 2026-09-27 (tap target ideal, extendida por Carlos el 2026-09-27 a todo
+   control interactivo, incluidos los botones con estilo de enlace): #withdraw-btn, "Enviar
+   enlace de recuperación" y "Abrir caso con soporte humano" son botones .lp-link (sin chrome de
+   botón) y necesitan el mismo agrandado de área táctil que .lp-verify-tap-target; se reutiliza
+   esa clase directamente en el HTML (manage-page.ts, revocation-page.ts, verify-page.ts) en vez
+   de duplicar la regla. */

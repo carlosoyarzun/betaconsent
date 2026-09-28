@@ -30,19 +30,63 @@ const HEAD = `<meta charset="utf-8">
   <link rel="stylesheet" href="/assets/design-system/index.css">
   <link rel="stylesheet" href="/assets/app.css">`;
 
+export type VerifyScope = "DECISION" | "MANAGE" | "REVOCATION";
+
+/** verify.js redirige aquí tras un V3 correcto, según el scope de la sesión (data-verify-scope). */
+const NEXT_ROUTE_BY_SCOPE: Readonly<Record<VerifyScope, string>> = {
+  DECISION: "/decision",
+  MANAGE: "/manage",
+  REVOCATION: "/manage/revocation/confirm",
+};
+
 /**
- * GET /verify con sesión válida (verificationRef ya emitido por V1). Estado por defecto; los
- * demás estados (enviando/incorrecto/expirado/bloqueado/error-red/error-uniforme-inline) los
- * activa verify.js según la respuesta de POST /otp/submit, /otp/resend y /otp/request (handoff
- * §6, tabla estado -> código de error -> texto).
+ * Bloque de estado bloqueado (OTP_LOCKED), scope DECISION (Carlos, 2026-09-27): "Solicitar
+ * nuevo código". Nunca se muestra en scope REVOCATION/MANAGE (ver renderRightsLockedBlock).
  */
-export function renderVerifyPage(): string {
+function renderDecisionLockedBlock(): string {
+  return `    <div role="alert" aria-live="assertive" id="state-locked" hidden>
+      <p>Bloqueamos este código por varios intentos incorrectos.</p>
+      <p>Por seguridad, no podemos usarlo de nuevo. Solicita un código nuevo para continuar.</p>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-locked">Solicitar nuevo código</button>
+    </div>
+`;
+}
+
+/**
+ * Bloque de estado bloqueado para scope REVOCATION/MANAGE (33:11, handoff §2/§6): INV-OT-06 —
+ * ningún límite de la clase RIGHTS elimina la vía de revocación; NUNCA dice "denegado" ni
+ * ofrece "solicitar nuevo código" (V6r/V6c). Las dos vías reales: enviar enlace de recuperación
+ * (POST /manage/recovery-link, RV0 fuente BEARER) o abrir un caso con soporte humano (POST
+ * /rights-case/open, RC1 fuente BEARER); ambas usan el handle MANAGE_ENTRY, no requieren la
+ * sesión MANAGE verificada.
+ */
+function renderRightsLockedBlock(): string {
+  return `    <div role="alert" aria-live="assertive" id="state-locked-rights" hidden>
+      <p>Bloqueamos este código por varios intentos incorrectos.</p>
+      <p>Nunca pierdes la posibilidad de retirar tu consentimiento: elige una opción.</p>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="send-recovery-link-btn">Enviar enlace de recuperación</button>
+      <button type="button" class="lp-btn lp-btn-secondary lp-verify-tap-target" id="open-human-case-btn">Abrir caso con soporte humano</button>
+      <div aria-live="polite" role="status" id="rights-locked-feedback" hidden></div>
+    </div>
+`;
+}
+
+/**
+ * GET /verify (scope DECISION), /manage/verify (scope MANAGE) y /manage/revocation/verify
+ * (scope REVOCATION) con sesión válida (verificationRef ya emitido por V1 del scope
+ * correspondiente). Estado por defecto; los demás estados (enviando/incorrecto/expirado/
+ * bloqueado/error-red/error-uniforme-inline) los activa verify.js según la respuesta de POST
+ * /otp/submit, /otp/resend y /otp/request (handoff §6, tabla estado -> código de error ->
+ * texto), parametrizado por `data-verify-scope` (UX-CNS-004 §3, reutiliza esta página y
+ * verify.js para las tres variantes en vez de triplicar el HTML/JS).
+ */
+export function renderVerifyPage(scope: VerifyScope = "DECISION"): string {
   return `<!doctype html>
 <html lang="es">
 <head>
   ${HEAD}
 </head>
-<body>
+<body data-verify-scope="${scope}" data-verify-next="${NEXT_ROUTE_BY_SCOPE[scope]}">
   <main class="lp-page-container lp-verify-page" aria-labelledby="verify-h1">
     <h1 id="verify-h1">Verifica el código</h1>
     <p>Enviamos un código a la vía de contacto registrada para continuar. No lo compartas con nadie.</p>
@@ -77,20 +121,7 @@ export function renderVerifyPage(): string {
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-expired">Solicitar nuevo código</button>
     </div>
 
-    <!--
-      Estado bloqueado (OTP_LOCKED): SOLO la variante scope DECISION (Carlos, 2026-09-27).
-      La variante REVOCATION/MANAGE queda para cuando se construya el flujo de revocación:
-      INV-OT-06 y V6r/V6c (specs/state-machines/otp-challenge.spec.yaml) exigen que ningún
-      límite de la clase RIGHTS elimine la vía de revocación, así que ese caso NUNCA debe
-      mostrar "Solicitar nuevo código" — debe ofrecer RECOVERY/caso humano en su lugar. No
-      implementar ese botón aquí para scope REVOCATION/MANAGE cuando se construya esa pantalla.
-    -->
-    <div role="alert" aria-live="assertive" id="state-locked" hidden>
-      <p>Bloqueamos este código por varios intentos incorrectos.</p>
-      <p>Por seguridad, no podemos usarlo de nuevo. Solicita un código nuevo para continuar.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-locked">Solicitar nuevo código</button>
-    </div>
-
+${scope === "DECISION" ? renderDecisionLockedBlock() : renderRightsLockedBlock()}
     <div role="alert" aria-live="polite" id="error-network" hidden>
       <p>No pudimos conectar.</p>
       <p>Revisa tu conexión e inténtalo nuevamente.</p>
