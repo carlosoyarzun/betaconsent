@@ -54,6 +54,7 @@
     var nextRoute = document.body.getAttribute("data-verify-next") || "/decision";
     var isRights = scope === "MANAGE" || scope === "REVOCATION";
 
+    var verifyForm = document.getElementById("verify-form");
     var verifyBtn = document.getElementById("verify-btn");
     var codeInput = document.getElementById("code-input");
     var codeError = document.getElementById("code-error");
@@ -77,6 +78,11 @@
     var lastAction = null; // reintentado por el botón "Reintentar" (error de red)
 
     function hideStates() {
+      // El formulario vuelve a mostrarse por defecto en cada cambio de estado; solo
+      // showLocked() (scope MANAGE/REVOCATION) lo oculta explícitamente después de llamar a
+      // esta función (fix Carlos, revisión en navegador con dev.ts: 33:11 solo muestra la
+      // alerta, los dos botones y la ayuda, nunca el campo de código/Verificar/Reenviar).
+      if (verifyForm) verifyForm.hidden = false;
       if (codeError) codeError.hidden = true;
       if (stateExpired) stateExpired.hidden = true;
       if (stateLocked) stateLocked.hidden = true;
@@ -119,9 +125,15 @@
     function showLocked() {
       hideStates();
       // INV-OT-06: scope MANAGE/REVOCATION nunca ofrece "solicitar nuevo código"; siempre
-      // RECOVERY (RV0) y caso humano (RC1), nunca "denegado".
+      // RECOVERY (RV0) y caso humano (RC1), nunca "denegado". Frame 33:11: en este estado solo
+      // se ven la alerta, los dos botones y la ayuda; el formulario (código/Verificar/
+      // Reenviar) se oculta y el foco pasa a la alerta.
       if (isRights) {
-        if (stateLockedRights) stateLockedRights.hidden = false;
+        if (verifyForm) verifyForm.hidden = true;
+        if (stateLockedRights) {
+          stateLockedRights.hidden = false;
+          stateLockedRights.focus();
+        }
       } else if (stateLocked) {
         stateLocked.hidden = false;
       }

@@ -83,7 +83,7 @@ const PURPOSES: readonly PurposeCopy[] = [
 function renderPurposeSection(p: PurposeCopy): string {
   return `    <div class="lp-decision-purpose" data-purpose="${p.purpose}">
       <h3>${escapeHtml(p.title)}</h3>
-      <p><!-- [LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos, handoff §3.3] -->${escapeHtml(p.description)}</p>
+      <p>[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos, handoff §3.3] ${escapeHtml(p.description)}</p>
       <div class="lp-decision-chip-pair" role="radiogroup" aria-label="${escapeHtml(p.title)}">
         <button type="button" class="lp-decision-chip" role="radio" aria-checked="false" data-purpose-choice="${p.purpose}" data-choice="GRANT">Acepto</button>
         <button type="button" class="lp-decision-chip" role="radio" aria-checked="false" data-purpose-choice="${p.purpose}" data-choice="DECLINE">No acepto</button>
@@ -141,11 +141,11 @@ export function renderDecisionPage(relationshipRefs: readonly string[], servedVe
           <option value="" selected disabled>Selecciona una opción</option>
           ${relationshipOptions}
         </select>
-        <p class="lp-input-help" id="relationship-help"><!-- [LEGAL DECISION — enum de relación pendiente de DEC-BR-003 / EXT-A / LD-01; opción (b) de Carlos: lista de valores por configuración] --></p>
+        <p class="lp-input-help" id="relationship-help">[LEGAL DECISION — enum de relación pendiente de DEC-BR-003 / EXT-A / LD-01; opción (b) de Carlos: lista de valores por configuración]</p>
       </div>
       <label class="lp-decision-checkbox-row" for="authority-declared">
         <input type="checkbox" id="authority-declared" class="lp-decision-checkbox" />
-        <span><!-- [LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 / EXT-A / LD-01] -->Declaro que tengo la autoridad para tomar esta decisión por el estudiante.</span>
+        <span>[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 / EXT-A / LD-01] Declaro que tengo la autoridad para tomar esta decisión por el estudiante.</span>
       </label>
     </section>
 

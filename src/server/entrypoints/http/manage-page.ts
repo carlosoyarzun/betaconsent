@@ -10,9 +10,10 @@
 // -> R1 -> V1 scope REVOCATION -> /manage/revocation/verify).
 //
 // Todo el copy narrativo es [UX — borrador], sintético, sin PII (mismo patrón que
-// welcome-page.ts/decision-page.ts). La frase de alcance total/irreversibilidad del retiro
-// lleva el marcador [LEGAL DECISION] literal (Carlos, 2026-09-28, handoff §8): no se redacta
-// aquí (CLAUDE.md, copy legal de producción).
+// welcome-page.ts/decision-page.ts). La frase de alcance del retiro lleva el marcador
+// [LEGAL DECISION] literal y VISIBLE como texto (Carlos, 2026-09-28, handoff §8; fix Carlos,
+// revisión en navegador con dev.ts: no puede ir dentro de un comentario HTML `<!-- -->`, porque
+// el usuario nunca lo vería): no se redacta aquí (CLAUDE.md, copy legal de producción).
 
 const HEAD = `<meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -32,7 +33,7 @@ export function renderManageEntryPage(): string {
     <h1 id="manage-h1">Tu consentimiento</h1>
     <p>Antes de mostrarte cualquier información, necesitamos verificar tu identidad con un código.</p>
     <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="start-verify-btn" aria-disabled="false" aria-busy="false">Verificar mi identidad</button>
-    <a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
 
     <div role="alert" aria-live="polite" id="error-network" hidden>
       <p>No pudimos conectar.</p>
@@ -65,10 +66,10 @@ export function renderManageStatusPage(): string {
       <p>Colegio Ejemplo — Estudio Beta de LectorPro. Estado actual: consentimiento otorgado (GRANTED).</p>
       <p>Finalidades otorgadas: Participar en el Estudio Beta, Grabación de audio, Análisis automatizado, Revisión humana.</p>
       <p>Puedes retirar tu consentimiento en cualquier momento.</p>
-      <p class="lp-revocation-legal-note"><!-- [LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial), protocolo l.423] --></p>
+      <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial), protocolo l.423]</p>
     </section>
     <button type="button" class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="start-revocation-btn" aria-disabled="false" aria-busy="false">Retirar mi consentimiento</button>
-    <a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
 
     <div role="alert" aria-live="polite" id="error-network" hidden>
       <p>No pudimos conectar.</p>

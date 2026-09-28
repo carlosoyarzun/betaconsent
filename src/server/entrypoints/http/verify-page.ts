@@ -61,7 +61,7 @@ function renderDecisionLockedBlock(): string {
  * sesión MANAGE verificada.
  */
 function renderRightsLockedBlock(): string {
-  return `    <div role="alert" aria-live="assertive" id="state-locked-rights" hidden>
+  return `    <div role="alert" aria-live="assertive" id="state-locked-rights" tabindex="-1" hidden>
       <p>Bloqueamos este código por varios intentos incorrectos.</p>
       <p>Nunca pierdes la posibilidad de retirar tu consentimiento: elige una opción.</p>
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="send-recovery-link-btn">Enviar enlace de recuperación</button>
@@ -89,31 +89,33 @@ export function renderVerifyPage(scope: VerifyScope = "DECISION"): string {
 <body data-verify-scope="${scope}" data-verify-next="${NEXT_ROUTE_BY_SCOPE[scope]}">
   <main class="lp-page-container lp-verify-page" aria-labelledby="verify-h1">
     <h1 id="verify-h1">Verifica el código</h1>
-    <p>Enviamos un código a la vía de contacto registrada para continuar. No lo compartas con nadie.</p>
-    <div class="lp-form-group" id="verify-form-group">
-      <label class="lp-label" for="code-input">Código de verificación</label>
-      <input
-        class="lp-input lp-verify-code-input"
-        id="code-input"
-        type="text"
-        inputmode="numeric"
-        autocomplete="one-time-code"
-        placeholder="Ingresa el código"
-        aria-describedby="code-help code-error"
-        aria-invalid="false"
-      />
-      <p class="lp-input-help" id="code-help">Ingresa el código de [N] caracteres que enviamos (P-01, valor pendiente de aprobación). El código deja de funcionar después de [tiempo pendiente de aprobación] (P-02).</p>
-      <div class="lp-input-error-msg" id="code-error" role="alert" aria-live="assertive" hidden>
-        El código ingresado no es correcto. Revísalo e inténtalo nuevamente.
+    <div id="verify-form">
+      <p>Enviamos un código a la vía de contacto registrada para continuar. No lo compartas con nadie.</p>
+      <div class="lp-form-group" id="verify-form-group">
+        <label class="lp-label" for="code-input">Código de verificación</label>
+        <input
+          class="lp-input lp-verify-code-input"
+          id="code-input"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          placeholder="Ingresa el código"
+          aria-describedby="code-help code-error"
+          aria-invalid="false"
+        />
+        <p class="lp-input-help" id="code-help">Ingresa el código de [N] caracteres que enviamos (P-01, valor pendiente de aprobación). El código deja de funcionar después de [tiempo pendiente de aprobación] (P-02).</p>
+        <div class="lp-input-error-msg" id="code-error" role="alert" aria-live="assertive" hidden>
+          El código ingresado no es correcto. Revísalo e inténtalo nuevamente.
+        </div>
       </div>
+      <div class="lp-verify-resend">
+        <span>¿No recibiste el código?</span> <button type="button" class="lp-link lp-verify-tap-target" id="resend-btn">Reenviar código</button>
+      </div>
+      <div aria-live="polite" role="status" id="resend-feedback" hidden></div>
+      <p>Puedes solicitarlo un número limitado de veces (P-06, valor pendiente de aprobación).</p>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-cta" id="verify-btn" aria-disabled="false" aria-busy="false">Verificar</button>
     </div>
-    <div class="lp-verify-resend">
-      <span>¿No recibiste el código?</span> <button type="button" class="lp-link lp-verify-tap-target" id="resend-btn">Reenviar código</button>
-    </div>
-    <div aria-live="polite" role="status" id="resend-feedback" hidden></div>
-    <p>Puedes solicitarlo un número limitado de veces (P-06, valor pendiente de aprobación).</p>
-    <button type="button" class="lp-btn lp-btn-primary lp-verify-cta" id="verify-btn" aria-disabled="false" aria-busy="false">Verificar</button>
-    <a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
 
     <div role="alert" aria-live="assertive" id="state-expired" hidden>
       <p>Este código ya no es válido.</p>

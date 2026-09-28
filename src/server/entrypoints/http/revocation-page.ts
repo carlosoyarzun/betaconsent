@@ -8,9 +8,13 @@
 // /manage/revocation/verify (R2) al cargar y luego POST /manage/revocation/confirm (R3) o
 // /manage/revocation/withdraw (R8) según la acción del usuario.
 //
-// El marcador [LEGAL DECISION] de esta pantalla es literal (Carlos, 2026-09-28): reemplaza la
-// frase sobre alcance total/irreversibilidad del retiro citada antes como [UX] (protocolo
-// l.423); no se redacta aquí (CLAUDE.md, copy legal de producción).
+// Los marcadores [LEGAL DECISION] de esta pantalla son literales y VISIBLES como texto (Carlos,
+// 2026-09-28; fix Carlos, revisión en navegador con dev.ts: no pueden ir dentro de un
+// comentario HTML `<!-- -->`, porque el usuario nunca los vería): el de alcance/
+// irreversibilidad del retiro (handoff §8, reemplaza la frase citada antes como [UX], protocolo
+// l.423) y el de efecto sobre los datos ya recolectados al revocar (handoff §4, protocolo
+// l.522, en confirmar-retiro y en el comprobante). Ninguno se redacta aquí (CLAUDE.md, copy
+// legal de producción).
 
 const HEAD = `<meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -32,15 +36,18 @@ export function renderRevocationConfirmPage(): string {
       <section class="lp-card-default lp-revocation-section" aria-labelledby="confirm-h2">
         <h2 id="confirm-h2">Vas a retirar tu consentimiento</h2>
         <p>Vas a retirar tu consentimiento para el Estudio Beta de LectorPro.</p>
-        <p class="lp-revocation-legal-note"><!-- [LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial) e irreversibilidad desde esta pantalla (protocolo l.423)] --></p>
+        <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
+        <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial) e irreversibilidad desde esta pantalla (protocolo l.423)]</p>
       </section>
       <button type="button" class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="confirm-revocation-btn" aria-disabled="false" aria-busy="false">Confirmar retiro total</button>
       <button type="button" class="lp-link lp-verify-tap-target" id="withdraw-btn">Cancelar solicitud de retiro</button>
+      <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
     </div>
 
     <div role="status" aria-live="polite" id="state-applied" hidden>
       <h2 id="applied-heading" tabindex="-1">Retiramos tu consentimiento</h2>
       <p id="applied-receipt"></p>
+      <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
       <p>Nunca te mostraremos aquí el enlace de gestión: lo enviamos solo a la vía de contacto ya verificada.</p>
     </div>
 
