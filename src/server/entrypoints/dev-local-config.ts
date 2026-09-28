@@ -28,3 +28,14 @@ export const LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY = { ttlMs: 15 * 60_000 };
  * declara aquí igual que el resto de este archivo para que dev.ts y los tests compartan una
  * sola fuente. */
 export const LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
+
+/** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts/invitation-handle-policy.config.ts:
+ * TTL de la cookie `__Host-cns-i-handle` que fija GET /i/{token} sin leer la BD. Solo necesita
+ * sobrevivir el 303 inmediato a GET /welcome; 10 minutos es un valor sintético de conveniencia,
+ * no una recomendación de producto (mismo criterio LOCAL-only que el resto de este archivo). */
+export const LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
+
+/** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts/manage-handle-policy.config.ts: TTL
+ * de la cookie `__Host-cns-m-handle` que fija GET /m/{token} sin leer la BD. Mismo criterio
+ * LOCAL-only que arriba. */
+export const LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY = { ttlMs: 10 * 60_000 };

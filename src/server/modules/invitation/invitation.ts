@@ -246,7 +246,15 @@ export function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, 
  * el motivo. GRD-IV-13 (cascada de cancelación pendiente) sigue diferido: requiere
  * tenant-context, fuera del alcance de este archivo (ver cabecera). */
 export function resolveInvitationForRedeem(ports: InvitationPorts, token: string): InvitationRecord | null {
-  const tokenHash = hashToken(token);
+  return resolveInvitationForRedeemByHash(ports, hashToken(token));
+}
+
+/** GET /welcome (SEC-CNS-014 patrón, Carlos 2026-09-28): variante de resolveInvitationForRedeem
+ * que resuelve DIRECTAMENTE por el hash ya fijado por GET /i/{token} (link-handle.ts), sin
+ * volver a hashear un token en claro que ese GET ya no conserva (INV-CM-08 reforzado: el GET de
+ * canje deja de leer la BD, consent-flow.handler.ts handleRedeemInvitationLink). Mismo
+ * predicado que resolveInvitationForRedeem (GRD-IV-07: expiración), sin efectos. */
+export function resolveInvitationForRedeemByHash(ports: InvitationPorts, tokenHash: string): InvitationRecord | null {
   const found = ports.invitationRepo.findByTokenHash(tokenHash);
   if (!found) return null;
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) return null;

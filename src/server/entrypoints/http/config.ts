@@ -20,6 +20,17 @@ export interface RightsCaseHttpConfig {
   /** Cookie del handle RECOVERY (SEC-CNS-014, recovery-handle.ts; contracts/openapi
    * securitySchemes.recoveryHandle). Nunca la misma cookie que sessionCookieName. */
   readonly recoveryHandleCookieName: string;
+  /** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts: cookie que porta SOLO el hash
+   * fijado por GET /i/{token} (typ INVITATION_LANDING), hasta que GET /welcome lo resuelve en
+   * solo lectura y crea la sesión real (sessionCookieName). Nunca la misma cookie que
+   * sessionCookieName, recoveryHandleCookieName ni manageEntryHandleCookieName. */
+  readonly invitationHandleCookieName: string;
+  /** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts: cookie que porta SOLO el hash
+   * fijado por GET /m/{token} (typ MANAGE_ENTRY), hasta que GET /manage lo resuelve en solo
+   * lectura y crea la sesión real. Distinta de `manageHandleCookieName` (contracts/openapi
+   * securitySchemes.manageHandle, __Host-cns-manage): esa cookie es un handle EN CLARO, pendiente
+   * de integrar con RC2u (rights-case-resume.handler.ts); esta lleva solo el hash. */
+  readonly manageEntryHandleCookieName: string;
 }
 
 const DEFAULT_MANAGE_HANDLE_COOKIE_NAME = "__Host-cns-manage";
@@ -27,6 +38,8 @@ const DEFAULT_CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const DEFAULT_CSRF_HEADER_NAME = "x-csrf-token";
 const DEFAULT_SESSION_COOKIE_NAME = "__Host-cns-session";
 const DEFAULT_RECOVERY_HANDLE_COOKIE_NAME = "__Host-cns-recovery";
+const DEFAULT_INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
+const DEFAULT_MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
 
 /**
  * Construye la configuración del entrypoint. `allowedOrigin` debe venir siempre de
@@ -48,5 +61,7 @@ export function loadRightsCaseHttpConfig(overrides: Partial<RightsCaseHttpConfig
     csrfHeaderName: overrides.csrfHeaderName ?? DEFAULT_CSRF_HEADER_NAME,
     sessionCookieName: overrides.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAME,
     recoveryHandleCookieName: overrides.recoveryHandleCookieName ?? DEFAULT_RECOVERY_HANDLE_COOKIE_NAME,
+    invitationHandleCookieName: overrides.invitationHandleCookieName ?? DEFAULT_INVITATION_HANDLE_COOKIE_NAME,
+    manageEntryHandleCookieName: overrides.manageEntryHandleCookieName ?? DEFAULT_MANAGE_ENTRY_HANDLE_COOKIE_NAME,
   };
 }

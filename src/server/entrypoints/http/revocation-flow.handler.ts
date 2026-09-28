@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import type { TenantHandlePort } from "../../ports/tenant-handle.port.ts";
+import type { ManageHandlePolicy } from "../../modules/revocation/manage-handle-policy.config.ts";
 import {
   confirmRevocation,
   evaluateRecoveryTokenEligibilityByHash,
@@ -40,6 +41,7 @@ import {
   serializeRecoveryHandleCookie,
   verifyRecoveryCsrfToken,
 } from "./recovery-handle.ts";
+import { decodeLinkHandle, encodeLinkHandle, hashLinkToken, serializeLinkHandleCookie, type LinkHandleType } from "./link-handle.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 
 export interface RevocationFlowPorts {
@@ -94,27 +96,69 @@ function checkCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): Ht
 }
 
 // ---------------------------------------------------------------------------
-// GET /m/{token} (API-CNS-102, P-14). Canje sin transición (INV-CM-08): resuelve el handle
-// MANAGE_ENTRY y crea la sesión (tenantId, chainRef, revokedDecisionRef); 303 a /manage.
+// GET /m/{token} (API-CNS-102, P-14, SEC-CNS-014). Canje uniforme SIN transición (INV-CM-08
+// reforzado, Carlos 2026-09-28 opción a): NUNCA lee la BD (ni tenantHandle ni ningún otro port),
+// solo hashea el token y fija el handle MANAGE_ENTRY firmado (`__Host-cns-m-handle`,
+// link-handle.ts). El 303 a /manage es bit a bit idéntico sea el token válido, inexistente,
+// rotado o de otro tenant: GRD-CM-01 se evalúa en GET /manage (render, solo lectura), nunca aquí.
 // ---------------------------------------------------------------------------
-export function handleRedeemManagementLink(token: string, ports: Pick<RevocationFlowPorts, "tenantHandle">, sessionSecret: Buffer): HttpResult {
-  const resolved = ports.tenantHandle.resolve(token);
-  if (!resolved) return uniformNotFound();
+export function handleRedeemManagementLink(
+  token: string,
+  manageHandlePolicy: ManageHandlePolicy,
+  manageHandleKey: Buffer,
+  manageEntryHandleCookieName: string,
+): HttpResult {
+  const tokenHash = hashLinkToken(token);
+  const expiresAtEpochSeconds = Math.floor((Date.now() + manageHandlePolicy.ttlMs) / 1000);
+  const cookieValue = encodeLinkHandle(manageHandleKey, "MANAGE_ENTRY", tokenHash, expiresAtEpochSeconds);
+  return {
+    status: 303,
+    body: {},
+    location: MANAGE_LANDING_ROUTE,
+    setLinkHandleCookie: serializeLinkHandleCookie(manageEntryHandleCookieName, cookieValue, Math.floor(manageHandlePolicy.ttlMs / 1000)),
+    // Mismo criterio que GET /i/{token} (consent-flow.handler.ts): RedemptionToken nunca se
+    // reenvía a terceros (Referrer-Policy no-referrer); no-store evita reintentos cacheados.
+    extraHeaders: { ...REDEMPTION_HEADERS },
+  };
+}
 
+// ---------------------------------------------------------------------------
+// GET /manage (UX-CNS-004, SEC-CNS-014, INV-CM-08). Solo lectura: si ya hay una sesión MANAGE
+// vigente (sessionCookieName, p. ej. ya avanzó a V1/V3), la reutiliza sin volver a tocar la BD;
+// si no, evalúa TenantHandlePort.resolveByHash contra el hash del handle MANAGE_ENTRY vigente
+// (fijado por GET /m/{token}) y, si resuelve, crea recién aquí la sesión real. Sin handle válido
+// -> `null` (el caller sirve el 404 byte-idéntico de renderManageUniformErrorPage, frame 59:3).
+// ---------------------------------------------------------------------------
+export interface ManageLandingView {
+  readonly session: ConsentSessionPayload;
+  /** Presente solo cuando esta llamada resolvió el handle recién ahora (primera visita tras el
+   * 303 de GET /m/{token}): el caller debe fijar esta cookie de sesión en la respuesta. */
+  readonly sessionCookieToSet?: string;
+}
+
+const MANAGE_ENTRY_HANDLE_TYPE: LinkHandleType = "MANAGE_ENTRY";
+
+export function resolveManageLandingSession(
+  ports: Pick<RevocationFlowPorts, "tenantHandle">,
+  sessionSecret: Buffer,
+  existingSession: ConsentSessionPayload | null,
+  manageHandleKey: Buffer,
+  cookies: Readonly<Record<string, string>>,
+  manageEntryHandleCookieName: string,
+): ManageLandingView | null {
+  if (existingSession && existingSession.chainRef) {
+    return { session: existingSession };
+  }
+  const handle = decodeLinkHandle(manageHandleKey, MANAGE_ENTRY_HANDLE_TYPE, cookies[manageEntryHandleCookieName]);
+  if (!handle) return null;
+  const resolved = ports.tenantHandle.resolveByHash(handle.h);
+  if (!resolved) return null;
   const session: ConsentSessionPayload = {
     tenantId: resolved.tenantId,
     chainRef: resolved.chainRef,
     revokedDecisionRef: resolved.revokedDecisionRef,
   };
-  return {
-    status: 303,
-    body: {},
-    location: MANAGE_LANDING_ROUTE,
-    setSessionCookie: encodeSession(sessionSecret, session),
-    // Mismo criterio que GET /i/{token} (consent-flow.handler.ts): RedemptionToken nunca se
-    // reenvía a terceros (Referrer-Policy no-referrer); no-store evita reintentos cacheados.
-    extraHeaders: { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" },
-  };
+  return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
 }
 
 // ---------------------------------------------------------------------------

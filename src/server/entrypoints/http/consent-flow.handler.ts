@@ -29,7 +29,7 @@ import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import {
   openInvitationByRef,
-  resolveInvitationForRedeem,
+  resolveInvitationForRedeemByHash,
   type InvitationPorts,
 } from "../../modules/invitation/invitation.ts";
 import {
@@ -52,6 +52,14 @@ import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession, encodeSession, type ConsentSessionPayload } from "./consent-session.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
+import {
+  decodeLinkHandle,
+  encodeLinkHandle,
+  hashLinkToken,
+  serializeLinkHandleCookie,
+  type LinkHandleType,
+} from "./link-handle.ts";
+import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
 
 export interface ConsentFlowPorts {
   readonly invitation: InvitationPorts;
@@ -76,6 +84,10 @@ export interface HttpResult {
    * `setSessionCookie` (que el transporte serializa). Nunca coexiste con `setSessionCookie` en
    * el mismo HttpResult. */
   readonly setRecoveryHandleCookie?: string;
+  /** SEC-CNS-014 patrón (Carlos, 2026-09-28, link-handle.ts): `Set-Cookie` de
+   * `__Host-cns-i-handle`/`__Host-cns-m-handle` ya serializado completo, mismo criterio que
+   * `setRecoveryHandleCookie` (nunca coexiste con `setSessionCookie` en el mismo HttpResult). */
+  readonly setLinkHandleCookie?: string;
   /** Solo 303 (RedeemSeeOther): ruta relativa sin token (contracts/openapi Location header). */
   readonly location?: string;
   /** Cabeceras adicionales exigidas por el contrato para esta respuesta (p. ej. RedemptionToken
@@ -153,32 +165,72 @@ function deriveDecisionMakerRef(channelRef: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// GET /i/{token} (API-CNS-101, P-12). Canje: crea la sesión LANDING (tenantId, invitationRef)
-// y redirige sin token (INV-CM-08: no transiciona). TEST-CNS-509..511.
+// GET /i/{token} (API-CNS-101, P-12, SEC-CNS-014). Canje uniforme SIN transición (INV-CM-08
+// reforzado, Carlos 2026-09-28 opción a): NUNCA lee la BD, solo hashea el token y fija el handle
+// INVITATION_LANDING firmado (`__Host-cns-i-handle`, link-handle.ts). El 303 a /welcome es bit a
+// bit idéntico sea el token válido, inexistente, expirado o de otro tenant: GRD-IV-07 se evalúa
+// en GET /welcome (render, solo lectura), nunca aquí. TEST-CNS-509..511, TEST-CNS-610+.
 // ---------------------------------------------------------------------------
 
 /** Ruta sin token a la que redirige el canje (contracts/openapi Location, pattern ^/[a-z-]+$). */
 const LANDING_ROUTE = "/welcome";
 
+const LINK_REDEMPTION_HEADERS = { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" } as const;
+
 export function handleRedeemInvitationLink(
   token: string,
-  ports: Pick<ConsentFlowPorts, "invitation">,
-  sessionSecret: Buffer,
+  invitationHandlePolicy: InvitationHandlePolicy,
+  invitationHandleKey: Buffer,
+  invitationHandleCookieName: string,
 ): HttpResult {
-  const found = resolveInvitationForRedeem(ports.invitation, token);
-  if (!found) return uniformNotFound();
-
-  const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
+  const tokenHash = hashLinkToken(token);
+  const expiresAtEpochSeconds = Math.floor((Date.now() + invitationHandlePolicy.ttlMs) / 1000);
+  const cookieValue = encodeLinkHandle(invitationHandleKey, "INVITATION_LANDING", tokenHash, expiresAtEpochSeconds);
   return {
     status: 303,
     body: {},
     location: LANDING_ROUTE,
-    setSessionCookie: encodeSession(sessionSecret, session),
+    setLinkHandleCookie: serializeLinkHandleCookie(invitationHandleCookieName, cookieValue, Math.floor(invitationHandlePolicy.ttlMs / 1000)),
     // RedemptionToken (contracts/openapi parameters.RedemptionToken): "nunca se reenvía a
     // terceros (Referrer-Policy no-referrer)"; Cache-Control evita que un proxy/navegador
     // reintente esta respuesta ligada a un token de un solo canje.
-    extraHeaders: { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" },
+    extraHeaders: { ...LINK_REDEMPTION_HEADERS },
   };
+}
+
+// ---------------------------------------------------------------------------
+// GET /welcome (UX-CNS-001, SEC-CNS-014, INV-CM-08). Solo lectura: si ya hay una sesión LANDING
+// vigente (sessionCookieName), la reutiliza sin volver a tocar la BD (segunda visita, o ya
+// avanzó a V1/C1); si no, evalúa GRD-IV-07 contra el hash del handle INVITATION_LANDING vigente
+// (fijado por GET /i/{token}) y, si resuelve, crea recién aquí la sesión real. Sin handle válido
+// -> `null` (el caller sirve el 404 byte-idéntico de renderWelcomeUniformErrorPage).
+// ---------------------------------------------------------------------------
+export interface WelcomeLandingView {
+  readonly session: ConsentSessionPayload;
+  /** Presente solo cuando esta llamada resolvió el handle recién ahora (primera visita tras el
+   * 303 de GET /i/{token}): el caller debe fijar esta cookie de sesión en la respuesta. */
+  readonly sessionCookieToSet?: string;
+}
+
+const INVITATION_LANDING_HANDLE_TYPE: LinkHandleType = "INVITATION_LANDING";
+
+export function resolveWelcomeLandingSession(
+  ports: Pick<ConsentFlowPorts, "invitation">,
+  sessionSecret: Buffer,
+  existingSession: ConsentSessionPayload | null,
+  invitationHandleKey: Buffer,
+  cookies: Readonly<Record<string, string>>,
+  invitationHandleCookieName: string,
+): WelcomeLandingView | null {
+  if (existingSession && existingSession.invitationRef) {
+    return { session: existingSession };
+  }
+  const handle = decodeLinkHandle(invitationHandleKey, INVITATION_LANDING_HANDLE_TYPE, cookies[invitationHandleCookieName]);
+  if (!handle) return null;
+  const found = resolveInvitationForRedeemByHash(ports.invitation, handle.h);
+  if (!found) return null;
+  const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
+  return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
 }
 
 // ---------------------------------------------------------------------------

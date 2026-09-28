@@ -26,6 +26,8 @@ import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/o
 import type { ConsentDecisionPorts } from "../../modules/consent-decision/consent-decision.ts";
 import type { RecoveryTokenPolicy } from "../../modules/revocation/recovery-token-policy.config.ts";
 import type { RecoveryHandlePolicy } from "../../modules/revocation/recovery-handle-policy.config.ts";
+import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
+import type { ManageHandlePolicy } from "../../modules/revocation/manage-handle-policy.config.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
@@ -37,6 +39,7 @@ import {
   handleResendOtp,
   handleSubmitDecision,
   handleSubmitOtp,
+  resolveWelcomeLandingSession,
   type ConsentFlowPorts,
   type HttpResult,
   type RawConsentRequest,
@@ -51,6 +54,7 @@ import {
   handleRequestRevocation,
   handleVerifyRevocation,
   handleWithdrawRevocation,
+  resolveManageLandingSession,
   resolveRecoveryConfirmView,
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
@@ -58,6 +62,7 @@ import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { deriveRecoveryCsrfKey, deriveRecoveryHandleKey, generateRecoveryCsrfToken } from "./recovery-handle.ts";
+import { deriveLinkHandleKey } from "./link-handle.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
@@ -90,6 +95,15 @@ export interface ConsentFlowHttpServerOptions {
    * servidor usa DEFAULT_TEST_RECOVERY_HANDLE_POLICY (mismo criterio D4 que
    * DEFAULT_TEST_RECOVERY_TOKEN_POLICY: LOCAL/test-only, nunca un default de producción). */
   readonly recoveryHandlePolicy?: RecoveryHandlePolicy;
+  /** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts: TTL de la cookie
+   * `__Host-cns-i-handle` que fija GET /i/{token} sin leer la BD. Si se omite, este servidor usa
+   * DEFAULT_TEST_INVITATION_HANDLE_POLICY (mismo criterio D4 LOCAL/test-only que
+   * DEFAULT_TEST_RECOVERY_HANDLE_POLICY). */
+  readonly invitationHandlePolicy?: InvitationHandlePolicy;
+  /** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts: TTL de la cookie
+   * `__Host-cns-m-handle` que fija GET /m/{token} sin leer la BD. Si se omite, este servidor usa
+   * DEFAULT_TEST_MANAGE_HANDLE_POLICY (mismo criterio D4 LOCAL/test-only). */
+  readonly manageHandlePolicy?: ManageHandlePolicy;
   /**
    * Entorno de ejecución (GRD-CM-13). Solo cuando es exactamente "LOCAL" este servidor expone
    * GET /__dev/otp-sink (dev.ts, D4/D5 report a Carlos: sink de depuración, cero PII más allá
@@ -139,6 +153,21 @@ const DEFAULT_TEST_RECOVERY_TOKEN_POLICY: RecoveryTokenPolicy = { ttlMs: 15 * 60
 /** Mismo criterio D4/LOCAL-test-only que DEFAULT_TEST_RECOVERY_TOKEN_POLICY (arriba), pero para
  * P-18 (handle RECOVERY de la cookie, ADR-006 §6.2: 10 minutos), no P-15 (token en BD). */
 const DEFAULT_TEST_RECOVERY_HANDLE_POLICY: RecoveryHandlePolicy = { ttlMs: 10 * 60_000 };
+
+/** Mismo criterio D4/LOCAL-test-only que arriba, pero para el handle INVITATION_LANDING
+ * (link-handle.ts, GET /i/{token}, SEC-CNS-014 patrón, Carlos 2026-09-28): solo necesita
+ * sobrevivir el 303 inmediato a GET /welcome, no la vigencia real de la invitación. */
+const DEFAULT_TEST_INVITATION_HANDLE_POLICY: InvitationHandlePolicy = { ttlMs: 10 * 60_000 };
+
+/** Mismo criterio D4/LOCAL-test-only que arriba, pero para el handle MANAGE_ENTRY
+ * (link-handle.ts, GET /m/{token}, SEC-CNS-014 patrón, Carlos 2026-09-28). */
+const DEFAULT_TEST_MANAGE_HANDLE_POLICY: ManageHandlePolicy = { ttlMs: 10 * 60_000 };
+
+/** HKDF `info` de cada handle (P2-02, mismo criterio que recovery-handle.ts): distintos entre sí
+ * y de los de recovery-handle.ts/consent-session.ts, para que comprometer una clave nunca
+ * comprometa las otras. */
+const INVITATION_HANDLE_HKDF_INFO = "CNS-INVITATION-HANDLE-v1";
+const MANAGE_ENTRY_HANDLE_HKDF_INFO = "CNS-MANAGE-ENTRY-HANDLE-v1";
 
 /** CA-116: ports de GET /m/{token} + R1-R3/R8/RV0(BEARER)/RC1(BEARER), y (PR 2) GET /r/{token}
  * + POST /recovery/revoke (R1r/R2r/R3r/R10/R11). `ledger` compartido con
@@ -254,6 +283,9 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   if (result.setRecoveryHandleCookie) {
     res.setHeader("Set-Cookie", result.setRecoveryHandleCookie);
   }
+  if (result.setLinkHandleCookie) {
+    res.setHeader("Set-Cookie", result.setLinkHandleCookie);
+  }
   if (result.extraHeaders) {
     for (const [name, value] of Object.entries(result.extraHeaders)) {
       res.setHeader(name, value);
@@ -283,45 +315,59 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const revocationPorts =
     options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
   const recoveryHandlePolicy = options.recoveryHandlePolicy ?? DEFAULT_TEST_RECOVERY_HANDLE_POLICY;
-  // P2-02 (SEC-CNS-014): dos claves HKDF propias derivadas de sessionSecret, cada una con un
-  // `info` distinto (recovery-handle.ts) y distinto también de la firma HMAC de
+  const invitationHandlePolicy = options.invitationHandlePolicy ?? DEFAULT_TEST_INVITATION_HANDLE_POLICY;
+  const manageHandlePolicy = options.manageHandlePolicy ?? DEFAULT_TEST_MANAGE_HANDLE_POLICY;
+  // P2-02 (SEC-CNS-014): claves HKDF propias derivadas de sessionSecret, cada una con un `info`
+  // distinto (recovery-handle.ts, link-handle.ts) y distinto también de la firma HMAC de
   // consent-session.ts: comprometer una nunca compromete las otras.
   const recoveryHandleKey = deriveRecoveryHandleKey(sessionSecret);
   const recoveryCsrfKey = deriveRecoveryCsrfKey(sessionSecret);
+  const invitationHandleKey = deriveLinkHandleKey(sessionSecret, INVITATION_HANDLE_HKDF_INFO);
+  const manageEntryHandleKey = deriveLinkHandleKey(sessionSecret, MANAGE_ENTRY_HANDLE_HKDF_INFO);
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0] ?? "";
 
     if (req.method === "GET" && path.startsWith("/i/") && path.length > "/i/".length) {
-      // API-CNS-101 (P-12): único GET de canje de este entrypoint IT0 (INV-CM-08, GRD-IV-07).
-      let token: string | undefined;
+      // API-CNS-101 (P-12, SEC-CNS-014): único GET de canje de este entrypoint IT0 (INV-CM-08
+      // reforzado, Carlos 2026-09-28 opción a). SIEMPRE el mismo 303, sin leer la BD: un
+      // segmento vacío tras decodificar es el único caso que ni siquiera hashea (URL con /i/
+      // exacto, ruta distinta por construcción, ya cubierta por path.length arriba).
+      let token: string;
+      const rawSegment = path.slice("/i/".length);
       try {
-        token = decodeURIComponent(path.slice("/i/".length));
+        token = decodeURIComponent(rawSegment);
       } catch {
-        token = undefined;
+        token = rawSegment;
       }
-      const result = token ? handleRedeemInvitationLink(token, ports, sessionSecret) : { status: 404 as const, body: { status: 404 } };
+      const result = handleRedeemInvitationLink(token, invitationHandlePolicy, invitationHandleKey, config.invitationHandleCookieName);
       writeResult(res, config, result);
       return;
     }
 
     if (req.method === "GET" && path === "/welcome") {
-      // UX-CNS-001: GET /welcome exige la sesión LANDING creada por GET /i/{token} (INV-CM-08:
-      // esta ruta nunca transiciona nada, solo lee la sesión). Sin sesión válida, se sirve el
-      // estado de error uniforme de la propia pantalla (INV-CM-05: sin distinguir causa), nunca
-      // un 404 crudo del framework.
+      // UX-CNS-001 (SEC-CNS-014, INV-CM-08): GET /welcome resuelve en solo lectura, con la
+      // sesión LANDING existente si ya la hay, o (primera visita tras el 303 de GET /i/{token})
+      // contra el hash del handle INVITATION_LANDING vigente (resolveWelcomeLandingSession,
+      // GRD-IV-07 evaluado AQUÍ, no en el GET de canje). Sin sesión ni handle elegible: 404
+      // byte-idéntico (INV-CM-05: sin distinguir inexistente/expirado/de otro tenant), nunca un
+      // 404 crudo del framework.
       const cookies = parseCookies(headerValue(req.headers.cookie));
-      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      const view = resolveWelcomeLandingSession(ports, sessionSecret, existingSession, invitationHandleKey, cookies, config.invitationHandleCookieName);
       writeHtmlSecurityHeaders(res);
-      if (!session) {
+      if (!view) {
         res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
         res.end(renderWelcomeUniformErrorPage());
         return;
       }
       // Cookie CSRF del double-submit (csrf.ts): legible por welcome.js, distinta de la cookie
-      // de sesión (siempre HttpOnly).
-      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      // de sesión (siempre HttpOnly). Si esta llamada recién resolvió el handle (primera
+      // visita), también fija la cookie de sesión real (view.sessionCookieToSet).
+      const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
+      if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
+      res.setHeader("Set-Cookie", cookiesToSet);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(renderWelcomePage());
       return;
@@ -367,16 +413,16 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     // CA-116 (revocación IT0, UX-CNS-004): GET /m/{token} + páginas MANAGE/REVOCATION.
     // -------------------------------------------------------------------
     if (req.method === "GET" && path.startsWith("/m/") && path.length > "/m/".length) {
-      // API-CNS-102 (P-14): único GET de canje del handle MANAGE_ENTRY (INV-CM-08, no transiciona).
-      let token: string | undefined;
+      // API-CNS-102 (P-14, SEC-CNS-014): único GET de canje del handle MANAGE_ENTRY (INV-CM-08
+      // reforzado, Carlos 2026-09-28 opción a). SIEMPRE el mismo 303, sin leer la BD.
+      let token: string;
+      const rawSegment = path.slice("/m/".length);
       try {
-        token = decodeURIComponent(path.slice("/m/".length));
+        token = decodeURIComponent(rawSegment);
       } catch {
-        token = undefined;
+        token = rawSegment;
       }
-      const result = token
-        ? handleRedeemManagementLink(token, revocationPorts, sessionSecret)
-        : { status: 404 as const, body: { status: 404 } };
+      const result = handleRedeemManagementLink(token, manageHandlePolicy, manageEntryHandleKey, config.manageEntryHandleCookieName);
       writeResult(res, config, result);
       return;
     }
@@ -399,20 +445,32 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path === "/manage") {
-      // UX-CNS-004 §1 (33:2 entrada / 33:21 estado): una sola ruta, dos renders según la
-      // sesión (INV-CM-08: este GET nunca transiciona, solo lee la sesión ya creada por
-      // GET /m/{token} y, si corresponde, por V3 scope MANAGE).
+      // UX-CNS-004 §1 (33:2 entrada / 33:21 estado / 59:3 error, SEC-CNS-014): una sola ruta,
+      // que resuelve en solo lectura con la sesión MANAGE existente si ya la hay, o (primera
+      // visita tras el 303 de GET /m/{token}) contra el hash del handle MANAGE_ENTRY vigente
+      // (resolveManageLandingSession, GRD-CM-01 evaluado AQUÍ, no en el GET de canje). Sin
+      // sesión ni handle elegible: 404 byte-idéntico (frame 59:3), nunca un 404 crudo.
       const cookies = parseCookies(headerValue(req.headers.cookie));
-      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      const view = resolveManageLandingSession(
+        revocationPorts,
+        sessionSecret,
+        existingSession,
+        manageEntryHandleKey,
+        cookies,
+        config.manageEntryHandleCookieName,
+      );
       writeHtmlSecurityHeaders(res);
-      if (!session || !session.chainRef) {
+      if (!view) {
         res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
         res.end(renderManageUniformErrorPage());
         return;
       }
-      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
+      if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
+      res.setHeader("Set-Cookie", cookiesToSet);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(session.manageDecisionMakerRef ? renderManageStatusPage() : renderManageEntryPage());
+      res.end(view.session.manageDecisionMakerRef ? renderManageStatusPage() : renderManageEntryPage());
       return;
     }
 

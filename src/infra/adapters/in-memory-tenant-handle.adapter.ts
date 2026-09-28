@@ -3,7 +3,7 @@
 // (/m/, /r/) contra un registro de handles emitidos, incluida la rotación (token viejo
 // deja de resolver tras emitir uno nuevo para la misma cadena).
 
-import type { ResolvedHandle, TenantHandlePort } from "../../server/ports/tenant-handle.port.ts";
+import { hashTenantHandle, type ResolvedHandle, type TenantHandlePort } from "../../server/ports/tenant-handle.port.ts";
 
 interface SeedHandle {
   readonly handle: string;
@@ -21,28 +21,36 @@ export interface InMemoryTenantHandleAdapter extends TenantHandlePort {
 
 export function createInMemoryTenantHandleAdapter(seeds: readonly SeedHandle[] = []): InMemoryTenantHandleAdapter {
   const byHandle = new Map<string, ResolvedHandle>();
+  // SEC-CNS-014 patrón: índice secundario por hash (hashTenantHandle), mantenido en paralelo a
+  // byHandle en issue()/rotate() para que resolveByHash sea O(1), igual que resolve().
+  const byHandleHash = new Map<string, ResolvedHandle>();
+
+  function set(handle: string, resolved: ResolvedHandle): void {
+    byHandle.set(handle, resolved);
+    byHandleHash.set(hashTenantHandle(handle), resolved);
+  }
+
+  function unset(handle: string): void {
+    byHandle.delete(handle);
+    byHandleHash.delete(hashTenantHandle(handle));
+  }
 
   for (const seed of seeds) {
-    byHandle.set(seed.handle, {
-      tenantId: seed.tenantId,
-      chainRef: seed.chainRef,
-      revokedDecisionRef: seed.revokedDecisionRef,
-    });
+    set(seed.handle, { tenantId: seed.tenantId, chainRef: seed.chainRef, revokedDecisionRef: seed.revokedDecisionRef });
   }
 
   return {
     resolve(handle: string): ResolvedHandle | null {
       return byHandle.get(handle) ?? null;
     },
+    resolveByHash(handleHash: string): ResolvedHandle | null {
+      return byHandleHash.get(handleHash) ?? null;
+    },
     issue(seed: SeedHandle): void {
-      byHandle.set(seed.handle, {
-        tenantId: seed.tenantId,
-        chainRef: seed.chainRef,
-        revokedDecisionRef: seed.revokedDecisionRef,
-      });
+      set(seed.handle, { tenantId: seed.tenantId, chainRef: seed.chainRef, revokedDecisionRef: seed.revokedDecisionRef });
     },
     rotate(handle: string): void {
-      byHandle.delete(handle);
+      unset(handle);
     },
   };
 }
