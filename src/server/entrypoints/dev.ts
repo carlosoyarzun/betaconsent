@@ -14,10 +14,14 @@ import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.
 import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
 import { loadRecoveryTokenPolicyConfig } from "../modules/revocation/recovery-token-policy.config.ts";
 import { loadRecoveryHandlePolicyConfig } from "../modules/revocation/recovery-handle-policy.config.ts";
+import { loadInvitationHandlePolicyConfig } from "../modules/invitation/invitation-handle-policy.config.ts";
+import { loadManageHandlePolicyConfig } from "../modules/revocation/manage-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { attestHumanAssistedVerification } from "../modules/revocation/revocation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
+  LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY,
+  LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY,
   LOCAL_ONLY_DEV_OTP_POLICY,
   LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY,
   LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY,
@@ -102,6 +106,10 @@ const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVER
 // P-18 (recovery-handle-policy.config.ts, ADR-006 §6.2, SEC-CNS-014): TTL de la cookie
 // __Host-cns-recovery que fija GET /r/{token} sin leer la BD; distinto de P-15 (arriba).
 const recoveryHandlePolicy = loadRecoveryHandlePolicyConfig(LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY);
+// SEC-CNS-014 patrón (Carlos, 2026-09-28): TTL de las cookies __Host-cns-i-handle/
+// __Host-cns-m-handle que fijan GET /i/{token} y GET /m/{token} sin leer la BD.
+const invitationHandlePolicy = loadInvitationHandlePolicyConfig(LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY);
+const manageHandlePolicy = loadManageHandlePolicyConfig(LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY);
 const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
 (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
   handle: MGMT_TOKEN,
@@ -166,6 +174,8 @@ const server = createConsentFlowHttpServer({
   revocationPorts,
   sessionSecret,
   recoveryHandlePolicy,
+  invitationHandlePolicy,
+  manageHandlePolicy,
   environment: "LOCAL",
   staffIdentity,
 });

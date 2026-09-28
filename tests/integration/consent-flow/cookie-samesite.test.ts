@@ -19,6 +19,7 @@ import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decis
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const TENANT_ID = "tenant-samesite";
@@ -62,21 +63,43 @@ test("TEST-CNS-599: __Host-cns-session y __Host-cns-csrf se fijan con SameSite=L
 
   try {
     const redeemed = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
-    const sessionSetCookie = redeemed.headers.get("set-cookie") ?? "";
-    assert.match(sessionSetCookie, /__Host-cns-session=/);
+    const handleSetCookie = redeemed.headers.get("set-cookie") ?? "";
+    assert.match(handleSetCookie, /__Host-cns-i-handle=/);
+    assert.match(handleSetCookie, /SameSite=Lax/);
+    assert.match(handleSetCookie, /Secure/);
+    assert.match(handleSetCookie, /HttpOnly/);
+    assert.match(handleSetCookie, /Path=\//);
+    const handleCookie = parseSetCookie(redeemed)[INVITATION_HANDLE_COOKIE_NAME]!;
+
+    const welcome = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+    const welcomeSetCookies = welcome.headers.getSetCookie ? welcome.headers.getSetCookie() : [welcome.headers.get("set-cookie") ?? ""];
+    const sessionSetCookie = welcomeSetCookies.find((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`)) ?? "";
     assert.match(sessionSetCookie, /SameSite=Lax/);
     assert.match(sessionSetCookie, /Secure/);
     assert.match(sessionSetCookie, /HttpOnly/);
     assert.match(sessionSetCookie, /Path=\//);
-    const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME]!;
-
-    const welcome = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
-    const csrfSetCookie = welcome.headers.get("set-cookie") ?? "";
-    assert.match(csrfSetCookie, /__Host-cns-csrf=/);
+    const csrfSetCookie = welcomeSetCookies.find((c) => c.startsWith(`${CSRF_COOKIE_NAME}=`)) ?? "";
     assert.match(csrfSetCookie, /SameSite=Lax/);
     assert.match(csrfSetCookie, /Secure/);
     assert.match(csrfSetCookie, /Path=\//);
-    const csrfCookie = parseSetCookie(welcome)[CSRF_COOKIE_NAME]!;
+    const sessionCookie = (() => {
+      const out: Record<string, string> = {};
+      for (const part of sessionSetCookie.split(";")) {
+        const eq = part.indexOf("=");
+        if (eq === -1) continue;
+        out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+      }
+      return out[SESSION_COOKIE_NAME]!;
+    })();
+    const csrfCookie = (() => {
+      const out: Record<string, string> = {};
+      for (const part of csrfSetCookie.split(";")) {
+        const eq = part.indexOf("=");
+        if (eq === -1) continue;
+        out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+      }
+      return out[CSRF_COOKIE_NAME]!;
+    })();
 
     // GRD-CM-10 sigue vigente: sin token CSRF -> ERR-CM-09 (403), pese a SameSite=Lax.
     const withoutCsrf = await fetch(`${baseUrl}/invitation/open`, {

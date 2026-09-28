@@ -22,6 +22,7 @@ const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+e2e-http@example.invalid";
 
@@ -39,6 +40,22 @@ function parseSetCookie(res: Response): Record<string, string> {
     const eq = part.indexOf("=");
     if (eq === -1) continue;
     out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+/** GET /welcome puede fijar sesión + CSRF en la misma respuesta; getSetCookie() (undici) los
+ * mantiene separados, a diferencia de parseSetCookie (un solo Set-Cookie). */
+function parseAllSetCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raws = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("set-cookie") ?? ""];
+  for (const raw of raws) {
+    for (const part of raw.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!out[name]) out[name] = part.slice(eq + 1).trim();
+    }
   }
   return out;
 }
@@ -90,10 +107,14 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
     });
     const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-507");
 
-    // GET /i/{token} (API-CNS-101, P-12): canje sin transición (INV-CM-08), crea la sesión LANDING.
+    // GET /i/{token} (API-CNS-101, P-12, SEC-CNS-014): canje uniforme sin transición
+    // (INV-CM-08 reforzado), fija solo el handle INVITATION_LANDING (Carlos, 2026-09-28).
     const redeemed = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
     assert.equal(redeemed.status, 303);
-    const landingSession = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    const handleCookie = parseSetCookie(redeemed)[INVITATION_HANDLE_COOKIE_NAME];
+    // GET /welcome resuelve el handle y crea recién ahí la sesión LANDING real.
+    const welcome = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+    const landingSession = parseAllSetCookies(welcome)[SESSION_COOKIE_NAME];
 
     // I4 vía HTTP.
     const opened = await post(baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });

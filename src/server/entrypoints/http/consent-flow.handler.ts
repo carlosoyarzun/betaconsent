@@ -29,7 +29,7 @@ import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import {
   openInvitationByRef,
-  resolveInvitationForRedeem,
+  resolveInvitationForRedeemByHash,
   type InvitationPorts,
 } from "../../modules/invitation/invitation.ts";
 import {
@@ -52,6 +52,14 @@ import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession, encodeSession, type ConsentSessionPayload } from "./consent-session.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
+import {
+  decodeLinkHandle,
+  encodeLinkHandle,
+  hashLinkToken,
+  serializeLinkHandleCookie,
+  type LinkHandleType,
+} from "./link-handle.ts";
+import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
 
 export interface ConsentFlowPorts {
   readonly invitation: InvitationPorts;
@@ -76,6 +84,10 @@ export interface HttpResult {
    * `setSessionCookie` (que el transporte serializa). Nunca coexiste con `setSessionCookie` en
    * el mismo HttpResult. */
   readonly setRecoveryHandleCookie?: string;
+  /** SEC-CNS-014 patrón (Carlos, 2026-09-28, link-handle.ts): `Set-Cookie` de
+   * `__Host-cns-i-handle`/`__Host-cns-m-handle` ya serializado completo, mismo criterio que
+   * `setRecoveryHandleCookie` (nunca coexiste con `setSessionCookie` en el mismo HttpResult). */
+  readonly setLinkHandleCookie?: string;
   /** CA-128 (case-confirmation.handler.ts, API-CNS-138): `Set-Cookie` de `__Host-cns-case` ya
    * serializado completo (case-session.ts serializeCaseSessionCookie), emitido solo por
    * /__dev/staff-login (LOCAL-only). Puede coexistir con setCaseCsrfCookie (no con las demás
@@ -161,32 +173,99 @@ function deriveDecisionMakerRef(channelRef: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// GET /i/{token} (API-CNS-101, P-12). Canje: crea la sesión LANDING (tenantId, invitationRef)
-// y redirige sin token (INV-CM-08: no transiciona). TEST-CNS-509..511.
+// GET /i/{token} (API-CNS-101, P-12, SEC-CNS-014). Canje uniforme SIN transición (INV-CM-08
+// reforzado, Carlos 2026-09-28 opción a): NUNCA lee la BD, solo hashea el token y fija el handle
+// INVITATION_LANDING firmado (`__Host-cns-i-handle`, link-handle.ts). El 303 a /welcome es bit a
+// bit idéntico sea el token válido, inexistente, expirado o de otro tenant: GRD-IV-07 se evalúa
+// en GET /welcome (render, solo lectura), nunca aquí. TEST-CNS-509..511, TEST-CNS-610+.
 // ---------------------------------------------------------------------------
 
 /** Ruta sin token a la que redirige el canje (contracts/openapi Location, pattern ^/[a-z-]+$). */
 const LANDING_ROUTE = "/welcome";
 
+const LINK_REDEMPTION_HEADERS = { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" } as const;
+
 export function handleRedeemInvitationLink(
   token: string,
-  ports: Pick<ConsentFlowPorts, "invitation">,
-  sessionSecret: Buffer,
+  invitationHandlePolicy: InvitationHandlePolicy,
+  invitationHandleKey: Buffer,
+  invitationHandleCookieName: string,
 ): HttpResult {
-  const found = resolveInvitationForRedeem(ports.invitation, token);
-  if (!found) return uniformNotFound();
-
-  const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
+  const tokenHash = hashLinkToken(token);
+  const expiresAtEpochSeconds = Math.floor((Date.now() + invitationHandlePolicy.ttlMs) / 1000);
+  const cookieValue = encodeLinkHandle(invitationHandleKey, "INVITATION_LANDING", tokenHash, expiresAtEpochSeconds);
   return {
     status: 303,
     body: {},
     location: LANDING_ROUTE,
-    setSessionCookie: encodeSession(sessionSecret, session),
+    setLinkHandleCookie: serializeLinkHandleCookie(invitationHandleCookieName, cookieValue, Math.floor(invitationHandlePolicy.ttlMs / 1000)),
     // RedemptionToken (contracts/openapi parameters.RedemptionToken): "nunca se reenvía a
     // terceros (Referrer-Policy no-referrer)"; Cache-Control evita que un proxy/navegador
     // reintente esta respuesta ligada a un token de un solo canje.
-    extraHeaders: { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" },
+    extraHeaders: { ...LINK_REDEMPTION_HEADERS },
   };
+}
+
+// ---------------------------------------------------------------------------
+// GET /welcome (UX-CNS-001, SEC-CNS-014, INV-CM-08). Solo lectura. FINDING P1 (Carlos,
+// prueba en navegador): el handle INVITATION_LANDING vigente (fijado por el GET /i/{token} MÁS
+// RECIENTE) SIEMPRE manda sobre una sesión previa — "el último enlace abierto manda", mismo
+// criterio que /recovery/confirm (que solo lee la cookie de recuperación, PR #23). Si el handle
+// resuelve a una identidad DISTINTA de la sesión existente (otro invitationRef/tenantId, p. ej.
+// el enlace de un segundo hijo), se descarta la sesión vieja y se crea una nueva; si resuelve a
+// la MISMA identidad, se reutiliza la sesión existente tal cual (preserva progreso — OTP ya
+// solicitado, decisionMakerRef, consentId — que un handle sin cambios no puede reconstruir). Si
+// el handle está presente pero es inválido (inexistente/expirado), la sesión previa se borra
+// SIEMPRE (aunque fuera válida): nunca se reutiliza el contexto de un enlace distinto al que el
+// usuario acaba de abrir. Solo cuando NO hay handle en absoluto se cae de vuelta a la sesión
+// existente (navegación dentro del mismo flujo, sin volver a pasar por GET /i/{token}).
+// ---------------------------------------------------------------------------
+export interface WelcomeLandingView {
+  readonly session: ConsentSessionPayload | null;
+  /** Presente solo cuando esta llamada resolvió una sesión NUEVA (handle recién resuelto, sea la
+   * primera visita o un enlace distinto al de la sesión previa): el caller debe fijar esta
+   * cookie en la respuesta. */
+  readonly sessionCookieToSet?: string;
+  /** true cuando hay que invalidar una cookie de sesión previa (handle presente pero inválido,
+   * o handle presente y válido mas de una identidad DISTINTA de la sesión previa): el caller
+   * debe fijar `Set-Cookie` con Max-Age=0 para esa cookie. */
+  readonly clearSessionCookie?: boolean;
+}
+
+const INVITATION_LANDING_HANDLE_TYPE: LinkHandleType = "INVITATION_LANDING";
+
+function sameInvitationIdentity(session: ConsentSessionPayload, tenantId: string, invitationRef: string): boolean {
+  return session.tenantId === tenantId && session.invitationRef === invitationRef;
+}
+
+export function resolveWelcomeLandingSession(
+  ports: Pick<ConsentFlowPorts, "invitation">,
+  sessionSecret: Buffer,
+  existingSession: ConsentSessionPayload | null,
+  invitationHandleKey: Buffer,
+  cookies: Readonly<Record<string, string>>,
+  invitationHandleCookieName: string,
+): WelcomeLandingView {
+  const handle = decodeLinkHandle(invitationHandleKey, INVITATION_LANDING_HANDLE_TYPE, cookies[invitationHandleCookieName]);
+  if (handle) {
+    const found = resolveInvitationForRedeemByHash(ports.invitation, handle.h);
+    if (!found) {
+      // Handle inválido: nunca reutiliza una sesión previa, la que sea (P1: "el último enlace
+      // abierto manda" incluye el caso "el último enlace es inválido").
+      return { session: null, clearSessionCookie: Boolean(existingSession) };
+    }
+    if (existingSession && existingSession.invitationRef && sameInvitationIdentity(existingSession, found.tenantId, found.invitationRef)) {
+      // Mismo enlace que ya generó esta sesión: preserva el progreso (OTP, decisión) en vez de
+      // reconstruir una sesión LANDING "en blanco" en cada recarga.
+      return { session: existingSession };
+    }
+    const session: ConsentSessionPayload = { tenantId: found.tenantId, invitationRef: found.invitationRef };
+    return { session, sessionCookieToSet: encodeSession(sessionSecret, session) };
+  }
+  if (existingSession && existingSession.invitationRef) {
+    return { session: existingSession };
+  }
+  return { session: null };
 }
 
 // ---------------------------------------------------------------------------

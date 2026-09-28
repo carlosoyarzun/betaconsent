@@ -17,6 +17,7 @@ import { createInvitation, markInvitationReady, sendInvitation } from "../../../
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+channel-redeem@example.invalid";
 
@@ -74,7 +75,7 @@ function parseSetCookie(res: Response): Record<string, string> {
   return out;
 }
 
-test("TEST-CNS-509: GET /i/{token} con token válido -> 303 a ruta sin token, fija la cookie de sesión y no transiciona (INV-CM-08)", async () => {
+test("TEST-CNS-509: GET /i/{token} con token válido -> 303 a ruta sin token, fija el handle INVITATION_LANDING (no la sesión final) y no transiciona (INV-CM-08 reforzado, SEC-CNS-014, Carlos 2026-09-28)", async () => {
   const harness = await startServer();
   try {
     const token = seedSentInvitation(harness.ports, "inv-509", "subject-509@example.invalid");
@@ -86,7 +87,8 @@ test("TEST-CNS-509: GET /i/{token} con token válido -> 303 a ruta sin token, fi
     assert.equal(location.includes(token), false, "la Location no debe llevar el token");
 
     const cookies = parseSetCookie(res);
-    assert.ok(cookies[SESSION_COOKIE_NAME], "debe fijar __Host-cns-session (D5, handle LANDING)");
+    assert.ok(cookies[INVITATION_HANDLE_COOKIE_NAME], "debe fijar __Host-cns-i-handle (SEC-CNS-014, link-handle.ts)");
+    assert.equal(cookies[SESSION_COOKIE_NAME], undefined, "GET /i/{token} ya no fija la sesión real directamente (Carlos 2026-09-28)");
 
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     assert.equal(res.headers.get("cache-control"), "no-store");
@@ -98,17 +100,22 @@ test("TEST-CNS-509: GET /i/{token} con token válido -> 303 a ruta sin token, fi
   }
 });
 
-test("TEST-CNS-510: GET /i/{token} con token inexistente, expirado o de otro tenant -> 404 uniforme, sin cookie", async () => {
+test("TEST-CNS-510: GET /i/{token} con token inexistente, expirado o de otro tenant -> el mismo 303 uniforme que un token válido (Carlos 2026-09-28); GET /welcome subsiguiente es el que distingue (404 byte-idéntico, welcome-http.test.ts TEST-CNS-539)", async () => {
   const harness = await startServer();
   try {
     const expiredToken = seedSentInvitation(harness.ports, "inv-510-expired", "subject-510a@example.invalid", new Date(Date.now() - 1000));
 
     for (const token of ["no-such-token", expiredToken]) {
       const res = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
-      assert.equal(res.status, 404);
-      const body = (await res.json()) as { status: number };
-      assert.equal(body.status, 404);
-      assert.equal(res.headers.get("set-cookie"), null);
+      assert.equal(res.status, 303);
+      assert.equal(res.headers.get("location"), "/welcome");
+      assert.ok(parseSetCookie(res)[INVITATION_HANDLE_COOKIE_NAME], "debe fijar __Host-cns-i-handle igual que un token válido");
+
+      const welcome = await fetch(`${harness.baseUrl}/welcome`, {
+        headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${parseSetCookie(res)[INVITATION_HANDLE_COOKIE_NAME]}` },
+      });
+      assert.equal(welcome.status, 404);
+      assert.match(await welcome.text(), /No pudimos abrir esta invitación\./);
     }
   } finally {
     await harness.close();

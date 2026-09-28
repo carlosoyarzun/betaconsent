@@ -4,6 +4,7 @@
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de I9) y condición (iii) de GRD-TC-08 (GRD-IV-13: 404 uniforme en GET /i/; OPEN-TC-07 DECIDED, DEC-BR-018).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en I9), N2-05 (GRD-TC-07 en I1/I3/I3r/I4); AUDIT-H01-rev4 M-05.
 # rev. 4e (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en I2/I3/I3r/I4/I5/I6/I7/I9 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
+# rev. 4f (2026-09-28, SEC-CNS-014, Carlos, opción a): GET /i/{token} (P-12) deja de leer la BD en el canje — mismo patrón que GET /r/{token} (revocation.spec.yaml managementLink/RECOVERY). Ya no evalúa GRD-IV-13 ni GRD-IV-07 en el propio GET: hashea el token, fija el handle LANDING firmado y responde SIEMPRE el mismo 303 a /welcome (válido, inexistente o expirado son indistinguibles). GRD-IV-13 y GRD-IV-07 pasan a evaluarse en GET /welcome (render, solo lectura), antes de crear ahí la sesión LANDING real. Cierra el oráculo 303/404 de TEST-CNS-537. Sin cambio de guards del POST I4, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 specId: SPEC-CNS-SM-INVITATION
 title: "State machine Invitation (IT0)"
 smId: SM-CNS-001
@@ -181,7 +182,7 @@ transitions:
     httpPost: true
     guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-10, GRD-IV-07, GRD-IV-08, GRD-IV-13, GRD-TC-07]
     effects:
-      - "GET /i/{token}: backend valida hash y GRD-IV-13 (participación/Enrollment CLOSED o cancelación en cascada pendiente → 404 uniforme sin handle), crea handle LANDING (P-12), Set-Cookie y 303 a ruta sin token; el GET no transiciona (INV-CM-08)."
+      - "GET /i/{token} (SEC-CNS-014, rev. 4f, Carlos 2026-09-28): hashea el token SIN leer la BD, fija el handle LANDING firmado (P-12) y responde SIEMPRE el mismo 303 a /welcome, sea el token válido, inexistente o expirado; el GET no transiciona (INV-CM-08 reforzado). GET /welcome evalúa GRD-IV-13 (participación/Enrollment CLOSED o cancelación en cascada pendiente) y GRD-IV-07 (expiración) en solo lectura, contra el hash del handle, y crea recién ahí la sesión LANDING real; sin handle elegible sirve el 404 uniforme (byte-idéntico) de la propia pantalla, nunca del framework."
       - "El primer POST con el handle transiciona a OPENED."
     emits: [INVITATION_OPENED]
     idempotencyKey: "invitationRef (INVITATION_OPENED una sola vez)"
@@ -344,10 +345,10 @@ guards:
     testIds: [TEST-CNS-124, TEST-CNS-134]
   - id: GRD-IV-13
     name: landing_blocked_while_cascade_pending
-    rule: "SEC-CNS-012 re-verificación rev. 4b (3)(iii): la resolución de GET /i/{token}, tras resolve_invitation y SET LOCAL, antes de crear el handle LANDING, comprueba que la participación y el Enrollment de la invitación no estén CLOSED y que no exista un ops.job CASCADE_CANCEL_INVITATION pendiente para esa invitación; si falla, 404 uniforme de ERR-IV-01 (mismo cuerpo, código y tiempo acotado que un token inexistente), sin handle, sin Set-Cookie y sin evento. El resto de fallas de GRD-CM-05 (contexto PAUSED, participación SUSPENDED) conserva el comportamiento actual (el POST I4 se rechaza con el error de GRD-CM-05). Parte de la desviación de GRD-TC-08 frente a R14-E, DECIDIDA por Carlos (OPEN-TC-07, DEC-BR-018 A-09): el guard es más restrictivo y se aplica en todo caso."
+    rule: "SEC-CNS-012 re-verificación rev. 4b (3)(iii), reubicado por SEC-CNS-014 rev. 4f (Carlos, 2026-09-28): ya NO se evalúa en GET /i/{token} (ese GET dejó de leer la BD, opción a). Se evalúa en GET /welcome, tras resolver el hash del handle LANDING contra el token guardado (resolve_invitation) y SET LOCAL, antes de crear la sesión LANDING real: comprueba que la participación y el Enrollment de la invitación no estén CLOSED y que no exista un ops.job CASCADE_CANCEL_INVITATION pendiente para esa invitación; si falla, 404 uniforme de ERR-IV-01 (mismo cuerpo HTML byte-idéntico que un handle inexistente o expirado), sin sesión LANDING y sin evento. El resto de fallas de GRD-CM-05 (contexto PAUSED, participación SUSPENDED) conserva el comportamiento actual (el POST I4 se rechaza con el error de GRD-CM-05). Parte de la desviación de GRD-TC-08 frente a R14-E, DECIDIDA por Carlos (OPEN-TC-07, DEC-BR-018 A-09): el guard es más restrictivo y se aplica en todo caso."
     onFail: ERR-IV-01
-    decidedRef: "OPEN-TC-07 (DEC-BR-018, 2026-09-27)"
-    governedBy: ["SEC-CNS-012 re-verificación rev. 4b (3)(iii)", "DEC-BR-018 (R14-E, OPEN-TC-07)", "REQ-CNS-TBD-07 AC-07.1", "SEC-CNS-006 P-12", "INV-CM-08"]
+    decidedRef: "OPEN-TC-07 (DEC-BR-018, 2026-09-27); reubicación a GET /welcome (SEC-CNS-014, Carlos 2026-09-28)"
+    governedBy: ["SEC-CNS-012 re-verificación rev. 4b (3)(iii)", "DEC-BR-018 (R14-E, OPEN-TC-07)", "REQ-CNS-TBD-07 AC-07.1", "SEC-CNS-006 P-12", "SEC-CNS-014 rev. 4f", "INV-CM-08"]
     testIds: [TEST-CNS-451]
   - id: GRD-IV-09
     name: channel_binding_and_single_decision_maker

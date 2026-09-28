@@ -41,7 +41,7 @@ export function renderManageEntryPage(): string {
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos continuar.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
@@ -77,7 +77,7 @@ export function renderManageStatusPage(): string {
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos continuar.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
@@ -88,8 +88,11 @@ export function renderManageStatusPage(): string {
 `;
 }
 
-/** Estado de error uniforme (handle inexistente/rotado, GRD-CM-01): mismo patrón que
- * renderVerifyUniformErrorPage/renderWelcomeUniformErrorPage (INV-CM-05). */
+/** Estado de error uniforme (handle inexistente/rotado/usado/vencido, GRD-CM-01): mismo patrón
+ * que renderVerifyUniformErrorPage/renderWelcomeUniformErrorPage (INV-CM-05). Frame 59:3
+ * (Carlos, 2026-09-28): copy propio de esta pantalla, distinto del de /welcome (9:12). El botón
+ * "Contactar a soporte" es un enlace con estilo de botón (opción b de Carlos) al mismo contacto
+ * de ayuda que usa el resto del sitio; NO abre un caso RC1 (intake sin enlace diferido). */
 export function renderManageUniformErrorPage(): string {
   return `<!doctype html>
 <html lang="es">
@@ -98,11 +101,13 @@ export function renderManageUniformErrorPage(): string {
 </head>
 <body>
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
-    <h1 id="manage-h1">Tu consentimiento</h1>
-    <div role="alert" aria-live="assertive" id="error-uniform">
-      <p>No pudimos continuar.</p>
-      <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
+    <h1 id="manage-h1">Gestiona tu consentimiento</h1>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
+      <p>Este enlace ya no está disponible.</p>
+      <p>Puede que ya no sea válido. Esto no significa que se haya perdido tu posibilidad de gestionar tu consentimiento.</p>
     </div>
+    <a href="mailto:ayuda@example.invalid" class="lp-btn lp-btn-primary lp-verify-tap-target" id="contact-support-btn">Contactar a soporte</a>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
   </main>
 </body>
 </html>

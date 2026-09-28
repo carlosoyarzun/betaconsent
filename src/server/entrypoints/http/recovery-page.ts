@@ -59,7 +59,7 @@ export function renderRecoveryConfirmPage(): string {
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos continuar con este retiro.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
@@ -83,10 +83,12 @@ export function renderRecoveryUniformErrorPage(): string {
 <body>
   <main class="lp-page-container lp-revocation-page" aria-labelledby="recovery-h1">
     <h1 id="recovery-h1">Confirmar retiro</h1>
-    <div role="alert" aria-live="assertive" id="error-uniform">
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
       <p>No pudimos continuar con este retiro.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
+    <p>¿Tampoco tienes tu enlace de gestión? Contáctanos y te ayudamos a recuperar el acceso sin revelar datos de otras personas.</p>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
   </main>
 </body>
 </html>
