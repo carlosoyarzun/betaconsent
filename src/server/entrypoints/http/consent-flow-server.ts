@@ -180,8 +180,16 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return value;
 }
 
+/** SEC-CNS-014 (APROBADO CON CAMBIOS, FINDING P1-02; Carlos 2026-09-28, opción b):
+ * SameSite=Lax, no Strict. Sin esto, la cookie de sesión nunca llega en la navegación GET de
+ * nivel superior que sigue a la redirección 303 de GET /r/{token} (o GET /i/, /m/) cuando el
+ * enlace se abre desde fuera del origen de la app (p. ej. un cliente de correo): con Strict el
+ * navegador la omite en esa primera navegación cross-site. Lax sigue sin enviar la cookie en un
+ * POST cross-site (solo en navegación GET de nivel superior), así que GRD-CM-10
+ * (csrf_and_origin: token CSRF double-submit + Origin exacto) sigue siendo la única defensa
+ * real de los POST, sin debilitarse. */
 function serializeSessionCookie(config: RightsCaseHttpConfig, value: string): string {
-  return `${config.sessionCookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+  return `${config.sessionCookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
 
 /** P1: contracts/openapi/consent-it0.openapi.yaml fija application/problem+json en
