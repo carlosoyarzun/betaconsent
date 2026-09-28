@@ -60,7 +60,7 @@ import {
   resolveRecoveryConfirmView,
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
-import { handleDevStaffLogin, handleRecordCaseConfirmation, type CaseConfirmationPorts } from "./case-confirmation.handler.ts";
+import { handleCosignCaseConfirmation, handleDevStaffLogin, handleRecordCaseConfirmation, type CaseConfirmationPorts } from "./case-confirmation.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { deriveCaseSessionKey } from "./case-session.ts";
@@ -661,6 +661,16 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       );
       writeResult(res, config, result);
       return;
+    }
+
+    if (path.startsWith("/platform/rights-cases/") && path.endsWith("/confirmation/cosign")) {
+      // API-CNS-139: mismo criterio de un solo segmento intermedio que API-CNS-138.
+      const caseRef = path.slice("/platform/rights-cases/".length, path.length - "/confirmation/cosign".length);
+      if (caseRef.length > 0 && !caseRef.includes("/")) {
+        const result = handleCosignCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
+        writeResult(res, config, result);
+        return;
+      }
     }
 
     if (path.startsWith("/platform/rights-cases/") && path.endsWith("/confirmation")) {

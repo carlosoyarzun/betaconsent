@@ -1,0 +1,192 @@
+// Gobierna: specs/state-machines/revocation.spec.yaml RH3 paso 2 (cosign_case_confirmation,
+// GRD-RV-10/ERR-RV-20, GRD-RV-26/ERR-RV-18, INV-RV-11, REVOCATION_CONFIRMED);
+// specs/state-machines/rights-case.spec.yaml GRD-RC-15 (ERR-RC-10);
+// contracts/schemas/ledger-event-payloads.schema.json REVOCATION_CONFIRMED;
+// contracts/openapi/consent-it0.openapi.yaml API-CNS-139. CA-128.
+// TEST-CNS-660..666.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  attestHumanAssistedVerification,
+  cosignCaseConfirmation,
+  recordCaseConfirmationPendingCosign,
+  type RevocationPorts,
+} from "../../../src/server/modules/revocation/revocation.ts";
+import { DomainError } from "../../../src/server/modules/common/errors.ts";
+import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
+import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
+import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
+import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
+import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
+import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
+import { validateLedgerEventPayload } from "../../contract/schema-lite.ts";
+
+function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
+  return {
+    revocationRepo,
+    ledger,
+    recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+    recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+    recoveryTokenPolicy: { ttlMs: 60_000 },
+    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
+  };
+}
+
+/** SYNTHETIC DATA ONLY: 4 personas ficticias, sin reutilización entre roles (GRD-RC-15). */
+const FULL_ROSTER: readonly StaffPrincipal[] = [
+  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
+  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
+  { principalRef: "staff-synthetic-03", role: "APPROVER" },
+  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+];
+const staff = createInMemoryStaffIdentityAdapter(FULL_ROSTER);
+
+function seed(ref: string, opts: { record?: boolean } = {}) {
+  const revocationRepo = createInMemoryRevocationRepository();
+  const ledger = createInMemoryLedgerAdapter();
+  const ports = makePorts(revocationRepo, ledger);
+  revocationRepo.save({ revocationRef: ref, tenantId: "tenant-1", chainRef: `chain-${ref}`, caseRef: `case-${ref}`, status: "REQUESTED" });
+  attestHumanAssistedVerification(ports, "tenant-1", ref, `case-${ref}`);
+  if (opts.record !== false) {
+    recordCaseConfirmationPendingCosign(ports, staff, "tenant-1", ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
+  }
+  return { revocationRepo, ledger, ports };
+}
+
+function errCode(fn: () => unknown): string | undefined {
+  try {
+    fn();
+  } catch (err) {
+    if (err instanceof DomainError) return err.code;
+    throw err;
+  }
+  return undefined;
+}
+
+function confirmedEvents(ledger: LedgerPort, ref: string) {
+  return ledger.listByAggregate("tenant-1", "Revocation", ref).filter((e) => e.eventType === "REVOCATION_CONFIRMED");
+}
+
+function revokedEvents(ledger: LedgerPort, ref: string) {
+  return ledger.listByAggregate("tenant-1", "Revocation", ref).filter((e) => e.eventType === "CONSENT_REVOKED");
+}
+
+test("TEST-CNS-660: cosign sin RH2/RH2v ATTESTED previa -> ERR-RV-20 (GRD-RV-10)", () => {
+  const revocationRepo = createInMemoryRevocationRepository();
+  const ledger = createInMemoryLedgerAdapter();
+  revocationRepo.save({ revocationRef: "rv-660", tenantId: "tenant-1", chainRef: "chain-660", caseRef: "case-660", status: "REQUESTED" });
+  const code = errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", "rv-660", "case-660", { cosignedByPrincipalRef: "staff-synthetic-02" }));
+  assert.equal(code, "ERR-RV-20");
+});
+
+test("TEST-CNS-661: cosign con revocationRef de otro tenant o caseRef distinto -> ERR-CM-01 (GRD-CM-01, tenant_id)", () => {
+  const { ports } = seed("rv-661");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", "rv-661", "case-rv-661", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-661", "case-otro", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+});
+
+test("TEST-CNS-662: cosign sin confirmación previa registrada (paso 1) -> ERR-RV-18, sin efecto", () => {
+  const { ports, revocationRepo, ledger } = seed("rv-662", { record: false });
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-662", "case-rv-662", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RV-18");
+  assert.equal(revocationRepo.findByRef("tenant-1", "rv-662")?.status, "VERIFIED");
+  assert.equal(confirmedEvents(ledger, "rv-662").length, 0);
+});
+
+test("TEST-CNS-663: cosign por la misma persona que registró -> ERR-RV-18 (cosignedByRef <> recordedByRef), sin efecto", () => {
+  const { ports, revocationRepo, ledger } = seed("rv-663");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-663", "case-rv-663", { cosignedByPrincipalRef: "staff-synthetic-01" })), "ERR-RV-18");
+  const stored = revocationRepo.findByRef("tenant-1", "rv-663");
+  assert.equal(stored?.status, "VERIFIED");
+  assert.equal(stored?.cosignedByRef, undefined);
+  assert.equal(confirmedEvents(ledger, "rv-663").length, 0);
+});
+
+test("TEST-CNS-664: dotación insuficiente -> ERR-RC-10 (GRD-RC-15), fail-closed", () => {
+  const { ports } = seed("rv-664");
+  const shortStaff = createInMemoryStaffIdentityAdapter([
+    { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
+    { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
+    { principalRef: "staff-synthetic-03", role: "APPROVER" },
+  ]);
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", "rv-664", "case-rv-664", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RC-10");
+});
+
+/** Refs UUIDv4 sintéticas: el schema exige Ref = UUIDv4 opaco (common.schema.json). Las refs
+ * "staff-synthetic-NN" del roster de dev NO cumplen ese patrón (FINDING P2 en el reporte). */
+const REV_UUID = "6f1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f10";
+const OP_A_UUID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+const OP_B_UUID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e";
+const APR_C_UUID = "c3d4e5f6-a7b8-4c9d-8e1f-2a3b4c5d6e7f";
+const APR_D_UUID = "d4e5f6a7-b8c9-4d0e-9f2a-3b4c5d6e7f80";
+
+test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recordedByRef/cosignedByRef distintos, válido contra el schema", () => {
+  const uuidStaff = createInMemoryStaffIdentityAdapter([
+    { principalRef: OP_A_UUID, role: "RIGHTS_OPERATOR" },
+    { principalRef: OP_B_UUID, role: "RIGHTS_OPERATOR" },
+    { principalRef: APR_C_UUID, role: "APPROVER" },
+    { principalRef: APR_D_UUID, role: "APPROVER" },
+  ]);
+  const revocationRepo = createInMemoryRevocationRepository();
+  const ledger = createInMemoryLedgerAdapter();
+  const ports = makePorts(revocationRepo, ledger);
+  revocationRepo.save({ revocationRef: REV_UUID, tenantId: "tenant-1", chainRef: "chain-665", caseRef: "case-665", status: "REQUESTED" });
+  attestHumanAssistedVerification(ports, "tenant-1", REV_UUID, "case-665");
+  recordCaseConfirmationPendingCosign(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { recordedByPrincipalRef: OP_A_UUID });
+
+  const confirmed = cosignCaseConfirmation(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { cosignedByPrincipalRef: OP_B_UUID });
+  assert.equal(confirmed.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28)
+  assert.equal(confirmed.recordedByRef, OP_A_UUID);
+  assert.equal(confirmed.cosignedByRef, OP_B_UUID);
+  assert.equal(revocationRepo.findByRef("tenant-1", REV_UUID)?.status, "APPLIED");
+
+  const event = confirmedEvents(ledger, REV_UUID)[0];
+  assert.ok(event);
+  assert.equal(event.recordedByRef, OP_A_UUID);
+  assert.equal(event.cosignedByRef, OP_B_UUID);
+  assert.notEqual(event.recordedByRef, event.cosignedByRef);
+  const result = validateLedgerEventPayload("REVOCATION_CONFIRMED", event.payload);
+  assert.ok(result.ok, result.errors.join("\n"));
+});
+
+test("TEST-CNS-666: cosign idempotente por revocationRef — repetir no duplica REVOCATION_CONFIRMED", () => {
+  const { ports, ledger } = seed("rv-666");
+  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const again = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(again.status, "APPLIED");
+  assert.equal(confirmedEvents(ledger, "rv-666").length, 1);
+  assert.equal(revokedEvents(ledger, "rv-666").length, 1);
+});
+
+test("TEST-CNS-676: cosign exitoso aplica R4 síncrono -> APPLIED con un único CONSENT_REVOKED tras REVOCATION_CONFIRMED (IT0, Carlos 2026-09-28)", () => {
+  const { ports, revocationRepo, ledger } = seed("rv-676");
+  const applied = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-676", "case-rv-676", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(applied.status, "APPLIED");
+  assert.equal(revocationRepo.findByRef("tenant-1", "rv-676")?.status, "APPLIED");
+  const types = ledger.listByAggregate("tenant-1", "Revocation", "rv-676").map((e) => e.eventType);
+  assert.deepEqual(types.slice(-2), ["REVOCATION_CONFIRMED", "CONSENT_REVOKED"]);
+  assert.equal(revokedEvents(ledger, "rv-676").length, 1);
+});
+
+test("TEST-CNS-677: repetir cosign tras APPLIED no reaplica ni duplica eventos; CONFIRMED sin aplicar se reintenta sin reemitir REVOCATION_CONFIRMED", () => {
+  const { ports, revocationRepo, ledger } = seed("rv-677");
+  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-677", "case-rv-677", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const before = ledger.listByAggregate("tenant-1", "Revocation", "rv-677").length;
+  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-677", "case-rv-677", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(ledger.listByAggregate("tenant-1", "Revocation", "rv-677").length, before);
+
+  // Simula R4 fallido: CONFIRMED con co-firma pero sin aplicar.
+  const { ports: p2, revocationRepo: repo2, ledger: l2 } = seed("rv-677b");
+  const rec = repo2.findByRef("tenant-1", "rv-677b");
+  assert.ok(rec);
+  repo2.save({ ...rec, status: "CONFIRMED", cosignedByRef: "staff-synthetic-02" });
+  const retried = cosignCaseConfirmation(p2, staff, "tenant-1", "rv-677b", "case-rv-677b", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(retried.status, "APPLIED");
+  assert.equal(confirmedEvents(l2, "rv-677b").length, 0);
+  assert.equal(revokedEvents(l2, "rv-677b").length, 1);
+  void revocationRepo;
+});

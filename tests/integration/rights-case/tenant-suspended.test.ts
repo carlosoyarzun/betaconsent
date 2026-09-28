@@ -7,11 +7,12 @@
 // siquiera reciben un puerto capaz de leer tenant.active (revisión estática == estructural
 // aquí), así que su resultado no puede depender de él.
 
+import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { closeCase, expressRevocationIntentInCase } from "../../../src/server/modules/rights-case/rights-case.ts";
-import { attestHumanAssistedVerification, applyRevocation, recordCaseConfirmation } from "../../../src/server/modules/revocation/revocation.ts";
+import { attestHumanAssistedVerification, cosignCaseConfirmation, recordCaseConfirmationPendingCosign } from "../../../src/server/modules/revocation/revocation.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
@@ -81,13 +82,18 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
   assert.equal(verified.status, "VERIFIED");
 
   // RH3
-  const confirmed = recordCaseConfirmation(ports, "tenant-suspended", revocation.revocationRef, "case-suspended-2", {
+  const staffIdentity = createInMemoryStaffIdentityAdapter([
+    { principalRef: "operator-a", role: "RIGHTS_OPERATOR" },
+    { principalRef: "operator-b", role: "RIGHTS_OPERATOR" },
+    { principalRef: "approver-c", role: "APPROVER" },
+    { principalRef: "approver-d", role: "APPROVER" },
+  ]);
+  recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-suspended", revocation.revocationRef, "case-suspended-2", {
     recordedByPrincipalRef: "operator-a",
+  });
+  const confirmed = cosignCaseConfirmation(ports, staffIdentity, "tenant-suspended", revocation.revocationRef, "case-suspended-2", {
     cosignedByPrincipalRef: "operator-b",
   });
-  assert.equal(confirmed.status, "CONFIRMED");
-
-  // R4
-  const applied = applyRevocation(ports, "tenant-suspended", revocation.revocationRef);
-  assert.equal(applied.status, "APPLIED");
+  // R4 síncrono dentro del cosign en IT0 (Carlos 2026-09-28): la cadena termina en APPLIED.
+  assert.equal(confirmed.status, "APPLIED");
 });
