@@ -200,11 +200,18 @@ export function handleRequestRevocation(
   if (!session || !session.chainRef || !session.revokedDecisionRef || !session.manageDecisionMakerRef) return uniformNotFound();
 
   const revocationRef = session.revocationRef ?? randomUUID();
-  const revocation = requestRevocation(ports.revocation, session.tenantId, {
-    revocationRef,
-    chainRef: session.chainRef,
-    revokedDecisionRef: session.revokedDecisionRef,
-  });
+  let revocation;
+  try {
+    revocation = requestRevocation(ports.revocation, session.tenantId, {
+      revocationRef,
+      chainRef: session.chainRef,
+      revokedDecisionRef: session.revokedDecisionRef,
+    });
+  } catch (err) {
+    // GRD-RV-02 (ERR-RV-02): respuesta uniforme (UniformAccepted), sin revelar el estado de la cadena.
+    if (err instanceof DomainError && err.code === "ERR-RV-02") return { status: 202, body: { result: "RECEIVED" } };
+    throw err;
+  }
   const nextSession: ConsentSessionPayload = { ...session, revocationRef: revocation.revocationRef };
   return {
     status: 200,

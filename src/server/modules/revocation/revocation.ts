@@ -262,12 +262,29 @@ export interface RequestRevocationInput {
   readonly revokedDecisionRef: string;
 }
 
+/** GRD-RV-02 (parcial, ver FINDING P2 del reporte CA-127): una decisión ya REVOKED por C6 no es
+ * elegible para una revocación nueva (R1) ni para emitir enlace (RV0). La verificación completa
+ * "es la GRANTED vigente de la cadena" exige fixtures con chainRef coherente en los tests. */
+function isAlreadyRevoked(
+  ports: Pick<RevocationPorts, "consentDecisionRepo">,
+  tenantId: string,
+  decisionRef: string,
+): boolean {
+  return ports.consentDecisionRepo.findByConsentId(tenantId, decisionRef)?.state === "REVOKED";
+}
+
 /** R1: null -> REQUESTED. Idempotente por revocationRef: si ya existe una Revocation abierta
  * para esta (tenantId, revocationRef), la devuelve sin duplicar el evento (mismo criterio que
  * requestOtp/GRD-OT-08 más arriba en el módulo hermano). */
 export function requestRevocation(ports: RevocationPorts, tenantId: string, input: RequestRevocationInput): RevocationRecord {
   const existing = ports.revocationRepo.findByRef(tenantId, input.revocationRef);
   if (existing) return existing;
+
+  // GRD-RV-02 (chain_granted, ERR-RV-02): la cadena debe tener aún la GRANTED vigente que se
+  // revoca; una decisión ya REVOKED por C6 no es elegible. Sin escrituras ni eventos.
+  if (isAlreadyRevoked(ports, tenantId, input.revokedDecisionRef)) {
+    throw new DomainError("ERR-RV-02");
+  }
 
   const record: RevocationRecord = {
     revocationRef: input.revocationRef,
@@ -500,6 +517,11 @@ export function issueRecoveryLinkBearer(
   revokedDecisionRef: string,
   trigger: Rv0BearerTrigger,
 ): Rv0BearerResult {
+  // GRD-RV-02 (precondición de RV0, ERR-RV-02 uniforme): cadena ya REVOKED (C6) o de otro ciclo
+  // -> no se emite token ni evento; la respuesta HTTP sigue siendo la uniforme.
+  if (isAlreadyRevoked(ports, tenantId, revokedDecisionRef)) {
+    return { sent: false };
+  }
   const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashRecoveryToken(token);
   const recoveryRef = `rec-${randomUUID()}`;
