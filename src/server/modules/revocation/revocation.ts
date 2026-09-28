@@ -66,6 +66,8 @@ export function attestHumanAssistedVerification(
     ...found,
     status: "VERIFIED",
     attestedVerification: { revocationRef, caseRef },
+    verifiedAuthPath: "RECOVERY",
+    verifiedRecoveryMethod: "HUMAN_ASSISTED",
   };
   ports.revocationRepo.save(verified);
   ports.ledger.append({
@@ -304,7 +306,7 @@ export function verifyRevocationOtp(
   if (found.status !== "REQUESTED") {
     throw new DomainError("ERR-CM-06");
   }
-  const verified: RevocationRecord = { ...found, status: "VERIFIED" };
+  const verified: RevocationRecord = { ...found, status: "VERIFIED", verifiedAuthPath: "OTP", verifiedRecoveryMethod: undefined };
   ports.revocationRepo.save(verified);
   ports.ledger.append({
     eventType: "REVOCATION_VERIFIED",
@@ -396,6 +398,13 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   if (found.status !== "CONFIRMED") {
     throw new DomainError("ERR-CM-06");
   }
+  // GRD-RV-29 / INV-RV-07: authPath y recoveryMethod se DERIVAN del registro (último
+  // REVOCATION_VERIFIED), nunca de input del usuario. Sin fuente en el dominio no se inventa un
+  // valor: falla cerrado (no debería ocurrir; R2/R2r/R10/RH2 fijan siempre la vía).
+  const { verifiedAuthPath, verifiedRecoveryMethod, revokedDecisionRef } = found;
+  if (!verifiedAuthPath || !revokedDecisionRef || (verifiedAuthPath === "RECOVERY" && !verifiedRecoveryMethod)) {
+    throw new DomainError("ERR-CM-06");
+  }
   const applied: RevocationRecord = { ...found, status: "APPLIED" };
   ports.revocationRepo.save(applied);
   ports.ledger.append({
@@ -405,8 +414,28 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: {},
+    payload: {
+      revocationRef,
+      revokedDecisionRef,
+      scope: "ALL", // BETA_2026_01: toda revocación es retiro total (vocabulary.scope).
+      effectiveAt: new Date().toISOString(), // hora del append (RULE-CNS-025), nunca del cliente.
+      authPath: verifiedAuthPath,
+      ...(verifiedAuthPath === "RECOVERY" ? { recoveryMethod: verifiedRecoveryMethod } : {}),
+      originPurposeRef: "ALL", // scope ALL en IT0; mismo valor que REVOCATION_REQUESTED.
+    },
     idempotencyKey: revocationRef,
+  });
+  // Recibo de la revocación: receiptRef = revocationRef, el mismo "Comprobante" que muestra la
+  // UI de autoservicio/recuperación. managementLinkIssued=false (IT0: sin management_token).
+  ports.ledger.append({
+    eventType: "RECEIPT_CREATED",
+    tenantId,
+    aggregateType: "Revocation",
+    aggregateId: revocationRef,
+    actorType: "HUMAN",
+    actorRole: "DECISION_MAKER",
+    payload: { receiptRef: revocationRef, managementLinkIssued: false },
+    idempotencyKey: `${revocationRef}:receipt`,
   });
   return applied;
 }
@@ -502,7 +531,8 @@ function requestRevocationRecovery(
   revokedDecisionRef: string,
   recoveryRef: string,
 ): RevocationRecord {
-  const revocationRef = `rv-${randomUUID()}`;
+  // Ref UUIDv4 opaco (common.schema.json Ref); el prefijo "rv-" incumplía el contrato (FINDING P1).
+  const revocationRef = randomUUID();
   const record: RevocationRecord = { revocationRef, tenantId, chainRef, revokedDecisionRef, status: "REQUESTED" };
   ports.revocationRepo.save(record);
   ports.ledger.append({
@@ -524,7 +554,12 @@ function requestRevocationRecovery(
  * El idempotencyKey incluye recoveryRef porque R10 puede repetirse con un token distinto sobre
  * la misma revocationRef (cada re-verificación es un hecho nuevo, no un replay). */
 function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string, found: RevocationRecord, recoveryRef: string): RevocationRecord {
-  const verified: RevocationRecord = { ...found, status: "VERIFIED" };
+  const verified: RevocationRecord = {
+    ...found,
+    status: "VERIFIED",
+    verifiedAuthPath: "RECOVERY",
+    verifiedRecoveryMethod: "CHANNEL_LINK",
+  };
   ports.revocationRepo.save(verified);
   ports.ledger.append({
     eventType: "REVOCATION_VERIFIED",

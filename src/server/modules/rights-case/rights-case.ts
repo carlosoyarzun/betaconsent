@@ -9,6 +9,8 @@
 // entrypoint HTTP (src/server/entrypoints/http/**), no aquí: esta capa nunca ve la request
 // cruda (ADR-001 §11).
 
+import { randomUUID } from "node:crypto";
+
 import { DomainError } from "../common/errors.ts";
 import { resolveHandleOrReject } from "../common/guards.ts";
 import { UNVERIFIED_BEARER_ACTOR } from "../common/types.ts";
@@ -71,12 +73,13 @@ export function expressRevocationIntentInCase(
 
   if (!rightsCase.revocationRef) {
     // RC3: no hay Revocation abierta -> crea REQUESTED en el mismo lote.
-    const revocationRef = `rv-${rightsCase.caseRef}`;
+    const revocationRef = randomUUID(); // Ref UUIDv4 (common.schema.json); antes `rv-${caseRef}` (FINDING P1).
     const revocation: RevocationRecord = {
       revocationRef,
       tenantId: rightsCase.tenantId,
       chainRef: rightsCase.chainRef,
       caseRef: rightsCase.caseRef,
+      revokedDecisionRef: rightsCase.revokedDecisionRef, // fuente de CONSENT_REVOKED.revokedDecisionRef en R4
       status: "REQUESTED",
     };
     ports.revocationRepo.save(revocation);

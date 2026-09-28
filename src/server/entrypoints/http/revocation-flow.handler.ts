@@ -199,7 +199,7 @@ export function handleRequestRevocation(
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.chainRef || !session.revokedDecisionRef || !session.manageDecisionMakerRef) return uniformNotFound();
 
-  const revocationRef = session.revocationRef ?? `rv-${randomUUID()}`;
+  const revocationRef = session.revocationRef ?? randomUUID();
   const revocation = requestRevocation(ports.revocation, session.tenantId, {
     revocationRef,
     chainRef: session.chainRef,

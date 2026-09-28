@@ -24,6 +24,11 @@ export interface RevocationRecord {
   /** R14-C: consentId de la decisión GRANTED vigente que esta Revocation revoca, fijado en
    * servidor al crear R1 (revocation.spec.yaml attributes: revokedDecisionRef). */
   revokedDecisionRef?: string;
+  /** GRD-RV-29 (verifiedAuthPath/verifiedRecoveryMethod): vía del último REVOCATION_VERIFIED,
+   * fijada por el dominio en R2/R2r/R10/RH2 (nunca del input del usuario). R4 la deriva de aquí
+   * para CONSENT_REVOKED.authPath/recoveryMethod. recoveryMethod solo si authPath = RECOVERY. */
+  verifiedAuthPath?: "OTP" | "RECOVERY";
+  verifiedRecoveryMethod?: "CHANNEL_LINK" | "HUMAN_ASSISTED";
   /** R8 (WithdrawRevocationRequest): único reasonCode del vocabulario IT0 (DEC-BR-017 §6). */
   reasonCode?: "WITHDRAWN_BY_REQUESTER";
 }
