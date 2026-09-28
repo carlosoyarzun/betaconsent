@@ -10,6 +10,27 @@
   min-height: 44px; /* Carlos, 2026-09-27: tap target ideal del CTA, en CSS de app, no en DS */
 }
 
+/* /verify (UX-CNS-002, handoff §5/§7): Carlos, 2026-09-27 extiende la misma decisión (CTA a
+   44px) al CTA de esta pantalla y, además, al campo de código (el otro control interactivo
+   crítico del formulario) — ambos en el CSS de la app, nunca en design-system/. */
+.lp-verify-cta {
+  min-height: 44px;
+}
+
+.lp-verify-code-input {
+  min-height: 44px;
+}
+
+.lp-verify-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: var(--lp-spacing-24, 24px);
+}
+
+.lp-verify-resend {
+  margin-top: var(--lp-spacing-16, 16px);
+}
+
 .lp-welcome-page {
   max-width: 480px;
   margin: 0 auto;

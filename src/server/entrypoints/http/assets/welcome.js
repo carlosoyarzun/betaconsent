@@ -81,7 +81,7 @@
             showUniformError();
             return;
           }
-          // No hay pantalla de OTP todavía (placeholder /verify, CLAUDE.md).
+          // UX-CNS-002: /verify exige la sesión con verificationRef, que este otpRes ya fijó.
           window.location.assign("/verify");
         })
         .catch(function () {

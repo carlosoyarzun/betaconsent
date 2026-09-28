@@ -33,7 +33,8 @@ import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
-import { renderVerifyPlaceholderPage } from "./verify-page.ts";
+import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
+import { renderDecisionPlaceholderPage } from "./decision-page.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 
 export interface ConsentFlowHttpServerOptions {
@@ -189,11 +190,29 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path === "/verify") {
-      // Placeholder mínimo (CLAUDE.md): todavía no hay pantalla de OTP; welcome.js redirige acá
-      // cuando /otp/request responde 202.
+      // UX-CNS-002: GET /verify exige la sesión con el OTP ya solicitado (V1, session.
+      // verificationRef); sin ella, se sirve el estado de error uniforme de la propia pantalla
+      // (INV-CM-05), nunca un 404 crudo (mismo patrón que /welcome).
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session || !session.verificationRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderVerifyUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderVerifyPage());
+      return;
+    }
+
+    if (req.method === "GET" && path === "/decision") {
+      // Placeholder mínimo (CLAUDE.md, Carlos 2026-09-27): todavía no hay pantalla de decisión;
+      // verify.js redirige acá cuando /otp/submit responde VERIFIED (200).
       writeHtmlSecurityHeaders(res);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderVerifyPlaceholderPage());
+      res.end(renderDecisionPlaceholderPage());
       return;
     }
 

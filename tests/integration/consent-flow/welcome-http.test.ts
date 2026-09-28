@@ -256,14 +256,14 @@ test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/ope
   }
 });
 
-test("TEST-CNS-544: GET /verify sirve un placeholder mínimo del servidor (siguiente pantalla pendiente), no un 404", async () => {
+test("TEST-CNS-544: GET /verify sin sesión con OTP ya solicitado muestra el estado de error uniforme de la propia pantalla (UX-CNS-002), no un 404 JSON crudo", async () => {
   const harness = await startServer();
   try {
     const res = await fetch(`${harness.baseUrl}/verify`);
-    assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
-    assert.match(html, /<h1[^>]*>Verificación<\/h1>/);
+    assert.match(html, /No pudimos continuar con esta verificación\./);
+    assert.doesNotMatch(html, /"status":404/);
   } finally {
     await harness.close();
   }
