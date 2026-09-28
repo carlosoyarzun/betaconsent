@@ -207,6 +207,7 @@ transitions:
     guards: [GRD-CM-01, GRD-CM-06, GRD-CM-10, GRD-RV-02, GRD-RV-04, GRD-RV-06, GRD-RV-18, GRD-RV-19, GRD-RV-23, GRD-RV-25]
     effects:
       - "Único POST con handle RECOVERY (cookie __Host-, creada por GET /r/<token> sin consumir); R1r, R2r y R3r ocurren en ese mismo POST."
+      - "el GET /r/<token> solo fija el hash, sin validar ni consumir (303 uniforme); GRD-RV-06 se evalúa en este POST."
       - "Cada recoveryRef se consume una vez y se adjunta a la única revocación abierta de la decisión a la que el token está ligado (N:1; SEC N2-04: revoked_decision_ref del token = decisión del ciclo vigente, GRD-RV-06)."
       - "Replay: solo el mismo POST (misma Idempotency-Key y mismo handle RECOVERY dentro de P-18) devuelve la misma respuesta; cualquier otro uso de un token consumido da la respuesta uniforme de ERR-RV-05, nunca la revocationRef (SEC P2-06)."
       - "initiatedVia se deriva en servidor del origin del caso abierto de la cadena (SCHOOL_REPORT iff SCHOOL_REPORTED); nunca del cliente (SEC P2-17)."
@@ -216,6 +217,7 @@ transitions:
     errors: [ERR-RV-05, ERR-RV-06, ERR-CM-09]
     governedBy: ["SM-CNS-001 v7 §5.1 R1r (cualquier authPath)", "SEC-CNS-012 re-verificación N-02", "DEC-BR-017 §2, §6", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "ADR-006 §6.2", "SEC-CNS-012 P2-06, P2-17"]
     testIds: [TEST-CNS-231, TEST-CNS-337, TEST-CNS-339, TEST-CNS-400, TEST-CNS-434]
+    changeNote: "Carlos 2026-09-28 opción (a) + fe de erratas ADR-006 §6/§6.2; sin cambio de semántica."
   - id: RC3
     from: null
     fromNote: "Solo si la cadena no tiene Revocation abierta (SM:155). Con una Revocation ya abierta en cualquier estado no terminal aplica R12 (R13-1)."
@@ -585,6 +587,7 @@ transitions:
       - "K vigentes por cadena (P-16); una emisión nueva no invalida las vigentes; al llegar a K rige la ventana P-17. Los límites se cuentan aparte de la idempotencia. Un token ligado a una decisión de un ciclo anterior no es vigente para el ciclo nuevo."
       - "Superar la ventana: respuesta uniforme con opción de pedir caso humano (RC1 LIMIT_REACHED solo a pedido del portador); nunca deniega."
       - "Un /r/ expirado no crea handle: 'pedir otro' (AC-03.3) se realiza desde el handle de /m/ con trigger REQUESTER_ASKED (alcance del handle según erratum R13-3)."
+      - "Un /r/ inválido o expirado produce el mismo 303, pero nunca llega a ser un handle válido; la página muestra la uniforme de ERR-RV-05."
     emits: [RECOVERY_TOKEN_ISSUED]
     idempotencyKey: "clave por request: (tenant_id, chainRef, trigger, requestRef) — requestRef = Idempotency-Key del POST (portador) o caseRef (sistema); SEC P1-03"
     errors: [ERR-RV-12, ERR-RV-02, ERR-CM-09, ERR-CM-01, ERR-CM-10]
@@ -632,7 +635,7 @@ guards:
     testIds: [TEST-CNS-233, TEST-CNS-327, TEST-CNS-329]
   - id: GRD-RV-06
     name: recovery_token_valid
-    rule: "Token de recuperación del tenant resuelto, no consumido, no expirado (P-15); handle RECOVERY vigente (P-18) creado por GET sin consumir; consumo en un único POST con CSRF + Origin. SEC N2-04 / R14-C: token.revoked_decision_ref = decisión del ciclo vigente de la cadena (la GRANTED vigente, que es el revokedDecisionRef de la Revocation abierta o de la que se crea); un token ligado a otra decisión (ciclo anterior) da la respuesta uniforme de ERR-RV-05, no se consume y no emite nada. Aplica a R1r, R2r, R10 y R11."
+    rule: "Token de recuperación del tenant resuelto, no consumido, no expirado (P-15); handle RECOVERY vigente (P-18) creado por GET sin consumir; consumo en un único POST con CSRF + Origin. SEC N2-04 / R14-C: token.revoked_decision_ref = decisión del ciclo vigente de la cadena (la GRANTED vigente, que es el revokedDecisionRef de la Revocation abierta o de la que se crea); un token ligado a otra decisión (ciclo anterior) da la respuesta uniforme de ERR-RV-05, no se consume y no emite nada. Aplica a R1r, R2r, R10 y R11. portador fijado por GET sin validar ni consumir (P-18); este predicado se evalúa en solo lectura en GET /recovery/confirm (render) y en el POST (consumo)."
     onFail: ERR-RV-05
     governedBy: ["SM-CNS-001 §5.1 R1r, R2r", "ADR-006 §6.2", "REQ-CNS-TBD-03 AC-03.3, AC-03.5", "SEC-CNS-006 P-15, P-18", "DEC-BR-018 R14-C", "SEC-CNS-012 re-verificación rev. 4 N2-04"]
     testIds: [TEST-CNS-231, TEST-CNS-434, TEST-CNS-435]
@@ -804,10 +807,11 @@ errors:
     testIds: [TEST-CNS-263]
   - id: ERR-RV-05
     code: RECOVERY_TOKEN_INVALID
-    response: "Respuesta uniforme (segundo uso, expirado, de otro tenant o ligado a la decisión de un ciclo anterior, SEC N2-04), sin revelar revocationRef. Si expiró, la respuesta indica usar el enlace de gestión para pedir otro (REQUESTER_ASKED desde /m/, alcance R13-3); un /r/ expirado no crea handle ni emite nada."
+    response: "Respuesta uniforme (segundo uso, expirado, de otro tenant o ligado a la decisión de un ciclo anterior, SEC N2-04), sin revelar revocationRef. Si expiró, la respuesta indica usar el enlace de gestión para pedir otro (REQUESTER_ASKED desde /m/, alcance R13-3); un /r/ expirado no crea handle ni emite nada. GET /r/ responde siempre 303 idéntico; la uniforme es la página 33:106 de /recovery/confirm, única para todas las clases; sin evento."
     emitsEvent: none
     governedBy: ["REQ-CNS-TBD-03 AC-03.3", "DEC-BR-017 §5", "SEC-CNS-012 P1-03, P2-06"]
     testIds: [TEST-CNS-231, TEST-CNS-337]
+    changeNote: "Carlos 2026-09-28 opción (a) + fe de erratas ADR-006 §6/§6.2; sin cambio de semántica."
   - id: ERR-RV-06
     code: RECOVERY_TOKEN_SCOPE_VIOLATION
     response: "401/403 uniforme: el token/handle RECOVERY no sirve para DECISION, MANAGE ni otra operación"

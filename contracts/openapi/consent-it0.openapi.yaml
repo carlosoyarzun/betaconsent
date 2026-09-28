@@ -99,7 +99,7 @@ components:
       type: apiKey
       in: cookie
       name: __Host-cns-recovery
-      description: Handle RECOVERY creado por GET /r/{token} sin consumir (P-18); solo válido para POST /recovery/revoke.
+      description: Portador del hash del token fijado por GET /r/{token} sin validar ni consumir (P-18). Es un handle RECOVERY válido solo si GRD-RV-06 resuelve en GET /recovery/confirm o en POST /recovery/revoke; si no, no existe handle.
       x-pending: ["P-26 (nombre de cookie)"]
     staffSession:
       type: apiKey
@@ -177,8 +177,8 @@ components:
       schema: {$ref: '../schemas/common.schema.json#/$defs/ContextRef'}
   headers:
     Location:
-      description: Ruta relativa sin token (p. ej. /welcome, /manage, /recover).
-      schema: {type: string, pattern: "^/[a-z-]+$"}
+      description: Ruta relativa sin token (p. ej. /welcome, /manage, /recovery/confirm).
+      schema: {type: string, pattern: "^/[a-z-]+(/[a-z-]+)*$"}
     SetCookie:
       description: Cookie __Host- del handle (Secure; HttpOnly; SameSite; Path=/), P-26.
       schema: {type: string}
@@ -216,6 +216,11 @@ components:
       content:
         application/json:
           schema: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
+    RecoveryRedeemSeeOther:
+      description: Respuesta idéntica (status, headers, Location /recovery/confirm, atributos y largo del Set-Cookie) sea el token válido, inexistente, consumido, expirado, de otro tenant o de otra cadena o ciclo. No lee la BD, no valida, no consume, no emite (INV-CM-08; Carlos 2026-09-28).
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+        Set-Cookie: {$ref: '#/components/headers/SetCookie'}
   schemas:
     Problem: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
     UniformAccepted: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
@@ -262,21 +267,16 @@ paths:
       operationId: redeemRecoveryLink
       x-api-id: API-CNS-103
       tags: [redemption]
-      summary: Canje del enlace de recuperación (crea handle RECOVERY sin consumir el token)
-      description: Crea el handle RECOVERY (P-18) sin consumir; el consumo ocurre solo en POST /recovery/revoke. Un /r/ expirado no crea handle ni emite nada (ERR-RV-05).
-      x-governed-by: ["revocation.spec R1r effects", "INV-CM-08", "SM-CNS-001 v7 §5.1", "DEC-BR-017 §2", "ADR-006 §6.2"]
+      summary: "Canje uniforme del enlace de recuperación: siempre 303 a /recovery/confirm"
+      description: Fija el portador del hash sin validar. GRD-RV-06 y ERR-RV-05 se evalúan en la página HTML /recovery/confirm (UX-CNS-004, 33:87/33:106) y en POST /recovery/revoke.
+      x-governed-by: ["revocation.spec R1r effects", "INV-CM-08", "SM-CNS-001 v7 §5.1", "DEC-BR-017 §2", "ADR-006 §6.2", "SEC-CNS-014"]
       x-state-transition: none
       x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-eligibility: "GRD-CM-06 evaluado en /recovery/confirm y en el POST"
       x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
       parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
       responses:
-        '303': {$ref: '#/components/responses/RedeemSeeOther'}
-        '200':
-          description: Token inválido, usado, expirado o de otro tenant → respuesta uniforme (ERR-RV-05) que indica usar el enlace de gestión; sin handle ni evento.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
+        '303': {$ref: '#/components/responses/RecoveryRedeemSeeOther'}
   # ---------------------------------------------------------------------------
   # tenant-context (EN0, EN1, CX2). TN*, SP*, CX1 sin HTTP: ver x-not-exposed.
   # ---------------------------------------------------------------------------
@@ -993,6 +993,8 @@ paths:
       tags: [bearer-rights]
       summary: Único POST con handle RECOVERY — R1r+R2r+R3r, o R10+R3r, o R11 (sin efecto)
       description: |
+        tenant_id, chainRef y revokedDecisionRef se resuelven en servidor desde el hash del portador
+        (GRD-CM-01), nunca desde la cookie ni el body.
         Consume el recoveryRef una vez y lo adjunta a la única revocación abierta de la decisión a la
         que el token está ligado (N:1; SEC N2-04: token.revoked_decision_ref = decisión del ciclo
         vigente, GRD-RV-06). Un token ligado a la decisión de un ciclo anterior da la respuesta

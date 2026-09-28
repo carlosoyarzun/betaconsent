@@ -19,18 +19,27 @@ import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import type { TenantHandlePort } from "../../ports/tenant-handle.port.ts";
 import {
   confirmRevocation,
+  evaluateRecoveryTokenEligibilityByHash,
+  hashRecoveryToken,
   issueRecoveryLinkBearer,
   requestRevocation,
-  resolveRecoveryTokenForRedeem,
-  revokeWithRecoveryLink,
+  revokeWithRecoveryLinkByHash,
   verifyRevocationOtp,
   withdrawRevocation,
   type RevocationPorts,
 } from "../../modules/revocation/revocation.ts";
 import { openRightsCase, type RightsCasePorts } from "../../modules/rights-case/rights-case.ts";
+import type { RecoveryHandlePolicy } from "../../modules/revocation/recovery-handle-policy.config.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession, encodeSession, type ConsentSessionPayload } from "./consent-session.ts";
+import {
+  decodeRecoveryHandle,
+  encodeRecoveryHandle,
+  generateRecoveryCsrfToken,
+  serializeRecoveryHandleCookie,
+  verifyRecoveryCsrfToken,
+} from "./recovery-handle.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 
 export interface RevocationFlowPorts {
@@ -44,13 +53,12 @@ const RECOVERY_CONFIRM_ROUTE = "/recovery/confirm";
 /** Cabeceras del canje /r/{token} (API-CNS-103), mismas de GET /m/{token}/GET /i/{token}. */
 const REDEMPTION_HEADERS = { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" } as const;
 
-/** GET /r/{token} inválido, consumido, expirado o de otro tenant/ciclo (ERR-RV-05, GRD-RV-06):
- * el contrato fija 200 UniformAccepted, a propósito distinto del 404 UniformNotFound de
- * /i/{token} y /m/{token} (openapi.yaml:275-279): GET /r/{token} nunca revela "no existe", solo
- * la respuesta uniforme que invita a usar el enlace de gestión (ERR-RV-05 response). */
-function recoveryUniformAccepted(): HttpResult {
-  return { status: 200, body: { result: "RECEIVED" }, extraHeaders: { ...REDEMPTION_HEADERS } };
-}
+/** SEC-CNS-014 FINDING P2-04: tope de largo antes de hashear. GET /r/{token} ya no lee la BD ni
+ * valida el token (contracts/openapi RedemptionToken acota a maxLength 128; este tope es más
+ * holgado a propósito, para no acoplar este archivo al schema del contrato) — cualquier
+ * entrada, del largo que sea, produce el mismo 303 idéntico; truncar antes de hashear solo
+ * acota el costo de una entrada adversarial larguísima, nunca cambia el resultado observable. */
+const RECOVERY_TOKEN_HASH_MAX_INPUT_LENGTH = 512;
 
 function uniformNotFound(): HttpResult {
   return { status: 404, body: { status: 404 } };
@@ -273,56 +281,90 @@ export function handleOpenRightsCase(
 }
 
 // ---------------------------------------------------------------------------
-// GET /r/{token} (API-CNS-103, P-18). Canje sin transición (INV-CM-08): resuelve el token de
-// recuperación y crea la sesión RECOVERY (tenantId, chainRef, revokedDecisionRef,
-// recoveryTokenHash) SIN consumirlo; el consumo ocurre solo en POST /recovery/revoke.
+// GET /r/{token} (API-CNS-103, P-18, SEC-CNS-014). Canje uniforme SIN transición (INV-CM-08
+// reforzado): NUNCA lee la BD (ni recoveryTokenRepo ni ningún otro port), solo hashea el token
+// y fija el handle RECOVERY firmado (__Host-cns-recovery, recovery-handle.ts). El 303 a
+// /recovery/confirm es bit a bit idéntico sea el token válido, inexistente, consumido, expirado
+// o de otro tenant/ciclo: GRD-RV-06/ERR-RV-05 se evalúan en la página destino (render, solo
+// lectura) y en POST /recovery/revoke (consumo), nunca aquí. Sin ramas ni logs condicionales.
 // ---------------------------------------------------------------------------
-export function handleRedeemRecoveryLink(token: string, ports: Pick<RevocationFlowPorts, "revocation">, sessionSecret: Buffer): HttpResult {
-  const resolved = resolveRecoveryTokenForRedeem(ports.revocation, token);
-  if (!resolved) return recoveryUniformAccepted(); // ERR-RV-05 (GRD-RV-06 onFail)
-
-  const session: ConsentSessionPayload = {
-    tenantId: resolved.tenantId,
-    chainRef: resolved.chainRef,
-    revokedDecisionRef: resolved.revokedDecisionRef,
-    recoveryTokenHash: resolved.tokenHash,
-  };
+export function handleRedeemRecoveryLink(token: string, recoveryHandlePolicy: RecoveryHandlePolicy, recoveryHandleKey: Buffer, recoveryHandleCookieName: string): HttpResult {
+  const bounded = token.length > RECOVERY_TOKEN_HASH_MAX_INPUT_LENGTH ? token.slice(0, RECOVERY_TOKEN_HASH_MAX_INPUT_LENGTH) : token;
+  const tokenHash = hashRecoveryToken(bounded);
+  const expiresAtEpochSeconds = Math.floor((Date.now() + recoveryHandlePolicy.ttlMs) / 1000);
+  const cookieValue = encodeRecoveryHandle(recoveryHandleKey, tokenHash, expiresAtEpochSeconds);
   return {
     status: 303,
     body: {},
     location: RECOVERY_CONFIRM_ROUTE,
-    setSessionCookie: encodeSession(sessionSecret, session),
+    setRecoveryHandleCookie: serializeRecoveryHandleCookie(recoveryHandleCookieName, cookieValue, Math.floor(recoveryHandlePolicy.ttlMs / 1000)),
     extraHeaders: { ...REDEMPTION_HEADERS },
   };
 }
 
 // ---------------------------------------------------------------------------
-// POST /recovery/revoke (API-CNS-135). Único POST con handle/sesión RECOVERY: R1r+R2r+R3r,
+// GET /recovery/confirm (UX-CNS-004 33:87/33:106, INV-CM-08, SEC-CNS-014). Solo lectura: evalúa
+// GRD-RV-06 (evaluateRecoveryTokenEligibilityByHash) contra el hash del handle RECOVERY vigente,
+// sin consumir el token, sin escribir nada, sin emitir eventos. El caller HTTP
+// (consent-flow-server.ts) usa `tokenHash` (presente solo si `eligible`) para fijar el CSRF
+// ligado al handle (P2).
+// ---------------------------------------------------------------------------
+export interface RecoveryConfirmView {
+  readonly eligible: boolean;
+  readonly tokenHash?: string;
+}
+
+export function resolveRecoveryConfirmView(
+  ports: Pick<RevocationFlowPorts, "revocation">,
+  recoveryHandleKey: Buffer,
+  cookieHeader: string | undefined,
+  recoveryHandleCookieName: string,
+): RecoveryConfirmView {
+  const cookies = parseCookies(cookieHeader);
+  const handle = decodeRecoveryHandle(recoveryHandleKey, cookies[recoveryHandleCookieName]);
+  if (!handle) return { eligible: false };
+  const eligibility = evaluateRecoveryTokenEligibilityByHash(ports.revocation, handle.h);
+  if (!eligibility) return { eligible: false };
+  return { eligible: true, tokenHash: handle.h };
+}
+
+// ---------------------------------------------------------------------------
+// POST /recovery/revoke (API-CNS-135, SEC-CNS-014). Único POST con handle RECOVERY: R1r+R2r+R3r,
 // R10+R3r o R11 (NOOP), según el estado de la Revocation abierta de la cadena (o su ausencia).
-// tenantId/chainRef/revokedDecisionRef/recoveryTokenHash SIEMPRE de la sesión creada por
-// GET /r/{token}, nunca del body.
+// tenantId/chainRef/revokedDecisionRef se resuelven en servidor desde el hash del handle
+// vigente (GRD-CM-01, revokeWithRecoveryLinkByHash), nunca desde la cookie ni el body. El CSRF
+// double-submit genérico (checkCsrf, GRD-CM-10) se complementa con `verifyRecoveryCsrfToken`
+// (P2, fijación de cookie de recuperación): si `__Host-cns-recovery` cambió entre el render de
+// 33:87 y este POST, la recomputación con el hash ACTUAL no coincide y el POST se rechaza.
 // ---------------------------------------------------------------------------
 export function handleRecoveryRevoke(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
-  sessionSecret: Buffer,
+  recoveryHandleKey: Buffer,
+  recoveryCsrfKey: Buffer,
 ): HttpResult {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
-  const session = readSession(request, config, sessionSecret);
-  if (!session || !session.chainRef || !session.revokedDecisionRef || !session.recoveryTokenHash) return uniformNotFound();
+  const cookies = parseCookies(request.cookieHeader);
+  const handle = decodeRecoveryHandle(recoveryHandleKey, cookies[config.recoveryHandleCookieName]);
+  if (!handle) return uniformNotFound();
+
+  if (!verifyRecoveryCsrfToken(recoveryCsrfKey, handle.h, request.csrfHeaderToken)) {
+    return csrfRejected();
+  }
 
   // RecoveryRevokeRequest (contracts/schemas/api-payloads.schema.json): confirmTotalWithdrawal
-  // const true, gesto explícito de confirmación (no dato de identidad: sigue viniendo de la
-  // sesión, no este campo). Sin él, rechazo determinista (mismo criterio que ERR-CM-06).
+  // const true, gesto explícito de confirmación (no dato de identidad: sigue resolviéndose en
+  // servidor desde el hash, no este campo). Sin él, rechazo determinista (mismo criterio que
+  // ERR-CM-06).
   const body = request.body as { confirmTotalWithdrawal?: unknown } | undefined;
   if (body?.confirmTotalWithdrawal !== true) {
     return problem(422, "ERR-CM-06");
   }
 
-  const outcome = revokeWithRecoveryLink(ports.revocation, session.tenantId, session.chainRef, session.revokedDecisionRef, session.recoveryTokenHash);
+  const outcome = revokeWithRecoveryLinkByHash(ports.revocation, handle.h);
   if (outcome.kind === "CONFIRMED") {
     return { status: 200, body: { revocationRef: outcome.revocationRef, state: "CONFIRMED", receiptDelivery: "BOUND_CHANNEL" } };
   }
@@ -331,7 +373,7 @@ export function handleRecoveryRevoke(
     // (RecoveryRevokeResult) modela IN_PROGRESS como resultado de éxito de esta operación.
     return { status: 200, body: { result: "IN_PROGRESS" } };
   }
-  // "UNIFORM" (ERR-RV-05): 202, distinto del 200 de GET /r/{token} (contracts/openapi
+  // "UNIFORM" (ERR-RV-05): 202, distinto del 303 de GET /r/{token} (contracts/openapi
   // /recovery/revoke responses: 202 UniformAccepted es la rama de error uniforme del POST).
   return { status: 202, body: { result: "RECEIVED" } };
 }

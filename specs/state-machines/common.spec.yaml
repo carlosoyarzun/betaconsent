@@ -373,7 +373,7 @@ invariants:
     governedBy: ["SM-CNS-001:7", "MP §32", "CLAUDE.md Límites de IA"]
     testIds: [TEST-CNS-108]
   - id: INV-CM-08
-    statement: "Un GET nunca consume un token ni transiciona un agregado (/i/, /m/, /r/ se canjean en backend con 303 a ruta sin token)."
+    statement: "Un GET nunca consume un token ni transiciona un agregado (/i/, /m/, /r/ se canjean en backend con 303 a ruta sin token). /r/ responde 303 sin evaluar el token; la validez solo se revela en la página destino."
     governedBy: ["SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20"]
     testIds: [TEST-CNS-109]
   - id: INV-CM-09

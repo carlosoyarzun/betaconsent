@@ -25,6 +25,7 @@ import type { InvitationPorts } from "../../modules/invitation/invitation.ts";
 import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/otp-challenge.ts";
 import type { ConsentDecisionPorts } from "../../modules/consent-decision/consent-decision.ts";
 import type { RecoveryTokenPolicy } from "../../modules/revocation/recovery-token-policy.config.ts";
+import type { RecoveryHandlePolicy } from "../../modules/revocation/recovery-handle-policy.config.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
@@ -50,11 +51,13 @@ import {
   handleRequestRevocation,
   handleVerifyRevocation,
   handleWithdrawRevocation,
+  resolveRecoveryConfirmView,
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
+import { deriveRecoveryCsrfKey, deriveRecoveryHandleKey, generateRecoveryCsrfToken } from "./recovery-handle.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
@@ -83,6 +86,10 @@ export interface ConsentFlowHttpServerOptions {
    * `revocationPorts`, createDefaultRevocationFlowPorts exige pasarlo explícito (fail-closed,
    * mismo patrón que otpPolicy). */
   readonly recoveryTokenPolicy?: RecoveryTokenPolicy;
+  /** P-18 (recovery-handle-policy.config.ts, ADR-006 §6.2, SEC-CNS-014). Si se omite, este
+   * servidor usa DEFAULT_TEST_RECOVERY_HANDLE_POLICY (mismo criterio D4 que
+   * DEFAULT_TEST_RECOVERY_TOKEN_POLICY: LOCAL/test-only, nunca un default de producción). */
+  readonly recoveryHandlePolicy?: RecoveryHandlePolicy;
   /**
    * Entorno de ejecución (GRD-CM-13). Solo cuando es exactamente "LOCAL" este servidor expone
    * GET /__dev/otp-sink (dev.ts, D4/D5 report a Carlos: sink de depuración, cero PII más allá
@@ -128,6 +135,10 @@ export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationship
  * proceso vive, nunca persistido ni usado como recomendación de producto. dev.ts y los tests que
  * SÍ prueban recovery pasan su propio override vía `loadRecoveryTokenPolicyConfig`. */
 const DEFAULT_TEST_RECOVERY_TOKEN_POLICY: RecoveryTokenPolicy = { ttlMs: 15 * 60_000 };
+
+/** Mismo criterio D4/LOCAL-test-only que DEFAULT_TEST_RECOVERY_TOKEN_POLICY (arriba), pero para
+ * P-18 (handle RECOVERY de la cookie, ADR-006 §6.2: 10 minutos), no P-15 (token en BD). */
+const DEFAULT_TEST_RECOVERY_HANDLE_POLICY: RecoveryHandlePolicy = { ttlMs: 10 * 60_000 };
 
 /** CA-116: ports de GET /m/{token} + R1-R3/R8/RV0(BEARER)/RC1(BEARER), y (PR 2) GET /r/{token}
  * + POST /recovery/revoke (R1r/R2r/R3r/R10/R11). `ledger` compartido con
@@ -180,8 +191,16 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return value;
 }
 
+/** SEC-CNS-014 (APROBADO CON CAMBIOS, FINDING P1-02; Carlos 2026-09-28, opción b):
+ * SameSite=Lax, no Strict. Sin esto, la cookie de sesión nunca llega en la navegación GET de
+ * nivel superior que sigue a la redirección 303 de GET /r/{token} (o GET /i/, /m/) cuando el
+ * enlace se abre desde fuera del origen de la app (p. ej. un cliente de correo): con Strict el
+ * navegador la omite en esa primera navegación cross-site. Lax sigue sin enviar la cookie en un
+ * POST cross-site (solo en navegación GET de nivel superior), así que GRD-CM-10
+ * (csrf_and_origin: token CSRF double-submit + Origin exacto) sigue siendo la única defensa
+ * real de los POST, sin debilitarse. */
 function serializeSessionCookie(config: RightsCaseHttpConfig, value: string): string {
-  return `${config.sessionCookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+  return `${config.sessionCookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
 
 /** P1: contracts/openapi/consent-it0.openapi.yaml fija application/problem+json en
@@ -203,9 +222,37 @@ function writeHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Content-Security-Policy", "default-src 'self'");
 }
 
+/** GET /recovery/confirm (SEC-CNS-014): además de las cabeceras de writeHtmlSecurityHeaders,
+ * frame-ancestors 'none' (nunca en un iframe de terceros) y COOP same-origin (aísla el
+ * `window` de esta pestaña de cualquier ventana abierta por un origen ajeno). Ambas páginas
+ * (200 y 404) las llevan. */
+function writeRecoveryHtmlSecurityHeaders(res: ServerResponse): void {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+}
+
+/** Piso de tiempo (ms) para la rama UniformNotFound de GET /recovery/confirm (SEC-CNS-014):
+ * intento de mitigación de canal lateral de temporización entre las causas (inexistente,
+ * consumido, expirado, otro ciclo, sin cookie) — no es una garantía criptográfica de tiempo
+ * constante, solo un piso mínimo sobre trabajo que ya es mayormente uniforme (un solo lookup en
+ * memoria por causa). */
+const RECOVERY_CONFIRM_UNIFORM_FLOOR_MS = 5;
+
+function floorDelay(startedAt: bigint, floorMs: number): Promise<void> {
+  const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+  const remaining = floorMs - elapsedMs;
+  if (remaining <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, remaining));
+}
+
 function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: HttpResult): void {
   if (result.setSessionCookie) {
     res.setHeader("Set-Cookie", serializeSessionCookie(config, result.setSessionCookie));
+  }
+  if (result.setRecoveryHandleCookie) {
+    res.setHeader("Set-Cookie", result.setRecoveryHandleCookie);
   }
   if (result.extraHeaders) {
     for (const [name, value] of Object.entries(result.extraHeaders)) {
@@ -235,6 +282,12 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     })();
   const revocationPorts =
     options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
+  const recoveryHandlePolicy = options.recoveryHandlePolicy ?? DEFAULT_TEST_RECOVERY_HANDLE_POLICY;
+  // P2-02 (SEC-CNS-014): dos claves HKDF propias derivadas de sessionSecret, cada una con un
+  // `info` distinto (recovery-handle.ts) y distinto también de la firma HMAC de
+  // consent-session.ts: comprometer una nunca compromete las otras.
+  const recoveryHandleKey = deriveRecoveryHandleKey(sessionSecret);
+  const recoveryCsrfKey = deriveRecoveryCsrfKey(sessionSecret);
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
@@ -329,16 +382,18 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path.startsWith("/r/") && path.length > "/r/".length) {
-      // API-CNS-103 (P-18, CA-116 PR 2): único GET de canje del token de recuperación
-      // (INV-CM-08, no transiciona ni consume). Token vacío o no decodificable -> misma
-      // respuesta uniforme que un token inválido (ERR-RV-05), nunca un 404 crudo.
-      let token: string | undefined;
+      // API-CNS-103 (P-18, SEC-CNS-014): único GET de canje del token de recuperación
+      // (INV-CM-08 reforzado: no lee la BD, no valida, no transiciona ni consume). Un token no
+      // decodificable se hashea igual, tal cual llega en el path (P2-04): SIEMPRE el mismo 303,
+      // nunca un 404 crudo ni una rama distinta.
+      const rawSegment = path.slice("/r/".length);
+      let token: string;
       try {
-        token = decodeURIComponent(path.slice("/r/".length));
+        token = decodeURIComponent(rawSegment);
       } catch {
-        token = undefined;
+        token = rawSegment;
       }
-      const result = handleRedeemRecoveryLink(token ?? "", revocationPorts, sessionSecret);
+      const result = handleRedeemRecoveryLink(token, recoveryHandlePolicy, recoveryHandleKey, config.recoveryHandleCookieName);
       writeResult(res, config, result);
       return;
     }
@@ -410,18 +465,25 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path === "/recovery/confirm") {
-      // CA-116 PR 2 (33:87 recovery/confirmar): exige la sesión RECOVERY creada por
-      // GET /r/{token} (recoveryTokenHash); sin ella, error uniforme (33:106), mismo patrón que
-      // /manage/revocation/confirm.
-      const cookies = parseCookies(headerValue(req.headers.cookie));
-      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
-      writeHtmlSecurityHeaders(res);
-      if (!session || !session.recoveryTokenHash || !session.chainRef || !session.revokedDecisionRef) {
+      // SEC-CNS-014 (UX-CNS-004 33:87/33:106): GRD-RV-06 se evalúa AQUÍ, en solo lectura
+      // (resolveRecoveryConfirmView -> evaluateRecoveryTokenEligibilityByHash), a partir del
+      // hash fijado por GET /r/{token} en la cookie __Host-cns-recovery (nunca de la sesión de
+      // consent-session.ts, que ya no lleva recoveryTokenHash). Sin handle válido, inexistente,
+      // consumido, expirado o de otro ciclo: 404 byte-idéntico (UniformNotFound, mismo criterio
+      // INV-CM-05), con un piso de tiempo común para no distinguir la causa por temporización.
+      const startedAt = process.hrtime.bigint();
+      const view = resolveRecoveryConfirmView(revocationPorts, recoveryHandleKey, headerValue(req.headers.cookie), config.recoveryHandleCookieName);
+      writeRecoveryHtmlSecurityHeaders(res);
+      if (!view.eligible || !view.tokenHash) {
+        await floorDelay(startedAt, RECOVERY_CONFIRM_UNIFORM_FLOOR_MS);
         res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
         res.end(renderRecoveryUniformErrorPage());
         return;
       }
-      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      // P2 (fijación de cookie): el CSRF de esta página queda ligado al hash vigente ahora
+      // mismo; POST /recovery/revoke lo recalcula contra la cookie __Host-cns-recovery ACTUAL
+      // (recovery-handle.ts verifyRecoveryCsrfToken).
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateRecoveryCsrfToken(recoveryCsrfKey, view.tokenHash)));
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(renderRecoveryConfirmPage());
       return;
@@ -526,7 +588,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         result = handleIssueRecoveryLink(request, revocationPorts, config, sessionSecret);
         break;
       case "/recovery/revoke":
-        result = handleRecoveryRevoke(request, revocationPorts, config, sessionSecret);
+        result = handleRecoveryRevoke(request, revocationPorts, config, recoveryHandleKey, recoveryCsrfKey);
         break;
       case "/rights-case/open":
         result = handleOpenRightsCase(request, revocationPorts, config, sessionSecret);

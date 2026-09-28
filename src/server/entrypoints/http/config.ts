@@ -17,12 +17,16 @@ export interface RightsCaseHttpConfig {
   readonly csrfHeaderName: string;
   /** Cookie de sesión del flujo invitación/otp/decisión (D5, PENDING de P-26; ver consent-session.ts). */
   readonly sessionCookieName: string;
+  /** Cookie del handle RECOVERY (SEC-CNS-014, recovery-handle.ts; contracts/openapi
+   * securitySchemes.recoveryHandle). Nunca la misma cookie que sessionCookieName. */
+  readonly recoveryHandleCookieName: string;
 }
 
 const DEFAULT_MANAGE_HANDLE_COOKIE_NAME = "__Host-cns-manage";
 const DEFAULT_CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const DEFAULT_CSRF_HEADER_NAME = "x-csrf-token";
 const DEFAULT_SESSION_COOKIE_NAME = "__Host-cns-session";
+const DEFAULT_RECOVERY_HANDLE_COOKIE_NAME = "__Host-cns-recovery";
 
 /**
  * Construye la configuración del entrypoint. `allowedOrigin` debe venir siempre de
@@ -43,5 +47,6 @@ export function loadRightsCaseHttpConfig(overrides: Partial<RightsCaseHttpConfig
     csrfCookieName: overrides.csrfCookieName ?? DEFAULT_CSRF_COOKIE_NAME,
     csrfHeaderName: overrides.csrfHeaderName ?? DEFAULT_CSRF_HEADER_NAME,
     sessionCookieName: overrides.sessionCookieName ?? DEFAULT_SESSION_COOKIE_NAME,
+    recoveryHandleCookieName: overrides.recoveryHandleCookieName ?? DEFAULT_RECOVERY_HANDLE_COOKIE_NAME,
   };
 }

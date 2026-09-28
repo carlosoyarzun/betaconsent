@@ -329,7 +329,10 @@ export interface Rv0BearerResult {
   readonly sent: boolean;
 }
 
-function hashRecoveryToken(token: string): string {
+/** SEC-CNS-014: GET /r/{token} (revocation-flow.handler.ts) también hashea con esta función,
+ * SIN leer ningún port (el hash es puro), para que el 303 sea idéntico sea o no válido el
+ * token. Exportada para ese único uso fuera de este módulo. */
+export function hashRecoveryToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
@@ -380,10 +383,14 @@ export function issueRecoveryLinkBearer(
 // TEST-CNS-589+.
 // ---------------------------------------------------------------------------
 
-/** GET /r/{token} (API-CNS-103, INV-CM-08): resuelve el token por su hash SIN consumirlo ni
- * transicionar nada (el consumo ocurre solo en POST /recovery/revoke, revokeWithRecoveryLink).
- * Devuelve `null` si el hash no resuelve, si ya fue consumido o si expiró (GRD-RV-06); el
- * llamador SIEMPRE trata `null` como la respuesta uniforme de ERR-RV-05, sin distinguir motivo. */
+/** SEC-CNS-014 (P1): ya NO la usa el handler HTTP de GET /r/{token} (revocation-flow.handler.ts
+ * handleRedeemRecoveryLink), que dejó de leer la BD en el GET (303 uniforme sin validar). Se
+ * conserva como helper de dominio, reutilizado por los tests unitarios de este módulo (p. ej.
+ * revocation-self-service.test.ts) para obtener el hash real de un token sembrado por
+ * issueRecoveryLinkBearer sin duplicar la lógica de hash+lookup. Resuelve el token por su hash
+ * SIN consumirlo ni transicionar nada (el consumo ocurre solo en POST /recovery/revoke,
+ * revokeWithRecoveryLink). Devuelve `null` si el hash no resuelve, si ya fue consumido o si
+ * expiró (GRD-RV-06). */
 export function resolveRecoveryTokenForRedeem(
   ports: Pick<RevocationPorts, "recoveryTokenRepo">,
   token: string,
@@ -505,6 +512,52 @@ export function evaluateRecoveryTokenEligibility(
   }
 
   return { tokenRecord, existing };
+}
+
+/**
+ * SEC-CNS-014 (GET /r/{token} ya no lee la BD): dado solo el hash del portador
+ * (`__Host-cns-recovery`, recovery-handle.ts), resuelve server-side (tenantId, chainRef,
+ * revokedDecisionRef) desde `recoveryTokenRepo` (GRD-CM-01), nunca desde la cookie ni el body.
+ * Si el hash no resuelve a ningún token (inexistente), devuelve identidad vacía: el llamador
+ * (evaluateRecoveryTokenEligibilityByHash / revokeWithRecoveryLinkByHash) igual falla en el
+ * primer chequeo de `evaluateRecoveryTokenEligibility` (`!tokenRecord`), sin usar esta
+ * identidad vacía para nada más.
+ */
+function identityFromTokenHash(
+  ports: Pick<RevocationPorts, "recoveryTokenRepo">,
+  tokenHash: string,
+): { tenantId: string; chainRef: string; revokedDecisionRef: string } {
+  const record = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+  return record
+    ? { tenantId: record.tenantId, chainRef: record.chainRef, revokedDecisionRef: record.revokedDecisionRef }
+    : { tenantId: "", chainRef: "", revokedDecisionRef: "" };
+}
+
+/**
+ * GET /recovery/confirm (SEC-CNS-014, INV-CM-08): variante de evaluateRecoveryTokenEligibility
+ * que solo necesita el hash (el llamador ya no tiene tenantId/chainRef/revokedDecisionRef
+ * resueltos de antes, porque GET /r/{token} ya no los resuelve). Sigue siendo un predicado puro
+ * (sin efectos); reutiliza evaluateRecoveryTokenEligibility con la identidad que el propio
+ * tokenRecord declara, así que el chequeo [1] de esa función (comparar contra lo que trae la
+ * sesión) se vuelve una comparación del registro contra sí mismo — los chequeos [2] (GRANTED
+ * vigente real) y [3] (Revocation abierta del mismo ciclo) siguen aplicando sin cambios.
+ */
+export function evaluateRecoveryTokenEligibilityByHash(
+  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "revocationRepo" | "consentDecisionRepo">,
+  tokenHash: string,
+): RecoveryTokenEligibility | null {
+  const { tenantId, chainRef, revokedDecisionRef } = identityFromTokenHash(ports, tokenHash);
+  return evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+}
+
+/**
+ * POST /recovery/revoke (SEC-CNS-014): variante de revokeWithRecoveryLink que resuelve
+ * tenantId/chainRef/revokedDecisionRef en servidor desde el hash del portador (GRD-CM-01),
+ * nunca desde la cookie ni el body (la cookie `__Host-cns-recovery` solo trae el hash).
+ */
+export function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): RecoveryRevokeOutcome {
+  const { tenantId, chainRef, revokedDecisionRef } = identityFromTokenHash(ports, tokenHash);
+  return revokeWithRecoveryLink(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
 }
 
 /**

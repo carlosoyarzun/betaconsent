@@ -48,15 +48,13 @@ export interface ConsentSessionPayload {
   readonly revocationOtpVerified?: boolean;
 
   // ---------------------------------------------------------------------
-  // CA-116 PR 2 (recovery, UX-CNS-004): sesión RECOVERY creada por GET /r/{token}
-  // (resolveRecoveryTokenForRedeem, INV-CM-08: no consume el token). GRD-RV-18: esta sesión
-  // solo habilita POST /recovery/revoke; nunca coexiste con manageDecisionMakerRef/
-  // decisionMakerRef de otra vía en la misma cookie (una redención de /r/ siempre pisa la
-  // sesión anterior con un payload nuevo, igual que /m/ y /i/).
+  // CA-116 PR 2 (recovery, UX-CNS-004, SEC-CNS-014 P2-03): GET /r/{token} y POST
+  // /recovery/revoke YA NO usan esta sesión: el hash del token de recuperación vive solo en la
+  // cookie dedicada `__Host-cns-recovery` (recovery-handle.ts), firmada con una clave HKDF
+  // propia y aislada de esta cookie de sesión (P2-02). Un `recoveryTokenHash` en el body o en
+  // esta cookie de sesión nunca se acepta (P2-03): esta interfaz ya no declara ese campo a
+  // propósito, para que un intento de reintroducirlo sea un error de tipos.
   // ---------------------------------------------------------------------
-  /** Hash del token de recuperación ligado a esta sesión (nunca el token en claro): fija
-   * exactamente qué token consume POST /recovery/revoke, sin aceptar uno del body. */
-  readonly recoveryTokenHash?: string;
 }
 
 function sign(secret: Buffer, payloadJson: string): string {

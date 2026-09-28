@@ -21,3 +21,10 @@ export const LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["S
  * (CA-116 PR 2, UX-CNS-004 recovery). 15 minutos es un valor sintético de conveniencia para
  * probar el flujo a mano, no una recomendación de producto. */
 export const LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY = { ttlMs: 15 * 60_000 };
+
+/** P-18 (recovery-handle-policy.config.ts, SEC-CNS-014): ADR-006 §6.2 fija 10 minutos para el
+ * handle RECOVERY de la cookie `__Host-cns-recovery` (distinto de P-15, el TTL del token
+ * persistido en BD). No es LOCAL-only por conveniencia: es el valor citado por el ADR, pero se
+ * declara aquí igual que el resto de este archivo para que dev.ts y los tests compartan una
+ * sola fuente. */
+export const LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY = { ttlMs: 10 * 60_000 };

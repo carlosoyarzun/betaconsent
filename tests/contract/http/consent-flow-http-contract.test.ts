@@ -15,8 +15,9 @@ import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
+import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefaultRevocationFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow.handler.ts";
+import type { RevocationFlowPorts } from "../../../src/server/entrypoints/http/revocation-flow.handler.ts";
 import {
   createRightsCaseHttpServer,
   createDefaultInMemoryPorts,
@@ -25,6 +26,8 @@ import {
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
+import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
+import type { InMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { validateApiPayload, validateCommon, type ValidationResult } from "../schema-lite.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
@@ -607,5 +610,64 @@ test("TEST-CNS-537: GET /i/{token} inexistente (UniformNotFound, 404) sigue resp
     assert.equal(res.headers.get("content-type"), "application/json");
   } finally {
     await harness.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /r/{token} (API-CNS-103, RecoveryRedeemSeeOther)
+// ---------------------------------------------------------------------------
+
+test("TEST-CNS-603: GET /r/{token} responde 303 con Location que valida contra el pattern del contrato (headers.Location, /recovery/confirm tiene dos segmentos)", async () => {
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+  const CONTRACT_TENANT_ID = "tenant-contract-603";
+  ports.decision.repo.save({
+    consentId: "consent-603",
+    tenantId: CONTRACT_TENANT_ID,
+    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+    productRef: LECTORPRO_BETA_CONFIG.productRef,
+    subjectRef: "subject-603@example.invalid",
+    decisionMakerRef: "dm:603",
+    invitationRef: "inv-603-seed",
+    verificationRef: "ver-603-seed",
+    chainRef: "chain-603",
+    state: "GRANTED",
+    purposes: GRANT_ALL,
+    priorStepsComplete: true,
+    stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
+    receiptRef: "receipt-603",
+  });
+  const revocationPorts: RevocationFlowPorts = createDefaultRevocationFlowPorts({ ttlMs: 60_000 }, ports.decision.ledger, ports.decision.repo);
+  (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
+    handle: "mgmt-token-603",
+    tenantId: CONTRACT_TENANT_ID,
+    chainRef: "chain-603",
+    revokedDecisionRef: "consent-603",
+  });
+  const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const baseUrl = await new Promise<string>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as AddressInfo;
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+  try {
+    const redeemed = await fetch(`${baseUrl}/m/mgmt-token-603`, { redirect: "manual" });
+    const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF, sessionCookie });
+    assert.equal(rv0.status, 202);
+    const sink = revocationPorts.revocation.recoveryLinkChannel as InMemoryRecoveryLinkChannelSink;
+    const message = sink.sent[sink.sent.length - 1];
+    assert.ok(message);
+    const match = message.recoveryPath.match(/^\/r\/(.+)$/);
+    assert.ok(match);
+    const token = match![1]!;
+
+    const res = await fetch(`${baseUrl}/r/${token}`, { redirect: "manual" });
+    assert.equal(res.status, 303);
+    const location = res.headers.get("location") ?? "";
+    assert.match(location, /^\/[a-z-]+(\/[a-z-]+)*$/, "Location debe cumplir contracts/openapi headers.Location");
+    assert.equal(location, "/recovery/confirm");
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
 });
