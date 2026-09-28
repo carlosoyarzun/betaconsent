@@ -221,6 +221,16 @@ components:
       headers:
         Location: {$ref: '#/components/headers/Location'}
         Set-Cookie: {$ref: '#/components/headers/SetCookie'}
+    InvitationRedeemSeeOther:
+      description: Respuesta idéntica (status, headers, Location /welcome, atributos y largo del Set-Cookie) sea el token válido, inexistente, expirado o de otro tenant. No lee la BD (GRD-IV-13 incluido): solo hashea el token y fija el handle INVITATION_LANDING firmado. GRD-IV-13/GRD-IV-07 se evalúan en la página HTML /welcome (INV-CM-08; Carlos 2026-09-28, mismo patrón que RecoveryRedeemSeeOther).
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+        Set-Cookie: {$ref: '#/components/headers/SetCookie'}
+    ManagementRedeemSeeOther:
+      description: Respuesta idéntica (status, headers, Location /manage, atributos y largo del Set-Cookie) sea el token válido, inexistente o rotado. No lee la BD: solo hashea el token y fija el handle MANAGE_ENTRY firmado. GRD-CM-01 se evalúa en la página HTML /manage (INV-CM-08; Carlos 2026-09-28, mismo patrón que RecoveryRedeemSeeOther).
+      headers:
+        Location: {$ref: '#/components/headers/Location'}
+        Set-Cookie: {$ref: '#/components/headers/SetCookie'}
   schemas:
     Problem: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
     UniformAccepted: {$ref: '../schemas/common.schema.json#/$defs/UniformAccepted'}
@@ -234,34 +244,32 @@ paths:
       operationId: redeemInvitationLink
       x-api-id: API-CNS-101
       tags: [redemption]
-      summary: Canje del enlace de invitación (crea handle LANDING, 303 sin token)
-      description: Valida el hash del token y, tras resolver el tenant y antes de crear el handle, GRD-IV-13 (participación o Enrollment de la invitación CLOSED, o job CASCADE_CANCEL_INVITATION pendiente → 404 uniforme de ERR-IV-01, sin handle, sin Set-Cookie y sin evento). Si pasa, crea el handle LANDING (P-12), fija la cookie y redirige. No transiciona Invitation (la transición I4 ocurre en POST /invitation/open).
-      x-governed-by: ["invitation.spec I4 effects, GRD-IV-13", "INV-CM-08", "SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20", "SEC-CNS-006 P-12", "SEC-CNS-012 re-verificación rev. 4b (3)(iii)"]
+      summary: "Canje uniforme del enlace de invitación: siempre 303 a /welcome (SEC-CNS-014)"
+      description: Fija el handle INVITATION_LANDING (hash del token, sin leer la BD) sin validar. GRD-IV-13 (participación o Enrollment de la invitación CLOSED, o job CASCADE_CANCEL_INVITATION pendiente) y GRD-IV-07 (expiración) se evalúan en la página HTML /welcome (INV-CM-08; Carlos 2026-09-28, mismo patrón que GET /r/{token}, cierra el oráculo 303 válido/404 inválido de TEST-CNS-537). No transiciona Invitation (la transición I4 ocurre en POST /invitation/open).
+      x-governed-by: ["invitation.spec I4 effects, GRD-IV-13", "INV-CM-08", "SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20", "SEC-CNS-006 P-12", "SEC-CNS-012 re-verificación rev. 4b (3)(iii)", "SEC-CNS-014 (Carlos, 2026-09-28)"]
       x-state-transition: none
       x-route-class: ISSUANCE_DECISION
-      x-eligibility: "eligibility_to_participate (GRD-CM-05; DEC-BR-016 §8) evaluada al canjear; desconocido = false"
-      x-redeem-guards: [GRD-IV-13] # chequeo del canje (no transiciona); falla → 404 uniforme
+      x-eligibility: "eligibility_to_participate (GRD-CM-05; DEC-BR-016 §8) evaluada en GET /welcome (ya no en el canje); desconocido = false"
+      x-redeem-guards: [] # SEC-CNS-014 (Carlos 2026-09-28): ningún guard en el canje; GRD-IV-13/GRD-IV-07 se evalúan en GET /welcome
       x-pending: ["DEC-BR-003 / EXT-A / LD-01 (P0 del enlace)", "SEC-CNS-006 (tope y backoff del job CASCADE_CANCEL_INVITATION: PENDING; OPEN-TC-07 cerrado por DEC-BR-018)"]
       parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
       responses:
-        '303': {$ref: '#/components/responses/RedeemSeeOther'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '303': {$ref: '#/components/responses/InvitationRedeemSeeOther'}
   /m/{token}:
     get:
       operationId: redeemManagementLink
       x-api-id: API-CNS-102
       tags: [redemption]
-      summary: Canje del enlace de gestión (crea handle MANAGE_ENTRY, 303 a /manage)
-      description: resolve_management_token(token_hash) → (tenant_id, chain_ref). Solo credencial + existencia del tenant; nunca *.active. No transiciona ni consume el token. La página del caso que se renderiza tras el canje NO dispara RC2u; RC2u solo transiciona con el POST explícito /rights-case/resume (F-011).
-      x-governed-by: ["revocation.spec managementLink (CFG-RV-MANAGEMENT-LINK)", "INV-CM-08", "SM-CNS-001 §5.0", "ADR-006 §6.1", "DEC-BR-017 §1", "SEC-CNS-006 P-13, P-14"]
+      summary: "Canje uniforme del enlace de gestión: siempre 303 a /manage (SEC-CNS-014)"
+      description: Fija el handle MANAGE_ENTRY (hash del token, sin leer la BD) sin validar. resolve_management_token(token_hash) → (tenant_id, chain_ref) se evalúa en GET /manage, no aquí (INV-CM-08; Carlos 2026-09-28, mismo patrón que GET /r/{token}). Nunca *.active. No transiciona ni consume el token. La página del caso que se renderiza tras el canje NO dispara RC2u; RC2u solo transiciona con el POST explícito /rights-case/resume (F-011).
+      x-governed-by: ["revocation.spec managementLink (CFG-RV-MANAGEMENT-LINK)", "INV-CM-08", "SM-CNS-001 §5.0", "ADR-006 §6.1", "DEC-BR-017 §1", "SEC-CNS-006 P-13, P-14", "SEC-CNS-014 (Carlos, 2026-09-28)"]
       x-state-transition: none
       x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06): solo existencia del tenant y chainRef; nunca lee *.active"
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06): evaluada en GET /manage (ya no en el canje); solo existencia del tenant y chainRef; nunca lee *.active"
       x-pending: ["DEC-BR-003 / EXT-A / LD-01"]
       parameters: [{$ref: '#/components/parameters/RedemptionToken'}]
       responses:
-        '303': {$ref: '#/components/responses/RedeemSeeOther'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '303': {$ref: '#/components/responses/ManagementRedeemSeeOther'}
   /r/{token}:
     get:
       operationId: redeemRecoveryLink
