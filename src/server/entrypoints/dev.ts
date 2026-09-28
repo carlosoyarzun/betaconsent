@@ -13,9 +13,15 @@ import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefau
 import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.ts";
 import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
 import { loadRecoveryTokenPolicyConfig } from "../modules/revocation/recovery-token-policy.config.ts";
+import { loadRecoveryHandlePolicyConfig } from "../modules/revocation/recovery-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
-import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG } from "./dev-local-config.ts";
+import {
+  LOCAL_ONLY_DEV_OTP_POLICY,
+  LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY,
+  LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY,
+  LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG,
+} from "./dev-local-config.ts";
 import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 
 const environment = process.env.CNS_ENVIRONMENT ?? "";
@@ -90,6 +96,9 @@ ports.decision.repo.save({
 // P-15 (recovery-token-policy.config.ts): mismo patrón D4 que otpPolicy, LOCAL-only, PENDING
 // de valor aprobado en SEC-CNS-006 (CA-116 PR 2, UX-CNS-004 recovery).
 const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY);
+// P-18 (recovery-handle-policy.config.ts, ADR-006 §6.2, SEC-CNS-014): TTL de la cookie
+// __Host-cns-recovery que fija GET /r/{token} sin leer la BD; distinto de P-15 (arriba).
+const recoveryHandlePolicy = loadRecoveryHandlePolicyConfig(LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY);
 const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
 (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
   handle: MGMT_TOKEN,
@@ -103,6 +112,7 @@ const server = createConsentFlowHttpServer({
   ports,
   revocationPorts,
   sessionSecret,
+  recoveryHandlePolicy,
   environment: "LOCAL",
 });
 

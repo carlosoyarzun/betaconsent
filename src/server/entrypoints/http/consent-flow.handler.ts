@@ -71,6 +71,11 @@ export interface HttpResult {
   readonly body: Readonly<Record<string, unknown>>;
   /** Si está presente, el transporte (server.ts) debe fijar esta cookie de sesión (D5). */
   readonly setSessionCookie?: string;
+  /** SEC-CNS-014 (CA-116 PR 2, GET /r/{token}): `Set-Cookie` de `__Host-cns-recovery` ya
+   * serializado completo (recovery-handle.ts serializeRecoveryHandleCookie), a diferencia de
+   * `setSessionCookie` (que el transporte serializa). Nunca coexiste con `setSessionCookie` en
+   * el mismo HttpResult. */
+  readonly setRecoveryHandleCookie?: string;
   /** Solo 303 (RedeemSeeOther): ruta relativa sin token (contracts/openapi Location header). */
   readonly location?: string;
   /** Cabeceras adicionales exigidas por el contrato para esta respuesta (p. ej. RedemptionToken

@@ -1,12 +1,19 @@
-// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-103 (GET /r/{token}),
-// API-CNS-134 (POST /manage/recovery-link, RV0 BEARER), API-CNS-135 (POST /recovery/revoke);
-// specs/state-machines/revocation.spec.yaml RV0, R1r, R2r, R3r, R10, R11, GRD-RV-06, ERR-RV-05.
-// CA-116 (UX-CNS-004, PR 2 recuperación). Recorre por HTTP real (node:http en un puerto
-// efímero de localhost): /m/{token} -> POST /manage/recovery-link -> leer el enlace real del
-// sink -> GET /r/{token} -> GET /recovery/confirm -> POST /recovery/revoke -> comprobante
-// (CONFIRMED). Agrega reutilización de token (ERR-RV-05 uniforme), token inválido (200
-// UniformAccepted) y R11 NOOP (revocación ya CONFIRMED).
-// TEST-CNS-592..597 (unidad complementaria del dominio: TEST-CNS-589..591 en
+// Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-103 (GET /r/{token}, ahora
+// RecoveryRedeemSeeOther: 303 uniforme, sin BD), API-CNS-134 (POST /manage/recovery-link, RV0
+// BEARER), API-CNS-135 (POST /recovery/revoke); specs/state-machines/revocation.spec.yaml RV0,
+// R1r, R2r, R3r, R10, R11, GRD-RV-06, ERR-RV-05; specs/state-machines/common.spec.yaml
+// INV-CM-08. CA-116 (UX-CNS-004, PR 2 recuperación) + SEC-CNS-014 (revisión APROBADA CON
+// CAMBIOS, Carlos 2026-09-28 opción (a)): GET /r/{token} deja de leer la BD; solo fija la
+// cookie firmada `__Host-cns-recovery` (recovery-handle.ts) con el hash del token, y responde
+// SIEMPRE el mismo 303 a /recovery/confirm. GRD-RV-06/ERR-RV-05 se evalúan en GET
+// /recovery/confirm (render, solo lectura) y en POST /recovery/revoke (consumo). Recorre por
+// HTTP real (node:http en un puerto efímero de localhost): /m/{token} -> POST
+// /manage/recovery-link -> leer el enlace real del sink -> GET /r/{token} -> GET
+// /recovery/confirm -> POST /recovery/revoke -> comprobante (CONFIRMED). Agrega reutilización
+// de token (ERR-RV-05 uniforme), token inválido (303 uniforme), R11 NOOP (revocación ya
+// CONFIRMED), comparación byte a byte entre clases de token/handle, aislamiento de cookies y
+// fijación del CSRF ligado al handle.
+// TEST-CNS-592..600,604,605 (unidad complementaria del dominio: TEST-CNS-589..591,598 en
 // tests/unit/revocation/revocation-self-service.test.ts).
 
 import test from "node:test";
@@ -19,18 +26,20 @@ import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/cons
 import type { RevocationFlowPorts } from "../../../src/server/entrypoints/http/revocation-flow.handler.ts";
 import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { InMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import type { RecoveryTokenRepositoryPort } from "../../../src/server/ports/recovery-token.port.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const RECOVERY_COOKIE_NAME = "__Host-cns-recovery";
 const TENANT_ID = "tenant-recovery";
 
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
-const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
+const LOCAL_ONLY_TEST_RECOVERY_HANDLE_POLICY = { ttlMs: 60_000 };
 
 function parseSetCookie(res: Response): Record<string, string> {
   const raw = res.headers.get("set-cookie") ?? "";
@@ -49,6 +58,7 @@ interface PostOpts {
   readonly csrfHeader?: string;
   readonly csrfCookie?: string;
   readonly sessionCookie?: string;
+  readonly recoveryCookie?: string;
   readonly body?: unknown;
 }
 
@@ -56,6 +66,7 @@ function post(baseUrl: string, opts: PostOpts): Promise<Response> {
   const cookieParts: string[] = [];
   if (opts.csrfCookie !== undefined) cookieParts.push(`${CSRF_COOKIE_NAME}=${opts.csrfCookie}`);
   if (opts.sessionCookie !== undefined) cookieParts.push(`${SESSION_COOKIE_NAME}=${opts.sessionCookie}`);
+  if (opts.recoveryCookie !== undefined) cookieParts.push(`${RECOVERY_COOKIE_NAME}=${opts.recoveryCookie}`);
 
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (opts.origin !== undefined) headers.origin = opts.origin;
@@ -64,6 +75,8 @@ function post(baseUrl: string, opts: PostOpts): Promise<Response> {
 
   return fetch(`${baseUrl}${opts.path}`, { method: "POST", headers, body: JSON.stringify(opts.body ?? {}) });
 }
+
+const VALID_CSRF_ORIGIN = { origin: ALLOWED_ORIGIN };
 
 interface Fixture {
   readonly ports: ConsentFlowPorts;
@@ -98,7 +111,12 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     revokedDecisionRef: consentId,
   });
 
-  const server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const server = createConsentFlowHttpServer({
+    config: { allowedOrigin: ALLOWED_ORIGIN },
+    ports,
+    revocationPorts,
+    recoveryHandlePolicy: LOCAL_ONLY_TEST_RECOVERY_HANDLE_POLICY,
+  });
   const baseUrl = await new Promise<string>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -114,7 +132,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
 async function issueRecoveryLink(baseUrl: string, revocationPorts: RevocationFlowPorts, mgmtToken: string): Promise<string> {
   const redeemed = await fetch(`${baseUrl}/m/${mgmtToken}`, { redirect: "manual" });
   const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
-  const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF, sessionCookie });
+  const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh", sessionCookie });
   assert.equal(rv0.status, 202);
   const sink = revocationPorts.revocation.recoveryLinkChannel as InMemoryRecoveryLinkChannelSink;
   const message = sink.sent[sink.sent.length - 1];
@@ -122,6 +140,21 @@ async function issueRecoveryLink(baseUrl: string, revocationPorts: RevocationFlo
   const match = message.recoveryPath.match(/^\/r\/(.+)$/);
   assert.ok(match, "recoveryPath debe tener la forma /r/<token>");
   return match![1]!;
+}
+
+/** GET /r/{token} -> 303 -> devuelve la cookie __Host-cns-recovery fijada. */
+async function redeemRecoveryToken(baseUrl: string, token: string): Promise<{ res: Response; recoveryCookie: string }> {
+  const res = await fetch(`${baseUrl}/r/${token}`, { redirect: "manual" });
+  const recoveryCookie = parseSetCookie(res)[RECOVERY_COOKIE_NAME]!;
+  return { res, recoveryCookie };
+}
+
+/** GET /recovery/confirm con la cookie de recuperación -> devuelve la respuesta y, si 200, el
+ * token CSRF ligado al handle (Set-Cookie __Host-cns-csrf). */
+async function renderRecoveryConfirm(baseUrl: string, recoveryCookie: string): Promise<{ res: Response; csrfToken?: string }> {
+  const res = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${RECOVERY_COOKIE_NAME}=${recoveryCookie}` } });
+  const csrfToken = parseSetCookie(res)[CSRF_COOKIE_NAME];
+  return { res, csrfToken };
 }
 
 function stripHtmlComments(html: string): string {
@@ -133,18 +166,26 @@ test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-589");
 
-    const redeemed = await fetch(`${baseUrl}/r/${token}`, { redirect: "manual" });
+    const { res: redeemed, recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
     assert.equal(redeemed.status, 303);
     assert.equal(redeemed.headers.get("location"), "/recovery/confirm");
     assert.equal(redeemed.headers.get("referrer-policy"), "no-referrer");
     assert.equal(redeemed.headers.get("cache-control"), "no-store");
-    const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    assert.ok(recoveryCookie, "GET /r/{token} debe fijar __Host-cns-recovery");
 
-    const confirmPage = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
+    const { res: confirmPage, csrfToken } = await renderRecoveryConfirm(baseUrl, recoveryCookie);
     assert.equal(confirmPage.status, 200);
     assert.match(await confirmPage.text(), /confirm-recovery-btn/);
+    assert.ok(csrfToken, "GET /recovery/confirm debe fijar el CSRF ligado al handle");
 
-    const revoke = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF, sessionCookie, body: { confirmTotalWithdrawal: true } });
+    const revoke = await post(baseUrl, {
+      path: "/recovery/revoke",
+      ...VALID_CSRF_ORIGIN,
+      csrfHeader: csrfToken,
+      csrfCookie: csrfToken,
+      recoveryCookie,
+      body: { confirmTotalWithdrawal: true },
+    });
     assert.equal(revoke.status, 200);
     const body = (await revoke.json()) as { revocationRef: string; state: string; receiptDelivery: string };
     assert.equal(body.state, "CONFIRMED");
@@ -164,14 +205,14 @@ test("TEST-CNS-593: reutilizar el mismo token de recuperación tras confirmarlo 
   const { revocationPorts, server, baseUrl } = await setUp("chain-590", "consent-590", "mgmt-token-590");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-590");
-    const redeemed = await fetch(`${baseUrl}/r/${token}`, { redirect: "manual" });
-    const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
+    const { csrfToken } = await renderRecoveryConfirm(baseUrl, recoveryCookie);
 
-    const first = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF, sessionCookie, body: { confirmTotalWithdrawal: true } });
+    const first = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: csrfToken, csrfCookie: csrfToken, recoveryCookie, body: { confirmTotalWithdrawal: true } });
     assert.equal(first.status, 200);
     const firstBody = (await first.json()) as { revocationRef: string };
 
-    const second = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF, sessionCookie, body: { confirmTotalWithdrawal: true } });
+    const second = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: csrfToken, csrfCookie: csrfToken, recoveryCookie, body: { confirmTotalWithdrawal: true } });
     assert.equal(second.status, 202);
     assert.deepEqual(await second.json(), { result: "RECEIVED" });
 
@@ -182,15 +223,16 @@ test("TEST-CNS-593: reutilizar el mismo token de recuperación tras confirmarlo 
   }
 });
 
-test("TEST-CNS-594: GET /r/{token} con un token inválido responde 200 UniformAccepted (ERR-RV-05, distinto del 404 de /i/ y /m/), sin fijar sesión", async () => {
+test("TEST-CNS-594: GET /r/{token} con un token inválido responde 303 uniforme (Location /recovery/confirm, Set-Cookie presente), nunca 404 ni 200 con cuerpo", async () => {
   const { server, baseUrl } = await setUp("chain-591", "consent-591", "mgmt-token-591");
   try {
     const res = await fetch(`${baseUrl}/r/no-existe-este-token`, { redirect: "manual" });
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { result: "RECEIVED" });
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.get("location"), "/recovery/confirm");
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     assert.equal(res.headers.get("cache-control"), "no-store");
-    assert.equal(res.headers.get("set-cookie"), null);
+    assert.ok(res.headers.get("set-cookie"), "debe fijar __Host-cns-recovery aunque el token sea inválido (SEC-CNS-014)");
+    assert.match(res.headers.get("set-cookie") ?? "", new RegExp(`^${RECOVERY_COOKIE_NAME}=`));
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
@@ -206,15 +248,29 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
   const { revocationPorts, server, baseUrl } = await setUp("chain-592", "consent-592", "mgmt-token-592");
   try {
     const firstToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-592");
-    const firstRedeemed = await fetch(`${baseUrl}/r/${firstToken}`, { redirect: "manual" });
-    const firstSession = parseSetCookie(firstRedeemed)[SESSION_COOKIE_NAME];
-    const firstRevoke = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF, sessionCookie: firstSession, body: { confirmTotalWithdrawal: true } });
+    const { recoveryCookie: firstCookie } = await redeemRecoveryToken(baseUrl, firstToken);
+    const { csrfToken: firstCsrf } = await renderRecoveryConfirm(baseUrl, firstCookie);
+    const firstRevoke = await post(baseUrl, {
+      path: "/recovery/revoke",
+      ...VALID_CSRF_ORIGIN,
+      csrfHeader: firstCsrf,
+      csrfCookie: firstCsrf,
+      recoveryCookie: firstCookie,
+      body: { confirmTotalWithdrawal: true },
+    });
     const firstBody = (await firstRevoke.json()) as { revocationRef: string };
 
     const secondToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-592");
-    const secondRedeemed = await fetch(`${baseUrl}/r/${secondToken}`, { redirect: "manual" });
-    const secondSession = parseSetCookie(secondRedeemed)[SESSION_COOKIE_NAME];
-    const secondRevoke = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF, sessionCookie: secondSession, body: { confirmTotalWithdrawal: true } });
+    const { recoveryCookie: secondCookie } = await redeemRecoveryToken(baseUrl, secondToken);
+    const { csrfToken: secondCsrf } = await renderRecoveryConfirm(baseUrl, secondCookie);
+    const secondRevoke = await post(baseUrl, {
+      path: "/recovery/revoke",
+      ...VALID_CSRF_ORIGIN,
+      csrfHeader: secondCsrf,
+      csrfCookie: secondCsrf,
+      recoveryCookie: secondCookie,
+      body: { confirmTotalWithdrawal: true },
+    });
     assert.equal(secondRevoke.status, 202);
     assert.deepEqual(await secondRevoke.json(), { result: "RECEIVED" });
 
@@ -225,7 +281,7 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
   }
 });
 
-test("TEST-CNS-596: GET /recovery/confirm sin sesión RECOVERY (sin canjear /r/{token} antes) muestra el error uniforme (33:106), nunca un 404 JSON crudo", async () => {
+test("TEST-CNS-596: GET /recovery/confirm sin cookie de recuperación (sin canjear /r/{token} antes) muestra el error uniforme (33:106), nunca un 404 JSON crudo", async () => {
   const { server, baseUrl } = await setUp("chain-593", "consent-593", "mgmt-token-593");
   try {
     const res = await fetch(`${baseUrl}/recovery/confirm`, { redirect: "manual" });
@@ -233,6 +289,8 @@ test("TEST-CNS-596: GET /recovery/confirm sin sesión RECOVERY (sin canjear /r/{
     const html = await res.text();
     assert.match(html, /error-uniform/);
     assert.match(html, /No pudimos continuar con este retiro\./);
+    assert.equal(res.headers.get("content-security-policy"), "default-src 'self'; frame-ancestors 'none'");
+    assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin");
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
@@ -242,14 +300,188 @@ test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [L
   const { revocationPorts, server, baseUrl } = await setUp("chain-594", "consent-594", "mgmt-token-594");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-594");
-    const redeemed = await fetch(`${baseUrl}/r/${token}`, { redirect: "manual" });
-    const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
 
-    const confirmPage = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
+    const { res: confirmPage } = await renderRecoveryConfirm(baseUrl, recoveryCookie);
     const visible = stripHtmlComments(await confirmPage.text());
     assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar \(supresión\/plazos\), protocolo l\.522\]/);
     assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro \(total, sin retiro parcial\) e irreversibilidad desde esta pantalla \(protocolo l\.423\)\]/);
     assert.match(visible, /class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="confirm-recovery-btn"/);
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+test("TEST-CNS-600: GET /r/{token} responde idéntico (status, headers, Location, atributos y largo del Set-Cookie) para un token válido, inexistente, consumido, expirado y demasiado largo; findByTokenHash nunca se llama en este GET", async () => {
+  const { revocationPorts, server, baseUrl } = await setUp("chain-600", "consent-600", "mgmt-token-600");
+  try {
+    let findByTokenHashCalls = 0;
+    const realRepo: RecoveryTokenRepositoryPort = revocationPorts.revocation.recoveryTokenRepo;
+    const spiedRepo: RecoveryTokenRepositoryPort = {
+      ...realRepo,
+      findByTokenHash: (hash) => {
+        findByTokenHashCalls += 1;
+        return realRepo.findByTokenHash(hash);
+      },
+    };
+    (revocationPorts.revocation as { recoveryTokenRepo: RecoveryTokenRepositoryPort }).recoveryTokenRepo = spiedRepo;
+
+    const validToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-600");
+
+    // Token consumido: lo canjeamos y confirmamos primero, con un token/mgmt distinto para no
+    // interferir con el token "válido" de arriba (que debe seguir sin consumir para esta prueba).
+    const consumedToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-600");
+    const { recoveryCookie: consumedCookie } = await redeemRecoveryToken(baseUrl, consumedToken);
+    const { csrfToken: consumedCsrf } = await renderRecoveryConfirm(baseUrl, consumedCookie);
+    await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: consumedCsrf, csrfCookie: consumedCsrf, recoveryCookie: consumedCookie, body: { confirmTotalWithdrawal: true } });
+
+    findByTokenHashCalls = 0; // solo nos interesan las llamadas de los GET /r/ de abajo.
+
+    const tooLongToken = "x".repeat(5_000);
+    const candidates = [validToken, "token-inexistente-cualquiera", consumedToken, tooLongToken];
+
+    const responses: { status: number; location: string | null; referrer: string | null; cache: string | null; setCookieLength: number }[] = [];
+    for (const candidate of candidates) {
+      const res = await fetch(`${baseUrl}/r/${encodeURIComponent(candidate)}`, { redirect: "manual" });
+      const setCookie = res.headers.get("set-cookie") ?? "";
+      responses.push({
+        status: res.status,
+        location: res.headers.get("location"),
+        referrer: res.headers.get("referrer-policy"),
+        cache: res.headers.get("cache-control"),
+        setCookieLength: setCookie.length,
+      });
+    }
+
+    assert.equal(findByTokenHashCalls, 0, "GET /r/{token} nunca debe leer recoveryTokenRepo (SEC-CNS-014 P1)");
+    const [first, ...rest] = responses;
+    for (const other of rest) {
+      assert.deepEqual(other, first);
+    }
+    assert.equal(first!.status, 303);
+    assert.equal(first!.location, "/recovery/confirm");
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) para un token inválido, uno consumido y uno expirado; ningún GET emite eventos ni consume el token", async () => {
+  const { revocationPorts, server, baseUrl } = await setUp("chain-601", "consent-601", "mgmt-token-601");
+  try {
+    // Inválido: nunca existió.
+    const { recoveryCookie: invalidCookie } = await redeemRecoveryToken(baseUrl, "token-que-nunca-existio-601");
+    const invalidRes = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${RECOVERY_COOKIE_NAME}=${invalidCookie}` } });
+
+    // Consumido: se canjea, confirma y se reutiliza la MISMA cookie de recuperación (ya
+    // consumida por el POST) para pedir /recovery/confirm de nuevo.
+    const consumedToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-601");
+    const { recoveryCookie: consumedCookie } = await redeemRecoveryToken(baseUrl, consumedToken);
+    const { csrfToken: consumedCsrf } = await renderRecoveryConfirm(baseUrl, consumedCookie);
+    const consumedRevoke = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: consumedCsrf, csrfCookie: consumedCsrf, recoveryCookie: consumedCookie, body: { confirmTotalWithdrawal: true } });
+    const { revocationRef: consumedRevocationRef } = (await consumedRevoke.json()) as { revocationRef: string };
+    const eventsBefore = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", consumedRevocationRef).length;
+    const consumedRes = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${RECOVERY_COOKIE_NAME}=${consumedCookie}` } });
+
+    // Expirado: TTL del handle (P-18) vencido -> decodeRecoveryHandle ya lo trata como ausente.
+    const expiringServer = await setUp("chain-601b", "consent-601b", "mgmt-token-601b");
+    try {
+      const almostExpiredServer = createConsentFlowHttpServer({
+        config: { allowedOrigin: ALLOWED_ORIGIN },
+        ports: expiringServer.ports,
+        revocationPorts: expiringServer.revocationPorts,
+        recoveryHandlePolicy: { ttlMs: 1 },
+      });
+      const addr = await new Promise<string>((resolve) => {
+        almostExpiredServer.listen(0, "127.0.0.1", () => {
+          const address = almostExpiredServer.address() as AddressInfo;
+          resolve(`http://127.0.0.1:${address.port}`);
+        });
+      });
+      try {
+        const expiredToken = await issueRecoveryLink(addr, expiringServer.revocationPorts, "mgmt-token-601b");
+        const { recoveryCookie: expiredCookie } = await redeemRecoveryToken(addr, expiredToken);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const expiredRes = await fetch(`${addr}/recovery/confirm`, { headers: { cookie: `${RECOVERY_COOKIE_NAME}=${expiredCookie}` } });
+
+        const invalidHtml = await invalidRes.text();
+        const consumedHtml = await consumedRes.text();
+        const expiredHtml = await expiredRes.text();
+        assert.equal(invalidRes.status, 404);
+        assert.equal(consumedRes.status, 404);
+        assert.equal(expiredRes.status, 404);
+        assert.equal(invalidHtml, consumedHtml);
+        assert.equal(consumedHtml, expiredHtml);
+      } finally {
+        await new Promise((resolve) => almostExpiredServer.close(() => resolve(undefined)));
+        await new Promise((resolve) => expiringServer.server.close(() => resolve(undefined)));
+      }
+    } finally {
+      // no-op: expiringServer.server ya se cerró arriba.
+    }
+
+    const eventsAfter = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", consumedRevocationRef).length;
+    assert.equal(eventsAfter, eventsBefore, "ningún GET /recovery/confirm debe emitir eventos");
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+test("TEST-CNS-604: fijación de la cookie de recuperación entre el render de 33:87 y el POST — si __Host-cns-recovery cambia, el POST /recovery/revoke se rechaza (CSRF ligado al hash, P2)", async () => {
+  const { revocationPorts, server, baseUrl } = await setUp("chain-604", "consent-604", "mgmt-token-604");
+  try {
+    const victimToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-604");
+    const { recoveryCookie: victimCookie } = await redeemRecoveryToken(baseUrl, victimToken);
+    const { csrfToken: victimCsrf } = await renderRecoveryConfirm(baseUrl, victimCookie);
+
+    // El atacante fija una cookie de recuperación distinta (otro token, aunque inválido) justo
+    // antes del POST: el CSRF de la víctima quedó ligado al hash de victimCookie, no al de la
+    // cookie que efectivamente viaja en este POST.
+    const { recoveryCookie: attackerCookie } = await redeemRecoveryToken(baseUrl, "token-atacante-604");
+
+    const revoke = await post(baseUrl, {
+      path: "/recovery/revoke",
+      ...VALID_CSRF_ORIGIN,
+      csrfHeader: victimCsrf,
+      csrfCookie: victimCsrf,
+      recoveryCookie: attackerCookie,
+      body: { confirmTotalWithdrawal: true },
+    });
+    assert.equal(revoke.status, 403);
+    const body = (await revoke.json()) as { code: string };
+    assert.equal(body.code, "CSRF_REJECTED");
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+test("TEST-CNS-605: aislamiento de cookies — una sesión MANAGE/DECISION no sirve para POST /recovery/revoke, y la cookie de recuperación no sirve para /manage ni /decision", async () => {
+  const { revocationPorts, server, baseUrl } = await setUp("chain-605", "consent-605", "mgmt-token-605");
+  try {
+    // Sesión MANAGE (GET /m/{token}) usada donde se espera la cookie de recuperación: 404, no
+    // consume ningún token de recuperación real.
+    const managed = await fetch(`${baseUrl}/m/mgmt-token-605`, { redirect: "manual" });
+    const manageSessionCookie = parseSetCookie(managed)[SESSION_COOKIE_NAME]!;
+    const revokeWithManageCookie = await post(baseUrl, {
+      path: "/recovery/revoke",
+      ...VALID_CSRF_ORIGIN,
+      csrfHeader: "csrf-token-abcdefgh",
+      csrfCookie: "csrf-token-abcdefgh",
+      recoveryCookie: manageSessionCookie, // valor de la cookie de sesión, puesto bajo el nombre de la cookie de recuperación
+      body: { confirmTotalWithdrawal: true },
+    });
+    assert.equal(revokeWithManageCookie.status, 404);
+
+    // Cookie de recuperación real usada como cookie de sesión (__Host-cns-session) en /manage:
+    // no trae chainRef de sesión MANAGE, así que /manage sigue mostrando el error uniforme.
+    const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-605");
+    const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
+    const manageWithRecoveryCookie = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${recoveryCookie}` } });
+    assert.equal(manageWithRecoveryCookie.status, 404);
+    const manageHtml = await manageWithRecoveryCookie.text();
+    assert.match(manageHtml, /error-uniform/);
+
+    const decisionWithRecoveryCookie = await fetch(`${baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${recoveryCookie}` } });
+    assert.equal(decisionWithRecoveryCookie.status, 404);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
