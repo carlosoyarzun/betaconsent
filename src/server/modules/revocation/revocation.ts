@@ -22,6 +22,7 @@ import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { RecoveryTokenRecord, RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
 import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
+import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 
 export interface RevocationPorts {
@@ -148,6 +149,91 @@ export function recordCaseConfirmation(
     idempotencyKey: `${revocationRef}:rh3`,
   });
   return confirmed;
+}
+
+// ---------------------------------------------------------------------------
+// CA-128 (API-CNS-138, RH3 paso 1 — record_case_confirmation, sin co-firma). A diferencia de
+// recordCaseConfirmation (arriba, alcance IT0 previo TEST-CNS-463..465: fusiona registro +
+// co-firma en una sola llamada y transiciona directo a CONFIRMED), esta función implementa el
+// paso 1 LITERAL de la spec (x-state-transition: {id: RH3, step: record, effect: none}):
+// registra recordedByRef SIN transicionar el estado de la Revocation ni emitir
+// REVOCATION_CONFIRMED (ledger-event-payloads.schema.json: recordedByRef/cosignedByRef son
+// "ambos o ninguno" vía dependentRequired; registrar solo uno haría fallar el append). La
+// Revocation permanece VERIFIED hasta que un segundo RIGHTS_OPERATOR distinto co-firme
+// (API-CNS-139, cosign_case_confirmation — fuera de alcance de CA-128).
+//
+// FINDING P2 (duplicación spec↔code, reportada al Supervisor, no resuelta aquí): este archivo
+// ahora modela RH3 con dos semánticas distintas (recordCaseConfirmation atómica vs.
+// recordCaseConfirmationPendingCosign en dos pasos). Ninguna prueba existente ejercita ambas a
+// la vez; se documenta para que lampone-architect reconcilie cuando se implemente API-CNS-139
+// (probablemente retirando la variante atómica o dejándola solo como helper de test).
+// ---------------------------------------------------------------------------
+
+export interface CaseConfirmationRecordContext {
+  /** Ref opaca del RIGHTS_OPERATOR que registra, derivada de su sesión CASE (nunca del body). */
+  readonly recordedByPrincipalRef: string;
+}
+
+/**
+ * GRD-RC-15 (nominal_roster_minimum, rights-case.spec.yaml): la lista nominal atestada exige
+ * ≥2 RIGHTS_OPERATOR distintos y ≥2 aprobadores distintos, sin que un mismo principal ocupe dos
+ * roles. Fail-closed: dotación insuficiente -> ERR-RC-10 (ROSTER_INSUFFICIENT), el caso sigue
+ * abierto, nunca FAILED.
+ */
+function assertNominalRosterMinimum(staffIdentity: StaffIdentityPort): void {
+  const roster = staffIdentity.listRoster();
+  const operatorRefs = new Set(roster.filter((principal) => principal.role === "RIGHTS_OPERATOR").map((principal) => principal.principalRef));
+  const approverRefs = new Set(roster.filter((principal) => principal.role === "APPROVER").map((principal) => principal.principalRef));
+  if (operatorRefs.size < 2 || approverRefs.size < 2) {
+    throw new DomainError("ERR-RC-10");
+  }
+}
+
+/**
+ * RH3 paso 1 (record_case_confirmation), API-CNS-138. Guards de este slice (CA-128; el resto de
+ * la lista `x-guards` del contrato -- GRD-RV-07, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28,
+ * GRD-RC-10 -- no está implementado todavía, mismo patrón de alcance mínimo documentado arriba
+ * en este archivo para RH2/RH3):
+ * - GRD-CM-01/06/07/10: aplicados por el llamador HTTP (case-confirmation.handler.ts). GRD-CM-06
+ *   se cumple por construcción: esta función no recibe ningún puerto de tenant/Study/
+ *   SchoolParticipation/Enrollment (INV-CM-06).
+ * - GRD-RV-10 (ERR-RV-20): exige una RH2/RH2v ATTESTED previa de la misma (revocationRef,
+ *   caseRef).
+ * - GRD-RC-15 (ERR-RC-10): dotación nominal mínima (arriba).
+ */
+export function recordCaseConfirmationPendingCosign(
+  ports: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  ctx: CaseConfirmationRecordContext,
+): RevocationRecord {
+  const found = requireRevocation(ports, tenantId, revocationRef);
+  if (found.caseRef !== caseRef) {
+    throw new DomainError("ERR-CM-01");
+  }
+
+  const attested = found.attestedVerification;
+  if (
+    found.status !== "VERIFIED" ||
+    !attested ||
+    attested.revocationRef !== revocationRef ||
+    attested.caseRef !== caseRef
+  ) {
+    // GRD-RV-10 onFail: RH3 sin RH2/RH2v ATTESTED previa de esta misma (revocationRef, caseRef).
+    throw new DomainError("ERR-RV-20");
+  }
+
+  assertNominalRosterMinimum(staffIdentity);
+
+  // Paso 1 literal (effect: none): registra recordedByRef, sin tocar `status` ni emitir evento.
+  const recorded: RevocationRecord = {
+    ...found,
+    recordedByRef: ctx.recordedByPrincipalRef,
+  };
+  ports.revocationRepo.save(recorded);
+  return recorded;
 }
 
 // ---------------------------------------------------------------------------
