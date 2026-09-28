@@ -26,6 +26,9 @@ const CHANNEL_REF = "test+verify@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 2 };
+// LOCAL-only sintetico (GRD-CD-04, decision-relationship.config.ts): estos tests no ejercen
+// pasos de decision, pero createDefaultConsentFlowPorts exige la config igual que otpPolicy.
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 interface Harness {
   readonly baseUrl: string;
@@ -34,7 +37,7 @@ interface Harness {
 }
 
 function startServer(): Promise<Harness> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -189,14 +192,14 @@ test("TEST-CNS-555: el campo de código tiene label visible, inputmode numeric y
   }
 });
 
-test("TEST-CNS-556: GET /decision es un placeholder mínimo del servidor, no un 404", async () => {
+test("TEST-CNS-556: GET /decision sin sesión verificada muestra el estado de error uniforme de la propia pantalla (UX-CNS-003), no un 404 JSON crudo", async () => {
   const harness = await startServer();
   try {
     const res = await fetch(`${harness.baseUrl}/decision`);
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 404);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
-    assert.match(html, /<h1[^>]*>Decisión<\/h1>/);
+    assert.match(html, /<h1[^>]*>Revisa y decide<\/h1>/);
   } finally {
     await harness.close();
   }
@@ -239,11 +242,12 @@ test("TEST-CNS-558: flujo completo GET /i/{token} -> /welcome -> open -> request
     });
     assert.equal(submitted.status, 200);
     assert.deepEqual(await submitted.json(), { result: "VERIFIED", scope: "DECISION" });
+    const sessionVerified = parseAllSetCookies(submitted)[SESSION_COOKIE_NAME] ?? sessionAfterRequest;
 
-    const decision = await fetch(`${harness.baseUrl}/decision`);
+    const decision = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionVerified}` } });
     assert.equal(decision.status, 200);
     const html = await decision.text();
-    assert.match(html, /<h1[^>]*>Decisión<\/h1>/);
+    assert.match(html, /<h1[^>]*>Revisa y decide<\/h1>/);
   } finally {
     await harness.close();
   }

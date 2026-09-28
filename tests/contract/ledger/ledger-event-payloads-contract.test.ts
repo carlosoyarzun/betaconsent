@@ -29,7 +29,7 @@ import {
   sendInvitation,
 } from "../../../src/server/modules/invitation/invitation.ts";
 import { requestOtp, submitOtp } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
-import { recordRequiredSteps, startDecision, submitDecision } from "../../../src/server/modules/consent-decision/consent-decision.ts";
+import { recordDecisionStep, startDecision, submitDecision } from "../../../src/server/modules/consent-decision/consent-decision.ts";
 import type { ConsentDecisionPorts } from "../../../src/server/modules/consent-decision/consent-decision.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
 import type { OtpChallengePorts } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
@@ -88,6 +88,8 @@ function buildPorts(): Ports {
     ledger,
     invitation,
     config: LECTORPRO_BETA_CONFIG,
+    // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
+    relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
   };
   return { ledger, invitation, otp, decision };
 }
@@ -133,7 +135,17 @@ function bringToPendingDecision(ports: Ports, suffix: string): PendingDecision {
     verificationRef,
     decisionMakerRef,
   });
-  recordRequiredSteps(ports.decision, TENANT_ID, consentId);
+  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONTEXT_INFORMATION_VIEWED" });
+  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
+  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
+    stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
+    relationshipRef: "SYNTHETIC_GUARDIAN",
+    authorityDeclared: true,
+  });
+  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
+    stepKind: "SUBJECT_CONFIRMED",
+    subjectConfirmed: true,
+  });
   return { invitationRef, consentId, decisionMakerRef };
 }
 

@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 
 import { createInvitation, markInvitationReady, openInvitation, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { requestOtp, submitOtp } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
-import { recordRequiredSteps, startDecision, submitDecision } from "../../../src/server/modules/consent-decision/consent-decision.ts";
+import { recordDecisionStep, startDecision, submitDecision } from "../../../src/server/modules/consent-decision/consent-decision.ts";
 import type { ConsentDecisionPorts } from "../../../src/server/modules/consent-decision/consent-decision.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
 import type { OtpChallengePorts } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
@@ -51,8 +51,31 @@ function makeAllPorts() {
     ledger,
     invitation: invitationPorts,
     config: LECTORPRO_BETA_CONFIG,
+    // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
+    relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
   };
   return { invitationPorts, otpPorts, consentPorts };
+}
+
+/** Recorre C2 completo (los 3 pasos exigidos por GRD-CD-05: CONSENT_VERSION_VIEWED,
+ * DECISION_MAKER_AUTHORITY_DECLARED, SUBJECT_CONFIRMED); CONTEXT_INFORMATION_VIEWED no es
+ * requerido y se omite aquí a propósito (ver REQUIRED_STEP_KINDS en consent-decision.ts). */
+function recordRequiredSteps(
+  consentPorts: ConsentDecisionPorts,
+  tenantId: string,
+  consentId: string,
+  decisionMakerRef = "dm-1",
+): void {
+  recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
+  recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, {
+    stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
+    relationshipRef: "SYNTHETIC_GUARDIAN",
+    authorityDeclared: true,
+  });
+  recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, {
+    stepKind: "SUBJECT_CONFIRMED",
+    subjectConfirmed: true,
+  });
 }
 
 /** Recorre invitación -> OTP hasta dejar la Invitation VERIFIED con un decisionMakerRef. */

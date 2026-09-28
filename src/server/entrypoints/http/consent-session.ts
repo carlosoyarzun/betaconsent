@@ -21,6 +21,9 @@ export interface ConsentSessionPayload {
   readonly verificationRef?: string;
   /** Presente solo tras V3 (OTP verificado): nunca se acepta si viene del cliente. */
   readonly decisionMakerRef?: string;
+  /** Presente desde la primera llamada de POST /decision/steps de esta sesión (C1 perezoso,
+   * consent-flow.handler.ts x-scope-note): nunca se acepta si viene del cliente. */
+  readonly consentId?: string;
 }
 
 function sign(secret: Buffer, payloadJson: string): string {

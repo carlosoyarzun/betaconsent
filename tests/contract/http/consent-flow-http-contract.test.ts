@@ -37,6 +37,8 @@ const CHANNEL_REF = "test+channel-contract@example.invalid";
 
 // LOCAL-only sintético (D4, no es default de producción): ver otp-policy.config.ts.
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+// LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
 
 function assertValid(result: ValidationResult): void {
@@ -50,7 +52,7 @@ interface ConsentFlowHarness {
 }
 
 function startConsentFlowServer(): Promise<ConsentFlowHarness> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -141,6 +143,26 @@ async function bringToVerifiedSession(harness: ConsentFlowHarness, invitationRef
   const sessionCookie = parseSetCookie(submitted)[SESSION_COOKIE_NAME];
   assert.ok(sessionCookie, "V3 debe fijar la cookie de sesión verificada");
   return sessionCookie;
+}
+
+/** Recorre C2 completo (POST /decision/steps) en orden: CONTEXT_INFORMATION_VIEWED,
+ * CONSENT_VERSION_VIEWED, DECISION_MAKER_AUTHORITY_DECLARED, SUBJECT_CONFIRMED. Devuelve la
+ * cookie de sesión final (con `consentId` ya fijado por C1 perezoso). */
+async function completeDecisionSteps(harness: ConsentFlowHarness, sessionCookie: string): Promise<string> {
+  const steps: unknown[] = [
+    { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+    { stepKind: "CONSENT_VERSION_VIEWED" },
+    { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true },
+    { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
+  ];
+  let cookie = sessionCookie;
+  for (const body of steps) {
+    const res = await post(harness.baseUrl, { path: "/decision/steps", ...VALID_CSRF, sessionCookie: cookie, body });
+    assert.equal(res.status, 200, `paso ${JSON.stringify(body)} debía responder 200`);
+    const nextCookie = parseSetCookie(res)[SESSION_COOKIE_NAME];
+    if (nextCookie) cookie = nextCookie;
+  }
+  return cookie;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,14 +358,33 @@ test("TEST-CNS-519: POST /otp/submit con código incorrecto responde OtpRejected
 // POST /decision/submit (API-CNS-127)
 // ---------------------------------------------------------------------------
 
+test("TEST-CNS-565: POST /decision/steps CONSENT_VERSION_VIEWED responde DecisionStepRecorded con servedVersion (api-payloads.schema.json)", async () => {
+  const harness = await startConsentFlowServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-565", "subject-565@example.invalid");
+    const res = await post(harness.baseUrl, {
+      path: "/decision/steps",
+      ...VALID_CSRF,
+      sessionCookie: verifiedSession,
+      body: { stepKind: "CONSENT_VERSION_VIEWED" },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assertValid(validateApiPayload("DecisionStepRecorded", body));
+  } finally {
+    await harness.close();
+  }
+});
+
 test("TEST-CNS-520: POST /decision/submit GRANTED responde DecisionRecorded con receiptRef (P1: faltaba, api-payloads.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
     const verifiedSession = await bringToVerifiedSession(harness, "inv-520", "subject-520@example.invalid");
+    const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const res = await post(harness.baseUrl, {
       path: "/decision/submit",
       ...VALID_CSRF,
-      sessionCookie: verifiedSession,
+      sessionCookie: sessionAfterSteps,
       body: { purposes: GRANT_ALL },
     });
     assert.equal(res.status, 200);
@@ -370,11 +411,12 @@ test("TEST-CNS-522: POST /decision/submit con finalidad requerida faltante respo
   const harness = await startConsentFlowServer();
   try {
     const verifiedSession = await bringToVerifiedSession(harness, "inv-522", "subject-522@example.invalid");
+    const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const incompletePurposes = GRANT_ALL.slice(1); // falta una finalidad requerida (GRD-CD-06/07).
     const res = await post(harness.baseUrl, {
       path: "/decision/submit",
       ...VALID_CSRF,
-      sessionCookie: verifiedSession,
+      sessionCookie: sessionAfterSteps,
       body: { purposes: incompletePurposes },
     });
     assert.equal(res.status, 422);
@@ -517,11 +559,12 @@ test("TEST-CNS-534: POST /decision/submit con finalidad requerida faltante respo
   const harness = await startConsentFlowServer();
   try {
     const verifiedSession = await bringToVerifiedSession(harness, "inv-534", "subject-534@example.invalid");
+    const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const incompletePurposes = GRANT_ALL.slice(1);
     const res = await post(harness.baseUrl, {
       path: "/decision/submit",
       ...VALID_CSRF,
-      sessionCookie: verifiedSession,
+      sessionCookie: sessionAfterSteps,
       body: { purposes: incompletePurposes },
     });
     assert.equal(res.status, 422);

@@ -25,6 +25,8 @@ const CHANNEL_REF = "test+channel-2@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+// LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
 
 interface Harness {
@@ -34,7 +36,7 @@ interface Harness {
 }
 
 function startServer(): Promise<Harness> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -119,6 +121,26 @@ async function bringToVerifiedSession(harness: Harness, invitationRef: string, s
   return sessionCookie;
 }
 
+/** Recorre C2 (POST /decision/steps) completo: CONTEXT_INFORMATION_VIEWED,
+ * CONSENT_VERSION_VIEWED, DECISION_MAKER_AUTHORITY_DECLARED y SUBJECT_CONFIRMED, en ese orden.
+ * Devuelve la cookie de sesión final (con `consentId` ya fijado por C1 perezoso). */
+async function completeDecisionSteps(harness: Harness, sessionCookie: string): Promise<string> {
+  const steps: unknown[] = [
+    { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+    { stepKind: "CONSENT_VERSION_VIEWED" },
+    { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true },
+    { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
+  ];
+  let cookie = sessionCookie;
+  for (const body of steps) {
+    const res = await post(harness.baseUrl, { path: "/decision/steps", ...VALID_CSRF, sessionCookie: cookie, body });
+    assert.equal(res.status, 200, `paso ${JSON.stringify(body)} debía responder 200`);
+    const nextCookie = parseSetCookie(res)[SESSION_COOKIE_NAME];
+    if (nextCookie) cookie = nextCookie;
+  }
+  return cookie;
+}
+
 test("TEST-CNS-504: sin sesión verificada (sin pasar por V3), /decision/submit -> 404 uniforme", async () => {
   const harness = await startServer();
   try {
@@ -133,15 +155,59 @@ test("TEST-CNS-504: sin sesión verificada (sin pasar por V3), /decision/submit 
   }
 });
 
-test("TEST-CNS-505: /decision/submit ignora decisionMakerRef del body; el actor se deriva de la sesión (C1/C2/C3 -> GRANTED, dispara I6)", async () => {
+test("TEST-CNS-564: /decision/submit sin haber completado los pasos de C2 (incluido DECISION_MAKER_AUTHORITY_DECLARED) -> 409 DECISION_STEPS_INCOMPLETE (ERR-CD-04, GRD-CD-05)", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-505", "subject-505@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-564", "subject-564@example.invalid");
 
+    // Ningún POST /decision/steps previo: la sesión no tiene consentId todavía, así que el
+    // servidor ni siquiera puede resolver una decisión PENDING (404 uniforme, mismo patrón que
+    // TEST-CNS-504 sin sesión verificada: "sin pasos" y "sin decisión iniciada" son
+    // indistinguibles en este slice porque C1 es perezoso, ver x-scope-note del handler).
     const res = await post(harness.baseUrl, {
       path: "/decision/submit",
       ...VALID_CSRF,
       sessionCookie: verifiedSession,
+      body: { purposes: GRANT_ALL },
+    });
+    assert.equal(res.status, 404);
+
+    // Con C1 ya iniciado (un paso registrado) pero SIN completar los 4 pasos de C2, el submit sí
+    // resuelve la decisión PENDING y falla por GRD-CD-05 (prior_steps_complete): ERR-CD-04 ->
+    // DECISION_STEPS_INCOMPLETE (EXTERNAL_ERROR_CODE, consent-flow.handler.ts).
+    const oneStepDone = await post(harness.baseUrl, {
+      path: "/decision/steps",
+      ...VALID_CSRF,
+      sessionCookie: verifiedSession,
+      body: { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+    });
+    assert.equal(oneStepDone.status, 200);
+    const sessionWithConsentId = parseSetCookie(oneStepDone)[SESSION_COOKIE_NAME] ?? verifiedSession;
+
+    const incomplete = await post(harness.baseUrl, {
+      path: "/decision/submit",
+      ...VALID_CSRF,
+      sessionCookie: sessionWithConsentId,
+      body: { purposes: GRANT_ALL },
+    });
+    assert.equal(incomplete.status, 409);
+    const body = (await incomplete.json()) as { code: string };
+    assert.equal(body.code, "DECISION_STEPS_INCOMPLETE");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-505: /decision/submit ignora decisionMakerRef del body; el actor se deriva de la sesión (C1/C2/C3 -> GRANTED, dispara I6)", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-505", "subject-505@example.invalid");
+    const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
+
+    const res = await post(harness.baseUrl, {
+      path: "/decision/submit",
+      ...VALID_CSRF,
+      sessionCookie: sessionAfterSteps,
       body: { purposes: GRANT_ALL, decisionMakerRef: "attacker-supplied-dm" },
     });
     assert.equal(res.status, 200);
@@ -161,6 +227,7 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
   const harness = await startServer();
   try {
     const verifiedSession = await bringToVerifiedSession(harness, "inv-506", "subject-506@example.invalid");
+    const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const purposes = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose, i) => ({
       purpose,
       choice: i === 0 ? ("DECLINE" as const) : ("GRANT" as const),
@@ -169,13 +236,72 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
     const res = await post(harness.baseUrl, {
       path: "/decision/submit",
       ...VALID_CSRF,
-      sessionCookie: verifiedSession,
+      sessionCookie: sessionAfterSteps,
       body: { purposes },
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string };
     assert.equal(body.state, "DECLINED");
     assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-506")?.state, "DECLINED");
+  } finally {
+    await harness.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Fixes de revisión en navegador (Carlos, dev.ts LOCAL): TEST-CNS-567..570.
+// ---------------------------------------------------------------------------
+
+test("TEST-CNS-567: GET /decision sirve el texto de consentimiento y la versión YA resueltos, sin esperar ningún POST /decision/steps (GRD-CD-03 servido; INV-CM-08 un GET nunca transiciona)", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-567", "subject-567@example.invalid");
+    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    // Nunca el placeholder "cargando…": el HTML servido por GET /decision ya trae la versión.
+    assert.doesNotMatch(html, /cargando/);
+    assert.match(html, /Versión vigente del texto: v1/);
+    assert.match(html, /\[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos\]/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL DECISION] de los frames 24:2/24:64 (no solo en un comentario HTML)", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-568", "subject-568@example.invalid");
+    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
+    const html = await res.text();
+    assert.match(
+      html,
+      /<p class="lp-decision-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-569: app.css da un tap target >=44px al checkbox de autoridad (#authority-declared), no solo a la fila que lo contiene (Carlos, 2026-09-27, misma decisión que /welcome y /verify)", async () => {
+  const harness = await startServer();
+  try {
+    const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
+    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-570: decision.js oculta #decision-form y mueve el foco al encabezado de confirmación en GRANTED y DECLINED (frames 27:49/27:58: la confirmación reemplaza el formulario)", async () => {
+  const harness = await startServer();
+  try {
+    const js = await (await fetch(`${harness.baseUrl}/assets/decision.js`)).text();
+    assert.match(js, /function showGranted\(receiptRef\) \{\s*hideStates\(\);\s*if \(decisionForm\) decisionForm\.hidden = true;/);
+    assert.match(js, /function showDeclined\(receiptRef\) \{\s*hideStates\(\);\s*if \(decisionForm\) decisionForm\.hidden = true;/);
+    assert.match(js, /getElementById\("granted-heading"\)/);
+    assert.match(js, /getElementById\("declined-heading"\)/);
+    assert.match(js, /heading\.focus\(\)/);
   } finally {
     await harness.close();
   }

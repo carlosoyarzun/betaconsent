@@ -61,3 +61,79 @@
 [hidden] {
   display: none;
 }
+
+/* /decision (UX-CNS-003, handoff decision-handoff.md §2/§7): no existen .lp-checkbox/.lp-radio
+   en design-system/css/components.css (P1 del handoff); estas utilidades nuevas viven en el CSS
+   de la app, mismo criterio que .lp-verify-cta. Carlos, 2026-09-27: CTA a 44px (misma decisión
+   que /welcome y /verify); chips "Acepto/No acepto" y "Sí/No" y la fila del checkbox de
+   autoridad también a 44px de tap target (handoff §6 checklist de accesibilidad). */
+.lp-decision-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: var(--lp-spacing-24, 24px);
+}
+
+.lp-decision-section {
+  margin-top: var(--lp-spacing-16, 16px);
+}
+
+.lp-decision-legal-box {
+  border: 1px solid var(--lp-border-default);
+  border-radius: var(--lp-radius-md, 8px);
+  padding: var(--lp-spacing-16, 16px);
+}
+
+.lp-decision-chip-pair {
+  display: flex;
+  gap: 8px;
+  margin-top: var(--lp-spacing-8, 8px);
+}
+
+.lp-decision-chip {
+  flex: 1;
+  min-height: 44px;
+  border-radius: var(--lp-radius-md, 8px);
+  border: 1px solid var(--lp-border-default);
+  background: transparent;
+  cursor: pointer;
+}
+
+.lp-decision-chip[aria-checked="true"][data-choice="GRANT"],
+.lp-decision-chip[aria-checked="true"][data-value="yes"] {
+  border-color: var(--lp-color-feedback-success, #10b981);
+  background: var(--lp-color-feedback-success-bg, #ecfdf5);
+  color: var(--lp-color-feedback-success, #10b981);
+}
+
+.lp-decision-chip[aria-checked="true"][data-choice="DECLINE"],
+.lp-decision-chip[aria-checked="true"][data-value="no"] {
+  border-color: var(--lp-color-feedback-error, #ef4444);
+  background: var(--lp-color-feedback-error-bg, #fef2f2);
+  color: var(--lp-color-feedback-error, #ef4444);
+}
+
+.lp-decision-checkbox-row {
+  display: flex;
+  gap: 12px;
+  min-height: 44px;
+  align-items: center;
+}
+
+/* Fix (Carlos, revisión en navegador con dev.ts): el checkbox nativo mide ~13px (tamaño por
+   defecto del control), muy por debajo del tap target de 44px de la decisión de Carlos,
+   2026-09-27 (misma decisión que .lp-welcome-cta/.lp-verify-cta/.lp-decision-cta). El contenedor
+   .lp-decision-checkbox-row ya mide >=44px de alto, pero el control clicable en sí debía
+   agrandarse también: se fija min-width/min-height 44px directamente en el input. */
+.lp-decision-checkbox-row .lp-decision-checkbox {
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+}
+
+.lp-decision-cta {
+  min-height: 44px; /* Carlos, 2026-09-27: misma decisión de tap target que /welcome y /verify */
+}
+
+.lp-decision-relationship-select {
+  min-height: 44px;
+}

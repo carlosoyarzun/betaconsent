@@ -13,6 +13,7 @@ import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
+import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
 import type { Environment } from "../../modules/common/types.ts";
 import type { InvitationPorts } from "../../modules/invitation/invitation.ts";
 import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/otp-challenge.ts";
@@ -20,6 +21,7 @@ import type { ConsentDecisionPorts } from "../../modules/consent-decision/consen
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import {
   handleOpenInvitation,
+  handleRecordDecisionStep,
   handleRedeemInvitationLink,
   handleRequestOtp,
   handleResendOtp,
@@ -34,7 +36,8 @@ import { decodeSession } from "./consent-session.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
-import { renderDecisionPlaceholderPage } from "./decision-page.ts";
+import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
+import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 
 export interface ConsentFlowHttpServerOptions {
@@ -45,6 +48,8 @@ export interface ConsentFlowHttpServerOptions {
   readonly sessionSecret?: Buffer;
   /** P-01/P-02/P-03 (otp-policy.config.ts); requerido si no se inyectan `ports` propios. */
   readonly otpPolicy?: OtpPolicy;
+  /** GRD-CD-04 (decision-relationship.config.ts); requerido si no se inyectan `ports` propios. */
+  readonly relationshipConfig?: DecisionRelationshipConfig;
   /**
    * Entorno de ejecución (GRD-CM-13). Solo cuando es exactamente "LOCAL" este servidor expone
    * GET /__dev/otp-sink (dev.ts, D4/D5 report a Carlos: sink de depuración, cero PII más allá
@@ -54,7 +59,10 @@ export interface ConsentFlowHttpServerOptions {
   readonly environment?: Environment;
 }
 
-export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy): ConsentFlowPorts {
+/** `relationshipConfig` es obligatorio, mismo patrón fail-closed que `otpPolicy` (D4,
+ * decision-relationship.config.ts): sin default de producción en esta función; el caller
+ * (dev.ts LOCAL, o tests) siempre pasa un override explícito. */
+export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationshipConfig: DecisionRelationshipConfig): ConsentFlowPorts {
   const ledger = createInMemoryLedgerAdapter();
   const invitation: InvitationPorts = {
     invitationRepo: createInMemoryInvitationRepository(),
@@ -74,6 +82,7 @@ export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy): ConsentFlow
     ledger,
     invitation,
     config: LECTORPRO_BETA_CONFIG,
+    relationships: relationshipConfig,
   };
   return { invitation, otp, decision };
 }
@@ -145,10 +154,13 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const ports =
     options.ports ??
     (() => {
-      if (!options.otpPolicy) {
-        throw new Error("createConsentFlowHttpServer requiere `ports` u `otpPolicy` (D4, otp-policy.config.ts).");
+      if (!options.otpPolicy || !options.relationshipConfig) {
+        throw new Error(
+          "createConsentFlowHttpServer requiere `ports` o ambos `otpPolicy` (D4, otp-policy.config.ts) y " +
+            "`relationshipConfig` (GRD-CD-04, decision-relationship.config.ts).",
+        );
       }
-      return createDefaultConsentFlowPorts(options.otpPolicy);
+      return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig);
     })();
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -208,11 +220,20 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     }
 
     if (req.method === "GET" && path === "/decision") {
-      // Placeholder mínimo (CLAUDE.md, Carlos 2026-09-27): todavía no hay pantalla de decisión;
-      // verify.js redirige acá cuando /otp/submit responde VERIFIED (200).
+      // UX-CNS-003: GET /decision exige la sesión verificada (post-V3, session.decisionMakerRef);
+      // sin ella, se sirve el estado de error uniforme de la propia pantalla (INV-CM-05), mismo
+      // patrón que /welcome y /verify. verify.js redirige acá cuando /otp/submit responde 200.
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
+      if (!session || !session.verificationRef || !session.decisionMakerRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderDecisionUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDecisionPlaceholderPage());
+      res.end(renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion()));
       return;
     }
 
@@ -277,6 +298,9 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         break;
       case "/otp/submit":
         result = handleSubmitOtp(request, ports, config, sessionSecret);
+        break;
+      case "/decision/steps":
+        result = handleRecordDecisionStep(request, ports, config, sessionSecret);
         break;
       case "/decision/submit":
         result = handleSubmitDecision(request, ports, config, sessionSecret);

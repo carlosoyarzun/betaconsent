@@ -27,6 +27,10 @@ export interface ConsentDecisionRecord {
   readonly purposes: readonly PurposeDecision[];
   /** GRD-CD-05 (prior_steps_complete): pasos previos registrados por C2. */
   readonly priorStepsComplete: boolean;
+  /** stepKind ya registrados por C2 (RecordDecisionStep), sin duplicados. Determina
+   * priorStepsComplete (GRD-CD-05: CONSENT_VERSION_VIEWED, DECISION_MAKER_AUTHORITY_DECLARED,
+   * SUBJECT_CONFIRMED; CONTEXT_INFORMATION_VIEWED no es requerido por ese guard). */
+  readonly stepsRecorded: readonly string[];
   /** Ref opaca del recibo (contracts/api-payloads.schema.json DecisionRecorded.receiptRef, Ref
    * UUID); solo se fija al terminar en GRANTED o DECLINED (C3/C5). Ausente en PENDING. */
   readonly receiptRef?: string;
