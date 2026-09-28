@@ -72,7 +72,7 @@ import { deriveLinkHandleKey } from "./link-handle.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
-import { renderManageEntryPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
+import { renderManageEntryPage, renderManageRevokedPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
 import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from "./revocation-page.ts";
 import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
@@ -512,7 +512,18 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
       res.setHeader("Set-Cookie", cookiesToSet);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(view.session.manageDecisionMakerRef ? renderManageStatusPage() : renderManageEntryPage());
+      // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
+      const decisionRevoked =
+        view.session.revokedDecisionRef !== undefined &&
+        revocationPorts.revocation.consentDecisionRepo.findByConsentId(view.session.tenantId, view.session.revokedDecisionRef)?.state ===
+          "REVOKED";
+      res.end(
+        !view.session.manageDecisionMakerRef
+          ? renderManageEntryPage()
+          : decisionRevoked
+            ? renderManageRevokedPage()
+            : renderManageStatusPage(),
+      );
       return;
     }
 

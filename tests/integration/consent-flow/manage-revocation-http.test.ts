@@ -399,3 +399,48 @@ test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma 
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
 });
+
+test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dice GRANTED ni ofrece retirar; R1 sobre esa cadena es uniforme (ERR-RV-02) y no crea revocación", async () => {
+  const { ports, server, baseUrl } = await setUp("chain-703", "consent-703", "mgmt-token-703");
+  try {
+    const sink = ports.otp.channel as InMemoryOtpChannelSink;
+    async function verifyManage(): Promise<string> {
+      let sessionCookie = await redeemManage(baseUrl, "mgmt-token-703");
+      const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
+      sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
+      const submitted = await post(baseUrl, { path: "/otp/submit", ...VALID_CSRF, sessionCookie, body: { code: sink.sent[sink.sent.length - 1]?.code ?? "" } });
+      assert.equal(submitted.status, 200);
+      return parseSetCookie(submitted)[SESSION_COOKIE_NAME] ?? sessionCookie;
+    }
+
+    let sessionCookie = await verifyManage();
+    const before = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).text();
+    assert.match(before, /start-revocation-btn/);
+
+    const r1 = await post(baseUrl, { path: "/manage/revocation", ...VALID_CSRF, sessionCookie });
+    sessionCookie = parseSetCookie(r1)[SESSION_COOKIE_NAME] ?? sessionCookie;
+    const requestedRevOtp = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
+    sessionCookie = parseSetCookie(requestedRevOtp)[SESSION_COOKIE_NAME] ?? sessionCookie;
+    const submittedRev = await post(baseUrl, { path: "/otp/submit", ...VALID_CSRF, sessionCookie, body: { code: sink.sent[sink.sent.length - 1]?.code ?? "" } });
+    sessionCookie = parseSetCookie(submittedRev)[SESSION_COOKIE_NAME] ?? sessionCookie;
+    await post(baseUrl, { path: "/manage/revocation/verify", ...VALID_CSRF, sessionCookie });
+    const r3 = await post(baseUrl, { path: "/manage/revocation/confirm", ...VALID_CSRF, sessionCookie });
+    assert.equal(((await r3.json()) as { status: string }).status, "APPLIED");
+    assert.equal(ports.decision.repo.findByConsentId(TENANT_ID, "consent-703")?.state, "REVOKED");
+
+    // Reproducción del FINDING: volver a /m/<token>, verificar con OTP y abrir /manage.
+    const again = await verifyManage();
+    const html = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${again}` } })).text();
+    assert.doesNotMatch(html, /start-revocation-btn/);
+    assert.doesNotMatch(html, /Retirar mi consentimiento/);
+    assert.doesNotMatch(html, /GRANTED/);
+    assert.match(html, /id="manage-revoked"/);
+
+    // R1 sobre la cadena revocada: 202 uniforme, sin revocationRef ni Revocation nueva.
+    const r1Again = await post(baseUrl, { path: "/manage/revocation", ...VALID_CSRF, sessionCookie: again });
+    assert.equal(r1Again.status, 202);
+    assert.deepEqual(await r1Again.json(), { result: "RECEIVED" });
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
