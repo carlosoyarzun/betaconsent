@@ -32,7 +32,14 @@ import {
   resolveInvitationForRedeem,
   type InvitationPorts,
 } from "../../modules/invitation/invitation.ts";
-import { requestOtp, resendOtp, submitOtp, type OtpChallengePorts } from "../../modules/otp-challenge/otp-challenge.ts";
+import {
+  requestOtp,
+  requestRightsOtp,
+  resendOtp,
+  submitOtp,
+  submitRightsOtp,
+  type OtpChallengePorts,
+} from "../../modules/otp-challenge/otp-challenge.ts";
 import {
   recordDecisionStep,
   startDecision,
@@ -93,6 +100,9 @@ const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
   "ERR-CD-02": "PURPOSE_SELECTION_INVALID",
   "ERR-CD-04": "DECISION_STEPS_INCOMPLETE",
   "ERR-CD-08": "DECISION_TERMINAL",
+  // CA-116: reutilizado por submitRightsOtp para OTP_SCOPE_MISUSE (ERR-OT-05 no existe en
+  // DomainErrorCode; ver comentario en otp-challenge.ts submitRightsOtp).
+  "ERR-OT-01": "OTP_GENERIC_RESPONSE",
 };
 
 /** Problem uniforme (contracts/common.schema.json $defs/Problem): code + status + correlationId
@@ -180,7 +190,7 @@ export function handleOpenInvitation(
   if (csrfFailure) return csrfFailure;
 
   const session = readSession(request, config, sessionSecret);
-  if (!session) return uniformNotFound();
+  if (!session || !session.invitationRef) return uniformNotFound();
 
   try {
     const opened = openInvitationByRef(ports.invitation, session.tenantId, session.invitationRef);
@@ -202,6 +212,31 @@ export function handleOpenInvitation(
 }
 
 // ---------------------------------------------------------------------------
+// CA-116 (revocación IT0, UX-CNS-004): POST /otp/request y /otp/submit (V1/V3) también sirven
+// scope REVOCATION/MANAGE (contracts/openapi x-guards-by-scope), sobre la MISMA sesión MANAGE
+// (chainRef, nunca del cliente). El scope se resuelve SIEMPRE del estado de la sesión, nunca de
+// un campo del body: DECISION si la sesión viene de GET /i/{token} (invitationRef, sin
+// chainRef); si viene de GET /m/{token} (chainRef presente), MANAGE hasta que exista
+// revocationRef (fijado solo por R1, POST /manage/revocation) y REVOCATION desde entonces. El
+// channelRef de REVOCATION/MANAGE es un valor opaco derivado del chainRef (nunca del cliente,
+// GRD-OT-02 trivialmente satisfecho); ver nota de alcance en otp-challenge.ts
+// requestRightsOtp/submitRightsOtp.
+// ---------------------------------------------------------------------------
+
+type OtpFlowScope = "DECISION" | "MANAGE" | "REVOCATION";
+
+function resolveOtpScope(session: ConsentSessionPayload): OtpFlowScope | null {
+  if (session.chainRef) return session.revocationRef ? "REVOCATION" : "MANAGE";
+  if (session.invitationRef) return "DECISION";
+  return null;
+}
+
+/** Nunca PII: valor opaco estable por chainRef, solo para el sink/canal in-memory de IT0. */
+function manageChannelRef(chainRef: string): string {
+  return `mgmt:${chainRef}`;
+}
+
+// ---------------------------------------------------------------------------
 // POST /otp/request (V1). API-CNS-120. Respuesta uniforme (x-uniform-response): 202 siempre
 // que la sesión resuelva, sin distinguir ERR-OT-01/ERR-OT-08 del éxito.
 // ---------------------------------------------------------------------------
@@ -216,7 +251,25 @@ export function handleRequestOtp(
 
   const session = readSession(request, config, sessionSecret);
   if (!session) return uniformNotFound();
+  const scope = resolveOtpScope(session);
 
+  if (scope === "MANAGE" || scope === "REVOCATION") {
+    const chainRef = session.chainRef;
+    if (!chainRef) return uniformNotFound();
+    const verificationRef =
+      scope === "MANAGE" ? (session.manageVerificationRef ?? randomUUID()) : (session.revocationVerificationRef ?? randomUUID());
+    try {
+      requestRightsOtp(ports.otp, session.tenantId, verificationRef, scope, chainRef, manageChannelRef(chainRef));
+    } catch (err) {
+      if (!(err instanceof DomainError)) throw err;
+      // INV-OT-06: RIGHTS nunca deniega (respuesta uniforme igual que el éxito).
+    }
+    const nextSession: ConsentSessionPayload =
+      scope === "MANAGE" ? { ...session, manageVerificationRef: verificationRef } : { ...session, revocationVerificationRef: verificationRef };
+    return { status: 202, body: { result: "RECEIVED" }, setSessionCookie: encodeSession(sessionSecret, nextSession) };
+  }
+
+  if (scope !== "DECISION" || !session.invitationRef) return uniformNotFound();
   const invitation = ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
@@ -280,12 +333,39 @@ export function handleSubmitOtp(
   if (csrfFailure) return csrfFailure;
 
   const session = readSession(request, config, sessionSecret);
-  if (!session || !session.verificationRef) return uniformNotFound();
+  if (!session) return uniformNotFound();
+  const scope = resolveOtpScope(session);
+  const code = typeof (request.body as { code?: unknown } | null)?.code === "string" ? (request.body as { code: string }).code : "";
 
+  if (scope === "MANAGE" || scope === "REVOCATION") {
+    const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
+    if (!verificationRef) return uniformNotFound();
+    try {
+      submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code);
+      const verifiedSession: ConsentSessionPayload =
+        scope === "MANAGE"
+          ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(manageChannelRef(session.chainRef ?? "")) }
+          : { ...session, revocationOtpVerified: true };
+      return {
+        status: 200,
+        body: { result: "VERIFIED", scope },
+        setSessionCookie: encodeSession(sessionSecret, verifiedSession),
+      };
+    } catch (err) {
+      if (err instanceof DomainError) {
+        if (err.code === "ERR-CM-01") return uniformNotFound();
+        // INV-OT-06: la respuesta de rechazo en RIGHTS nunca dice "denegado"; verify.js decide
+        // la variante bloqueada por el propio code (OTP_LOCKED) igual que en scope DECISION.
+        return problem(422, err.code);
+      }
+      throw err;
+    }
+  }
+
+  if (scope !== "DECISION" || !session.verificationRef || !session.invitationRef) return uniformNotFound();
   const invitation = ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
-  const code = typeof (request.body as { code?: unknown } | null)?.code === "string" ? (request.body as { code: string }).code : "";
   const decisionMakerRef = deriveDecisionMakerRef(invitation.recipientChannelRef);
 
   try {
@@ -352,7 +432,7 @@ export function handleRecordDecisionStep(
   if (csrfFailure) return csrfFailure;
 
   const session = readSession(request, config, sessionSecret);
-  if (!session || !session.verificationRef || !session.decisionMakerRef) return uniformNotFound();
+  if (!session || !session.verificationRef || !session.decisionMakerRef || !session.invitationRef) return uniformNotFound();
 
   const step = parseDecisionStepInput(request.body);
   if (!step) return problem(422, "ERR-CD-04");

@@ -165,6 +165,51 @@ export function confirmCaseReturnViaHandle(
   return updated;
 }
 
+export interface OpenRightsCaseInput {
+  readonly caseRef: string;
+  readonly chainRef: string;
+  readonly revokedDecisionRef: string;
+  readonly origin: "LIMIT_REACHED" | "CHANNEL_UNREACHABLE" | "REQUESTER_ASKED";
+}
+
+/**
+ * RC1 fuente BEARER (rights-case.spec.yaml): null -> OPEN, POST explícito desde el handle
+ * MANAGE_ENTRY de /m/ (CA-116 UX-CNS-004 §3 "bloqueado→caso humano"). Alcance IT0 de este
+ * slice: idempotente por (tenantId, chainRef, revokedDecisionRef) — GRD-RC-02, ≤1 caso no
+ * terminal por ciclo — devolviendo el caso ya abierto sin duplicar el evento; no implementa
+ * case_contact opcional (CHANNEL_UNREACHABLE) ni FLAG-escalated/REVOCATION_ESCALATED sobre una
+ * Revocation ya abierta (eso pertenece a R12/RC3a, fuera de alcance de este slice).
+ */
+export function openRightsCase(
+  ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger">,
+  tenantId: string,
+  input: OpenRightsCaseInput,
+): RightsCaseRecord {
+  const existing = ports.rightsCaseRepo.findOpenByChain(tenantId, input.chainRef, input.revokedDecisionRef);
+  if (existing) return existing;
+
+  const record: RightsCaseRecord = {
+    caseRef: input.caseRef,
+    tenantId,
+    chainRef: input.chainRef,
+    revokedDecisionRef: input.revokedDecisionRef,
+    status: "OPEN",
+    origin: input.origin,
+  };
+  ports.rightsCaseRepo.save(record);
+  ports.ledger.append({
+    eventType: "RIGHTS_CASE_OPENED",
+    tenantId,
+    aggregateType: "RightsCase",
+    aggregateId: input.caseRef,
+    actorType: UNVERIFIED_BEARER_ACTOR.actorType,
+    actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
+    payload: { reasonCode: input.origin, initiatedVia: "DECISION_MAKER" },
+    idempotencyKey: `${tenantId}:${input.chainRef}:${input.revokedDecisionRef}`,
+  });
+  return record;
+}
+
 export type CaseCloseOutcome = "RESOLVED" | "WITHDRAWN";
 
 /**

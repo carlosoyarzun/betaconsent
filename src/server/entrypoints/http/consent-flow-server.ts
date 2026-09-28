@@ -12,12 +12,16 @@ import { createInMemoryLedgerAdapter } from "../../../infra/adapters/in-memory-l
 import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
+import { createInMemoryRevocationRepository } from "../../../infra/adapters/in-memory-revocation-repository.adapter.ts";
+import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-memory-rights-case-repository.adapter.ts";
+import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
 import type { Environment } from "../../modules/common/types.ts";
 import type { InvitationPorts } from "../../modules/invitation/invitation.ts";
 import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/otp-challenge.ts";
 import type { ConsentDecisionPorts } from "../../modules/consent-decision/consent-decision.ts";
+import type { LedgerPort } from "../../ports/ledger.port.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import {
   handleOpenInvitation,
@@ -31,18 +35,35 @@ import {
   type HttpResult,
   type RawConsentRequest,
 } from "./consent-flow.handler.ts";
+import {
+  handleConfirmRevocation,
+  handleIssueRecoveryLink,
+  handleOpenRightsCase,
+  handleRedeemManagementLink,
+  handleRequestRevocation,
+  handleVerifyRevocation,
+  handleWithdrawRevocation,
+  type RevocationFlowPorts,
+} from "./revocation-flow.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
+import { renderManageEntryPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
+import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from "./revocation-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 
 export interface ConsentFlowHttpServerOptions {
   readonly config?: Partial<RightsCaseHttpConfig>;
   readonly ports?: ConsentFlowPorts;
+  /** CA-116 (revocación IT0): ports de GET /m/{token} y el flujo self-service R1-R3/R8/RV0/RC1.
+   * Si se omite junto con `ports`, se construye con createDefaultRevocationFlowPorts (mismo
+   * ledger que `ports.decision.ledger`, TenantHandlePort in-memory vacío: dev.ts/los tests
+   * siembran handles explícitamente con `.issue()`). */
+  readonly revocationPorts?: RevocationFlowPorts;
   /** Secreto HMAC de la sesión (D5). Si se omite, se genera uno aleatorio por proceso (solo
    * válido mientras el proceso vive; nunca se persiste ni se loguea). */
   readonly sessionSecret?: Buffer;
@@ -85,6 +106,18 @@ export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationship
     relationships: relationshipConfig,
   };
   return { invitation, otp, decision };
+}
+
+/** CA-116: ports de GET /m/{token} + R1-R3/R8/RV0(BEARER)/RC1(BEARER). `ledger` compartido con
+ * `createDefaultConsentFlowPorts` (mismo proceso in-memory) si el caller lo pasa; si no, uno
+ * nuevo. El `TenantHandlePort` nace vacío: dev.ts y los tests siembran handles con `.issue()`
+ * (import { createInMemoryTenantHandleAdapter } directamente para poder sembrar). */
+export function createDefaultRevocationFlowPorts(ledger: LedgerPort = createInMemoryLedgerAdapter()): RevocationFlowPorts {
+  return {
+    tenantHandle: createInMemoryTenantHandleAdapter(),
+    revocation: { revocationRepo: createInMemoryRevocationRepository(), ledger },
+    rightsCase: { rightsCaseRepo: createInMemoryRightsCaseRepository(), ledger },
+  };
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
@@ -162,6 +195,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig);
     })();
+  const revocationPorts = options.revocationPorts ?? createDefaultRevocationFlowPorts(ports.decision.ledger);
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
@@ -237,6 +271,90 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    // -------------------------------------------------------------------
+    // CA-116 (revocación IT0, UX-CNS-004): GET /m/{token} + páginas MANAGE/REVOCATION.
+    // -------------------------------------------------------------------
+    if (req.method === "GET" && path.startsWith("/m/") && path.length > "/m/".length) {
+      // API-CNS-102 (P-14): único GET de canje del handle MANAGE_ENTRY (INV-CM-08, no transiciona).
+      let token: string | undefined;
+      try {
+        token = decodeURIComponent(path.slice("/m/".length));
+      } catch {
+        token = undefined;
+      }
+      const result = token
+        ? handleRedeemManagementLink(token, revocationPorts, sessionSecret)
+        : { status: 404 as const, body: { status: 404 } };
+      writeResult(res, config, result);
+      return;
+    }
+
+    if (req.method === "GET" && path === "/manage") {
+      // UX-CNS-004 §1 (33:2 entrada / 33:21 estado): una sola ruta, dos renders según la
+      // sesión (INV-CM-08: este GET nunca transiciona, solo lee la sesión ya creada por
+      // GET /m/{token} y, si corresponde, por V3 scope MANAGE).
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session || !session.chainRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderManageUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(session.manageDecisionMakerRef ? renderManageStatusPage() : renderManageEntryPage());
+      return;
+    }
+
+    if (req.method === "GET" && path === "/manage/verify") {
+      // Exige el OTP scope MANAGE ya solicitado (V1); mismo patrón de error uniforme que /verify.
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session || !session.manageVerificationRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderVerifyUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderVerifyPage("MANAGE"));
+      return;
+    }
+
+    if (req.method === "GET" && path === "/manage/revocation/verify") {
+      // Exige el OTP scope REVOCATION ya solicitado (V1, posterior a R1).
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session || !session.revocationVerificationRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderVerifyUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderVerifyPage("REVOCATION"));
+      return;
+    }
+
+    if (req.method === "GET" && path === "/manage/revocation/confirm") {
+      // Exige V3 scope REVOCATION ya correcto (R2 lo ejecuta revocation.js al cargar).
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session || !session.revocationOtpVerified || !session.revocationRef || !session.manageDecisionMakerRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderRevocationUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderRevocationConfirmPage());
+      return;
+    }
+
     if (req.method === "GET" && path.startsWith("/assets/")) {
       // Lista blanca cerrada (static-assets.ts): el lookup es por igualdad exacta, nunca por
       // join de filesystem, así que un intento de traversal (`../`, codificado o no) nunca
@@ -304,6 +422,24 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         break;
       case "/decision/submit":
         result = handleSubmitDecision(request, ports, config, sessionSecret);
+        break;
+      case "/manage/revocation":
+        result = handleRequestRevocation(request, revocationPorts, config, sessionSecret);
+        break;
+      case "/manage/revocation/verify":
+        result = handleVerifyRevocation(request, revocationPorts, config, sessionSecret);
+        break;
+      case "/manage/revocation/confirm":
+        result = handleConfirmRevocation(request, revocationPorts, config, sessionSecret);
+        break;
+      case "/manage/revocation/withdraw":
+        result = handleWithdrawRevocation(request, revocationPorts, config, sessionSecret);
+        break;
+      case "/manage/recovery-link":
+        result = handleIssueRecoveryLink(request, revocationPorts, config, sessionSecret);
+        break;
+      case "/rights-case/open":
+        result = handleOpenRightsCase(request, revocationPorts, config, sessionSecret);
         break;
       default:
         res.writeHead(404, { "content-type": "application/json" });

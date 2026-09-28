@@ -306,3 +306,26 @@ test("TEST-CNS-570: decision.js oculta #decision-form y mueve el foco al encabez
     await harness.close();
   }
 });
+
+// Quita cualquier comentario HTML (`<!-- ... -->`) antes de buscar un marcador: si el marcador
+// solo existe DENTRO de un comentario, esta función lo hace desaparecer y el assert.match falla
+// (fix Carlos, revisión en navegador con dev.ts: los marcadores [LEGAL DECISION] no pueden
+// quedar invisibles para el usuario dentro de un comentario HTML).
+function stripHtmlComments(html: string): string {
+  return html.replace(/<!--[\s\S]*?-->/g, "");
+}
+
+test("TEST-CNS-584: los marcadores [LEGAL DECISION] de /decision (finalidad, enum de relación, enunciado de autoridad) son texto visible, nunca solo un comentario HTML", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-584", "subject-584@example.invalid");
+    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
+    const html = await res.text();
+    const visible = stripHtmlComments(html);
+    assert.match(visible, /\[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos, handoff §3\.3\]/);
+    assert.match(visible, /\[LEGAL DECISION — enum de relación pendiente de DEC-BR-003 \/ EXT-A \/ LD-01; opción \(b\) de Carlos: lista de valores por configuración\]/);
+    assert.match(visible, /\[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 \/ EXT-A \/ LD-01\]/);
+  } finally {
+    await harness.close();
+  }
+});

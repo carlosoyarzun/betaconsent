@@ -21,6 +21,11 @@ export interface RevocationRecord {
   attestedVerification?: AttestedVerification;
   recordedByRef?: string;
   cosignedByRef?: string;
+  /** R14-C: consentId de la decisión GRANTED vigente que esta Revocation revoca, fijado en
+   * servidor al crear R1 (revocation.spec.yaml attributes: revokedDecisionRef). */
+  revokedDecisionRef?: string;
+  /** R8 (WithdrawRevocationRequest): único reasonCode del vocabulario IT0 (DEC-BR-017 §6). */
+  reasonCode?: "WITHDRAWN_BY_REQUESTER";
 }
 
 export interface RevocationRepositoryPort {

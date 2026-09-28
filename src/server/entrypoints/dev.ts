@@ -9,12 +9,13 @@
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
-import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "./http/consent-flow-server.ts";
+import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefaultRevocationFlowPorts } from "./http/consent-flow-server.ts";
 import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.ts";
 import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG } from "./dev-local-config.ts";
+import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 
 const environment = process.env.CNS_ENVIRONMENT ?? "";
 if (environment !== "LOCAL") {
@@ -61,9 +62,42 @@ markInvitationReady(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF, {
 });
 const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF);
 
+// CA-116 (revocación IT0, UX-CNS-004): además del enlace /i/<token>, siembra un enlace
+// /m/<token> sintético sobre una decisión GRANTED ya existente (sin pasar por el flujo HTTP de
+// invitación/OTP/decisión), para poder probar a mano gestión/retiro sin repetir todo el flujo
+// de arriba. CA116_MGMT_TOKEN es un literal fijo (LOCAL only, cero PII, D4 mismo criterio que
+// el resto de este archivo).
+const MGMT_CHAIN_REF = "chain-dev-mgmt";
+const MGMT_CONSENT_ID = "consent-dev-mgmt-001";
+const MGMT_TOKEN = "dev-mgmt-token-001";
+ports.decision.repo.save({
+  consentId: MGMT_CONSENT_ID,
+  tenantId: TENANT_ID,
+  contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+  productRef: LECTORPRO_BETA_CONFIG.productRef,
+  subjectRef: "dev-mgmt-subject@example.invalid",
+  decisionMakerRef: "dm:dev-mgmt",
+  invitationRef: "inv-dev-mgmt-seed",
+  verificationRef: "ver-dev-mgmt-seed",
+  chainRef: MGMT_CHAIN_REF,
+  state: "GRANTED",
+  purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
+  priorStepsComplete: true,
+  stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
+  receiptRef: "receipt-dev-mgmt-001",
+});
+const revocationPorts = createDefaultRevocationFlowPorts(ports.decision.ledger);
+(revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
+  handle: MGMT_TOKEN,
+  tenantId: TENANT_ID,
+  chainRef: MGMT_CHAIN_REF,
+  revokedDecisionRef: MGMT_CONSENT_ID,
+});
+
 const server = createConsentFlowHttpServer({
   config: { allowedOrigin },
   ports,
+  revocationPorts,
   sessionSecret,
   environment: "LOCAL",
 });
@@ -78,4 +112,8 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`Abre esta URL en tu navegador para comenzar el flujo (canje de un solo uso, GET /i/{token}):`);
   console.log(`  ${baseUrl}/i/${token}`);
   console.log(`Leer el OTP emitido: GET ${baseUrl}/__dev/otp-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
+  // CA-116: enlace /m/<token> sintético sobre una decisión GRANTED ya sembrada (MGMT_CONSENT_ID),
+  // para probar a mano gestión/retiro (GET /m/{token} -> /manage) sin repetir el flujo de arriba.
+  console.log(`Enlace de gestión (UX-CNS-004, sobre una decisión GRANTED ya sembrada):`);
+  console.log(`  ${baseUrl}/m/${MGMT_TOKEN}`);
 });
