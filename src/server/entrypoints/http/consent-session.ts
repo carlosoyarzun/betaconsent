@@ -16,14 +16,36 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export interface ConsentSessionPayload {
   readonly tenantId: string;
-  readonly invitationRef: string;
-  /** Presente desde V1 (otp-challenge): liga la sesión al challenge activo. */
+  /** Sesión del flujo invitación/otp/decisión (GET /i/{token}); ausente en una sesión MANAGE_ENTRY
+   * (GET /m/{token}, CA-116 UX-CNS-004). */
+  readonly invitationRef?: string;
+  /** Presente desde V1 (otp-challenge) scope DECISION: liga la sesión al challenge activo. */
   readonly verificationRef?: string;
-  /** Presente solo tras V3 (OTP verificado): nunca se acepta si viene del cliente. */
+  /** Presente solo tras V3 scope DECISION (OTP verificado): nunca se acepta si viene del cliente. */
   readonly decisionMakerRef?: string;
   /** Presente desde la primera llamada de POST /decision/steps de esta sesión (C1 perezoso,
    * consent-flow.handler.ts x-scope-note): nunca se acepta si viene del cliente. */
   readonly consentId?: string;
+
+  // ---------------------------------------------------------------------
+  // CA-116 (revocación IT0, UX-CNS-004): sesión MANAGE_ENTRY creada por GET /m/{token}
+  // (CFG-RV-MANAGEMENT-LINK). chainRef/revokedDecisionRef se fijan SIEMPRE al resolver el
+  // handle (TenantHandlePort), nunca desde el cliente.
+  // ---------------------------------------------------------------------
+  /** chainRef resuelto del handle MANAGE_ENTRY; presente en toda sesión MANAGE. */
+  readonly chainRef?: string;
+  /** Decisión GRANTED vigente de la cadena al emitir el handle (R14-C). */
+  readonly revokedDecisionRef?: string;
+  /** verificationRef del OTP scope MANAGE activo (V1 MANAGE), antes de V3. */
+  readonly manageVerificationRef?: string;
+  /** Presente solo tras V3 scope MANAGE (identidad MANAGE verificada): nunca del cliente. */
+  readonly manageDecisionMakerRef?: string;
+  /** revocationRef de la Revocation abierta por R1 en esta sesión MANAGE. */
+  readonly revocationRef?: string;
+  /** verificationRef del OTP scope REVOCATION activo (V1 REVOCATION, posterior a R1). */
+  readonly revocationVerificationRef?: string;
+  /** true solo tras V3 scope REVOCATION correcto: habilita R2 (verifyRevocationOtp). */
+  readonly revocationOtpVerified?: boolean;
 }
 
 function sign(secret: Buffer, payloadJson: string): string {
@@ -57,12 +79,10 @@ export function decodeSession(secret: Buffer, cookieValue: string | undefined): 
   try {
     const json = Buffer.from(body, "base64url").toString("utf8");
     const parsed = JSON.parse(json) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as Record<string, unknown>).tenantId === "string" &&
-      typeof (parsed as Record<string, unknown>).invitationRef === "string"
-    ) {
+    // CA-116: invitationRef ya no es obligatorio (una sesión MANAGE_ENTRY de GET /m/{token}
+    // nunca lo tiene); tenantId sigue siendo la única clave de aislamiento obligatoria
+    // (DEC-BR-015 §1).
+    if (typeof parsed === "object" && parsed !== null && typeof (parsed as Record<string, unknown>).tenantId === "string") {
       return parsed as ConsentSessionPayload;
     }
     return null;
