@@ -89,7 +89,7 @@ ports.decision.repo.save({
   tenantId: TENANT_ID,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
   productRef: LECTORPRO_BETA_CONFIG.productRef,
-  subjectRef: "dev-mgmt-subject@example.invalid",
+  subjectRef: "a4c7e9b2-1f3d-4e60-8a52-9d0b7c3e1f46", // Ref opaca UUIDv4: viaja en el sobre de consent.revoked (CA-127), nunca email/PII
   decisionMakerRef: "dm:dev-mgmt",
   invitationRef: "inv-dev-mgmt-seed",
   verificationRef: "ver-dev-mgmt-seed",
