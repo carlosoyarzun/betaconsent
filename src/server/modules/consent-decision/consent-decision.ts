@@ -24,12 +24,15 @@ import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { markInvitationCompleted, markInvitationDeclined } from "../invitation/invitation.ts";
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
+import type { DecisionRelationshipConfig } from "./decision-relationship.config.ts";
 
 export interface ConsentDecisionPorts {
   readonly repo: ConsentDecisionRepositoryPort;
   readonly ledger: LedgerPort;
   readonly invitation: InvitationPorts;
   readonly config: LectorProBetaConfig;
+  /** GRD-CD-04: relationshipRef, opción (b) de Carlos (decision-relationship.config.ts). */
+  readonly relationships: DecisionRelationshipConfig;
 }
 
 const DECISION_MAKER_ROLE: readonly ActorRole[] = ["DECISION_MAKER"];
@@ -91,39 +94,100 @@ export function startDecision(
     state: "PENDING",
     purposes: [],
     priorStepsComplete: false,
+    stepsRecorded: [],
   };
   ports.repo.save(record);
   // C1 emits: [] (SM-CNS-001 §4 C1): sin evento de ledger propio.
   return record;
 }
 
-/** C2 (subconjunto): registra los pasos previos exigidos por GRD-CD-05 en un solo lote. */
-export function recordRequiredSteps(ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): ConsentDecisionRecord {
+/** stepKind de contracts/schemas/api-payloads.schema.json DecisionStepRequest (:413-487). */
+export type DecisionStepInput =
+  | { readonly stepKind: "CONTEXT_INFORMATION_VIEWED" }
+  | { readonly stepKind: "CONSENT_VERSION_VIEWED" }
+  | {
+      readonly stepKind: "DECISION_MAKER_AUTHORITY_DECLARED";
+      /** PENDING DEC-BR-003 / EXT-A / LD-01 (enum legal); aquí solo se valida contra
+       * ports.relationships.allowedRelationshipRefs (opción b de Carlos, 2026-09-27). */
+      readonly relationshipRef: string;
+      /** Declaración explícita, sin preselección (P06; GRD-CD-04). */
+      readonly authorityDeclared: true;
+    }
+  | { readonly stepKind: "SUBJECT_CONFIRMED"; readonly subjectConfirmed: true };
+
+/** GRD-CD-05 (consent-decision.spec.yaml:298-303): CONTEXT_INFORMATION_VIEWED no es requerido,
+ * solo aparece en `emits` de C2 (handoff §4). */
+const REQUIRED_STEP_KINDS: readonly DecisionStepInput["stepKind"][] = [
+  "CONSENT_VERSION_VIEWED",
+  "DECISION_MAKER_AUTHORITY_DECLARED",
+  "SUBJECT_CONFIRMED",
+];
+
+function isStepsComplete(stepsRecorded: readonly string[]): boolean {
+  return REQUIRED_STEP_KINDS.every((kind) => stepsRecorded.includes(kind));
+}
+
+/** C2: registra un paso (PENDING -> PENDING). Guards: GRD-CM-02, GRD-CM-05, GRD-CM-10,
+ * GRD-CD-01, GRD-CD-03, GRD-CD-04. Reemplaza el antiguo `recordRequiredSteps` (que marcaba los
+ * 4 pasos como completos sin ninguna entrada real del usuario, violando GRD-CD-04): ahora cada
+ * paso se registra uno a uno con los datos reales que exige DecisionStepRequest. */
+export function recordDecisionStep(
+  ports: ConsentDecisionPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  decisionMakerRef: string,
+  consentId: string,
+  step: DecisionStepInput,
+): ConsentDecisionRecord {
   const found = requireDecision(ports, tenantId, consentId);
+  assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
+  if (found.decisionMakerRef !== decisionMakerRef) {
+    // Mismo patrón que submitDecision: solo el DecisionMaker verificado de esta cadena.
+    throw new DomainError("ERR-CM-10");
+  }
   if (found.state !== "PENDING") {
     throw new DomainError("ERR-CM-06");
   }
 
-  const events: Array<{ eventType: string; payload: Record<string, unknown> }> = [
-    { eventType: "CONTEXT_INFORMATION_VIEWED", payload: { consentId } },
-    { eventType: "CONSENT_VERSION_VIEWED", payload: { consentId } },
-    { eventType: "DECISION_MAKER_AUTHORITY_DECLARED", payload: { consentId } },
-    { eventType: "SUBJECT_CONFIRMED", payload: { consentId, subjectRef: found.subjectRef } },
-  ];
-  for (const event of events) {
-    ports.ledger.append({
-      eventType: event.eventType,
-      tenantId,
-      aggregateType: "ConsentDecision",
-      aggregateId: consentId,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      payload: event.payload,
-      idempotencyKey: `${consentId}:${event.eventType}`,
-    });
+  if (step.stepKind === "DECISION_MAKER_AUTHORITY_DECLARED") {
+    // GRD-CD-04 (relationship_and_authority_declaration, onFail ERR-CD-04): authorityDeclared
+    // explícito (P06, sin preselección: el tipo ya exige `true` literal) y relationshipRef en
+    // la lista permitida por configuración (opción b, decision-relationship.config.ts).
+    if (step.authorityDeclared !== true || !ports.relationships.allowedRelationshipRefs.includes(step.relationshipRef)) {
+      throw new DomainError("ERR-CD-04");
+    }
+  }
+  if (step.stepKind === "SUBJECT_CONFIRMED" && step.subjectConfirmed !== true) {
+    throw new DomainError("ERR-CD-04");
   }
 
-  const updated: ConsentDecisionRecord = { ...found, priorStepsComplete: true };
+  const payload: Record<string, unknown> = { consentId };
+  if (step.stepKind === "DECISION_MAKER_AUTHORITY_DECLARED") {
+    payload.relationshipRef = step.relationshipRef;
+  }
+  if (step.stepKind === "SUBJECT_CONFIRMED") {
+    payload.subjectRef = found.subjectRef;
+  }
+
+  ports.ledger.append({
+    eventType: step.stepKind,
+    tenantId,
+    aggregateType: "ConsentDecision",
+    aggregateId: consentId,
+    actorType: "HUMAN",
+    actorRole: "DECISION_MAKER",
+    payload,
+    idempotencyKey: `${consentId}:${step.stepKind}`,
+  });
+
+  const stepsRecorded = found.stepsRecorded.includes(step.stepKind)
+    ? found.stepsRecorded
+    : [...found.stepsRecorded, step.stepKind];
+  const updated: ConsentDecisionRecord = {
+    ...found,
+    stepsRecorded,
+    priorStepsComplete: isStepsComplete(stepsRecorded),
+  };
   ports.repo.save(updated);
   return updated;
 }

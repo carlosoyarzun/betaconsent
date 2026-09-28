@@ -27,6 +27,8 @@ const CHANNEL_REF = "test+e2e-http@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+// LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] };
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
@@ -64,7 +66,7 @@ function post(baseUrl: string, opts: PostOpts): Promise<Response> {
 }
 
 test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cadena del ledger consecutiva y tenant_id en cada evento", async () => {
-  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY);
+  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
 
   const baseUrl = await new Promise<string>((resolve) => {
@@ -116,11 +118,26 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
     assert.equal(submitted.status, 200);
     const sessionVerified = parseSetCookie(submitted)[SESSION_COOKIE_NAME];
 
-    // C1/C2/C3 vía HTTP en un solo POST (x-scope-note).
+    // C1 perezoso + C2 vía HTTP: un POST /decision/steps por paso (x-scope-note).
+    const stepBodies: unknown[] = [
+      { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+      { stepKind: "CONSENT_VERSION_VIEWED" },
+      { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "IT0_SYNTHETIC_GUARDIAN", authorityDeclared: true },
+      { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
+    ];
+    let sessionAfterSteps = sessionVerified;
+    for (const stepBody of stepBodies) {
+      const stepRes = await post(baseUrl, { path: "/decision/steps", ...VALID_CSRF, sessionCookie: sessionAfterSteps, body: stepBody });
+      assert.equal(stepRes.status, 200);
+      const nextCookie = parseSetCookie(stepRes)[SESSION_COOKIE_NAME];
+      if (nextCookie) sessionAfterSteps = nextCookie;
+    }
+
+    // C3 vía HTTP.
     const decided = await post(baseUrl, {
       path: "/decision/submit",
       ...VALID_CSRF,
-      sessionCookie: sessionVerified,
+      sessionCookie: sessionAfterSteps,
       body: { purposes: GRANT_ALL },
     });
     assert.equal(decided.status, 200);

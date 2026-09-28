@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "./http/consent-flow-server.ts";
 import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.ts";
+import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 
@@ -33,7 +34,12 @@ const allowedOrigin = process.env.CNS_ALLOWED_ORIGIN ?? `http://127.0.0.1:${port
 const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: 6, ttlMs: 5 * 60_000, maxAttempts: 3, maxResends: 3 };
 const otpPolicy = loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY);
 
-const ports = createDefaultConsentFlowPorts(otpPolicy);
+// LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos,
+// 2026-09-27): el enum legal real sigue PENDING DEC-BR-003 / EXT-A / LD-01.
+const LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] };
+const relationshipConfig = loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
+
+const ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig);
 const sessionSecret = randomBytes(32);
 
 const TENANT_ID = "tenant-dev";

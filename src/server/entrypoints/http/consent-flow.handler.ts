@@ -1,22 +1,27 @@
 // Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-101 (GET /i/{token}),
 // API-CNS-115 (POST /invitation/open), API-CNS-120 (POST /otp/request), API-CNS-121 (POST
-// /otp/submit) y API-CNS-127 (POST /decision/submit, consolida C1/C2/C3/C5 en un solo
-// endpoint IT0 — ver x-scope-note más abajo); specs/state-machines/invitation.spec.yaml I4
-// (efecto de canje + efecto de apertura), specs/state-machines/common.spec.yaml INV-CM-08,
-// otp-challenge.spec.yaml V1/V3, consent-decision.spec.yaml C1/C2/C3/C5; common.spec.yaml
-// GRD-CM-10 (D1). TEST-CNS-498..TEST-CNS-51x (traceability/test-matrix.csv).
+// /otp/submit), API-CNS-126 (POST /decision/steps) y API-CNS-127 (POST /decision/submit);
+// specs/state-machines/invitation.spec.yaml I4 (efecto de canje + efecto de apertura),
+// specs/state-machines/common.spec.yaml INV-CM-08, otp-challenge.spec.yaml V1/V3,
+// consent-decision.spec.yaml C1/C2/C3/C5; common.spec.yaml GRD-CM-10 (D1).
+// TEST-CNS-498..TEST-CNS-51x, TEST-CNS-564.. (traceability/test-matrix.csv).
 //
-// x-scope-note (reportado a Carlos): el contrato separa /decision/start, /decision/steps y
-// /decision/submit en tres POST; esta tarea (CA-116 HTTP) ejecuta C1 (start) y C2 (steps)
-// internamente dentro de este mismo POST /decision/submit en vez de exponerse como rutas
-// separadas, por alcance. GET /i/{token} (P-12) sí está implementado: crea la sesión LANDING
+// x-scope-note (actualizado, CA-116 /decision): el contrato separa /decision/start,
+// /decision/steps y /decision/submit en tres POST. Este archivo ya NO consolida C1+C2 dentro de
+// /decision/submit (eso violaba GRD-CD-04/GRD-CD-05: el submit anterior marcaba los 4 pasos de
+// C2 como completos sin ningún dato real del usuario). Ahora: POST /decision/steps (C2) inicia
+// la decisión (C1) de forma perezosa en su primera llamada de la sesión — sin una ruta
+// /decision/start separada, sigue siendo scope reducido — y guarda `consentId` en la sesión;
+// POST /decision/submit (C3/C5) exige que la sesión ya tenga `consentId` (pasos ya iniciados) y
+// nunca genera uno nuevo. GET /i/{token} (P-12) sí está implementado: crea la sesión LANDING
 // (tenantId, invitationRef) sin transicionar Invitation (INV-CM-08); la transición I4
 // (SENT -> OPENED) ocurre solo en el POST /invitation/open subsiguiente, que ahora toma la
 // invitación de esa sesión y no de un token en el body (contract EmptyCommand).
 //
 // decisionMakerRef y tenantId SIEMPRE se derivan de la sesión (consent-session.ts, D5) o del
 // propio dominio (invitation.recipientChannelRef tras V3); un `decisionMakerRef` en el body de
-// /decision/submit se ignora por completo (nunca se lee del payload, SM R0.2).
+// /decision/submit o /decision/steps se ignora por completo (nunca se lee del payload, SM R0.2;
+// DecisionStepRequest tampoco define ese campo en el contrato).
 
 import { randomUUID, createHash } from "node:crypto";
 
@@ -29,10 +34,11 @@ import {
 } from "../../modules/invitation/invitation.ts";
 import { requestOtp, resendOtp, submitOtp, type OtpChallengePorts } from "../../modules/otp-challenge/otp-challenge.ts";
 import {
-  recordRequiredSteps,
+  recordDecisionStep,
   startDecision,
   submitDecision,
   type ConsentDecisionPorts,
+  type DecisionStepInput,
 } from "../../modules/consent-decision/consent-decision.ts";
 import type { PurposeChoice } from "../../ports/consent-decision-repository.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
@@ -303,8 +309,105 @@ export function handleSubmitOtp(
 }
 
 // ---------------------------------------------------------------------------
-// POST /decision/submit (C1+C2+C3/C5 en un solo POST, x-scope-note). API-CNS-127.
-// actor y decisionMakerRef SIEMPRE de la sesión; decisionMakerRef del body se ignora.
+// POST /decision/steps (C2, con C1 perezoso en la primera llamada de la sesión). API-CNS-126.
+// decisionMakerRef SIEMPRE de la sesión; DecisionStepRequest no define ese campo (SM R0.2).
+// ---------------------------------------------------------------------------
+export type SubmitDecisionStepBody =
+  | { readonly stepKind?: unknown; readonly relationshipRef?: unknown; readonly authorityDeclared?: unknown; readonly subjectConfirmed?: unknown };
+
+/** Servido en la respuesta de CONSENT_VERSION_VIEWED (ServedConsentVersion,
+ * contracts/schemas/api-payloads.schema.json:489-516). LD-06 (consentTextHash como prueba de lo
+ * mostrado) y el texto legal real siguen PENDING (marcador [LEGAL DECISION] en decision-page.ts,
+ * nunca inventado aquí); este placeholder solo satisface la FORMA que exige el contrato. */
+const SERVED_CONSENT_VERSION_TEXT = "[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos]";
+const SERVED_CONSENT_VERSION = {
+  consentVersion: "v1",
+  privacyNoticeVersion: "v1",
+  consentTextHash: createHash("sha256").update(SERVED_CONSENT_VERSION_TEXT).digest("hex"),
+  text: SERVED_CONSENT_VERSION_TEXT,
+};
+
+/** Valida la forma de DecisionStepRequest (api-payloads.schema.json:413-487) contra el body
+ * crudo del cliente. Cualquier forma que no calce exactamente uno de los 4 stepKind con sus
+ * campos requeridos (incluido authorityDeclared/subjectConfirmed !== true, es decir sin
+ * preselección real, P06) devuelve `null` -> 422 ERR-CD-04 en el caller. */
+function parseDecisionStepInput(body: unknown): DecisionStepInput | null {
+  const b = (body ?? {}) as SubmitDecisionStepBody;
+  switch (b.stepKind) {
+    case "CONTEXT_INFORMATION_VIEWED":
+      return { stepKind: "CONTEXT_INFORMATION_VIEWED" };
+    case "CONSENT_VERSION_VIEWED":
+      return { stepKind: "CONSENT_VERSION_VIEWED" };
+    case "DECISION_MAKER_AUTHORITY_DECLARED":
+      if (typeof b.relationshipRef === "string" && b.authorityDeclared === true) {
+        return { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: b.relationshipRef, authorityDeclared: true };
+      }
+      return null;
+    case "SUBJECT_CONFIRMED":
+      if (b.subjectConfirmed === true) {
+        return { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true };
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+export function handleRecordDecisionStep(
+  request: RawConsentRequest,
+  ports: ConsentFlowPorts,
+  config: RightsCaseHttpConfig,
+  sessionSecret: Buffer,
+): HttpResult {
+  const csrfFailure = checkCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+
+  const session = readSession(request, config, sessionSecret);
+  if (!session || !session.verificationRef || !session.decisionMakerRef) return uniformNotFound();
+
+  const step = parseDecisionStepInput(request.body);
+  if (!step) return problem(422, "ERR-CD-04");
+
+  let consentId = session.consentId;
+  let sessionCookieValue: string | undefined;
+  if (!consentId) {
+    // C1 perezoso (x-scope-note arriba): primera llamada de /decision/steps de esta sesión.
+    consentId = randomUUID();
+    try {
+      startDecision(ports.decision, session.tenantId, "DECISION_MAKER", {
+        consentId,
+        invitationRef: session.invitationRef,
+        verificationRef: session.verificationRef,
+        decisionMakerRef: session.decisionMakerRef, // nunca del body
+      });
+    } catch (err) {
+      if (err instanceof DomainError && (err.code === "ERR-CM-01" || err.code === "ERR-CD-07")) return uniformNotFound();
+      throw err;
+    }
+    sessionCookieValue = encodeSession(sessionSecret, { ...session, consentId });
+  }
+
+  try {
+    recordDecisionStep(ports.decision, session.tenantId, "DECISION_MAKER", session.decisionMakerRef, consentId, step);
+    // DecisionStepRecorded (contracts/api-payloads.schema.json:517-562): servedVersion solo en
+    // CONSENT_VERSION_VIEWED (if/then/else del schema).
+    const body: Record<string, unknown> = { stepKind: step.stepKind, state: "PENDING" };
+    if (step.stepKind === "CONSENT_VERSION_VIEWED") body.servedVersion = SERVED_CONSENT_VERSION;
+    return { status: 200, body, setSessionCookie: sessionCookieValue };
+  } catch (err) {
+    if (err instanceof DomainError) {
+      if (err.code === "ERR-CM-01" || err.code === "ERR-CD-07") return uniformNotFound();
+      if (err.code === "ERR-CD-04") return { ...problem(422, err.code), setSessionCookie: sessionCookieValue };
+      if (err.code === "ERR-CM-06") return { ...problem(409, err.code), setSessionCookie: sessionCookieValue };
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /decision/submit (C3/C5). API-CNS-127. Exige que la sesión ya tenga `consentId`
+// (/decision/steps ya corrió al menos una vez, C1 perezoso); actor y decisionMakerRef SIEMPRE
+// de la sesión, decisionMakerRef del body se ignora.
 // ---------------------------------------------------------------------------
 export interface SubmitDecisionBody {
   readonly purposes?: ReadonlyArray<{ purpose?: unknown; choice?: unknown }>;
@@ -322,7 +425,7 @@ export function handleSubmitDecision(
   if (csrfFailure) return csrfFailure;
 
   const session = readSession(request, config, sessionSecret);
-  if (!session || !session.verificationRef || !session.decisionMakerRef) return uniformNotFound();
+  if (!session || !session.verificationRef || !session.decisionMakerRef || !session.consentId) return uniformNotFound();
 
   const body = (request.body ?? {}) as SubmitDecisionBody;
   const rawPurposes = Array.isArray(body.purposes) ? body.purposes : [];
@@ -330,21 +433,13 @@ export function handleSubmitDecision(
     .filter((p) => typeof p.purpose === "string" && (p.choice === "GRANT" || p.choice === "DECLINE"))
     .map((p) => ({ purpose: p.purpose as string, choice: p.choice as PurposeChoice }));
 
-  const consentId = randomUUID();
   try {
-    startDecision(ports.decision, session.tenantId, "DECISION_MAKER", {
-      consentId,
-      invitationRef: session.invitationRef,
-      verificationRef: session.verificationRef,
-      decisionMakerRef: session.decisionMakerRef, // nunca body.decisionMakerRef
-    });
-    recordRequiredSteps(ports.decision, session.tenantId, consentId);
     const decided = submitDecision(
       ports.decision,
       session.tenantId,
       "DECISION_MAKER",
       session.decisionMakerRef, // nunca body.decisionMakerRef
-      consentId,
+      session.consentId,
       purposes,
     );
     // DecisionRecorded (contracts/api-payloads.schema.json $defs/DecisionRecorded): receiptRef
