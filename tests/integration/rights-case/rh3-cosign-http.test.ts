@@ -10,6 +10,7 @@
 // TEST-CNS-667..675 (cosign, RH3 paso 2; el paso 1 vive en rh3-case-confirmation-http.test.ts).
 
 import test from "node:test";
+import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -84,9 +85,9 @@ interface Fixture {
 }
 
 async function setUp(
-  opts: { chainRef: string; caseRef: string; revocationRef: string; environment?: Environment; roster?: readonly StaffPrincipal[] },
+  opts: { chainRef: string; caseRef: string; revocationRef: string; consentId?: string; environment?: Environment; roster?: readonly StaffPrincipal[] },
 ): Promise<Fixture> {
-  const consentId = `consent-${opts.chainRef}`;
+  const consentId = opts.consentId ?? `consent-${opts.chainRef}`;
   const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
   ports.decision.repo.save({
     consentId,
@@ -122,6 +123,7 @@ async function setUp(
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
     caseRef: opts.caseRef,
+    revokedDecisionRef: consentId,
     status: "REQUESTED",
   });
   attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, opts.revocationRef, opts.caseRef);
@@ -361,6 +363,10 @@ test("TEST-CNS-673: dotación insuficiente en cosign -> 409 ROSTER_INSUFFICIENT 
   }
 });
 
+const CONSENT_674 = "674a3c52-8d4e-4a7b-9c21-0e5a7d3b9f74";
+const CONSENT_675 = "675a3c52-8d4e-4a7b-9c21-0e5a7d3b9f75";
+const REVOCATION_675 = "675b3c52-8d4e-4a7b-9c21-0e5a7d3b9f75";
+
 test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> login 02 -> cosign; ack válido y REVOCATION_CONFIRMED válido contra el schema", async () => {
   const opA = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
   const opB = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e";
@@ -371,18 +377,18 @@ test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> 
     { principalRef: "d4e5f6a7-b8c9-4d0e-9f2a-3b4c5d6e7f80", role: "APPROVER" },
   ];
   const revocationRef = "6f1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f10";
-  const fx = await setUp({ chainRef: "chain-674", caseRef: "case-674", revocationRef, roster: uuidRoster });
+  const fx = await setUp({ chainRef: "chain-674", caseRef: "case-674", revocationRef, consentId: CONSENT_674, roster: uuidRoster });
   try {
     await record(fx, opA);
     const op2 = await login(fx, opB);
     const res = await postCosign(fx.baseUrl, authed(fx, op2));
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.deepEqual(body, { cosign: "COSIGNED", revocationState: "CONFIRMED" });
+    assert.deepEqual(body, { cosign: "COSIGNED", revocationState: "APPLIED" }); // Carlos 2026-09-28 (a): R4 síncrono -> APPLIED
     assertValid(validateApiPayload("CaseConfirmationAck", body));
 
     const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, revocationRef);
-    assert.equal(stored?.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28); la ack sigue en CONFIRMED (enum del contrato)
+    assert.equal(stored?.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28); la ack devuelve APPLIED (contrato enmendado)
     assert.equal(stored?.recordedByRef, opA);
     assert.equal(stored?.cosignedByRef, opB); // de la sesión CASE del co-firmante, nunca del body
 
@@ -398,7 +404,7 @@ test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> 
 });
 
 test("TEST-CNS-675: cosign repetido es idempotente — 200 con el mismo ack y un único REVOCATION_CONFIRMED", async () => {
-  const fx = await setUp({ chainRef: "chain-675", caseRef: "case-675", revocationRef: "rv-675" });
+  const fx = await setUp({ chainRef: "chain-675", caseRef: "case-675", revocationRef: REVOCATION_675, consentId: CONSENT_675 });
   try {
     await record(fx, "staff-synthetic-01");
     const op2 = await login(fx, "staff-synthetic-02");
@@ -406,10 +412,13 @@ test("TEST-CNS-675: cosign repetido es idempotente — 200 con el mismo ack y un
     const second = await postCosign(fx.baseUrl, authed(fx, op2));
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
-    assert.deepEqual(await second.json(), { cosign: "COSIGNED", revocationState: "CONFIRMED" });
+    const secondBody = await second.json();
+    assert.deepEqual(secondBody, { cosign: "COSIGNED", revocationState: "APPLIED" });
+    assertValid(validateApiPayload("CaseConfirmationAck", secondBody));
     assert.equal(confirmedEvents(fx).length, 1);
-    const revoked = fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef).filter((e) => e.eventType === "CONSENT_REVOKED");
-    assert.equal(revoked.length, 1);
+    const events = fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef);
+    // CA-127: un solo CONSENT_REVOKED y un solo RECEIPT_CREATED, ambos válidos contra el schema.
+    assertRevocationEvidence(events, { revocationRef: REVOCATION_675, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED", revokedDecisionRef: CONSENT_675 });
   } finally {
     await fx.close();
   }

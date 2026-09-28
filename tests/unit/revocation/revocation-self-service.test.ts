@@ -22,6 +22,7 @@ import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
+import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import type { ConsentDecisionState } from "../../../src/server/ports/consent-decision-repository.port.ts";
 
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
@@ -67,26 +68,28 @@ function seedGrantedDecision(
 
 test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED -> APPLIED (R4 síncrono) y encola un solo CONSENT_REVOKED", () => {
   const ports = makePorts();
+  const REV = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f75";
+  const DECISION = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f76";
   const requested = requestRevocation(ports, "tenant-1", {
-    revocationRef: "rv-575",
+    revocationRef: REV,
     chainRef: "chain-575",
-    revokedDecisionRef: "consent-575",
+    revokedDecisionRef: DECISION,
   });
   assert.equal(requested.status, "REQUESTED");
 
-  const verified = verifyRevocationOtp(ports, "tenant-1", "rv-575", "ver-575");
+  const verified = verifyRevocationOtp(ports, "tenant-1", REV, "ver-575");
   assert.equal(verified.status, "VERIFIED");
 
-  const applied = confirmRevocation(ports, "tenant-1", "rv-575");
+  const applied = confirmRevocation(ports, "tenant-1", REV);
   assert.equal(applied.status, "APPLIED");
 
-  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-575");
-  const revokedEvents = events.filter((e) => e.eventType === "CONSENT_REVOKED");
-  assert.equal(revokedEvents.length, 1);
+  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", REV);
   assert.deepEqual(
     events.map((e) => e.eventType),
-    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
   );
+  // CA-127: evidencia válida contra el schema; authPath OTP derivado del registro (R2).
+  assertRevocationEvidence(events, { revocationRef: REV, authPath: "OTP", revokedDecisionRef: DECISION });
 });
 
 test("TEST-CNS-576: R1 es idempotente por revocationRef (una sola solicitud abierta, sin duplicar el evento)", () => {
@@ -135,21 +138,24 @@ test("TEST-CNS-580: un revocationRef inexistente en R2/R3/R8 da 404 uniforme (ER
 
 test("TEST-CNS-589: revokeWithRecoveryLink sin Revocation abierta (token fresco) recorre R1r+R2r+R3r hasta CONFIRMED (APPLIED síncrono, GRD-RV-06)", () => {
   const ports = makePorts();
-  seedGrantedDecision(ports, "tenant-1", "chain-589b", "consent-589b");
-  issueRecoveryLinkBearer(ports, "tenant-1", "chain-589b", "consent-589b", "REQUESTER_ASKED");
+  const DECISION_589 = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f89";
+  seedGrantedDecision(ports, "tenant-1", "chain-589b", DECISION_589);
+  issueRecoveryLinkBearer(ports, "tenant-1", "chain-589b", DECISION_589, "REQUESTER_ASKED");
   const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
   const token = sent.recoveryPath.replace("/r/", "");
   const resolved = resolveRecoveryTokenForRedeem(ports, token);
   assert.ok(resolved);
 
-  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-589b", "consent-589b", resolved!.tokenHash);
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-589b", DECISION_589, resolved!.tokenHash);
   assert.equal(outcome.kind, "CONFIRMED");
   const revocationRef = (outcome as { kind: "CONFIRMED"; revocationRef: string }).revocationRef;
   const events = ports.ledger.listByAggregate("tenant-1", "Revocation", revocationRef);
   assert.deepEqual(
     events.map((e) => e.eventType),
-    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
   );
+  // CA-127: evidencia válida contra el schema; authPath RECOVERY/CHANNEL_LINK derivado del registro (R2r).
+  assertRevocationEvidence(events, { revocationRef, authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", revokedDecisionRef: DECISION_589 });
 
   // GRD-RV-06: el token consumido ya no resuelve (un solo uso).
   assert.equal(resolveRecoveryTokenForRedeem(ports, token), null);

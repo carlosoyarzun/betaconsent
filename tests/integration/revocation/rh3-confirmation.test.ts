@@ -101,6 +101,7 @@ test("TEST-CNS-465: recordedByRef/cosignedByRef de RH3 se derivan de la sesión 
     tenantId: "tenant-1",
     chainRef: "chain-1",
     caseRef: "case-2",
+    revokedDecisionRef: "consent-2",
     status: "REQUESTED",
   });
   const ledger = createInMemoryLedgerAdapter();
