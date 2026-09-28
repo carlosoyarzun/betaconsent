@@ -9,6 +9,8 @@
 // Idempotency-Key e integridad de claves) ni GRD-CD-10 (expectedSequence, carrera con
 // revocación). Ver reporte de la tarea para el detalle de lo diferido.
 
+import { randomUUID } from "node:crypto";
+
 import { DomainError } from "../common/errors.ts";
 import { assertActorRoleIn, assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
 import type { ActorRole, TenantId } from "../common/types.ts";
@@ -195,7 +197,11 @@ export function submitDecision(
   }
 
   const nextState = allGranted ? "GRANTED" : "DECLINED";
-  const decided: ConsentDecisionRecord = { ...found, state: nextState, purposes };
+  // receiptRef (contracts/api-payloads.schema.json DecisionRecorded, common.schema.json Ref):
+  // opaco UUIDv4, distinto del receiptRef interno de RECEIPT_CREATED (ledger-event-payloads,
+  // formato pendiente: ver reporte de la tarea, discrepancia fuera de alcance HTTP).
+  const receiptRef = randomUUID();
+  const decided: ConsentDecisionRecord = { ...found, state: nextState, purposes, receiptRef };
   ports.repo.save(decided);
 
   for (const p of purposes) {

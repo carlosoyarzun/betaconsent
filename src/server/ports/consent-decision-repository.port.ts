@@ -27,6 +27,9 @@ export interface ConsentDecisionRecord {
   readonly purposes: readonly PurposeDecision[];
   /** GRD-CD-05 (prior_steps_complete): pasos previos registrados por C2. */
   readonly priorStepsComplete: boolean;
+  /** Ref opaca del recibo (contracts/api-payloads.schema.json DecisionRecorded.receiptRef, Ref
+   * UUID); solo se fija al terminar en GRANTED o DECLINED (C3/C5). Ausente en PENDING. */
+  readonly receiptRef?: string;
 }
 
 export interface ConsentDecisionRepositoryPort {

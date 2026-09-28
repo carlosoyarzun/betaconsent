@@ -73,8 +73,28 @@ function uniformNotFound(): HttpResult {
   return { status: 404, body: { status: 404 } };
 }
 
-function problem(status: 409 | 422, code: string): HttpResult {
-  return { status, body: { code, status } };
+/** DomainErrorCode (ERR-XX-NN interno) -> ErrorCode externo (contracts/common.schema.json
+ * $defs/ErrorCode.x-error-ids). El código interno NUNCA sale tal cual en un Problem/OtpRejected
+ * (P1: el contrato solo reconoce los nombres de ErrorCode, no los IDs ERR-XX-NN). */
+const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
+  "ERR-CM-06": "INVALID_TRANSITION",
+  "ERR-OT-02": "OTP_CODE_REJECTED",
+  "ERR-OT-03": "OTP_EXPIRED_OR_CONSUMED",
+  "ERR-OT-04": "OTP_LOCKED",
+  "ERR-CD-01": "ALREADY_DECIDED",
+  "ERR-CD-02": "PURPOSE_SELECTION_INVALID",
+  "ERR-CD-04": "DECISION_STEPS_INCOMPLETE",
+  "ERR-CD-08": "DECISION_TERMINAL",
+};
+
+/** Problem uniforme (contracts/common.schema.json $defs/Problem): code + status + correlationId
+ * siempre los tres (P1: faltaba correlationId y el code sin mapear al ErrorCode externo). */
+function problem(status: 409 | 422, domainErrorCode: string): HttpResult {
+  const code = EXTERNAL_ERROR_CODE[domainErrorCode];
+  if (!code) {
+    throw new Error(`consent-flow.handler: sin mapeo externo para ${domainErrorCode} (EXTERNAL_ERROR_CODE)`);
+  }
+  return { status, body: { code, status, correlationId: randomUUID() } };
 }
 
 function readSession(
@@ -158,8 +178,10 @@ export function handleOpenInvitation(
     const opened = openInvitationByRef(ports.invitation, session.tenantId, session.invitationRef);
     const nextSession: ConsentSessionPayload = { tenantId: opened.tenantId, invitationRef: opened.invitationRef };
     return {
+      // InvitationOpenedAck (contracts/api-payloads.schema.json:303-315, additionalProperties
+      // false): acuse mínimo sin invitationRef ni state (P1, x-scope-note actualizado arriba).
       status: 200,
-      body: { invitationRef: opened.invitationRef, state: opened.state },
+      body: { result: "OPENED" },
       setSessionCookie: encodeSession(sessionSecret, nextSession),
     };
   } catch (err) {
@@ -198,7 +220,9 @@ export function handleRequestOtp(
     // ERR-OT-01/ERR-OT-08: x-uniform-response, no se distingue del éxito (202 igual).
   }
   const nextSession: ConsentSessionPayload = { ...session, verificationRef };
-  return { status: 202, body: { result: "ACCEPTED" }, setSessionCookie: encodeSession(sessionSecret, nextSession) };
+  // UniformAccepted (contracts/common.schema.json $defs/UniformAccepted): result es la
+  // constante "RECEIVED" (P1: no "ACCEPTED").
+  return { status: 202, body: { result: "RECEIVED" }, setSessionCookie: encodeSession(sessionSecret, nextSession) };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,16 +251,18 @@ export function handleSubmitOtp(
     submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef);
     const verifiedSession: ConsentSessionPayload = { ...session, decisionMakerRef };
     return {
+      // OtpVerified (contracts/api-payloads.schema.json $defs/OtpVerified): scope es requerido
+      // (P1: faltaba). IT0 solo implementa scope DECISION (otp-challenge.ts, alcance del archivo).
       status: 200,
-      body: { result: "VERIFIED" },
+      body: { result: "VERIFIED", scope: "DECISION" },
       setSessionCookie: encodeSession(sessionSecret, verifiedSession),
     };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();
-      // ERR-OT-02/03/04 (V2/V4/expirado): rechazo genérico 422, sin distinguir detalle
-      // (contracts/openapi OtpRejected; onFail no revela intentos restantes).
-      return problem(422, "OTP_REJECTED");
+      // ERR-OT-02/03/04 (V2/V4/expirado): rechazo con el code específico de OtpRejected (P1:
+      // "OTP_REJECTED" no existe en el enum del contrato; sin distinguir detalle de intentos).
+      return problem(422, err.code);
     }
     throw err;
   }
@@ -287,7 +313,9 @@ export function handleSubmitDecision(
       consentId,
       purposes,
     );
-    return { status: 200, body: { consentId: decided.consentId, state: decided.state } };
+    // DecisionRecorded (contracts/api-payloads.schema.json $defs/DecisionRecorded): receiptRef
+    // es requerido (P1: faltaba); nunca incluye el management_token (va solo al canal ligado).
+    return { status: 200, body: { consentId: decided.consentId, state: decided.state, receiptRef: decided.receiptRef } };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01" || err.code === "ERR-CD-07") return uniformNotFound();
