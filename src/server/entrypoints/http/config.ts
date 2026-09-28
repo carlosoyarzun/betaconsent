@@ -31,6 +31,14 @@ export interface RightsCaseHttpConfig {
    * securitySchemes.manageHandle, __Host-cns-manage): esa cookie es un handle EN CLARO, pendiente
    * de integrar con RC2u (rights-case-resume.handler.ts); esta lleva solo el hash. */
   readonly manageEntryHandleCookieName: string;
+  /** Cookie de la sesión CASE (contracts/openapi securitySchemes.caseSession, nombre exacto
+   * `__Host-cns-case` ya fijado en el contrato; P-26 pendiente para el resto de las cookies de
+   * este archivo, no para esta). CA-128 (API-CNS-138). */
+  readonly caseSessionCookieName: string;
+  /** Cookie CSRF propia de la consola CASE (P-26 PENDIENTE, nombre provisional): aislada de
+   * csrfCookieName (bearer) para que comprometer una no comprometa la otra, mismo criterio que
+   * recoveryHandleCookieName. */
+  readonly caseCsrfCookieName: string;
 }
 
 const DEFAULT_MANAGE_HANDLE_COOKIE_NAME = "__Host-cns-manage";
@@ -40,6 +48,8 @@ const DEFAULT_SESSION_COOKIE_NAME = "__Host-cns-session";
 const DEFAULT_RECOVERY_HANDLE_COOKIE_NAME = "__Host-cns-recovery";
 const DEFAULT_INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const DEFAULT_MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
+const DEFAULT_CASE_SESSION_COOKIE_NAME = "__Host-cns-case";
+const DEFAULT_CASE_CSRF_COOKIE_NAME = "__Host-cns-case-csrf";
 
 /**
  * Construye la configuración del entrypoint. `allowedOrigin` debe venir siempre de
@@ -63,5 +73,7 @@ export function loadRightsCaseHttpConfig(overrides: Partial<RightsCaseHttpConfig
     recoveryHandleCookieName: overrides.recoveryHandleCookieName ?? DEFAULT_RECOVERY_HANDLE_COOKIE_NAME,
     invitationHandleCookieName: overrides.invitationHandleCookieName ?? DEFAULT_INVITATION_HANDLE_COOKIE_NAME,
     manageEntryHandleCookieName: overrides.manageEntryHandleCookieName ?? DEFAULT_MANAGE_ENTRY_HANDLE_COOKIE_NAME,
+    caseSessionCookieName: overrides.caseSessionCookieName ?? DEFAULT_CASE_SESSION_COOKIE_NAME,
+    caseCsrfCookieName: overrides.caseCsrfCookieName ?? DEFAULT_CASE_CSRF_COOKIE_NAME,
   };
 }

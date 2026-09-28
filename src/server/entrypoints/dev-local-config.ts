@@ -39,3 +39,17 @@ export const LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
  * de la cookie `__Host-cns-m-handle` que fija GET /m/{token} sin leer la BD. Mismo criterio
  * LOCAL-only que arriba. */
 export const LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
+
+/** LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos, 2026-09-28, opción (ii); CA-128,
+ * API-CNS-138): lista nominal de 4 personas ficticias, sin reutilización entre roles (NF-19,
+ * GRD-RC-15) — 2 RIGHTS_OPERATOR y 2 APPROVER. Sin IdP real en IT0: dev.ts inyecta este roster
+ * en StaffIdentityPort (in-memory-staff-identity.adapter.ts) y lo resuelve únicamente el
+ * endpoint de desarrollo /__dev/staff-login (case-confirmation.handler.ts, LOCAL-only,
+ * GRD-CM-13). Cero PII: solo refs opacas sintéticas, nunca email, nombre ni RUT. LEGAL DECISION
+ * LD-03 (quién tiene autoridad legal para registrar/co-firmar RH3) no se decide aquí. */
+export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
+  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" as const },
+  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" as const },
+  { principalRef: "staff-synthetic-03", role: "APPROVER" as const },
+  { principalRef: "staff-synthetic-04", role: "APPROVER" as const },
+];

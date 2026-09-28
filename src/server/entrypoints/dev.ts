@@ -17,6 +17,7 @@ import { loadRecoveryHandlePolicyConfig } from "../modules/revocation/recovery-h
 import { loadInvitationHandlePolicyConfig } from "../modules/invitation/invitation-handle-policy.config.ts";
 import { loadManageHandlePolicyConfig } from "../modules/revocation/manage-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
+import { attestHumanAssistedVerification } from "../modules/revocation/revocation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
   LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY,
@@ -25,7 +26,9 @@ import {
   LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY,
   LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY,
   LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG,
+  LOCAL_ONLY_DEV_STAFF_ROSTER,
 } from "./dev-local-config.ts";
+import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 
 const environment = process.env.CNS_ENVIRONMENT ?? "";
@@ -115,6 +118,56 @@ const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, po
   revokedDecisionRef: MGMT_CONSENT_ID,
 });
 
+// CA-128 (API-CNS-138, RH3 paso 1): además del enlace /m/<token> de arriba, siembra un caso
+// RH3 completo (RC1 abierto + RH2 ya atestado) para poder probar record_case_confirmation a
+// mano sin repetir HTTP para RC1/RH2 (fuera de alcance de este slice). Cadena/decisión propias
+// (RH3_*), separadas de MGMT_* de arriba, para no interferir con el flujo de gestión.
+const RH3_CHAIN_REF = "chain-dev-rh3";
+const RH3_CONSENT_ID = "consent-dev-rh3-001";
+const RH3_CASE_REF = "case-dev-rh3-001";
+const RH3_REVOCATION_REF = "rv-dev-rh3-001";
+ports.decision.repo.save({
+  consentId: RH3_CONSENT_ID,
+  tenantId: TENANT_ID,
+  contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+  productRef: LECTORPRO_BETA_CONFIG.productRef,
+  subjectRef: "dev-rh3-subject@example.invalid",
+  decisionMakerRef: "dm:dev-rh3",
+  invitationRef: "inv-dev-rh3-seed",
+  verificationRef: "ver-dev-rh3-seed",
+  chainRef: RH3_CHAIN_REF,
+  state: "GRANTED",
+  purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
+  priorStepsComplete: true,
+  stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
+  receiptRef: "receipt-dev-rh3-001",
+});
+revocationPorts.rightsCase.rightsCaseRepo.save({
+  caseRef: RH3_CASE_REF,
+  tenantId: TENANT_ID,
+  chainRef: RH3_CHAIN_REF,
+  revokedDecisionRef: RH3_CONSENT_ID,
+  status: "OPEN",
+});
+revocationPorts.revocation.revocationRepo.save({
+  revocationRef: RH3_REVOCATION_REF,
+  tenantId: TENANT_ID,
+  chainRef: RH3_CHAIN_REF,
+  caseRef: RH3_CASE_REF,
+  status: "REQUESTED",
+});
+attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, RH3_REVOCATION_REF, RH3_CASE_REF);
+revocationPorts.rightsCase.rightsCaseRepo.save({
+  caseRef: RH3_CASE_REF,
+  tenantId: TENANT_ID,
+  chainRef: RH3_CHAIN_REF,
+  revokedDecisionRef: RH3_CONSENT_ID,
+  status: "IN_VERIFICATION",
+  revocationRef: RH3_REVOCATION_REF,
+});
+// LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos 2026-09-28 opción (ii)).
+const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
+
 const server = createConsentFlowHttpServer({
   config: { allowedOrigin },
   ports,
@@ -124,6 +177,7 @@ const server = createConsentFlowHttpServer({
   invitationHandlePolicy,
   manageHandlePolicy,
   environment: "LOCAL",
+  staffIdentity,
 });
 
 server.listen(port, "127.0.0.1", () => {
@@ -144,4 +198,14 @@ server.listen(port, "127.0.0.1", () => {
   // "Enviar enlace de recuperación" (POST /manage/recovery-link) y lee el enlace /r/<token> real
   // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
   console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
+  // CA-128 (API-CNS-138, RH3 paso 1): caso ya abierto con RH2 atestado (RH3_CASE_REF); probar
+  // record_case_confirmation a mano con curl (dos pasos: login de staff sintético, luego POST).
+  console.log(`RH3 paso 1 (API-CNS-138, sin co-firma): caso ${RH3_CASE_REF} ya abierto con RH2 atestado. Probar con curl:`);
+  console.log(
+    `  curl -i -c /tmp/cns-case-cookies.txt -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"tenantId":"${TENANT_ID}","caseRef":"${RH3_CASE_REF}","principalRef":"staff-synthetic-01"}'`,
+  );
+  console.log(`  # copia el valor de __Host-cns-case-csrf del Set-Cookie de arriba en <CSRF>, luego:`);
+  console.log(
+    `  curl -i -b /tmp/cns-case-cookies.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF>" -H 'content-type: application/json' -d '{"confirmationGivenOnCasePage":true}'`,
+  );
 });

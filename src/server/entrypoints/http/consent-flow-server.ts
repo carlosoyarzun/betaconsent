@@ -18,6 +18,7 @@ import { createInMemoryRecoveryTokenRepository } from "../../../infra/adapters/i
 import { createInMemoryRevocationRepository } from "../../../infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
+import { createInMemoryStaffIdentityAdapter } from "../../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
 import type { Environment } from "../../modules/common/types.ts";
@@ -30,6 +31,7 @@ import type { InvitationHandlePolicy } from "../../modules/invitation/invitation
 import type { ManageHandlePolicy } from "../../modules/revocation/manage-handle-policy.config.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
+import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import {
   handleOpenInvitation,
@@ -58,8 +60,10 @@ import {
   resolveRecoveryConfirmView,
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
+import { handleDevStaffLogin, handleRecordCaseConfirmation, type CaseConfirmationPorts } from "./case-confirmation.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
+import { deriveCaseSessionKey } from "./case-session.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { deriveRecoveryCsrfKey, deriveRecoveryHandleKey, generateRecoveryCsrfToken } from "./recovery-handle.ts";
 import { deriveLinkHandleKey } from "./link-handle.ts";
@@ -111,6 +115,14 @@ export interface ConsentFlowHttpServerOptions {
    * "undefined", deja la ruta fuera (fail-closed).
    */
   readonly environment?: Environment;
+  /**
+   * CA-128 (API-CNS-138, RH3 paso 1). StaffIdentityPort: lista nominal sintética de RIGHTS_OPERATOR
+   * y aprobadores (GRD-RC-15), inyectada por dev.ts (LOCAL_ONLY_DEV_STAFF_ROSTER) o los tests.
+   * Si se omite, un adaptador in-memory con roster vacío: fail-closed por defecto (GRD-RC-15
+   * ERR-RC-10 siempre, mismo criterio D4 que tenantHandle vacío en createDefaultRevocationFlowPorts),
+   * nunca una lista de producción hardcodeada.
+   */
+  readonly staffIdentity?: StaffIdentityPort;
 }
 
 /** `relationshipConfig` es obligatorio, mismo patrón fail-closed que `otpPolicy` (D4,
@@ -285,11 +297,16 @@ function floorDelay(startedAt: bigint, floorMs: number): Promise<void> {
 }
 
 function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: HttpResult): void {
-  if (result.setSessionCookie) {
-    res.setHeader("Set-Cookie", serializeSessionCookie(config, result.setSessionCookie));
-  }
-  if (result.setRecoveryHandleCookie) {
-    res.setHeader("Set-Cookie", result.setRecoveryHandleCookie);
+  // CA-128: setCaseSessionCookie/setCaseCsrfCookie pueden coexistir entre sí (dos cookies del
+  // mismo /__dev/staff-login); nunca con setSessionCookie/setRecoveryHandleCookie (documentado
+  // en consent-flow.handler.ts). Node admite un arreglo para varias líneas Set-Cookie.
+  const cookies: string[] = [];
+  if (result.setSessionCookie) cookies.push(serializeSessionCookie(config, result.setSessionCookie));
+  if (result.setRecoveryHandleCookie) cookies.push(result.setRecoveryHandleCookie);
+  if (result.setCaseSessionCookie) cookies.push(result.setCaseSessionCookie);
+  if (result.setCaseCsrfCookie) cookies.push(result.setCaseCsrfCookie);
+  if (cookies.length > 0) {
+    res.setHeader("Set-Cookie", cookies);
   }
   if (result.setLinkHandleCookie) {
     res.setHeader("Set-Cookie", result.setLinkHandleCookie);
@@ -332,6 +349,16 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const recoveryCsrfKey = deriveRecoveryCsrfKey(sessionSecret);
   const invitationHandleKey = deriveLinkHandleKey(sessionSecret, INVITATION_HANDLE_HKDF_INFO);
   const manageEntryHandleKey = deriveLinkHandleKey(sessionSecret, MANAGE_ENTRY_HANDLE_HKDF_INFO);
+  // CA-128: clave propia de la sesión CASE (case-session.ts), aislada de las de arriba.
+  const caseSessionKey = deriveCaseSessionKey(sessionSecret);
+  // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING: roster vacío por defecto (fail-closed,
+  // GRD-RC-15 ERR-RC-10 siempre sin override explícito).
+  const staffIdentity: StaffIdentityPort = options.staffIdentity ?? createInMemoryStaffIdentityAdapter([]);
+  const caseConfirmationPorts: CaseConfirmationPorts = {
+    revocation: revocationPorts.revocation,
+    rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo,
+    staffIdentity,
+  };
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
@@ -621,6 +648,31 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       cookieHeader: headerValue(req.headers.cookie),
       body,
     };
+
+    if (path === "/__dev/staff-login") {
+      // CA-128 (Carlos 2026-09-28, opción (ii)): mismo guard GRD-CM-13 que /__dev/otp-sink;
+      // handleDevStaffLogin ya rechaza fuera de LOCAL, aquí solo se enruta.
+      const result = handleDevStaffLogin(
+        request,
+        options.environment ?? "DEV",
+        { staffIdentity, rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo },
+        config,
+        caseSessionKey,
+      );
+      writeResult(res, config, result);
+      return;
+    }
+
+    if (path.startsWith("/platform/rights-cases/") && path.endsWith("/confirmation")) {
+      // API-CNS-138: caseRef es el único segmento intermedio; un path con "/" adicional
+      // (intento de traversal o de apuntar a otra sub-ruta) nunca resuelve, cae al 404 genérico.
+      const caseRef = path.slice("/platform/rights-cases/".length, path.length - "/confirmation".length);
+      if (caseRef.length > 0 && !caseRef.includes("/")) {
+        const result = handleRecordCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
+        writeResult(res, config, result);
+        return;
+      }
+    }
 
     let result: HttpResult;
     switch (path) {
