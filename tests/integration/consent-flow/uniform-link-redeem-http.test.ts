@@ -317,3 +317,138 @@ test("TEST-CNS-617: el botón 'Contactar a soporte' del error uniforme de /manag
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
   }
 });
+
+// ---------------------------------------------------------------------------
+// FINDING P1 (Carlos, prueba en navegador): "el último enlace abierto manda". Una sesión previa
+// vigente (real, ya sin handle en la petición: navegación normal dentro del flujo) nunca debe
+// sobrevivir a un GET con un handle nuevo — ni cuando el handle nuevo es inválido (error
+// uniforme, sesión borrada) ni cuando resuelve a una identidad distinta (contexto del enlace
+// nuevo, no el anterior).
+// ---------------------------------------------------------------------------
+
+function parseAllSetCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raws = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("set-cookie") ?? ""];
+  for (const raw of raws) {
+    for (const part of raw.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!out[name]) out[name] = part.slice(eq + 1).trim();
+    }
+  }
+  return out;
+}
+
+/** GET /i/{token} -> GET /welcome, devuelve (sesión real, Set-Cookie completo de /welcome). */
+async function redeemInvitationFull(baseUrl: string, token: string): Promise<{ sessionCookie: string; welcomeRes: Response }> {
+  const redeemed = await fetch(`${baseUrl}/i/${encodeURIComponent(token)}`, { redirect: "manual" });
+  const handleCookie = parseSetCookie(redeemed)[INVITATION_HANDLE_COOKIE_NAME]!;
+  const welcomeRes = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  const sessionCookie = parseAllSetCookies(welcomeRes)[SESSION_COOKIE_NAME]!;
+  return { sessionCookie, welcomeRes };
+}
+
+test("TEST-CNS-618: /welcome — sesión A vigente + handle inválido -> error uniforme y la sesión A queda borrada; sesión A + handle válido de un enlace B distinto -> contexto de B, nunca el de A", async () => {
+  const harness = await startHarness();
+  try {
+    const tokenA = seedSentInvitation(harness.ports, "inv-618-a");
+    const { sessionCookie: sessionA } = await redeemInvitationFull(harness.baseUrl, tokenA);
+    assert.ok(sessionA);
+
+    // Sesión A vigente + handle inválido (típico: el navegador todavía trae la cookie de
+    // sesión A, pero el usuario acaba de abrir un enlace roto): error uniforme, sesión borrada.
+    const invalidRedeemed = await fetch(`${harness.baseUrl}/i/token-inexistente-618`, { redirect: "manual" });
+    const invalidHandle = parseSetCookie(invalidRedeemed)[INVITATION_HANDLE_COOKIE_NAME]!;
+    const welcomeInvalid = await fetch(`${harness.baseUrl}/welcome`, {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionA}; ${INVITATION_HANDLE_COOKIE_NAME}=${invalidHandle}` },
+    });
+    assert.equal(welcomeInvalid.status, 404);
+    assert.match(await welcomeInvalid.text(), /No pudimos abrir esta invitación\./);
+    const clearedCookie = welcomeInvalid.headers.get("set-cookie") ?? "";
+    assert.match(clearedCookie, new RegExp(`${SESSION_COOKIE_NAME}=;`));
+    assert.match(clearedCookie, /Max-Age=0/);
+
+    // Sesión A vigente + handle válido de un enlace B distinto (segundo hijo, p. ej.): el
+    // contexto pasa a ser el de B, nunca el de A ("el último enlace abierto manda").
+    const tokenB = seedSentInvitation(harness.ports, "inv-618-b");
+    const redeemedB = await fetch(`${harness.baseUrl}/i/${tokenB}`, { redirect: "manual" });
+    const handleB = parseSetCookie(redeemedB)[INVITATION_HANDLE_COOKIE_NAME]!;
+    const welcomeB = await fetch(`${harness.baseUrl}/welcome`, {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionA}; ${INVITATION_HANDLE_COOKIE_NAME}=${handleB}` },
+    });
+    assert.equal(welcomeB.status, 200);
+    const sessionAfterB = parseAllSetCookies(welcomeB)[SESSION_COOKIE_NAME]!;
+    assert.notEqual(sessionAfterB, sessionA);
+
+    const opened = await fetch(`${harness.baseUrl}/invitation/open`, {
+      method: "POST",
+      headers: {
+        origin: ALLOWED_ORIGIN,
+        "content-type": "application/json",
+        "x-csrf-token": "csrf-token-abcdefgh",
+        cookie: `${SESSION_COOKIE_NAME}=${sessionAfterB}; __Host-cns-csrf=csrf-token-abcdefgh`,
+      },
+      body: "{}",
+    });
+    assert.equal(opened.status, 200);
+    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-618-b")?.state, "OPENED");
+    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-618-a")?.state, "SENT");
+  } finally {
+    await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
+  }
+});
+
+test("TEST-CNS-619: /manage — sesión A vigente + handle inválido -> error uniforme (59:3) y la sesión A queda borrada; sesión A + handle válido de un enlace B distinto -> contexto (chainRef) de B, nunca el de A", async () => {
+  const harness = await startHarness();
+  try {
+    const tenantHandle = harness.revocationPorts.tenantHandle as InMemoryTenantHandleAdapter;
+    tenantHandle.issue({ handle: "mgmt-619-a", tenantId: TENANT_ID, chainRef: "chain-619-a", revokedDecisionRef: "consent-619-a" });
+    const redeemedA = await fetch(`${harness.baseUrl}/m/mgmt-619-a`, { redirect: "manual" });
+    const handleA = parseSetCookie(redeemedA)[MANAGE_ENTRY_HANDLE_COOKIE_NAME]!;
+    const manageA = await fetch(`${harness.baseUrl}/manage`, { headers: { cookie: `${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${handleA}` } });
+    const sessionA = parseAllSetCookies(manageA)[SESSION_COOKIE_NAME]!;
+    assert.ok(sessionA);
+
+    // Sesión A vigente + handle inválido: error uniforme (59:3), sesión borrada.
+    const invalidRedeemed = await fetch(`${harness.baseUrl}/m/mgmt-inexistente-619`, { redirect: "manual" });
+    const invalidHandle = parseSetCookie(invalidRedeemed)[MANAGE_ENTRY_HANDLE_COOKIE_NAME]!;
+    const manageInvalid = await fetch(`${harness.baseUrl}/manage`, {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionA}; ${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${invalidHandle}` },
+    });
+    assert.equal(manageInvalid.status, 404);
+    assert.match(await manageInvalid.text(), /Este enlace ya no está disponible\./);
+    const clearedCookie = manageInvalid.headers.get("set-cookie") ?? "";
+    assert.match(clearedCookie, new RegExp(`${SESSION_COOKIE_NAME}=;`));
+    assert.match(clearedCookie, /Max-Age=0/);
+
+    // Sesión A vigente + handle válido de un enlace B distinto (otro chainRef, p. ej. la
+    // gestión de un segundo hijo): el contexto pasa a ser el de B, nunca el de A.
+    tenantHandle.issue({ handle: "mgmt-619-b", tenantId: TENANT_ID, chainRef: "chain-619-b", revokedDecisionRef: "consent-619-b" });
+    const redeemedB = await fetch(`${harness.baseUrl}/m/mgmt-619-b`, { redirect: "manual" });
+    const handleB = parseSetCookie(redeemedB)[MANAGE_ENTRY_HANDLE_COOKIE_NAME]!;
+    const manageB = await fetch(`${harness.baseUrl}/manage`, {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionA}; ${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${handleB}` },
+    });
+    assert.equal(manageB.status, 200);
+    const sessionAfterB = parseAllSetCookies(manageB)[SESSION_COOKIE_NAME]!;
+    assert.notEqual(sessionAfterB, sessionA);
+
+    const r1 = await fetch(`${harness.baseUrl}/manage/revocation`, {
+      method: "POST",
+      headers: {
+        origin: ALLOWED_ORIGIN,
+        "content-type": "application/json",
+        "x-csrf-token": "csrf-token-abcdefgh",
+        cookie: `${SESSION_COOKIE_NAME}=${sessionAfterB}; __Host-cns-csrf=csrf-token-abcdefgh`,
+      },
+      body: "{}",
+    });
+    // Sin sesión MANAGE verificada (V3) todavía: 404 uniforme, pero la aserción que importa aquí
+    // es que R1 nunca alcanza a operar sobre chain-619-a (nunca se creó ninguna Revocation ahí).
+    assert.equal(r1.status, 404);
+    assert.equal(harness.revocationPorts.revocation.revocationRepo.findOpenByChain(TENANT_ID, "chain-619-a"), null);
+  } finally {
+    await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
+  }
+});
