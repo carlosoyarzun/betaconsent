@@ -6,7 +6,9 @@
 // las respuestas HTTP (consent-flow.handler.ts, rights-case-resume.handler.ts) y por los
 // payloads de eventos del ledger que ya emite el dominio: $ref (dentro del mismo esquema o a
 // otro), type, required, properties, additionalProperties: false, enum, const (incluido const
-// de array) y oneOf. No implementa if/then/else, allOf, dependentRequired, anyOf,
+// de array), oneOf, pattern (string) y, desde CA-127, allOf con if/then (sin else; lo usa
+// outbox-events.schema.json#/$defs/OutboxEvent) y `properties` sin `type`. No implementa
+// else, dependentRequired, anyOf,
 // patternProperties ni formatos (ningún $defs validado aquí los necesita; los que sí los usan
 // se reportan como finding en vez de forzar un validador más grande).
 
@@ -28,6 +30,7 @@ const SCHEMA_FILES: Readonly<Record<string, JsonSchema>> = {
   "common.schema.json": loadSchemaFile("common.schema.json"),
   "api-payloads.schema.json": loadSchemaFile("api-payloads.schema.json"),
   "ledger-event-payloads.schema.json": loadSchemaFile("ledger-event-payloads.schema.json"),
+  "outbox-events.schema.json": loadSchemaFile("outbox-events.schema.json"),
 };
 
 function getByPointer(doc: JsonSchema, pointer: string): JsonSchema {
@@ -67,6 +70,22 @@ function validateNode(schema: JsonSchema, value: unknown, path: string, file: st
     return;
   }
 
+  // allOf (CA-127): cada rama se valida; una rama con if/then aplica `then` solo si `if` valida.
+  // No hace return: el resto de las palabras clave del mismo nodo se siguen evaluando.
+  if (Array.isArray(schema.allOf)) {
+    for (const branch of schema.allOf as JsonSchema[]) {
+      if (branch.if !== undefined) {
+        const ifErrors: string[] = [];
+        validateNode(branch.if as JsonSchema, value, path, file, ifErrors);
+        if (ifErrors.length === 0 && branch.then !== undefined) {
+          validateNode(branch.then as JsonSchema, value, path, file, errors);
+        }
+      } else {
+        validateNode(branch, value, path, file, errors);
+      }
+    }
+  }
+
   if (Array.isArray(schema.oneOf)) {
     const branches = schema.oneOf as JsonSchema[];
     const matches = branches.filter((branch) => {
@@ -94,7 +113,9 @@ function validateNode(schema: JsonSchema, value: unknown, path: string, file: st
     return;
   }
 
-  if (schema.type === "object") {
+  const isObjectSchema = schema.type === "object" || (schema.type === undefined && typeof schema.properties === "object");
+  if (isObjectSchema) {
+    if (schema.type === undefined && (typeof value !== "object" || value === null || Array.isArray(value))) return;
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       errors.push(`${path}: esperado objeto, recibido ${JSON.stringify(value)}`);
       return;
@@ -174,6 +195,12 @@ export function validateApiPayload(defName: string, value: unknown): ValidationR
 /** Valida contra contracts/schemas/common.schema.json#/$defs/<defName>. */
 export function validateCommon(defName: string, value: unknown): ValidationResult {
   return validateAgainstDef("common.schema.json", defName, value);
+}
+
+/** Valida un sobre contra contracts/schemas/outbox-events.schema.json#/$defs/OutboxEvent
+ * (incluye el payload por eventType vía allOf/if/then). */
+export function validateOutboxEvent(envelope: unknown): ValidationResult {
+  return validateAgainstDef("outbox-events.schema.json", "OutboxEvent", envelope);
 }
 
 /** Valida el `payload` de un evento del ledger contra
