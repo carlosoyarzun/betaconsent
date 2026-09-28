@@ -2,6 +2,7 @@
 // F-R14-04/INV-RV-11). TEST-CNS-463, TEST-CNS-464, TEST-CNS-465.
 
 import test from "node:test";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
 import { attestHumanAssistedVerification, cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
@@ -42,7 +43,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
 test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocationRef, caseRef) -> ERR-RV-20 (GRD-RV-10)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   revocationRepo.save({
-    revocationRef: "rv-1",
+    revocationRef: fixtureUuid("rv-1"),
     tenantId: "tenant-1",
     chainRef: "chain-1",
     caseRef: "case-1",
@@ -52,7 +53,7 @@ test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocation
 
   assert.throws(
     () =>
-      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), staffIdentity, "tenant-1", "rv-1", "case-1", {
+      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), staffIdentity, "tenant-1", fixtureUuid("rv-1"), "case-1", {
         recordedByPrincipalRef: "operator-a",
       }),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-RV-20",
@@ -97,26 +98,27 @@ test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 un
 test("TEST-CNS-465: recordedByRef/cosignedByRef de RH3 se derivan de la sesión del ejecutor, nunca de un campo enviado en el request", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   revocationRepo.save({
-    revocationRef: "rv-2",
+    revocationRef: fixtureUuid("rv-2"),
     tenantId: "tenant-1",
     chainRef: "chain-1",
     caseRef: "case-2",
+    revokedDecisionRef: fixtureUuid("consent-2"),
     status: "REQUESTED",
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-1", "rv-2", "case-2");
+  attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-1", fixtureUuid("rv-2"), "case-2");
 
   // Los ctx llevan solo refs derivadas de la sesión; el tipo ni siquiera admite campos del
   // request (recordedByRef/cosignedByRef del body se rechazan en el borde HTTP, 422).
   const ports = makePorts(revocationRepo, ledger);
-  recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", "rv-2", "case-2", { recordedByPrincipalRef: "operator-a" });
-  const confirmed = cosignCaseConfirmation(ports, staffIdentity, "tenant-1", "rv-2", "case-2", { cosignedByPrincipalRef: "operator-b" });
+  recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", fixtureUuid("rv-2"), "case-2", { recordedByPrincipalRef: "operator-a" });
+  const confirmed = cosignCaseConfirmation(ports, staffIdentity, "tenant-1", fixtureUuid("rv-2"), "case-2", { cosignedByPrincipalRef: "operator-b" });
 
   assert.equal(confirmed.recordedByRef, "operator-a");
   assert.equal(confirmed.cosignedByRef, "operator-b");
 
-  const events = ledger.listByAggregate("tenant-1", "Revocation", "rv-2");
+  const events = ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-2"));
   const confirmedEvent = events.find((e) => e.eventType === "REVOCATION_CONFIRMED");
   assert.ok(confirmedEvent);
   assert.equal(confirmedEvent?.recordedByRef, "operator-a");

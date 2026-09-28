@@ -17,7 +17,7 @@ import { loadRecoveryHandlePolicyConfig } from "../modules/revocation/recovery-h
 import { loadInvitationHandlePolicyConfig } from "../modules/invitation/invitation-handle-policy.config.ts";
 import { loadManageHandlePolicyConfig } from "../modules/revocation/manage-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
-import { attestHumanAssistedVerification } from "../modules/revocation/revocation.ts";
+import { RH3_DEV_CASE_REF, seedRh3DevCase } from "./dev-rh3-seed.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
   LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY,
@@ -122,49 +122,8 @@ const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, po
 // RH3 completo (RC1 abierto + RH2 ya atestado) para poder probar record_case_confirmation a
 // mano sin repetir HTTP para RC1/RH2 (fuera de alcance de este slice). Cadena/decisión propias
 // (RH3_*), separadas de MGMT_* de arriba, para no interferir con el flujo de gestión.
-const RH3_CHAIN_REF = "chain-dev-rh3";
-const RH3_CONSENT_ID = "consent-dev-rh3-001";
-const RH3_CASE_REF = "case-dev-rh3-001";
-const RH3_REVOCATION_REF = "rv-dev-rh3-001";
-ports.decision.repo.save({
-  consentId: RH3_CONSENT_ID,
-  tenantId: TENANT_ID,
-  contextRef: LECTORPRO_BETA_CONFIG.contextRef,
-  productRef: LECTORPRO_BETA_CONFIG.productRef,
-  subjectRef: "dev-rh3-subject@example.invalid",
-  decisionMakerRef: "dm:dev-rh3",
-  invitationRef: "inv-dev-rh3-seed",
-  verificationRef: "ver-dev-rh3-seed",
-  chainRef: RH3_CHAIN_REF,
-  state: "GRANTED",
-  purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
-  priorStepsComplete: true,
-  stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
-  receiptRef: "receipt-dev-rh3-001",
-});
-revocationPorts.rightsCase.rightsCaseRepo.save({
-  caseRef: RH3_CASE_REF,
-  tenantId: TENANT_ID,
-  chainRef: RH3_CHAIN_REF,
-  revokedDecisionRef: RH3_CONSENT_ID,
-  status: "OPEN",
-});
-revocationPorts.revocation.revocationRepo.save({
-  revocationRef: RH3_REVOCATION_REF,
-  tenantId: TENANT_ID,
-  chainRef: RH3_CHAIN_REF,
-  caseRef: RH3_CASE_REF,
-  status: "REQUESTED",
-});
-attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, RH3_REVOCATION_REF, RH3_CASE_REF);
-revocationPorts.rightsCase.rightsCaseRepo.save({
-  caseRef: RH3_CASE_REF,
-  tenantId: TENANT_ID,
-  chainRef: RH3_CHAIN_REF,
-  revokedDecisionRef: RH3_CONSENT_ID,
-  status: "IN_VERIFICATION",
-  revocationRef: RH3_REVOCATION_REF,
-});
+const RH3_CASE_REF = RH3_DEV_CASE_REF;
+seedRh3DevCase(ports, revocationPorts, TENANT_ID);
 // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos 2026-09-28 opción (ii)).
 const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
 

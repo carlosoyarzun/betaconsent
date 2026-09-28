@@ -10,6 +10,7 @@
 // TEST-CNS-637..644.
 
 import test from "node:test";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -199,7 +200,7 @@ function postConfirmation(baseUrl: string, opts: ConfirmOpts): Promise<Response>
 }
 
 test("TEST-CNS-637: sin sesión CASE (cookie ausente, CSRF válido) -> 404 uniforme (GRD-CM-01)", async () => {
-  const fx = await setUp({ chainRef: "chain-637", caseRef: "case-637", revocationRef: "rv-637" });
+  const fx = await setUp({ chainRef: "chain-637", caseRef: "case-637", revocationRef: fixtureUuid("rv-637") });
   try {
     // CSRF double-submit válido (cookie == header) pero SIN __Host-cns-case: GRD-CM-10 pasa,
     // GRD-CM-01 (sin sesión CASE) es lo que se está probando aquí.
@@ -212,7 +213,7 @@ test("TEST-CNS-637: sin sesión CASE (cookie ausente, CSRF válido) -> 404 unifo
 });
 
 test("TEST-CNS-638: sesión CASE con rol APPROVER (no RIGHTS_OPERATOR) -> ERR-CM-10 (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-638", caseRef: "case-638", revocationRef: "rv-638" });
+  const fx = await setUp({ chainRef: "chain-638", caseRef: "case-638", revocationRef: fixtureUuid("rv-638") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-03" });
     assert.equal(login.res.status, 200);
@@ -233,7 +234,7 @@ test("TEST-CNS-638: sesión CASE con rol APPROVER (no RIGHTS_OPERATOR) -> ERR-CM
 });
 
 test("TEST-CNS-639: /__dev/staff-login ausente fuera de LOCAL -> 404 (GRD-CM-13)", async () => {
-  const fx = await setUp({ chainRef: "chain-639", caseRef: "case-639", revocationRef: "rv-639", environment: "DEV" });
+  const fx = await setUp({ chainRef: "chain-639", caseRef: "case-639", revocationRef: fixtureUuid("rv-639"), environment: "DEV" });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
     assert.equal(login.res.status, 404);
@@ -243,7 +244,7 @@ test("TEST-CNS-639: /__dev/staff-login ausente fuera de LOCAL -> 404 (GRD-CM-13)
 });
 
 test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de RecordCaseConfirmationRequest -> 422 rechazado, NUNCA persistido ni usado (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-640", caseRef: "case-640", revocationRef: "rv-640" });
+  const fx = await setUp({ chainRef: "chain-640", caseRef: "case-640", revocationRef: fixtureUuid("rv-640") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
     const res = await postConfirmation(fx.baseUrl, {
@@ -274,7 +275,7 @@ test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de
 });
 
 test("TEST-CNS-645: body limpio (sin recordedByRef) -> recordedByRef persistido es SIEMPRE el de la sesión CASE, nunca uno del cliente (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-645", caseRef: "case-645", revocationRef: "rv-645" });
+  const fx = await setUp({ chainRef: "chain-645", caseRef: "case-645", revocationRef: fixtureUuid("rv-645") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
     const res = await postConfirmation(fx.baseUrl, {
@@ -298,7 +299,7 @@ test("TEST-CNS-645: body limpio (sin recordedByRef) -> recordedByRef persistido 
 });
 
 test("TEST-CNS-646: repetir la misma confirmación (mismo operador, mismo caso) es idempotente — no duplica el registro ni emite un segundo evento", async () => {
-  const fx = await setUp({ chainRef: "chain-646", caseRef: "case-646", revocationRef: "rv-646" });
+  const fx = await setUp({ chainRef: "chain-646", caseRef: "case-646", revocationRef: fixtureUuid("rv-646") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
 
@@ -343,7 +344,7 @@ test("TEST-CNS-646: repetir la misma confirmación (mismo operador, mismo caso) 
 });
 
 test("TEST-CNS-641: CSRF/Origin incorrecto -> 403 CSRF_REJECTED (GRD-CM-10)", async () => {
-  const fx = await setUp({ chainRef: "chain-641", caseRef: "case-641", revocationRef: "rv-641" });
+  const fx = await setUp({ chainRef: "chain-641", caseRef: "case-641", revocationRef: fixtureUuid("rv-641") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
     const res = await postConfirmation(fx.baseUrl, {
@@ -361,7 +362,7 @@ test("TEST-CNS-641: CSRF/Origin incorrecto -> 403 CSRF_REJECTED (GRD-CM-10)", as
 });
 
 test("TEST-CNS-642: caseRef del path que no coincide con la sesión CASE -> 404 uniforme (contracts/openapi CaseRef)", async () => {
-  const fx = await setUp({ chainRef: "chain-642", caseRef: "case-642", revocationRef: "rv-642" });
+  const fx = await setUp({ chainRef: "chain-642", caseRef: "case-642", revocationRef: fixtureUuid("rv-642") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
     const res = await postConfirmation(fx.baseUrl, {
@@ -382,7 +383,7 @@ test("TEST-CNS-643: dotación insuficiente (<4 personas) -> ERR-RC-10 (GRD-RC-15
     { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-03", role: "APPROVER" },
   ];
-  const fx = await setUp({ chainRef: "chain-643", caseRef: "case-643", revocationRef: "rv-643", roster: shortRoster });
+  const fx = await setUp({ chainRef: "chain-643", caseRef: "case-643", revocationRef: fixtureUuid("rv-643"), roster: shortRoster });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
     const res = await postConfirmation(fx.baseUrl, {
@@ -402,7 +403,7 @@ test("TEST-CNS-643: dotación insuficiente (<4 personas) -> ERR-RC-10 (GRD-RC-15
 });
 
 test("TEST-CNS-644: camino feliz — RC1 abierto -> RH2 atestado -> RH3 paso 1 registrado por HTTP; respuesta válida contra CaseConfirmationAck", async () => {
-  const fx = await setUp({ chainRef: "chain-644", caseRef: "case-644", revocationRef: "rv-644" });
+  const fx = await setUp({ chainRef: "chain-644", caseRef: "case-644", revocationRef: fixtureUuid("rv-644") });
   try {
     const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-02" });
     assert.equal(login.res.status, 200);

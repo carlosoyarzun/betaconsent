@@ -1156,6 +1156,7 @@ paths:
       x-errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-RV-20, ERR-RV-04, ERR-RC-10, ERR-CM-01, ERR-CM-10]
       x-errors-note: "ERR-RC-05 huérfano: su guard GRD-RC-12 se quitó de RH3 por OPEN-RV-10; se conserva hasta que Carlos lo resuelva. ERR-RV-20 = RH3_NOT_BOUND_TO_RH2 (sin RH2/RH2v ATTESTED de la misma revocationRef y caseRef posterior al último RC3/RC3a)."
       x-idempotency: "revocationRef"
+      x-changeNote: "2026-09-28 (Carlos, opción (a)): CaseConfirmationAck.revocationState admite APPLIED; tras la co-firma con R4 exitoso la ack devuelve APPLIED (CA-127)."
       x-pending: ["OPEN-RV-10", "LD-03"]
       security: [{caseSession: []}]
       parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -1166,7 +1167,7 @@ paths:
             schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CosignCaseConfirmationRequest'}
       responses:
         '200':
-          description: Co-firma registrada; revocationState = CONFIRMED si se cumplen los cuatro ojos.
+          description: Co-firma registrada; revocationState = APPLIED si se cumplen los cuatro ojos y R4 se aplica de forma síncrona (IT0); si R4 falla, error propagado y Revocation en CONFIRMED.
           content:
             application/json:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}

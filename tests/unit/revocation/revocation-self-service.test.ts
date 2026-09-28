@@ -4,6 +4,7 @@
 // TEST-CNS-589..591, TEST-CNS-598 (SEC-CNS-014, FINDING P1-01).
 
 import test from "node:test";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
 import {
@@ -22,6 +23,7 @@ import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
+import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import type { ConsentDecisionState } from "../../../src/server/ports/consent-decision-repository.port.ts";
 
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
@@ -67,59 +69,61 @@ function seedGrantedDecision(
 
 test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED -> APPLIED (R4 síncrono) y encola un solo CONSENT_REVOKED", () => {
   const ports = makePorts();
+  const REV = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f75";
+  const DECISION = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f76";
   const requested = requestRevocation(ports, "tenant-1", {
-    revocationRef: "rv-575",
+    revocationRef: REV,
     chainRef: "chain-575",
-    revokedDecisionRef: "consent-575",
+    revokedDecisionRef: DECISION,
   });
   assert.equal(requested.status, "REQUESTED");
 
-  const verified = verifyRevocationOtp(ports, "tenant-1", "rv-575", "ver-575");
+  const verified = verifyRevocationOtp(ports, "tenant-1", REV, "ver-575");
   assert.equal(verified.status, "VERIFIED");
 
-  const applied = confirmRevocation(ports, "tenant-1", "rv-575");
+  const applied = confirmRevocation(ports, "tenant-1", REV);
   assert.equal(applied.status, "APPLIED");
 
-  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-575");
-  const revokedEvents = events.filter((e) => e.eventType === "CONSENT_REVOKED");
-  assert.equal(revokedEvents.length, 1);
+  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", REV);
   assert.deepEqual(
     events.map((e) => e.eventType),
-    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
   );
+  // CA-127: evidencia válida contra el schema; authPath OTP derivado del registro (R2).
+  assertRevocationEvidence(events, { revocationRef: REV, authPath: "OTP", revokedDecisionRef: DECISION });
 });
 
 test("TEST-CNS-576: R1 es idempotente por revocationRef (una sola solicitud abierta, sin duplicar el evento)", () => {
   const ports = makePorts();
-  const input = { revocationRef: "rv-576", chainRef: "chain-576", revokedDecisionRef: "consent-576" };
+  const input = { revocationRef: fixtureUuid("rv-576"), chainRef: "chain-576", revokedDecisionRef: fixtureUuid("consent-576") };
   requestRevocation(ports, "tenant-1", input);
   requestRevocation(ports, "tenant-1", input);
-  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-576");
+  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-576"));
   assert.equal(events.filter((e) => e.eventType === "REVOCATION_REQUESTED").length, 1);
 });
 
 test("TEST-CNS-577: R8 desde REQUESTED, VERIFIED o CONFIRMED retira la solicitud (FAILED, WITHDRAWN_BY_REQUESTER)", () => {
   const ports = makePorts();
-  requestRevocation(ports, "tenant-1", { revocationRef: "rv-577", chainRef: "chain-577", revokedDecisionRef: "consent-577" });
-  const withdrawn = withdrawRevocation(ports, "tenant-1", "rv-577");
+  requestRevocation(ports, "tenant-1", { revocationRef: fixtureUuid("rv-577"), chainRef: "chain-577", revokedDecisionRef: fixtureUuid("consent-577") });
+  const withdrawn = withdrawRevocation(ports, "tenant-1", fixtureUuid("rv-577"));
   assert.equal(withdrawn.status, "FAILED");
   assert.equal(withdrawn.reasonCode, "WITHDRAWN_BY_REQUESTER");
 });
 
 test("TEST-CNS-578: R8 sobre una Revocation ya APPLIED no tiene efecto (GRD-RV-15, R4 ya ganó la carrera)", () => {
   const ports = makePorts();
-  requestRevocation(ports, "tenant-1", { revocationRef: "rv-578", chainRef: "chain-578", revokedDecisionRef: "consent-578" });
-  verifyRevocationOtp(ports, "tenant-1", "rv-578", "ver-578");
-  confirmRevocation(ports, "tenant-1", "rv-578");
+  requestRevocation(ports, "tenant-1", { revocationRef: fixtureUuid("rv-578"), chainRef: "chain-578", revokedDecisionRef: fixtureUuid("consent-578") });
+  verifyRevocationOtp(ports, "tenant-1", fixtureUuid("rv-578"), "ver-578");
+  confirmRevocation(ports, "tenant-1", fixtureUuid("rv-578"));
   assert.throws(
-    () => withdrawRevocation(ports, "tenant-1", "rv-578"),
+    () => withdrawRevocation(ports, "tenant-1", fixtureUuid("rv-578")),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-06",
   );
 });
 
 test("TEST-CNS-579: issueRecoveryLinkBearer (RV0 fuente BEARER) emite RECOVERY_TOKEN_ISSUED sin transicionar la Revocation (kind EMISSION)", () => {
   const ports = makePorts();
-  const result = issueRecoveryLinkBearer(ports, "tenant-1", "chain-579", "consent-579", "LIMIT_REACHED");
+  const result = issueRecoveryLinkBearer(ports, "tenant-1", "chain-579", fixtureUuid("consent-579"), "LIMIT_REACHED");
   assert.equal(result.sent, true);
   const events = ports.ledger.listByAggregate("tenant-1", "Revocation", "chain-579");
   assert.equal(events[0]?.eventType, "RECOVERY_TOKEN_ISSUED");
@@ -128,28 +132,31 @@ test("TEST-CNS-579: issueRecoveryLinkBearer (RV0 fuente BEARER) emite RECOVERY_T
 test("TEST-CNS-580: un revocationRef inexistente en R2/R3/R8 da 404 uniforme (ERR-CM-01), mismo criterio que RH2/RH3", () => {
   const ports = makePorts();
   assert.throws(
-    () => verifyRevocationOtp(ports, "tenant-1", "rv-missing", "ver-x"),
+    () => verifyRevocationOtp(ports, "tenant-1", fixtureUuid("rv-missing"), "ver-x"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
   );
 });
 
 test("TEST-CNS-589: revokeWithRecoveryLink sin Revocation abierta (token fresco) recorre R1r+R2r+R3r hasta CONFIRMED (APPLIED síncrono, GRD-RV-06)", () => {
   const ports = makePorts();
-  seedGrantedDecision(ports, "tenant-1", "chain-589b", "consent-589b");
-  issueRecoveryLinkBearer(ports, "tenant-1", "chain-589b", "consent-589b", "REQUESTER_ASKED");
+  const DECISION_589 = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f89";
+  seedGrantedDecision(ports, "tenant-1", "chain-589b", DECISION_589);
+  issueRecoveryLinkBearer(ports, "tenant-1", "chain-589b", DECISION_589, "REQUESTER_ASKED");
   const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
   const token = sent.recoveryPath.replace("/r/", "");
   const resolved = resolveRecoveryTokenForRedeem(ports, token);
   assert.ok(resolved);
 
-  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-589b", "consent-589b", resolved!.tokenHash);
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-589b", DECISION_589, resolved!.tokenHash);
   assert.equal(outcome.kind, "CONFIRMED");
   const revocationRef = (outcome as { kind: "CONFIRMED"; revocationRef: string }).revocationRef;
   const events = ports.ledger.listByAggregate("tenant-1", "Revocation", revocationRef);
   assert.deepEqual(
     events.map((e) => e.eventType),
-    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
   );
+  // CA-127: evidencia válida contra el schema; authPath RECOVERY/CHANNEL_LINK derivado del registro (R2r).
+  assertRevocationEvidence(events, { revocationRef, authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", revokedDecisionRef: DECISION_589 });
 
   // GRD-RV-06: el token consumido ya no resuelve (un solo uso).
   assert.equal(resolveRecoveryTokenForRedeem(ports, token), null);
@@ -157,30 +164,30 @@ test("TEST-CNS-589: revokeWithRecoveryLink sin Revocation abierta (token fresco)
 
 test("TEST-CNS-590: revokeWithRecoveryLink con un token inválido/inexistente responde UNIFORM (ERR-RV-05), sin crear ninguna Revocation", () => {
   const ports = makePorts();
-  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-590b", "consent-590b", "hash-que-no-existe");
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-590b", fixtureUuid("consent-590b"), "hash-que-no-existe");
   assert.deepEqual(outcome, { kind: "UNIFORM" });
 });
 
 test("TEST-CNS-591: revokeWithRecoveryLink sobre una Revocation ya CONFIRMED (antes de que R4 la aplique) responde R11 NOOP: no consume el token ni emite evento", () => {
   const ports = makePorts();
-  seedGrantedDecision(ports, "tenant-1", "chain-595", "consent-595");
+  seedGrantedDecision(ports, "tenant-1", "chain-595", fixtureUuid("consent-595"));
   ports.revocationRepo.save({
-    revocationRef: "rv-595",
+    revocationRef: fixtureUuid("rv-595"),
     tenantId: "tenant-1",
     chainRef: "chain-595",
-    revokedDecisionRef: "consent-595",
+    revokedDecisionRef: fixtureUuid("consent-595"),
     status: "CONFIRMED",
   });
-  issueRecoveryLinkBearer(ports, "tenant-1", "chain-595", "consent-595", "REQUESTER_ASKED");
+  issueRecoveryLinkBearer(ports, "tenant-1", "chain-595", fixtureUuid("consent-595"), "REQUESTER_ASKED");
   const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
   const token = sent.recoveryPath.replace("/r/", "");
   const resolved = resolveRecoveryTokenForRedeem(ports, token);
   assert.ok(resolved);
 
-  const before = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-595").length;
-  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-595", "consent-595", resolved!.tokenHash);
+  const before = ports.ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-595")).length;
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-595", fixtureUuid("consent-595"), resolved!.tokenHash);
   assert.deepEqual(outcome, { kind: "IN_PROGRESS" });
-  const after = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-595").length;
+  const after = ports.ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-595")).length;
   assert.equal(after, before);
 
   // SEC N-05: R11 nunca consume el token (sigue resolviendo).

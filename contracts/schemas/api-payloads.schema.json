@@ -993,7 +993,8 @@
         "revocationState": {
           "enum": [
             "VERIFIED",
-            "CONFIRMED"
+            "CONFIRMED",
+            "APPLIED"
           ]
         }
       },
@@ -1001,7 +1002,8 @@
         "cosign",
         "revocationState"
       ],
-      "description": "Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17)."
+      "description": "Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Tras la co-firma, R4 se aplica de forma síncrona en IT0 y la ack devuelve APPLIED; si R4 falla el error se propaga y la Revocation queda CONFIRMED.",
+      "x-changeNote": "2026-09-28 (Carlos, opción (a)): revocationState admite APPLIED. Tras la co-firma RH3 con R4 exitoso la ack devuelve APPLIED; si R4 falla se mantiene el comportamiento anterior (error propagado, estado CONFIRMED). CA-127."
     },
     "CloseRightsCaseRequest": {
       "type": "object",

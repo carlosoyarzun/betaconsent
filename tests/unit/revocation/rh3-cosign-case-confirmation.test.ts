@@ -6,6 +6,7 @@
 // TEST-CNS-660..666.
 
 import test from "node:test";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
 import {
@@ -25,6 +26,7 @@ import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { validateLedgerEventPayload } from "../../contract/schema-lite.ts";
+import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 
 function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
   return {
@@ -46,11 +48,14 @@ const FULL_ROSTER: readonly StaffPrincipal[] = [
 ];
 const staff = createInMemoryStaffIdentityAdapter(FULL_ROSTER);
 
+/** Ref UUIDv4 sintética del ciclo de decisión revocado (fuente de CONSENT_REVOKED.revokedDecisionRef). */
+const DECISION_UUID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
 function seed(ref: string, opts: { record?: boolean } = {}) {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
   const ports = makePorts(revocationRepo, ledger);
-  revocationRepo.save({ revocationRef: ref, tenantId: "tenant-1", chainRef: `chain-${ref}`, caseRef: `case-${ref}`, status: "REQUESTED" });
+  revocationRepo.save({ revocationRef: ref, tenantId: "tenant-1", chainRef: `chain-${ref}`, caseRef: `case-${ref}`, revokedDecisionRef: DECISION_UUID, status: "REQUESTED" });
   attestHumanAssistedVerification(ports, "tenant-1", ref, `case-${ref}`);
   if (opts.record !== false) {
     recordCaseConfirmationPendingCosign(ports, staff, "tenant-1", ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
@@ -79,41 +84,41 @@ function revokedEvents(ledger: LedgerPort, ref: string) {
 test("TEST-CNS-660: cosign sin RH2/RH2v ATTESTED previa -> ERR-RV-20 (GRD-RV-10)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  revocationRepo.save({ revocationRef: "rv-660", tenantId: "tenant-1", chainRef: "chain-660", caseRef: "case-660", status: "REQUESTED" });
-  const code = errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", "rv-660", "case-660", { cosignedByPrincipalRef: "staff-synthetic-02" }));
+  revocationRepo.save({ revocationRef: fixtureUuid("rv-660"), tenantId: "tenant-1", chainRef: "chain-660", caseRef: "case-660", status: "REQUESTED" });
+  const code = errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", fixtureUuid("rv-660"), "case-660", { cosignedByPrincipalRef: "staff-synthetic-02" }));
   assert.equal(code, "ERR-RV-20");
 });
 
 test("TEST-CNS-661: cosign con revocationRef de otro tenant o caseRef distinto -> ERR-CM-01 (GRD-CM-01, tenant_id)", () => {
-  const { ports } = seed("rv-661");
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", "rv-661", "case-rv-661", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-661", "case-otro", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+  const { ports } = seed(fixtureUuid("rv-661"));
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", fixtureUuid("rv-661"), `case-${fixtureUuid("rv-661")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-661"), "case-otro", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
 });
 
 test("TEST-CNS-662: cosign sin confirmación previa registrada (paso 1) -> ERR-RV-18, sin efecto", () => {
-  const { ports, revocationRepo, ledger } = seed("rv-662", { record: false });
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-662", "case-rv-662", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RV-18");
-  assert.equal(revocationRepo.findByRef("tenant-1", "rv-662")?.status, "VERIFIED");
-  assert.equal(confirmedEvents(ledger, "rv-662").length, 0);
+  const { ports, revocationRepo, ledger } = seed(fixtureUuid("rv-662"), { record: false });
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-662"), `case-${fixtureUuid("rv-662")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RV-18");
+  assert.equal(revocationRepo.findByRef("tenant-1", fixtureUuid("rv-662"))?.status, "VERIFIED");
+  assert.equal(confirmedEvents(ledger, fixtureUuid("rv-662")).length, 0);
 });
 
 test("TEST-CNS-663: cosign por la misma persona que registró -> ERR-RV-18 (cosignedByRef <> recordedByRef), sin efecto", () => {
-  const { ports, revocationRepo, ledger } = seed("rv-663");
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-663", "case-rv-663", { cosignedByPrincipalRef: "staff-synthetic-01" })), "ERR-RV-18");
-  const stored = revocationRepo.findByRef("tenant-1", "rv-663");
+  const { ports, revocationRepo, ledger } = seed(fixtureUuid("rv-663"));
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-663"), `case-${fixtureUuid("rv-663")}`, { cosignedByPrincipalRef: "staff-synthetic-01" })), "ERR-RV-18");
+  const stored = revocationRepo.findByRef("tenant-1", fixtureUuid("rv-663"));
   assert.equal(stored?.status, "VERIFIED");
   assert.equal(stored?.cosignedByRef, undefined);
-  assert.equal(confirmedEvents(ledger, "rv-663").length, 0);
+  assert.equal(confirmedEvents(ledger, fixtureUuid("rv-663")).length, 0);
 });
 
 test("TEST-CNS-664: dotación insuficiente -> ERR-RC-10 (GRD-RC-15), fail-closed", () => {
-  const { ports } = seed("rv-664");
+  const { ports } = seed(fixtureUuid("rv-664"));
   const shortStaff = createInMemoryStaffIdentityAdapter([
     { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-03", role: "APPROVER" },
   ]);
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", "rv-664", "case-rv-664", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RC-10");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", fixtureUuid("rv-664"), `case-${fixtureUuid("rv-664")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RC-10");
 });
 
 /** Refs UUIDv4 sintéticas: el schema exige Ref = UUIDv4 opaco (common.schema.json). Las refs
@@ -134,7 +139,7 @@ test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recor
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
   const ports = makePorts(revocationRepo, ledger);
-  revocationRepo.save({ revocationRef: REV_UUID, tenantId: "tenant-1", chainRef: "chain-665", caseRef: "case-665", status: "REQUESTED" });
+  revocationRepo.save({ revocationRef: REV_UUID, tenantId: "tenant-1", chainRef: "chain-665", caseRef: "case-665", revokedDecisionRef: DECISION_UUID, status: "REQUESTED" });
   attestHumanAssistedVerification(ports, "tenant-1", REV_UUID, "case-665");
   recordCaseConfirmationPendingCosign(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { recordedByPrincipalRef: OP_A_UUID });
 
@@ -154,39 +159,45 @@ test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recor
 });
 
 test("TEST-CNS-666: cosign idempotente por revocationRef — repetir no duplica REVOCATION_CONFIRMED", () => {
-  const { ports, ledger } = seed("rv-666");
-  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
-  const again = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const { ports, ledger } = seed(fixtureUuid("rv-666"));
+  cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), `case-${fixtureUuid("rv-666")}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const again = cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), `case-${fixtureUuid("rv-666")}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
   assert.equal(again.status, "APPLIED");
-  assert.equal(confirmedEvents(ledger, "rv-666").length, 1);
-  assert.equal(revokedEvents(ledger, "rv-666").length, 1);
+  assert.equal(confirmedEvents(ledger, fixtureUuid("rv-666")).length, 1);
+  assert.equal(revokedEvents(ledger, fixtureUuid("rv-666")).length, 1);
 });
 
+const REV_676 = "7a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f11";
+const REV_677 = "7a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f12";
+const REV_677B = "7a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f13";
+
 test("TEST-CNS-676: cosign exitoso aplica R4 síncrono -> APPLIED con un único CONSENT_REVOKED tras REVOCATION_CONFIRMED (IT0, Carlos 2026-09-28)", () => {
-  const { ports, revocationRepo, ledger } = seed("rv-676");
-  const applied = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-676", "case-rv-676", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const { ports, revocationRepo, ledger } = seed(REV_676);
+  const applied = cosignCaseConfirmation(ports, staff, "tenant-1", REV_676, `case-${REV_676}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
   assert.equal(applied.status, "APPLIED");
-  assert.equal(revocationRepo.findByRef("tenant-1", "rv-676")?.status, "APPLIED");
-  const types = ledger.listByAggregate("tenant-1", "Revocation", "rv-676").map((e) => e.eventType);
-  assert.deepEqual(types.slice(-2), ["REVOCATION_CONFIRMED", "CONSENT_REVOKED"]);
-  assert.equal(revokedEvents(ledger, "rv-676").length, 1);
+  assert.equal(revocationRepo.findByRef("tenant-1", REV_676)?.status, "APPLIED");
+  const events = ledger.listByAggregate("tenant-1", "Revocation", REV_676);
+  assert.deepEqual(events.slice(-3).map((e) => e.eventType), ["REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"]);
+  assert.equal(revokedEvents(ledger, REV_676).length, 1);
+  // RH3 = caso humano: authPath RECOVERY / HUMAN_ASSISTED, derivado del registro (RH2); evidencia válida contra el schema.
+  assertRevocationEvidence(events, { revocationRef: REV_676, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED", revokedDecisionRef: DECISION_UUID });
 });
 
 test("TEST-CNS-677: repetir cosign tras APPLIED no reaplica ni duplica eventos; CONFIRMED sin aplicar se reintenta sin reemitir REVOCATION_CONFIRMED", () => {
-  const { ports, revocationRepo, ledger } = seed("rv-677");
-  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-677", "case-rv-677", { cosignedByPrincipalRef: "staff-synthetic-02" });
-  const before = ledger.listByAggregate("tenant-1", "Revocation", "rv-677").length;
-  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-677", "case-rv-677", { cosignedByPrincipalRef: "staff-synthetic-02" });
-  assert.equal(ledger.listByAggregate("tenant-1", "Revocation", "rv-677").length, before);
+  const { ports, ledger } = seed(REV_677);
+  cosignCaseConfirmation(ports, staff, "tenant-1", REV_677, `case-${REV_677}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const before = ledger.listByAggregate("tenant-1", "Revocation", REV_677).length;
+  cosignCaseConfirmation(ports, staff, "tenant-1", REV_677, `case-${REV_677}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(ledger.listByAggregate("tenant-1", "Revocation", REV_677).length, before);
+  assertRevocationEvidence(ledger.listByAggregate("tenant-1", "Revocation", REV_677), { revocationRef: REV_677, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
 
   // Simula R4 fallido: CONFIRMED con co-firma pero sin aplicar.
-  const { ports: p2, revocationRepo: repo2, ledger: l2 } = seed("rv-677b");
-  const rec = repo2.findByRef("tenant-1", "rv-677b");
+  const { ports: p2, revocationRepo: repo2, ledger: l2 } = seed(REV_677B);
+  const rec = repo2.findByRef("tenant-1", REV_677B);
   assert.ok(rec);
   repo2.save({ ...rec, status: "CONFIRMED", cosignedByRef: "staff-synthetic-02" });
-  const retried = cosignCaseConfirmation(p2, staff, "tenant-1", "rv-677b", "case-rv-677b", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const retried = cosignCaseConfirmation(p2, staff, "tenant-1", REV_677B, `case-${REV_677B}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
   assert.equal(retried.status, "APPLIED");
-  assert.equal(confirmedEvents(l2, "rv-677b").length, 0);
-  assert.equal(revokedEvents(l2, "rv-677b").length, 1);
-  void revocationRepo;
+  assert.equal(confirmedEvents(l2, REV_677B).length, 0);
+  assertRevocationEvidence(l2.listByAggregate("tenant-1", "Revocation", REV_677B), { revocationRef: REV_677B, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
 });

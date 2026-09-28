@@ -5,6 +5,7 @@
 // TEST-CNS-630..636.
 
 import test from "node:test";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
 import { attestHumanAssistedVerification, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
@@ -50,12 +51,12 @@ function seedVerifiedRevocation(revocationRepo: RevocationRepositoryPort, ledger
 
 test("TEST-CNS-630: record_case_confirmation sin RH2/RH2v ATTESTED previa -> ERR-RV-20 (GRD-RV-10)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
-  revocationRepo.save({ revocationRef: "rv-630", tenantId: "tenant-1", chainRef: "chain-630", caseRef: "case-630", status: "REQUESTED" });
+  revocationRepo.save({ revocationRef: fixtureUuid("rv-630"), tenantId: "tenant-1", chainRef: "chain-630", caseRef: "case-630", status: "REQUESTED" });
   const ledger = createInMemoryLedgerAdapter();
 
   assert.throws(
     () =>
-      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-1", "rv-630", "case-630", {
+      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-1", fixtureUuid("rv-630"), "case-630", {
         recordedByPrincipalRef: "staff-synthetic-01",
       }),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-RV-20",
@@ -65,11 +66,11 @@ test("TEST-CNS-630: record_case_confirmation sin RH2/RH2v ATTESTED previa -> ERR
 test("TEST-CNS-631: revocationRef/caseRef de otro tenant -> ERR-CM-01 (GRD-CM-01)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  seedVerifiedRevocation(revocationRepo, ledger, "rv-631", "case-631", "tenant-a");
+  seedVerifiedRevocation(revocationRepo, ledger, fixtureUuid("rv-631"), "case-631", "tenant-a");
 
   assert.throws(
     () =>
-      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-b", "rv-631", "case-631", {
+      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-b", fixtureUuid("rv-631"), "case-631", {
         recordedByPrincipalRef: "staff-synthetic-01",
       }),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
@@ -79,11 +80,11 @@ test("TEST-CNS-631: revocationRef/caseRef de otro tenant -> ERR-CM-01 (GRD-CM-01
 test("TEST-CNS-632: caseRef que no coincide con el de la Revocation -> ERR-CM-01 (GRD-CM-01)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  seedVerifiedRevocation(revocationRepo, ledger, "rv-632", "case-632");
+  seedVerifiedRevocation(revocationRepo, ledger, fixtureUuid("rv-632"), "case-632");
 
   assert.throws(
     () =>
-      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-1", "rv-632", "case-otro", {
+      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-1", fixtureUuid("rv-632"), "case-otro", {
         recordedByPrincipalRef: "staff-synthetic-01",
       }),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
@@ -93,7 +94,7 @@ test("TEST-CNS-632: caseRef que no coincide con el de la Revocation -> ERR-CM-01
 test("TEST-CNS-633: dotación <4 personas (menos de 2 RIGHTS_OPERATOR) -> ERR-RC-10 (GRD-RC-15), fail-closed", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  seedVerifiedRevocation(revocationRepo, ledger, "rv-633", "case-633");
+  seedVerifiedRevocation(revocationRepo, ledger, fixtureUuid("rv-633"), "case-633");
   const shortRoster: readonly StaffPrincipal[] = [
     { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-03", role: "APPROVER" },
@@ -102,21 +103,21 @@ test("TEST-CNS-633: dotación <4 personas (menos de 2 RIGHTS_OPERATOR) -> ERR-RC
 
   assert.throws(
     () =>
-      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(shortRoster), "tenant-1", "rv-633", "case-633", {
+      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(shortRoster), "tenant-1", fixtureUuid("rv-633"), "case-633", {
         recordedByPrincipalRef: "staff-synthetic-01",
       }),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-RC-10",
   );
 
   // El caso sigue abierto: la Revocation conserva VERIFIED (failClosed: "nunca FAILED").
-  const stillVerified = revocationRepo.findByRef("tenant-1", "rv-633");
+  const stillVerified = revocationRepo.findByRef("tenant-1", fixtureUuid("rv-633"));
   assert.equal(stillVerified?.status, "VERIFIED");
 });
 
 test("TEST-CNS-634: dotación con reutilización de rol (un mismo principal como único RIGHTS_OPERATOR y único aprobador) -> ERR-RC-10 (GRD-RC-15)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  seedVerifiedRevocation(revocationRepo, ledger, "rv-634", "case-634");
+  seedVerifiedRevocation(revocationRepo, ledger, fixtureUuid("rv-634"), "case-634");
   const reusedRoster: readonly StaffPrincipal[] = [
     { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
@@ -125,7 +126,7 @@ test("TEST-CNS-634: dotación con reutilización de rol (un mismo principal como
 
   assert.throws(
     () =>
-      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(reusedRoster), "tenant-1", "rv-634", "case-634", {
+      recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(reusedRoster), "tenant-1", fixtureUuid("rv-634"), "case-634", {
         recordedByPrincipalRef: "staff-synthetic-01",
       }),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-RC-10",
@@ -135,9 +136,9 @@ test("TEST-CNS-634: dotación con reutilización de rol (un mismo principal como
 test("TEST-CNS-635: registro válido (paso 1) NO transiciona la Revocation ni emite REVOCATION_CONFIRMED (x-state-transition effect: none)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  seedVerifiedRevocation(revocationRepo, ledger, "rv-635", "case-635");
+  seedVerifiedRevocation(revocationRepo, ledger, fixtureUuid("rv-635"), "case-635");
 
-  const recorded = recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-1", "rv-635", "case-635", {
+  const recorded = recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), makeStaffIdentity(), "tenant-1", fixtureUuid("rv-635"), "case-635", {
     recordedByPrincipalRef: "staff-synthetic-01",
   });
 
@@ -145,23 +146,23 @@ test("TEST-CNS-635: registro válido (paso 1) NO transiciona la Revocation ni em
   assert.equal(recorded.recordedByRef, "staff-synthetic-01");
   assert.equal(recorded.cosignedByRef, undefined);
 
-  const stored = revocationRepo.findByRef("tenant-1", "rv-635");
+  const stored = revocationRepo.findByRef("tenant-1", fixtureUuid("rv-635"));
   assert.equal(stored?.status, "VERIFIED");
   assert.equal(stored?.recordedByRef, "staff-synthetic-01");
 
-  const confirmedEvents = ledger.listByAggregate("tenant-1", "Revocation", "rv-635").filter((e) => e.eventType === "REVOCATION_CONFIRMED");
+  const confirmedEvents = ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-635")).filter((e) => e.eventType === "REVOCATION_CONFIRMED");
   assert.equal(confirmedEvents.length, 0);
 });
 
 test("TEST-CNS-636: idempotente por revocationRef — un segundo registro (mismo operador) no revierte el estado ni falla", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  seedVerifiedRevocation(revocationRepo, ledger, "rv-636", "case-636");
+  seedVerifiedRevocation(revocationRepo, ledger, fixtureUuid("rv-636"), "case-636");
   const ports = makePorts(revocationRepo, ledger);
   const staffIdentity = makeStaffIdentity();
 
-  recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", "rv-636", "case-636", { recordedByPrincipalRef: "staff-synthetic-01" });
-  const second = recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", "rv-636", "case-636", { recordedByPrincipalRef: "staff-synthetic-01" });
+  recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", fixtureUuid("rv-636"), "case-636", { recordedByPrincipalRef: "staff-synthetic-01" });
+  const second = recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", fixtureUuid("rv-636"), "case-636", { recordedByPrincipalRef: "staff-synthetic-01" });
 
   assert.equal(second.status, "VERIFIED");
   assert.equal(second.recordedByRef, "staff-synthetic-01");

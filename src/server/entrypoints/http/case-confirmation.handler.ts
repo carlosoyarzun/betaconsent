@@ -201,11 +201,9 @@ export function handleCosignCaseConfirmation(
     const cosigned = cosignCaseConfirmation(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, {
       cosignedByPrincipalRef: session.principalRef,
     });
-    // CaseConfirmationAck.revocationState solo admite VERIFIED|CONFIRMED (contrato, sin APPLIED):
-    // R4 síncrono en IT0 por decisión de Carlos 2026-09-28 deja la Revocation en APPLIED, y la
-    // ack sigue devolviendo CONFIRMED hasta que el contrato se enmiende (FINDING reportado).
-    void cosigned;
-    return { status: 200, body: { cosign: "COSIGNED", revocationState: "CONFIRMED" } };
+    // CaseConfirmationAck.revocationState admite APPLIED (Carlos 2026-09-28, opción (a)): R4 síncrono
+    // en IT0. Si R4 falla, el error se propaga (catch de abajo) y la Revocation queda CONFIRMED.
+    return { status: 200, body: { cosign: "COSIGNED", revocationState: cosigned.status === "APPLIED" ? "APPLIED" : "CONFIRMED" } };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();

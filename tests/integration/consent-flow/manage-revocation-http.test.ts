@@ -10,6 +10,7 @@
 // TEST-CNS-581..TEST-CNS-585.
 
 import test from "node:test";
+import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -137,8 +138,10 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
   return { ports, revocationPorts, server, baseUrl, token: mgmtToken };
 }
 
+const CONSENT_581 = "581a3c52-8d4e-4a7b-9c21-0e5a7d3b9f81";
+
 test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> verificación REVOCATION -> R2 -> R3 llega a APPLIED; cadena del ledger consecutiva", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-581", "consent-581", "mgmt-token-581");
+  const { ports, server, baseUrl } = await setUp("chain-581", CONSENT_581, "mgmt-token-581");
   try {
     const redeemed = await fetch(`${baseUrl}/m/mgmt-token-581`, { redirect: "manual" });
     assert.equal(redeemed.status, 303);
@@ -200,10 +203,12 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
     const events = ports.decision.ledger.listByAggregate(TENANT_ID, "Revocation", r3Body.revocationRef);
     assert.deepEqual(
       events.map((e) => e.eventType),
-      ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+      ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
     );
     const sequences = events.map((e) => e.sequence).sort((a, b) => a - b);
-    assert.deepEqual(sequences, [1, 2, 3, 4]);
+    assert.deepEqual(sequences, [1, 2, 3, 4, 5]);
+    // CA-127: evidencia válida contra el schema; authPath OTP; receiptRef == el revocationRef mostrado como comprobante.
+    assertRevocationEvidence(events, { revocationRef: r3Body.revocationRef, authPath: "OTP", revokedDecisionRef: CONSENT_581 });
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }

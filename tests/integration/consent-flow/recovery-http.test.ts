@@ -17,6 +17,7 @@
 // tests/unit/revocation/revocation-self-service.test.ts).
 
 import test from "node:test";
+import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -182,8 +183,10 @@ function stripHtmlComments(html: string): string {
   return html.replace(/<!--[\s\S]*?-->/g, "");
 }
 
+const CONSENT_592 = "592a3c52-8d4e-4a7b-9c21-0e5a7d3b9f92";
+
 test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token} -> /recovery/confirm -> POST /recovery/revoke llega a CONFIRMED (R1r+R2r+R3r)", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-589", "consent-589", "mgmt-token-589");
+  const { revocationPorts, server, baseUrl } = await setUp("chain-589", CONSENT_592, "mgmt-token-589");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-589");
 
@@ -215,8 +218,10 @@ test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token
     const events = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", body.revocationRef);
     assert.deepEqual(
       events.map((e) => e.eventType),
-      ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+      ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
     );
+    // CA-127: evidencia válida contra el schema; RECOVERY/CHANNEL_LINK; receiptRef == comprobante mostrado.
+    assertRevocationEvidence(events, { revocationRef: body.revocationRef, authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", revokedDecisionRef: CONSENT_592 });
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
