@@ -16,6 +16,13 @@
 // solo lee la sesión ya creada por V1 (otp/request) para decidir si renderiza la pantalla o el
 // estado de error uniforme. Las transiciones (submit/resend/request de nuevo código) las
 // ejecuta verify.js contra los endpoints HTTP correspondientes.
+//
+// Fix (Carlos, probado en navegador con dev.ts): #resend-feedback es una región aria-live
+// nueva, sin frame/handoff que la defina, para anunciar el resultado de POST /otp/resend
+// (202/409) que antes no daba feedback. El texto que usa verify.js ("Te enviamos un nuevo
+// código." / mensaje de límite alcanzado) es [UX — borrador], no viene del handoff §3/§6; sin
+// cifra concreta (P-06 sin valor aprobado en SEC-CNS-006, igual que el resto del copy de esta
+// pantalla). Reportar a ravena-ux para que lo incorpore al handoff/Figma si corresponde.
 
 const HEAD = `<meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -57,8 +64,9 @@ export function renderVerifyPage(): string {
       </div>
     </div>
     <div class="lp-verify-resend">
-      <span>¿No recibiste el código?</span> <button type="button" class="lp-link" id="resend-btn">Reenviar código</button>
+      <span>¿No recibiste el código?</span> <button type="button" class="lp-link lp-verify-tap-target" id="resend-btn">Reenviar código</button>
     </div>
+    <div aria-live="polite" role="status" id="resend-feedback" hidden></div>
     <p>Puedes solicitarlo un número limitado de veces (P-06, valor pendiente de aprobación).</p>
     <button type="button" class="lp-btn lp-btn-primary lp-verify-cta" id="verify-btn" aria-disabled="false" aria-busy="false">Verificar</button>
     <a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a>
@@ -66,7 +74,7 @@ export function renderVerifyPage(): string {
     <div role="alert" aria-live="assertive" id="state-expired" hidden>
       <p>Este código ya no es válido.</p>
       <p>Puede haber expirado o haberse usado antes. Solicita uno nuevo para continuar.</p>
-      <button type="button" class="lp-btn lp-btn-primary" id="request-new-code-btn-expired">Solicitar nuevo código</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-expired">Solicitar nuevo código</button>
     </div>
 
     <!--
@@ -80,13 +88,13 @@ export function renderVerifyPage(): string {
     <div role="alert" aria-live="assertive" id="state-locked" hidden>
       <p>Bloqueamos este código por varios intentos incorrectos.</p>
       <p>Por seguridad, no podemos usarlo de nuevo. Solicita un código nuevo para continuar.</p>
-      <button type="button" class="lp-btn lp-btn-primary" id="request-new-code-btn-locked">Solicitar nuevo código</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-locked">Solicitar nuevo código</button>
     </div>
 
     <div role="alert" aria-live="polite" id="error-network" hidden>
       <p>No pudimos conectar.</p>
       <p>Revisa tu conexión e inténtalo nuevamente.</p>
-      <button type="button" class="lp-btn lp-btn-primary" id="retry-btn">Reintentar</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
     <div role="alert" aria-live="assertive" id="error-uniform" hidden>

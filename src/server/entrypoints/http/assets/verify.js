@@ -8,6 +8,12 @@
 // bound_to_handle) hace que un V1 repetido desde el mismo handle/sesión reemplace el
 // challenge existente (LOCKED/EXPIRED no cuentan como "activo") con uno nuevo (CODE_SENT,
 // attempts=0), sujeto a presupuesto (V6/V6a); no crea una invitación ni un endpoint distinto.
+//
+// Fix (Carlos, probado en navegador con dev.ts): "Reenviar código" no daba feedback en 202 y
+// dejaba visible el error previo ("El código ingresado no es correcto…"). Ahora, en 202, limpia
+// el error del campo (aria-invalid, code-error) y anuncia un mensaje neutro por #resend-feedback
+// (aria-live=polite); en 409 OTP_RESEND_LIMIT muestra un mensaje de límite alcanzado, sin cifra
+// (P-06 sin valor aprobado en SEC-CNS-006). Copy [UX — borrador], sin frame/handoff que lo fije.
 (function () {
   "use strict";
 
@@ -46,6 +52,7 @@
     var errorNetwork = document.getElementById("error-network");
     var errorUniform = document.getElementById("error-uniform");
     var retryBtn = document.getElementById("retry-btn");
+    var resendFeedback = document.getElementById("resend-feedback");
     if (!verifyBtn || !codeInput) return;
 
     var busy = false;
@@ -58,7 +65,19 @@
       if (stateLocked) stateLocked.hidden = true;
       if (errorNetwork) errorNetwork.hidden = true;
       if (errorUniform) errorUniform.hidden = true;
+      if (resendFeedback) {
+        resendFeedback.hidden = true;
+        resendFeedback.textContent = "";
+      }
       codeInput.setAttribute("aria-invalid", "false");
+    }
+
+    function showResendFeedback(message) {
+      hideStates();
+      if (resendFeedback) {
+        resendFeedback.textContent = message;
+        resendFeedback.hidden = false;
+      }
     }
 
     function setBusy(isBusy) {
@@ -160,14 +179,27 @@
     function resendCode() {
       if (busy) return;
       // V2r (POST /otp/resend): reemplaza el código sin reiniciar attempts ni presupuesto
-      // (GRD-OT-06). Sin estado dedicado en el handoff para 409 OTP_RESEND_LIMIT: la nota de
-      // límite ya visible en la pantalla no distingue intentos restantes (P-06 sin valor
-      // aprobado); un 404 sí es la sesión inválida.
-      postJson("/otp/resend").then(function (res) {
-        if (res.status === 404) showUniformError();
-      }).catch(function () {
-        showNetworkError();
-      });
+      // (GRD-OT-06). 202: limpia el error previo del campo y anuncia un mensaje neutro por
+      // #resend-feedback (fix Carlos, probado en navegador). 409 OTP_RESEND_LIMIT: mensaje de
+      // límite alcanzado, sin cifra (P-06 sin valor aprobado). 404: sesión inválida (error
+      // uniforme).
+      postJson("/otp/resend")
+        .then(function (res) {
+          if (res.status === 202) {
+            showResendFeedback("Te enviamos un nuevo código.");
+            return;
+          }
+          if (res.status === 409) {
+            showResendFeedback("Alcanzaste el límite de reenvíos disponible por ahora.");
+            return;
+          }
+          if (res.status === 404) {
+            showUniformError();
+          }
+        })
+        .catch(function () {
+          showNetworkError();
+        });
     }
 
     verifyBtn.addEventListener("click", submitCode);

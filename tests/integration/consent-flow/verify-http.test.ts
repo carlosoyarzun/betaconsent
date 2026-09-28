@@ -288,3 +288,46 @@ test("TEST-CNS-560: reenviar el código (POST /otp/resend) desde /verify reempla
     await harness.close();
   }
 });
+
+test("TEST-CNS-561: app.css fija min-height 44px (tap target) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", async () => {
+  const harness = await startServer();
+  try {
+    const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
+    assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*44px/);
+    assert.match(css, /\.lp-verify-cta\s*\{[^}]*min-height:\s*44px/);
+    assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*44px/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-562: GET /verify aplica la clase de tap target (44px) a 'Reenviar código', ambos 'Solicitar nuevo código' y 'Reintentar', e incluye la región aria-live #resend-feedback", async () => {
+  const harness = await startServer();
+  try {
+    const { session } = await bringToOtpRequested(harness, "inv-562", "subject-562@example.invalid");
+    const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
+    for (const id of ["resend-btn", "request-new-code-btn-expired", "request-new-code-btn-locked", "retry-btn"]) {
+      const re = new RegExp(`class="[^"]*lp-verify-tap-target[^"]*"[^>]*id="${id}"`);
+      assert.match(html, re, `${id} debe tener lp-verify-tap-target`);
+    }
+    assert.match(html, /aria-live="polite"[^>]*id="resend-feedback"/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-563: verify.js limpia el error previo y anuncia feedback neutro en 202, y un mensaje de límite en 409 (sin cifra), en POST /otp/resend", async () => {
+  const harness = await startServer();
+  try {
+    const js = await (await fetch(`${harness.baseUrl}/assets/verify.js`)).text();
+    assert.match(js, /showResendFeedback\("Te enviamos un nuevo código\."\)/);
+    assert.match(js, /showResendFeedback\("Alcanzaste el límite de reenvíos disponible por ahora\."\)/);
+    // showResendFeedback llama hideStates() primero: limpia code-error/aria-invalid antes de
+    // mostrar el mensaje nuevo (fix: la UI ya no dejaba visible "El código ingresado no es
+    // correcto…" tras un reenvío exitoso).
+    assert.match(js, /function showResendFeedback\(message\) \{\s*hideStates\(\);/);
+    assert.doesNotMatch(js, /\d+\s*(reenvíos|intentos)/i); // P-06 sin valor aprobado: sin cifra
+  } finally {
+    await harness.close();
+  }
+});
