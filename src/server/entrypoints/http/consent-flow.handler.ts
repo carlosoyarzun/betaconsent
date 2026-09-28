@@ -76,6 +76,14 @@ export interface HttpResult {
    * `setSessionCookie` (que el transporte serializa). Nunca coexiste con `setSessionCookie` en
    * el mismo HttpResult. */
   readonly setRecoveryHandleCookie?: string;
+  /** CA-128 (case-confirmation.handler.ts, API-CNS-138): `Set-Cookie` de `__Host-cns-case` ya
+   * serializado completo (case-session.ts serializeCaseSessionCookie), emitido solo por
+   * /__dev/staff-login (LOCAL-only). Puede coexistir con setCaseCsrfCookie (no con las demás
+   * cookies de sesión de este archivo). */
+  readonly setCaseSessionCookie?: string;
+  /** CA-128: `Set-Cookie` de la cookie CSRF de la consola CASE (csrf.ts serializeCsrfCookie),
+   * emitido junto con setCaseSessionCookie por /__dev/staff-login. */
+  readonly setCaseCsrfCookie?: string;
   /** Solo 303 (RedeemSeeOther): ruta relativa sin token (contracts/openapi Location header). */
   readonly location?: string;
   /** Cabeceras adicionales exigidas por el contrato para esta respuesta (p. ej. RedemptionToken
