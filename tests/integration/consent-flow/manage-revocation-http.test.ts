@@ -25,6 +25,7 @@ const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
 const TENANT_ID = "tenant-mgmt";
 
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
@@ -41,6 +42,33 @@ function parseSetCookie(res: Response): Record<string, string> {
     out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
   }
   return out;
+}
+
+/** GET /manage puede fijar sesión + CSRF en la misma respuesta; getSetCookie() (undici) los
+ * mantiene separados, a diferencia de parseSetCookie (un solo Set-Cookie). */
+function parseAllSetCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raws = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("set-cookie") ?? ""];
+  for (const raw of raws) {
+    for (const part of raw.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!out[name]) out[name] = part.slice(eq + 1).trim();
+    }
+  }
+  return out;
+}
+
+/** SEC-CNS-014 (Carlos, 2026-09-28): GET /m/{token} ya no fija la sesión directamente, solo el
+ * handle MANAGE_ENTRY; la sesión real la fija GET /manage al resolverlo. */
+async function redeemManage(baseUrl: string, token: string): Promise<string> {
+  const redeemed = await fetch(`${baseUrl}/m/${token}`, { redirect: "manual" });
+  const handleCookie = parseSetCookie(redeemed)[MANAGE_ENTRY_HANDLE_COOKIE_NAME];
+  const manage = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  const sessionCookie = parseAllSetCookies(manage)[SESSION_COOKIE_NAME];
+  if (!sessionCookie) throw new Error(`redeemManage: GET /manage no fijó sesión para el token ${token}`);
+  return sessionCookie;
 }
 
 interface PostOpts {
@@ -115,7 +143,7 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
     const redeemed = await fetch(`${baseUrl}/m/mgmt-token-581`, { redirect: "manual" });
     assert.equal(redeemed.status, 303);
     assert.equal(redeemed.headers.get("location"), "/manage");
-    let sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-581");
 
     const manageEntry = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     assert.equal(manageEntry.status, 200);
@@ -184,8 +212,7 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
 test("TEST-CNS-582: R8 (cancelar solicitud de retiro) desde REQUESTED responde FAILED; el consentimiento sigue vigente (no llega a APPLIED)", async () => {
   const { ports, server, baseUrl } = await setUp("chain-582", "consent-582", "mgmt-token-582");
   try {
-    const redeemed = await fetch(`${baseUrl}/m/mgmt-token-582`, { redirect: "manual" });
-    let sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-582");
 
     const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
     sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
@@ -209,8 +236,7 @@ test("TEST-CNS-582: R8 (cancelar solicitud de retiro) desde REQUESTED responde F
 test("TEST-CNS-583: bloqueo por intentos incorrectos en scope REVOCATION (V4, LOCKED) nunca falla la Revocation (INV-OT-06); RV0 y RC1 fuente BEARER siguen respondiendo", async () => {
   const { ports, revocationPorts, server, baseUrl } = await setUp("chain-583", "consent-583", "mgmt-token-583");
   try {
-    const redeemed = await fetch(`${baseUrl}/m/mgmt-token-583`, { redirect: "manual" });
-    let sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-583");
 
     const requestedMgmtOtp = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
     sessionCookie = parseSetCookie(requestedMgmtOtp)[SESSION_COOKIE_NAME] ?? sessionCookie;
@@ -261,8 +287,7 @@ function stripHtmlComments(html: string): string {
 }
 
 async function bringToRevocationConfirmSession(baseUrl: string, ports: ConsentFlowPorts, mgmtToken: string): Promise<string> {
-  const redeemed = await fetch(`${baseUrl}/m/${mgmtToken}`, { redirect: "manual" });
-  let sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+  let sessionCookie = await redeemManage(baseUrl, mgmtToken);
   const sink = ports.otp.channel as InMemoryOtpChannelSink;
 
   const requestedMgmtOtp = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
@@ -286,8 +311,7 @@ async function bringToRevocationConfirmSession(baseUrl: string, ports: ConsentFl
 test("TEST-CNS-585: GET /manage (estado) muestra como texto visible el marcador [LEGAL DECISION] de alcance del retiro (33:21), nunca solo dentro de un comentario HTML", async () => {
   const { ports, server, baseUrl } = await setUp("chain-585", "consent-585", "mgmt-token-585");
   try {
-    const redeemed = await fetch(`${baseUrl}/m/mgmt-token-585`, { redirect: "manual" });
-    let sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-585");
     const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
     sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
     const sink = ports.otp.channel as InMemoryOtpChannelSink;
@@ -343,8 +367,7 @@ test("TEST-CNS-587: el estado bloqueado REVOCATION/MANAGE (33:11) oculta el form
 test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma línea) en /manage (entrada y estado) y en confirmar-retiro, que además ahora incluye el enlace de ayuda", async () => {
   const { ports, server, baseUrl } = await setUp("chain-588", "consent-588", "mgmt-token-588");
   try {
-    const redeemed = await fetch(`${baseUrl}/m/mgmt-token-588`, { redirect: "manual" });
-    let sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-588");
 
     const manageEntry = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     const entryHtml = await manageEntry.text();

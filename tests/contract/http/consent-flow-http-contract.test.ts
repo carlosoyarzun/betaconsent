@@ -35,6 +35,7 @@ const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
 const MANAGE_COOKIE_NAME = "__Host-cns-manage";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+channel-contract@example.invalid";
 
@@ -80,6 +81,22 @@ function parseSetCookie(res: Response): Record<string, string> {
   return out;
 }
 
+/** GET /welcome puede fijar sesión + CSRF en la misma respuesta; getSetCookie() (undici) los
+ * mantiene separados, a diferencia de parseSetCookie (un solo Set-Cookie). */
+function parseAllSetCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raws = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("set-cookie") ?? ""];
+  for (const raw of raws) {
+    for (const part of raw.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!out[name]) out[name] = part.slice(eq + 1).trim();
+    }
+  }
+  return out;
+}
+
 interface PostOpts {
   readonly path: string;
   readonly origin?: string;
@@ -120,9 +137,14 @@ function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subj
   return token;
 }
 
+/** SEC-CNS-014 (Carlos, 2026-09-28): GET /i/{token} ya no fija la sesión directamente, solo el
+ * handle INVITATION_LANDING; la sesión real la fija GET /welcome al resolverlo. */
 async function redeem(baseUrl: string, token: string): Promise<string | undefined> {
-  const res = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
-  return parseSetCookie(res)[SESSION_COOKIE_NAME];
+  const first = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
+  const handleCookie = parseSetCookie(first)[INVITATION_HANDLE_COOKIE_NAME];
+  if (!handleCookie) return undefined;
+  const second = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  return parseAllSetCookies(second)[SESSION_COOKIE_NAME];
 }
 
 /** Recorre invitación -> canje -> I4 -> V1 -> V3 y devuelve la sesión verificada, lista para
@@ -185,13 +207,13 @@ test("TEST-CNS-512: GET /i/{token} válido responde 303 con Location sin token (
   }
 });
 
-test("TEST-CNS-513: GET /i/{token} inexistente responde 404 UniformNotFound (contracts/common.schema.json)", async () => {
+test("TEST-CNS-513: GET /i/{token} inexistente responde el mismo 303 uniforme que un token válido (SEC-CNS-014, Carlos 2026-09-28); GET /welcome subsiguiente sirve el 404 UniformNotFound-equivalente en HTML (welcome-http.test.ts TEST-CNS-539)", async () => {
   const harness = await startConsentFlowServer();
   try {
     const res = await fetch(`${harness.baseUrl}/i/this-token-does-not-exist`, { redirect: "manual" });
-    assert.equal(res.status, 404);
-    const body = await res.json();
-    assertValid(validateCommon("UniformNotFound", body));
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.get("location"), "/welcome");
+    assert.equal(res.headers.get("content-type"), "application/json");
   } finally {
     await harness.close();
   }
@@ -602,12 +624,18 @@ test("TEST-CNS-536: POST /invitation/open válido sigue respondiendo application
   }
 });
 
-test("TEST-CNS-537: GET /i/{token} inexistente (UniformNotFound, 404) sigue respondiendo application/json, no problem+json (contracts/openapi UniformNotFound)", async () => {
+test("TEST-CNS-537: GET /i/{token} inexistente responde 303 (RedeemSeeOther) con content-type application/json, idéntico byte a byte al de un token válido salvo el cuerpo vacío común a ambos (SEC-CNS-014, Carlos 2026-09-28: cierra el oráculo 303 válido / 404 inválido)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const res = await fetch(`${harness.baseUrl}/i/this-token-does-not-exist`, { redirect: "manual" });
-    assert.equal(res.status, 404);
-    assert.equal(res.headers.get("content-type"), "application/json");
+    const token = seedSentInvitation(harness.ports, "inv-537", "subject-537@example.invalid");
+    const valid = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
+    const invalid = await fetch(`${harness.baseUrl}/i/this-token-does-not-exist`, { redirect: "manual" });
+    assert.equal(valid.status, 303);
+    assert.equal(invalid.status, 303);
+    assert.equal(valid.headers.get("location"), invalid.headers.get("location"));
+    assert.equal(valid.headers.get("content-type"), "application/json");
+    assert.equal(invalid.headers.get("content-type"), "application/json");
+    assert.deepEqual(await valid.json(), await invalid.json());
   } finally {
     await harness.close();
   }
@@ -652,7 +680,9 @@ test("TEST-CNS-603: GET /r/{token} responde 303 con Location que valida contra e
   });
   try {
     const redeemed = await fetch(`${baseUrl}/m/mgmt-token-603`, { redirect: "manual" });
-    const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+    const handleCookie = parseSetCookie(redeemed)["__Host-cns-m-handle"];
+    const manage = await fetch(`${baseUrl}/manage`, { headers: { cookie: `__Host-cns-m-handle=${handleCookie}` } });
+    const sessionCookie = parseAllSetCookies(manage)[SESSION_COOKIE_NAME];
     const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF, sessionCookie });
     assert.equal(rv0.status, 202);
     const sink = revocationPorts.revocation.recoveryLinkChannel as InMemoryRecoveryLinkChannelSink;

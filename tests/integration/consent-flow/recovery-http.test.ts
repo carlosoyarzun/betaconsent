@@ -34,6 +34,7 @@ const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
 const RECOVERY_COOKIE_NAME = "__Host-cns-recovery";
+const MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
 const TENANT_ID = "tenant-recovery";
 
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
@@ -48,6 +49,22 @@ function parseSetCookie(res: Response): Record<string, string> {
     const eq = part.indexOf("=");
     if (eq === -1) continue;
     out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+/** GET /manage puede fijar sesión + CSRF en la misma respuesta; getSetCookie() (undici) los
+ * mantiene separados, a diferencia de parseSetCookie (un solo Set-Cookie). */
+function parseAllSetCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raws = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("set-cookie") ?? ""];
+  for (const raw of raws) {
+    for (const part of raw.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!out[name]) out[name] = part.slice(eq + 1).trim();
+    }
   }
   return out;
 }
@@ -130,8 +147,12 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
  * GET /m/{token} y devuelve el token en claro leído del sink LOCAL (nunca de la respuesta
  * HTTP: mismo criterio Cero PII que dev.ts /__dev/recovery-sink). */
 async function issueRecoveryLink(baseUrl: string, revocationPorts: RevocationFlowPorts, mgmtToken: string): Promise<string> {
+  // SEC-CNS-014 (Carlos, 2026-09-28): GET /m/{token} ya no fija la sesión directamente, solo el
+  // handle MANAGE_ENTRY; la sesión real la fija GET /manage al resolverlo.
   const redeemed = await fetch(`${baseUrl}/m/${mgmtToken}`, { redirect: "manual" });
-  const sessionCookie = parseSetCookie(redeemed)[SESSION_COOKIE_NAME];
+  const handleCookie = parseSetCookie(redeemed)[MANAGE_ENTRY_HANDLE_COOKIE_NAME];
+  const manage = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  const sessionCookie = parseAllSetCookies(manage)[SESSION_COOKIE_NAME];
   const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh", sessionCookie });
   assert.equal(rv0.status, 202);
   const sink = revocationPorts.revocation.recoveryLinkChannel as InMemoryRecoveryLinkChannelSink;

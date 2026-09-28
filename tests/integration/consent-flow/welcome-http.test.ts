@@ -21,6 +21,7 @@ const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+welcome@example.invalid";
 
@@ -83,9 +84,15 @@ function parseAllSetCookies(res: Response): Record<string, string> {
   return out;
 }
 
+/** SEC-CNS-014 (Carlos, 2026-09-28): GET /i/{token} ya no fija la sesión directamente, solo el
+ * handle INVITATION_LANDING (__Host-cns-i-handle); la sesión real la fija GET /welcome al
+ * resolverlo (consent-flow.handler.ts resolveWelcomeLandingSession). */
 async function redeem(baseUrl: string, token: string): Promise<string | undefined> {
-  const res = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
-  return parseAllSetCookies(res)[SESSION_COOKIE_NAME];
+  const first = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
+  const handleCookie = parseAllSetCookies(first)[INVITATION_HANDLE_COOKIE_NAME];
+  if (!handleCookie) return undefined;
+  const second = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  return parseAllSetCookies(second)[SESSION_COOKIE_NAME];
 }
 
 async function getWelcome(baseUrl: string, sessionCookie: string | undefined): Promise<Response> {
@@ -213,18 +220,24 @@ test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/ope
   try {
     const token = seedSentInvitation(harness.ports, "inv-543", "subject-543@example.invalid");
 
-    // 1) GET /i/{token} (P-12): redirige a /welcome sin transicionar (INV-CM-08).
+    // 1) GET /i/{token} (P-12, SEC-CNS-014): redirige a /welcome sin transicionar (INV-CM-08
+    // reforzado) y sin fijar la sesión real todavía, solo el handle INVITATION_LANDING.
     const redeemed = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
     assert.equal(redeemed.status, 303);
     assert.equal(redeemed.headers.get("location"), "/welcome");
     const cookiesAfterRedeem = parseAllSetCookies(redeemed);
-    const sessionCookie = cookiesAfterRedeem[SESSION_COOKIE_NAME];
-    assert.ok(sessionCookie);
+    const handleCookie = cookiesAfterRedeem[INVITATION_HANDLE_COOKIE_NAME];
+    assert.ok(handleCookie);
+    assert.equal(cookiesAfterRedeem[SESSION_COOKIE_NAME], undefined);
 
-    // 2) GET /welcome: fija la cookie CSRF que welcome.js leería con document.cookie.
-    const welcome = await getWelcome(harness.baseUrl, sessionCookie);
+    // 2) GET /welcome: resuelve el handle, fija la sesión real y la cookie CSRF que welcome.js
+    // leería con document.cookie.
+    const welcome = await fetch(`${harness.baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
     assert.equal(welcome.status, 200);
-    const csrfToken = parseAllSetCookies(welcome)[CSRF_COOKIE_NAME];
+    const cookiesAfterWelcome = parseAllSetCookies(welcome);
+    const sessionCookie = cookiesAfterWelcome[SESSION_COOKIE_NAME];
+    assert.ok(sessionCookie, "GET /welcome debe fijar la sesión real al resolver el handle");
+    const csrfToken = cookiesAfterWelcome[CSRF_COOKIE_NAME];
     assert.ok(csrfToken, "GET /welcome debe fijar __Host-cns-csrf (csrf.ts)");
 
     // 3) POST /invitation/open (welcome.js: postJson en el click de "Continuar"), CSRF

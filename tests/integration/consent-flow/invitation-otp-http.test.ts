@@ -24,6 +24,7 @@ const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+channel-1@example.invalid";
 
@@ -81,6 +82,22 @@ function parseSetCookie(res: Response): Record<string, string> {
   return out;
 }
 
+/** A diferencia de parseSetCookie (un solo Set-Cookie), GET /welcome puede fijar sesión + CSRF
+ * en la misma respuesta; getSetCookie() (undici) los mantiene separados. */
+function parseAllSetCookies(res: Response): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raws = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get("set-cookie") ?? ""];
+  for (const raw of raws) {
+    for (const part of raw.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      if (!out[name]) out[name] = part.slice(eq + 1).trim();
+    }
+  }
+  return out;
+}
+
 interface PostOpts {
   readonly path: string;
   readonly origin?: string;
@@ -105,11 +122,15 @@ async function post(baseUrl: string, opts: PostOpts): Promise<Response> {
 
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
-/** Canjea el token vía GET /i/{token} (P-12) y devuelve la cookie de sesión LANDING que fija
- * ese GET (INV-CM-08: no transiciona). `undefined` si el canje no fija cookie (token inválido). */
+/** Canjea el token vía GET /i/{token} (P-12, SEC-CNS-014) y GET /welcome, que resuelve el hash y
+ * fija recién ahí la sesión LANDING real (INV-CM-08 reforzado: ninguno de los dos GET
+ * transiciona). `undefined` si GET /welcome no resuelve el handle (token inválido/expirado). */
 async function redeem(baseUrl: string, token: string): Promise<string | undefined> {
-  const res = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
-  return parseSetCookie(res)[SESSION_COOKIE_NAME];
+  const first = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
+  const handleCookie = parseSetCookie(first)[INVITATION_HANDLE_COOKIE_NAME];
+  if (!handleCookie) return undefined;
+  const second = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  return parseAllSetCookies(second)[SESSION_COOKIE_NAME];
 }
 
 test("TEST-CNS-498: POST /invitation/open sin CSRF (Origin ausente) -> ERR-CM-09 (403), sin transición", async () => {

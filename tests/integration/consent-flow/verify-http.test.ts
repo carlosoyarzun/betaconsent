@@ -21,6 +21,7 @@ const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
+const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const TENANT_ID = "tenant-1";
 const CHANNEL_REF = "test+verify@example.invalid";
 
@@ -105,9 +106,14 @@ async function post(baseUrl: string, opts: PostOpts): Promise<Response> {
 
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
+/** SEC-CNS-014 (Carlos, 2026-09-28): GET /i/{token} ya no fija la sesión directamente, solo el
+ * handle INVITATION_LANDING; la sesión real la fija GET /welcome al resolverlo. */
 async function redeem(baseUrl: string, token: string): Promise<string | undefined> {
-  const res = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
-  return parseAllSetCookies(res)[SESSION_COOKIE_NAME];
+  const first = await fetch(`${baseUrl}/i/${token}`, { redirect: "manual" });
+  const handleCookie = parseAllSetCookies(first)[INVITATION_HANDLE_COOKIE_NAME];
+  if (!handleCookie) return undefined;
+  const second = await fetch(`${baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+  return parseAllSetCookies(second)[SESSION_COOKIE_NAME];
 }
 
 /** invitación -> canje -> open -> otp/request; devuelve la sesión con verificationRef ya
