@@ -72,6 +72,10 @@ function confirmedEvents(ledger: LedgerPort, ref: string) {
   return ledger.listByAggregate("tenant-1", "Revocation", ref).filter((e) => e.eventType === "REVOCATION_CONFIRMED");
 }
 
+function revokedEvents(ledger: LedgerPort, ref: string) {
+  return ledger.listByAggregate("tenant-1", "Revocation", ref).filter((e) => e.eventType === "CONSENT_REVOKED");
+}
+
 test("TEST-CNS-660: cosign sin RH2/RH2v ATTESTED previa -> ERR-RV-20 (GRD-RV-10)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
@@ -135,10 +139,10 @@ test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recor
   recordCaseConfirmationPendingCosign(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { recordedByPrincipalRef: OP_A_UUID });
 
   const confirmed = cosignCaseConfirmation(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { cosignedByPrincipalRef: OP_B_UUID });
-  assert.equal(confirmed.status, "CONFIRMED");
+  assert.equal(confirmed.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28)
   assert.equal(confirmed.recordedByRef, OP_A_UUID);
   assert.equal(confirmed.cosignedByRef, OP_B_UUID);
-  assert.equal(revocationRepo.findByRef("tenant-1", REV_UUID)?.status, "CONFIRMED");
+  assert.equal(revocationRepo.findByRef("tenant-1", REV_UUID)?.status, "APPLIED");
 
   const event = confirmedEvents(ledger, REV_UUID)[0];
   assert.ok(event);
@@ -153,6 +157,36 @@ test("TEST-CNS-666: cosign idempotente por revocationRef — repetir no duplica 
   const { ports, ledger } = seed("rv-666");
   cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
   const again = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
-  assert.equal(again.status, "CONFIRMED");
+  assert.equal(again.status, "APPLIED");
   assert.equal(confirmedEvents(ledger, "rv-666").length, 1);
+  assert.equal(revokedEvents(ledger, "rv-666").length, 1);
+});
+
+test("TEST-CNS-676: cosign exitoso aplica R4 síncrono -> APPLIED con un único CONSENT_REVOKED tras REVOCATION_CONFIRMED (IT0, Carlos 2026-09-28)", () => {
+  const { ports, revocationRepo, ledger } = seed("rv-676");
+  const applied = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-676", "case-rv-676", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(applied.status, "APPLIED");
+  assert.equal(revocationRepo.findByRef("tenant-1", "rv-676")?.status, "APPLIED");
+  const types = ledger.listByAggregate("tenant-1", "Revocation", "rv-676").map((e) => e.eventType);
+  assert.deepEqual(types.slice(-2), ["REVOCATION_CONFIRMED", "CONSENT_REVOKED"]);
+  assert.equal(revokedEvents(ledger, "rv-676").length, 1);
+});
+
+test("TEST-CNS-677: repetir cosign tras APPLIED no reaplica ni duplica eventos; CONFIRMED sin aplicar se reintenta sin reemitir REVOCATION_CONFIRMED", () => {
+  const { ports, revocationRepo, ledger } = seed("rv-677");
+  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-677", "case-rv-677", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const before = ledger.listByAggregate("tenant-1", "Revocation", "rv-677").length;
+  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-677", "case-rv-677", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(ledger.listByAggregate("tenant-1", "Revocation", "rv-677").length, before);
+
+  // Simula R4 fallido: CONFIRMED con co-firma pero sin aplicar.
+  const { ports: p2, revocationRepo: repo2, ledger: l2 } = seed("rv-677b");
+  const rec = repo2.findByRef("tenant-1", "rv-677b");
+  assert.ok(rec);
+  repo2.save({ ...rec, status: "CONFIRMED", cosignedByRef: "staff-synthetic-02" });
+  const retried = cosignCaseConfirmation(p2, staff, "tenant-1", "rv-677b", "case-rv-677b", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assert.equal(retried.status, "APPLIED");
+  assert.equal(confirmedEvents(l2, "rv-677b").length, 0);
+  assert.equal(revokedEvents(l2, "rv-677b").length, 1);
+  void revocationRepo;
 });

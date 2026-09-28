@@ -176,8 +176,8 @@ export interface CaseConfirmationCosignContext {
  * RIGHTS_OPERATOR del co-firmante lo verifica el llamador HTTP (LEGAL DECISION LD-03: la regla
  * definitiva de quién escribe/co-firma la confirmación no la decide este código).
  * Idempotente por revocationRef: repetir sobre una Revocation ya CONFIRMED/APPLIED devuelve el
- * registro sin reemitir REVOCATION_CONFIRMED. APPLY_REVOCATION (R4) lo ejecuta un worker
- * aparte (applyRevocation); aquí no se aplica de forma síncrona.
+ * registro sin reemitir REVOCATION_CONFIRMED. R4 (applyRevocation) se ejecuta aquí de forma
+ * síncrona (IT0, decisión de Carlos 2026-09-28; worker asíncrono diferido): devuelve APPLIED.
  */
 export function cosignCaseConfirmation(
   ports: RevocationPorts,
@@ -191,8 +191,12 @@ export function cosignCaseConfirmation(
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
   }
-  if ((found.status === "CONFIRMED" || found.status === "APPLIED") && found.cosignedByRef) {
-    return found;
+  if (found.status === "APPLIED" && found.cosignedByRef) {
+    return found; // idempotente: ya confirmada y aplicada, sin reaplicar ni duplicar eventos.
+  }
+  if (found.status === "CONFIRMED" && found.cosignedByRef) {
+    // CONFIRMED sin aplicar (R4 falló antes): reintenta R4, sin reemitir REVOCATION_CONFIRMED.
+    return applyRevocation(ports, tenantId, revocationRef);
   }
 
   const attested = found.attestedVerification;
@@ -228,7 +232,10 @@ export function cosignCaseConfirmation(
     payload: { revocationRef, recordedByRef, cosignedByRef: ctx.cosignedByPrincipalRef },
     idempotencyKey: `${revocationRef}:rh3`,
   });
-  return confirmed;
+  // R4 síncrono en IT0 por decisión de Carlos 2026-09-28; worker asíncrono diferido. Mismo patrón
+  // que confirmRevocation (R3 -> R4): si R4 falla, el error se propaga y la Revocation queda
+  // CONFIRMED (el reintento de cosign reaplica R4 sin duplicar REVOCATION_CONFIRMED).
+  return applyRevocation(ports, tenantId, revocationRef);
 }
 
 // ---------------------------------------------------------------------------

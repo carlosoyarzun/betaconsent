@@ -382,7 +382,7 @@ test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> 
     assertValid(validateApiPayload("CaseConfirmationAck", body));
 
     const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, revocationRef);
-    assert.equal(stored?.status, "CONFIRMED");
+    assert.equal(stored?.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28); la ack sigue en CONFIRMED (enum del contrato)
     assert.equal(stored?.recordedByRef, opA);
     assert.equal(stored?.cosignedByRef, opB); // de la sesión CASE del co-firmante, nunca del body
 
@@ -408,6 +408,8 @@ test("TEST-CNS-675: cosign repetido es idempotente — 200 con el mismo ack y un
     assert.equal(second.status, 200);
     assert.deepEqual(await second.json(), { cosign: "COSIGNED", revocationState: "CONFIRMED" });
     assert.equal(confirmedEvents(fx).length, 1);
+    const revoked = fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef).filter((e) => e.eventType === "CONSENT_REVOKED");
+    assert.equal(revoked.length, 1);
   } finally {
     await fx.close();
   }
