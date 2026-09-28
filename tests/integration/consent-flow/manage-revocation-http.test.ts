@@ -29,6 +29,7 @@ const TENANT_ID = "tenant-mgmt";
 
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
+const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
 function parseSetCookie(res: Response): Record<string, string> {
@@ -90,7 +91,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
     receiptRef: `receipt-${consentId}`,
   });
-  const revocationPorts = createDefaultRevocationFlowPorts(ports.decision.ledger);
+  const revocationPorts = createDefaultRevocationFlowPorts(LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY, ports.decision.ledger);
   (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
     handle: mgmtToken,
     tenantId: TENANT_ID,

@@ -4,10 +4,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { attestHumanAssistedVerification, recordCaseConfirmation } from "../../../src/server/modules/revocation/revocation.ts";
+import { attestHumanAssistedVerification, recordCaseConfirmation, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
+import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
+
+/** CA-116 PR 2: RevocationPorts ganó recoveryTokenRepo/recoveryLinkChannel/recoveryTokenPolicy
+ * (RV0 BEARER + GET /r/{token} + POST /recovery/revoke), ajenos a RH2/RH3 (fuente RECOVERY
+ * HUMAN_ASSISTED); este helper completa el tipo sin que cada test tenga que repetirlo. */
+function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
+  return {
+    revocationRepo,
+    ledger,
+    recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+    recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+    recoveryTokenPolicy: { ttlMs: 60_000 },
+  };
+}
 
 test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocationRef, caseRef) -> ERR-RV-20 (GRD-RV-10)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
@@ -22,7 +39,7 @@ test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocation
 
   assert.throws(
     () =>
-      recordCaseConfirmation({ revocationRepo, ledger }, "tenant-1", "rv-1", "case-1", {
+      recordCaseConfirmation(makePorts(revocationRepo, ledger), "tenant-1", "rv-1", "case-1", {
         recordedByPrincipalRef: "operator-a",
         cosignedByPrincipalRef: "operator-b",
       }),
@@ -42,14 +59,14 @@ test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 un
   const ledger = createInMemoryLedgerAdapter();
 
   assert.throws(
-    () => attestHumanAssistedVerification({ revocationRepo, ledger }, "tenant-b", "rv-tenant-a", "case-a"),
+    () => attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-b", "rv-tenant-a", "case-a"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
     "RH2 con revocationRef de otro tenant debía dar 404 uniforme",
   );
 
   assert.throws(
     () =>
-      recordCaseConfirmation({ revocationRepo, ledger }, "tenant-b", "rv-tenant-a", "case-a", {
+      recordCaseConfirmation(makePorts(revocationRepo, ledger), "tenant-b", "rv-tenant-a", "case-a", {
         recordedByPrincipalRef: "operator-a",
         cosignedByPrincipalRef: "operator-b",
       }),
@@ -69,10 +86,10 @@ test("TEST-CNS-465: recordedByRef/cosignedByRef de RH3 se derivan de la sesión 
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  attestHumanAssistedVerification({ revocationRepo, ledger }, "tenant-1", "rv-2", "case-2");
+  attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-1", "rv-2", "case-2");
 
   const confirmed = recordCaseConfirmation(
-    { revocationRepo, ledger },
+    makePorts(revocationRepo, ledger),
     "tenant-1",
     "rv-2",
     "case-2",

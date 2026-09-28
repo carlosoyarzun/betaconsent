@@ -46,6 +46,17 @@ export interface ConsentSessionPayload {
   readonly revocationVerificationRef?: string;
   /** true solo tras V3 scope REVOCATION correcto: habilita R2 (verifyRevocationOtp). */
   readonly revocationOtpVerified?: boolean;
+
+  // ---------------------------------------------------------------------
+  // CA-116 PR 2 (recovery, UX-CNS-004): sesión RECOVERY creada por GET /r/{token}
+  // (resolveRecoveryTokenForRedeem, INV-CM-08: no consume el token). GRD-RV-18: esta sesión
+  // solo habilita POST /recovery/revoke; nunca coexiste con manageDecisionMakerRef/
+  // decisionMakerRef de otra vía en la misma cookie (una redención de /r/ siempre pisa la
+  // sesión anterior con un payload nuevo, igual que /m/ y /i/).
+  // ---------------------------------------------------------------------
+  /** Hash del token de recuperación ligado a esta sesión (nunca el token en claro): fija
+   * exactamente qué token consume POST /recovery/revoke, sin aceptar uno del body. */
+  readonly recoveryTokenHash?: string;
 }
 
 function sign(secret: Buffer, payloadJson: string): string {

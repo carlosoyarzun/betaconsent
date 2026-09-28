@@ -1,22 +1,35 @@
 // Gobierna: specs/state-machines/revocation.spec.yaml (RH2, RH3, R4, R1, R2, R3, R8, RV0
-// fuente BEARER). Alcance IT0 de este archivo (subconjunto mínimo, ver
+// fuente BEARER, R1r, R2r, R3r, R10, R11). Alcance IT0 de este archivo (subconjunto mínimo, ver
 // traceability/test-matrix.csv TEST-CNS-462..465, TEST-CNS-571+): la verificación humana
 // atestada (RH2, simplificada a un solo paso para este slice; el doble control
 // proposer/approver de la spec completa es una historia posterior), el registro de
 // confirmación con cuatro ojos (RH3, simplificado a los guards bajo prueba), la aplicación
-// (R4), y (CA-116 UX-CNS-004) el subconjunto self-service authPath OTP: solicitud (R1),
+// (R4), (CA-116 UX-CNS-004 PR 1) el subconjunto self-service authPath OTP: solicitud (R1),
 // verificación (R2), confirmación (R3) y retiro explícito (R8) de la revocación, más RV0 con
-// fuente BEARER (emisión del enlace de recuperación pedido por el portador; la creación real
-// del token de /r/{token} es la PR 2, ver nota en issueRecoveryLinkBearer). No implementa SLA,
-// CHANNEL_LINK ni el resto de authPath/recoveryMethod ajenos a este slice.
+// fuente BEARER (emisión del enlace de recuperación pedido por el portador), y (CA-116
+// UX-CNS-004 PR 2, TEST-CNS-589+) el authPath RECOVERY/CHANNEL_LINK del único POST de
+// /recovery/revoke: R1r (null|REQUESTED -> REQUESTED), R2r (REQUESTED -> VERIFIED, consume el
+// token), R10 (VERIFIED -> VERIFIED, re-verificación), R11 (CONFIRMED -> CONFIRMED, NOOP sin
+// consumir el token) y R3r (VERIFIED -> CONFIRMED, reutiliza confirmRevocation/R4 síncrono). No
+// implementa SLA, HUMAN_ASSISTED (RC3/R12/RH2v/RH3 fuente RECOVERY) ni el resto de
+// authPath/recoveryMethod ajenos a este slice.
+
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
+import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.port.ts";
+import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
   readonly ledger: LedgerPort;
+  /** CA-116 PR 2 (RV0 BEARER, GET /r/{token}, POST /recovery/revoke). */
+  readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
+  readonly recoveryLinkChannel: RecoveryLinkChannelPort;
+  readonly recoveryTokenPolicy: RecoveryTokenPolicy;
 }
 
 function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
@@ -311,16 +324,21 @@ export interface Rv0BearerResult {
   readonly sent: boolean;
 }
 
+function hashRecoveryToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 /**
  * RV0 con fuente BEARER (revocation.spec.yaml RV0 guardsBySource.BEARER): POST explícito desde
- * el handle MANAGE_ENTRY de /m/, sin canal en el body (GRD-RV-17). Alcance IT0 de este slice
- * (PR1, UX-CNS-004 §3 "bloqueado→enviar enlace"): registra RECOVERY_TOKEN_ISSUED en el ledger
- * como emisión SECURITY (kind: EMISSION, sin cambio de estado de la Revocation) y responde
- * "enviado"; NO crea el `tenant_resolve.recovery_token` real ni el handle /r/{token} que lo
- * consume (eso es RC-116 PR 2, GET /r/{token} + POST /recovery/revoke): sin ese token, el botón
- * "Enviar enlace de recuperación" queda conectado al endpoint correcto del contrato
- * (POST /manage/recovery-link, API-CNS-134) y emite el evento correcto, pero el enlace en sí no
- * es canjeable todavía. Reportado como pendiente explícito para la PR 2 (ver reporte de tarea).
+ * el handle MANAGE_ENTRY de /m/, sin canal en el body (GRD-RV-17). Alcance IT0 (PR1, UX-CNS-004
+ * §3 "bloqueado→enviar enlace" + PR 2, TEST-CNS-589+): crea el `tenant_resolve.recovery_token`
+ * real (token opaco CSPRNG, mismo patrón GRD-IV-05 que invitation.ts sendInvitation: solo el
+ * hash persiste, TTL P-15 vía recoveryTokenPolicy), lo emite por `recoveryLinkChannel` (sink
+ * in-memory de LOCAL, nunca en la respuesta HTTP ni en logs, Cero PII) y registra
+ * RECOVERY_TOKEN_ISSUED en el ledger como emisión SECURITY (kind: EMISSION, sin cambio de
+ * estado de la Revocation). No implementa K vigentes por cadena (P-16) ni la ventana P-17
+ * (revocation.spec RV0 effects): cada emisión crea un token nuevo sin invalidar los vigentes,
+ * sin límite todavía (documentado como alcance mínimo IT0, igual que el resto de este archivo).
  */
 export function issueRecoveryLinkBearer(
   ports: RevocationPorts,
@@ -329,6 +347,13 @@ export function issueRecoveryLinkBearer(
   revokedDecisionRef: string,
   trigger: Rv0BearerTrigger,
 ): Rv0BearerResult {
+  const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
+  const tokenHash = hashRecoveryToken(token);
+  const recoveryRef = `rec-${randomUUID()}`;
+  const expiresAt = new Date(Date.now() + ports.recoveryTokenPolicy.ttlMs);
+  ports.recoveryTokenRepo.save({ tokenHash, recoveryRef, tenantId, chainRef, revokedDecisionRef, expiresAt });
+  // El token en claro solo vive en este mensaje del sink LOCAL; se descarta al retornar.
+  ports.recoveryLinkChannel.send({ recoveryPath: `/r/${token}` });
   ports.ledger.append({
     eventType: "RECOVERY_TOKEN_ISSUED",
     tenantId,
@@ -336,9 +361,153 @@ export function issueRecoveryLinkBearer(
     aggregateId: chainRef,
     actorType: "HUMAN",
     actorRole: "UNVERIFIED_BEARER",
-    payload: { chainRef, revokedDecisionRef, trigger },
+    payload: { chainRef, revokedDecisionRef, trigger, recoveryRef },
     // Sin idempotencyKey: cada emisión es un token nuevo (K vigentes por cadena, revocation.spec
     // RV0 effects); una emisión nueva no invalida ni dedupea las vigentes.
   });
   return { sent: true };
+}
+
+// ---------------------------------------------------------------------------
+// CA-116 PR 2 (UX-CNS-004, recovery): único POST de /recovery/revoke — R1r+R2r+R3r (token
+// fresco sobre una cadena sin Revocation abierta o con una REQUESTED existente), R10+R3r
+// (token fresco sobre una Revocation VERIFIED, re-verificación) o R11 (NOOP, ya CONFIRMED).
+// TEST-CNS-589+.
+// ---------------------------------------------------------------------------
+
+/** GET /r/{token} (API-CNS-103, INV-CM-08): resuelve el token por su hash SIN consumirlo ni
+ * transicionar nada (el consumo ocurre solo en POST /recovery/revoke, revokeWithRecoveryLink).
+ * Devuelve `null` si el hash no resuelve, si ya fue consumido o si expiró (GRD-RV-06); el
+ * llamador SIEMPRE trata `null` como la respuesta uniforme de ERR-RV-05, sin distinguir motivo. */
+export function resolveRecoveryTokenForRedeem(
+  ports: Pick<RevocationPorts, "recoveryTokenRepo">,
+  token: string,
+): { tenantId: string; chainRef: string; revokedDecisionRef: string; tokenHash: string } | null {
+  const tokenHash = hashRecoveryToken(token);
+  const found = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+  if (!found) return null;
+  if (found.consumedAt) return null;
+  if (found.expiresAt.getTime() <= Date.now()) return null;
+  return { tenantId: found.tenantId, chainRef: found.chainRef, revokedDecisionRef: found.revokedDecisionRef, tokenHash: found.tokenHash };
+}
+
+/** R1r: null -> REQUESTED, authPath RECOVERY/CHANNEL_LINK (mismo POST único de
+ * /recovery/revoke, revocation.spec.yaml:197-218). A diferencia de requestRevocation (R1, OTP),
+ * siempre crea: el llamador (revokeWithRecoveryLink) solo entra aquí cuando ya confirmó que no
+ * hay Revocation abierta para esta cadena (findOpenByChain). */
+function requestRevocationRecovery(
+  ports: RevocationPorts,
+  tenantId: string,
+  chainRef: string,
+  revokedDecisionRef: string,
+  recoveryRef: string,
+): RevocationRecord {
+  const revocationRef = `rv-${randomUUID()}`;
+  const record: RevocationRecord = { revocationRef, tenantId, chainRef, revokedDecisionRef, status: "REQUESTED" };
+  ports.revocationRepo.save(record);
+  ports.ledger.append({
+    eventType: "REVOCATION_REQUESTED",
+    tenantId,
+    aggregateType: "Revocation",
+    aggregateId: revocationRef,
+    actorType: "HUMAN",
+    actorRole: "DECISION_MAKER",
+    payload: { scope: "ALL", authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", originPurposeRef: "ALL", recoveryRef },
+    idempotencyKey: `${revocationRef}:r1r`,
+  });
+  return record;
+}
+
+/** R2r (REQUESTED -> VERIFIED) / R10 (VERIFIED -> VERIFIED, self-loop de re-verificación):
+ * ambos consumen el token en la misma tx (GRD-RV-06, ya hecho por el llamador antes de entrar
+ * aquí) y emiten REVOCATION_VERIFIED authPath RECOVERY (revocation.spec.yaml:255-271,489-497).
+ * El idempotencyKey incluye recoveryRef porque R10 puede repetirse con un token distinto sobre
+ * la misma revocationRef (cada re-verificación es un hecho nuevo, no un replay). */
+function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string, found: RevocationRecord, recoveryRef: string): RevocationRecord {
+  const verified: RevocationRecord = { ...found, status: "VERIFIED" };
+  ports.revocationRepo.save(verified);
+  ports.ledger.append({
+    eventType: "REVOCATION_VERIFIED",
+    tenantId,
+    aggregateType: "Revocation",
+    aggregateId: found.revocationRef,
+    actorType: "HUMAN",
+    actorRole: "DECISION_MAKER",
+    payload: { authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", recoveryRef },
+    idempotencyKey: `${found.revocationRef}:r2r:${recoveryRef}`,
+  });
+  return verified;
+}
+
+export type RecoveryRevokeOutcome =
+  | { readonly kind: "CONFIRMED"; readonly revocationRef: string }
+  | { readonly kind: "IN_PROGRESS" }
+  | { readonly kind: "UNIFORM" };
+
+/**
+ * POST /recovery/revoke (API-CNS-135, GRD-RV-06): único punto de entrada del authPath
+ * RECOVERY/CHANNEL_LINK. `tenantId`/`chainRef`/`revokedDecisionRef` vienen SIEMPRE de la sesión
+ * RECOVERY creada por GET /r/{token} (nunca del body); `tokenHash` es el del token que esa
+ * misma sesión ligó al canjear el enlace.
+ *
+ * - Token inválido/consumido/expirado o ligado a otra cadena/decisión (GRD-RV-06 onFail):
+ *   "UNIFORM" (ERR-RV-05), sin consumir nada ni emitir evento.
+ * - Sin Revocation abierta para la cadena: R1r (REQUESTED) + R2r (VERIFIED) + R3r (CONFIRMED,
+ *   con R4 síncrono) en la misma llamada.
+ * - Revocation REQUESTED (p. ej. abierta por R1 self-service): R2r + R3r.
+ * - Revocation VERIFIED: R10 (re-verificación) + R3r.
+ * - Revocation CONFIRMED: R11, NOOP — "en curso", el token NO se consume, sin evento.
+ * - Revocation APPLIED (GRD-RV-27, más allá de APPLIED): "UNIFORM", sin consumir el token.
+ */
+export function revokeWithRecoveryLink(
+  ports: RevocationPorts,
+  tenantId: string,
+  chainRef: string,
+  revokedDecisionRef: string,
+  tokenHash: string,
+): RecoveryRevokeOutcome {
+  const tokenRecord = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+  if (
+    !tokenRecord ||
+    tokenRecord.tenantId !== tenantId ||
+    tokenRecord.chainRef !== chainRef ||
+    tokenRecord.revokedDecisionRef !== revokedDecisionRef ||
+    tokenRecord.consumedAt ||
+    tokenRecord.expiresAt.getTime() <= Date.now()
+  ) {
+    // GRD-RV-06 onFail: ERR-RV-05, respuesta uniforme, sin revelar revocationRef, sin evento.
+    return { kind: "UNIFORM" };
+  }
+
+  const existing = ports.revocationRepo.findOpenByChain(tenantId, chainRef);
+
+  if (existing?.status === "CONFIRMED") {
+    // R11 (kind NOOP, SEC N-05): ni consume el token ni emite evento.
+    return { kind: "IN_PROGRESS" };
+  }
+  if (existing?.status === "APPLIED") {
+    // GRD-RV-27: más allá de APPLIED, respuesta uniforme; el caso (si existe) cierra por
+    // RC4/RC5, fuera de alcance de este slice self-service.
+    return { kind: "UNIFORM" };
+  }
+
+  // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto.
+  ports.recoveryTokenRepo.consume(tokenHash);
+
+  let record: RevocationRecord;
+  if (!existing) {
+    // R1r: null -> REQUESTED, seguido de R2r en el mismo POST.
+    record = requestRevocationRecovery(ports, tenantId, chainRef, revokedDecisionRef, tokenRecord.recoveryRef);
+    record = verifyRevocationRecovery(ports, tenantId, record, tokenRecord.recoveryRef);
+  } else if (existing.status === "VERIFIED") {
+    // R10: VERIFIED -> VERIFIED (re-verificación).
+    record = verifyRevocationRecovery(ports, tenantId, existing, tokenRecord.recoveryRef);
+  } else {
+    // existing.status === "REQUESTED": R2r directo sobre una solicitud abierta por otra vía.
+    record = verifyRevocationRecovery(ports, tenantId, existing, tokenRecord.recoveryRef);
+  }
+
+  // R3r: VERIFIED -> CONFIRMED, mismo POST (confirmRevocation ya encola R4 síncrono).
+  const confirmed = confirmRevocation(ports, tenantId, record.revocationRef);
+  return { kind: "CONFIRMED", revocationRef: confirmed.revocationRef };
 }

@@ -9,15 +9,27 @@ import {
   confirmRevocation,
   issueRecoveryLinkBearer,
   requestRevocation,
+  resolveRecoveryTokenForRedeem,
+  revokeWithRecoveryLink,
   verifyRevocationOtp,
   withdrawRevocation,
 } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+
+const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 
 function makePorts() {
-  return { revocationRepo: createInMemoryRevocationRepository(), ledger: createInMemoryLedgerAdapter() };
+  return {
+    revocationRepo: createInMemoryRevocationRepository(),
+    ledger: createInMemoryLedgerAdapter(),
+    recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+    recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+    recoveryTokenPolicy: LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY,
+  };
 }
 
 test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED -> APPLIED (R4 síncrono) y encola un solo CONSENT_REVOKED", () => {
@@ -86,4 +98,56 @@ test("TEST-CNS-580: un revocationRef inexistente en R2/R3/R8 da 404 uniforme (ER
     () => verifyRevocationOtp(ports, "tenant-1", "rv-missing", "ver-x"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
   );
+});
+
+test("TEST-CNS-589: revokeWithRecoveryLink sin Revocation abierta (token fresco) recorre R1r+R2r+R3r hasta CONFIRMED (APPLIED síncrono, GRD-RV-06)", () => {
+  const ports = makePorts();
+  issueRecoveryLinkBearer(ports, "tenant-1", "chain-589b", "consent-589b", "REQUESTER_ASKED");
+  const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
+  const token = sent.recoveryPath.replace("/r/", "");
+  const resolved = resolveRecoveryTokenForRedeem(ports, token);
+  assert.ok(resolved);
+
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-589b", "consent-589b", resolved!.tokenHash);
+  assert.equal(outcome.kind, "CONFIRMED");
+  const revocationRef = (outcome as { kind: "CONFIRMED"; revocationRef: string }).revocationRef;
+  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", revocationRef);
+  assert.deepEqual(
+    events.map((e) => e.eventType),
+    ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED"],
+  );
+
+  // GRD-RV-06: el token consumido ya no resuelve (un solo uso).
+  assert.equal(resolveRecoveryTokenForRedeem(ports, token), null);
+});
+
+test("TEST-CNS-590: revokeWithRecoveryLink con un token inválido/inexistente responde UNIFORM (ERR-RV-05), sin crear ninguna Revocation", () => {
+  const ports = makePorts();
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-590b", "consent-590b", "hash-que-no-existe");
+  assert.deepEqual(outcome, { kind: "UNIFORM" });
+});
+
+test("TEST-CNS-591: revokeWithRecoveryLink sobre una Revocation ya CONFIRMED (antes de que R4 la aplique) responde R11 NOOP: no consume el token ni emite evento", () => {
+  const ports = makePorts();
+  ports.revocationRepo.save({
+    revocationRef: "rv-595",
+    tenantId: "tenant-1",
+    chainRef: "chain-595",
+    revokedDecisionRef: "consent-595",
+    status: "CONFIRMED",
+  });
+  issueRecoveryLinkBearer(ports, "tenant-1", "chain-595", "consent-595", "REQUESTER_ASKED");
+  const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
+  const token = sent.recoveryPath.replace("/r/", "");
+  const resolved = resolveRecoveryTokenForRedeem(ports, token);
+  assert.ok(resolved);
+
+  const before = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-595").length;
+  const outcome = revokeWithRecoveryLink(ports, "tenant-1", "chain-595", "consent-595", resolved!.tokenHash);
+  assert.deepEqual(outcome, { kind: "IN_PROGRESS" });
+  const after = ports.ledger.listByAggregate("tenant-1", "Revocation", "rv-595").length;
+  assert.equal(after, before);
+
+  // SEC N-05: R11 nunca consume el token (sigue resolviendo).
+  assert.ok(resolveRecoveryTokenForRedeem(ports, token));
 });

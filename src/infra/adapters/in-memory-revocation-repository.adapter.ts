@@ -22,6 +22,14 @@ export function createInMemoryRevocationRepository(): RevocationRepositoryPort {
       }
       return null;
     },
+    findOpenByChain(tenantId, chainRef) {
+      for (const record of byKey.values()) {
+        if (record.tenantId === tenantId && record.chainRef === chainRef && record.status !== "FAILED") {
+          return record;
+        }
+      }
+      return null;
+    },
     save(record) {
       byKey.set(key(record.tenantId, record.revocationRef), { ...record });
     },

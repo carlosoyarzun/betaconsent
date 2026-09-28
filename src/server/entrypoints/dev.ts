@@ -12,9 +12,10 @@ import type { AddressInfo } from "node:net";
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefaultRevocationFlowPorts } from "./http/consent-flow-server.ts";
 import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.ts";
 import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
+import { loadRecoveryTokenPolicyConfig } from "../modules/revocation/recovery-token-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
-import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG } from "./dev-local-config.ts";
+import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG } from "./dev-local-config.ts";
 import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 
 const environment = process.env.CNS_ENVIRONMENT ?? "";
@@ -86,7 +87,10 @@ ports.decision.repo.save({
   stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
   receiptRef: "receipt-dev-mgmt-001",
 });
-const revocationPorts = createDefaultRevocationFlowPorts(ports.decision.ledger);
+// P-15 (recovery-token-policy.config.ts): mismo patrón D4 que otpPolicy, LOCAL-only, PENDING
+// de valor aprobado en SEC-CNS-006 (CA-116 PR 2, UX-CNS-004 recovery).
+const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY);
+const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger);
 (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
   handle: MGMT_TOKEN,
   tenantId: TENANT_ID,
@@ -116,4 +120,8 @@ server.listen(port, "127.0.0.1", () => {
   // para probar a mano gestión/retiro (GET /m/{token} -> /manage) sin repetir el flujo de arriba.
   console.log(`Enlace de gestión (UX-CNS-004, sobre una decisión GRANTED ya sembrada):`);
   console.log(`  ${baseUrl}/m/${MGMT_TOKEN}`);
+  // CA-116 PR 2: para probar la recuperación a mano, desde el enlace de gestión de arriba pulsa
+  // "Enviar enlace de recuperación" (POST /manage/recovery-link) y lee el enlace /r/<token> real
+  // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
+  console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
 });

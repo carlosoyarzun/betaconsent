@@ -1,14 +1,16 @@
 // Gobierna: contracts/openapi/consent-it0.openapi.yaml API-CNS-102 (GET /m/{token}),
-// API-CNS-130 (POST /manage/revocation, R1), API-CNS-131 (POST /manage/revocation/verify, R2),
-// API-CNS-132 (POST /manage/revocation/confirm, R3), API-CNS-133 (POST
-// /manage/revocation/withdraw, R8), API-CNS-134 (POST /manage/recovery-link, RV0 fuente
-// BEARER), rights-case.spec.yaml RC1 fuente BEARER (POST /rights-case/open). CA-116
-// (UX-CNS-004, PR1 gestión/retiro self-service). TEST-CNS-581+.
+// API-CNS-103 (GET /r/{token}), API-CNS-130 (POST /manage/revocation, R1), API-CNS-131 (POST
+// /manage/revocation/verify, R2), API-CNS-132 (POST /manage/revocation/confirm, R3),
+// API-CNS-133 (POST /manage/revocation/withdraw, R8), API-CNS-134 (POST
+// /manage/recovery-link, RV0 fuente BEARER), API-CNS-135 (POST /recovery/revoke, R1r/R2r/R3r/
+// R10/R11), rights-case.spec.yaml RC1 fuente BEARER (POST /rights-case/open). CA-116
+// (UX-CNS-004): PR1 gestión/retiro self-service (TEST-CNS-581+) y PR2 recuperación
+// (TEST-CNS-589+).
 //
 // Mismo patrón que consent-flow.handler.ts: actor y tenant/chainRef SIEMPRE de la sesión
 // (nunca del body); GRD-CM-10 (CSRF/Origin) en cada POST; 404 uniforme si la sesión no
-// resuelve. GET /m/{token} sigue INV-CM-08 (no transiciona: solo resuelve el handle y crea la
-// sesión MANAGE_ENTRY), igual que GET /i/{token} en consent-flow.handler.ts.
+// resuelve. GET /m/{token} y GET /r/{token} siguen INV-CM-08 (no transicionan: solo resuelven
+// el handle y crean la sesión), igual que GET /i/{token} en consent-flow.handler.ts.
 
 import { randomUUID } from "node:crypto";
 
@@ -19,6 +21,8 @@ import {
   confirmRevocation,
   issueRecoveryLinkBearer,
   requestRevocation,
+  resolveRecoveryTokenForRedeem,
+  revokeWithRecoveryLink,
   verifyRevocationOtp,
   withdrawRevocation,
   type RevocationPorts,
@@ -36,6 +40,17 @@ export interface RevocationFlowPorts {
 }
 
 const MANAGE_LANDING_ROUTE = "/manage";
+const RECOVERY_CONFIRM_ROUTE = "/recovery/confirm";
+/** Cabeceras del canje /r/{token} (API-CNS-103), mismas de GET /m/{token}/GET /i/{token}. */
+const REDEMPTION_HEADERS = { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" } as const;
+
+/** GET /r/{token} inválido, consumido, expirado o de otro tenant/ciclo (ERR-RV-05, GRD-RV-06):
+ * el contrato fija 200 UniformAccepted, a propósito distinto del 404 UniformNotFound de
+ * /i/{token} y /m/{token} (openapi.yaml:275-279): GET /r/{token} nunca revela "no existe", solo
+ * la respuesta uniforme que invita a usar el enlace de gestión (ERR-RV-05 response). */
+function recoveryUniformAccepted(): HttpResult {
+  return { status: 200, body: { result: "RECEIVED" }, extraHeaders: { ...REDEMPTION_HEADERS } };
+}
 
 function uniformNotFound(): HttpResult {
   return { status: 404, body: { status: 404 } };
@@ -255,4 +270,68 @@ export function handleOpenRightsCase(
   // InReviewAck (mismo patrón que POST /rights-case/resume en consent-flow-server.ts/server.ts):
   // el solicitante ve "en revisión", nunca el estado interno del caso.
   return { status: 200, body: { result: "IN_REVIEW", caseRef: rightsCase.caseRef } };
+}
+
+// ---------------------------------------------------------------------------
+// GET /r/{token} (API-CNS-103, P-18). Canje sin transición (INV-CM-08): resuelve el token de
+// recuperación y crea la sesión RECOVERY (tenantId, chainRef, revokedDecisionRef,
+// recoveryTokenHash) SIN consumirlo; el consumo ocurre solo en POST /recovery/revoke.
+// ---------------------------------------------------------------------------
+export function handleRedeemRecoveryLink(token: string, ports: Pick<RevocationFlowPorts, "revocation">, sessionSecret: Buffer): HttpResult {
+  const resolved = resolveRecoveryTokenForRedeem(ports.revocation, token);
+  if (!resolved) return recoveryUniformAccepted(); // ERR-RV-05 (GRD-RV-06 onFail)
+
+  const session: ConsentSessionPayload = {
+    tenantId: resolved.tenantId,
+    chainRef: resolved.chainRef,
+    revokedDecisionRef: resolved.revokedDecisionRef,
+    recoveryTokenHash: resolved.tokenHash,
+  };
+  return {
+    status: 303,
+    body: {},
+    location: RECOVERY_CONFIRM_ROUTE,
+    setSessionCookie: encodeSession(sessionSecret, session),
+    extraHeaders: { ...REDEMPTION_HEADERS },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// POST /recovery/revoke (API-CNS-135). Único POST con handle/sesión RECOVERY: R1r+R2r+R3r,
+// R10+R3r o R11 (NOOP), según el estado de la Revocation abierta de la cadena (o su ausencia).
+// tenantId/chainRef/revokedDecisionRef/recoveryTokenHash SIEMPRE de la sesión creada por
+// GET /r/{token}, nunca del body.
+// ---------------------------------------------------------------------------
+export function handleRecoveryRevoke(
+  request: RawConsentRequest,
+  ports: Pick<RevocationFlowPorts, "revocation">,
+  config: RightsCaseHttpConfig,
+  sessionSecret: Buffer,
+): HttpResult {
+  const csrfFailure = checkCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+
+  const session = readSession(request, config, sessionSecret);
+  if (!session || !session.chainRef || !session.revokedDecisionRef || !session.recoveryTokenHash) return uniformNotFound();
+
+  // RecoveryRevokeRequest (contracts/schemas/api-payloads.schema.json): confirmTotalWithdrawal
+  // const true, gesto explícito de confirmación (no dato de identidad: sigue viniendo de la
+  // sesión, no este campo). Sin él, rechazo determinista (mismo criterio que ERR-CM-06).
+  const body = request.body as { confirmTotalWithdrawal?: unknown } | undefined;
+  if (body?.confirmTotalWithdrawal !== true) {
+    return problem(422, "ERR-CM-06");
+  }
+
+  const outcome = revokeWithRecoveryLink(ports.revocation, session.tenantId, session.chainRef, session.revokedDecisionRef, session.recoveryTokenHash);
+  if (outcome.kind === "CONFIRMED") {
+    return { status: 200, body: { revocationRef: outcome.revocationRef, state: "CONFIRMED", receiptDelivery: "BOUND_CHANNEL" } };
+  }
+  if (outcome.kind === "IN_PROGRESS") {
+    // R11 (NOOP): mismo patrón que 202 UniformAccepted de RV0/RC1, pero 200 porque el contrato
+    // (RecoveryRevokeResult) modela IN_PROGRESS como resultado de éxito de esta operación.
+    return { status: 200, body: { result: "IN_PROGRESS" } };
+  }
+  // "UNIFORM" (ERR-RV-05): 202, distinto del 200 de GET /r/{token} (contracts/openapi
+  // /recovery/revoke responses: 202 UniformAccepted es la rama de error uniforme del POST).
+  return { status: 202, body: { result: "RECEIVED" } };
 }
