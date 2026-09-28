@@ -1,19 +1,21 @@
 // Gobierna: specs/test-framework.spec.yaml (TEST-FRAMEWORK), CA-116 fix (P1 contrato vs
 // implementación). Validador propio, mínimo, de JSON Schema (sin dependencias nuevas):
 // soporta exactamente el subconjunto de palabras clave que usan
-// contracts/schemas/api-payloads.schema.json y contracts/schemas/common.schema.json en las
-// definiciones referenciadas por las respuestas HTTP de consent-flow.handler.ts y
-// rights-case-resume.handler.ts: $ref (dentro del mismo archivo o al otro esquema), type,
-// required, properties, additionalProperties: false, enum, const (incluido const de array) y
-// oneOf. No implementa if/then/else, anyOf, patternProperties ni formatos (no los usa el
-// subconjunto validado aquí).
+// contracts/schemas/api-payloads.schema.json, contracts/schemas/common.schema.json y
+// contracts/schemas/ledger-event-payloads.schema.json en las definiciones referenciadas por
+// las respuestas HTTP (consent-flow.handler.ts, rights-case-resume.handler.ts) y por los
+// payloads de eventos del ledger que ya emite el dominio: $ref (dentro del mismo esquema o a
+// otro), type, required, properties, additionalProperties: false, enum, const (incluido const
+// de array) y oneOf. No implementa if/then/else, allOf, dependentRequired, anyOf,
+// patternProperties ni formatos (ningún $defs validado aquí los necesita; los que sí los usan
+// se reportan como finding en vez de forzar un validador más grande).
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CONTRACTS_SCHEMAS_DIR = join(HERE, "..", "..", "..", "contracts", "schemas");
+const CONTRACTS_SCHEMAS_DIR = join(HERE, "..", "..", "contracts", "schemas");
 
 type JsonSchema = Record<string, unknown>;
 
@@ -25,6 +27,7 @@ function loadSchemaFile(fileName: string): JsonSchema {
 const SCHEMA_FILES: Readonly<Record<string, JsonSchema>> = {
   "common.schema.json": loadSchemaFile("common.schema.json"),
   "api-payloads.schema.json": loadSchemaFile("api-payloads.schema.json"),
+  "ledger-event-payloads.schema.json": loadSchemaFile("ledger-event-payloads.schema.json"),
 };
 
 function getByPointer(doc: JsonSchema, pointer: string): JsonSchema {
@@ -171,4 +174,11 @@ export function validateApiPayload(defName: string, value: unknown): ValidationR
 /** Valida contra contracts/schemas/common.schema.json#/$defs/<defName>. */
 export function validateCommon(defName: string, value: unknown): ValidationResult {
   return validateAgainstDef("common.schema.json", defName, value);
+}
+
+/** Valida el `payload` de un evento del ledger contra
+ * contracts/schemas/ledger-event-payloads.schema.json#/$defs/<eventType> (lista blanca por
+ * eventType, INV-CM-05). */
+export function validateLedgerEventPayload(eventType: string, payload: unknown): ValidationResult {
+  return validateAgainstDef("ledger-event-payloads.schema.json", eventType, payload);
 }

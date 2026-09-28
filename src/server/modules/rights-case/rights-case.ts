@@ -157,7 +157,9 @@ export function confirmCaseReturnViaHandle(
     aggregateId: rightsCase.caseRef,
     actorType: UNVERIFIED_BEARER_ACTOR.actorType,
     actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
-    payload: {},
+    // ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_CONTACTING exige caseRef (P1:
+    // faltaba); recoveryRef se omite porque origin es siempre CHANNEL_UNREACHABLE en RC2u.
+    payload: { caseRef: rightsCase.caseRef },
     idempotencyKey: rightsCase.caseRef,
   });
   return updated;
@@ -194,7 +196,9 @@ export function closeCase(
     aggregateId: caseRef,
     actorType: "HUMAN",
     actorRole: "RIGHTS_OPERATOR",
-    payload: { outcome },
+    // ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_CLOSED exige también caseRef (P1:
+    // faltaba).
+    payload: { caseRef, outcome },
     idempotencyKey: caseRef,
   });
   return closed;

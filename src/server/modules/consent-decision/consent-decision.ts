@@ -198,8 +198,10 @@ export function submitDecision(
 
   const nextState = allGranted ? "GRANTED" : "DECLINED";
   // receiptRef (contracts/api-payloads.schema.json DecisionRecorded, common.schema.json Ref):
-  // opaco UUIDv4, distinto del receiptRef interno de RECEIPT_CREATED (ledger-event-payloads,
-  // formato pendiente: ver reporte de la tarea, discrepancia fuera de alcance HTTP).
+  // opaco UUIDv4. El MISMO valor se usa en el evento RECEIPT_CREATED del ledger (P1: antes
+  // usaba `receipt:${consentId}`, con un formato distinto del Ref que exige
+  // ledger-event-payloads.schema.json:415-430 y sin relación con lo que expone la respuesta
+  // HTTP).
   const receiptRef = randomUUID();
   const decided: ConsentDecisionRecord = { ...found, state: nextState, purposes, receiptRef };
   ports.repo.save(decided);
@@ -235,7 +237,9 @@ export function submitDecision(
       aggregateId: consentId,
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
-      payload: { receiptRef: `receipt:${consentId}` },
+      // managementLinkIssued: false es el valor factual de este slice IT0: el
+      // management_token nunca se emite todavía (x-scope-note, consent-flow.handler.ts).
+      payload: { receiptRef, managementLinkIssued: false },
       idempotencyKey: `${consentId}:receipt`,
     });
     markInvitationCompleted(ports.invitation, tenantId, found.invitationRef, consentId); // I6
@@ -257,7 +261,9 @@ export function submitDecision(
       aggregateId: consentId,
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
-      payload: { receiptRef: `receipt:${consentId}` },
+      // managementLinkIssued: false es el valor factual de este slice IT0: el
+      // management_token nunca se emite todavía (x-scope-note, consent-flow.handler.ts).
+      payload: { receiptRef, managementLinkIssued: false },
       idempotencyKey: `${consentId}:receipt`,
     });
     markInvitationDeclined(ports.invitation, tenantId, found.invitationRef, consentId); // I7
