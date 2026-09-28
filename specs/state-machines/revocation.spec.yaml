@@ -605,8 +605,9 @@ managementLink: # §5.0: entrada única a toda ruta RIGHTS del titular (no es un
   rotation: ["RECEIPT_REISSUED", "FAILURE_CAP (otp-challenge V6c)"]
   guard: GRD-RV-20
   invariant: INV-RV-06
-  governedBy: ["SM-CNS-001 §5.0", "ADR-006 §6.1", "DEC-BR-017 §1", "SEC-CNS-006 P-13, P-14"]
+  governedBy: ["SM-CNS-001 §5.0", "ADR-006 §6.1", "DEC-BR-017 §1", "SEC-CNS-006 P-13, P-14", "SEC-CNS-014 (Carlos, 2026-09-28)"]
   testIds: [TEST-CNS-258, TEST-CNS-264]
+  changeNote: "SEC-CNS-014 (Carlos, 2026-09-28, opción a; mismo patrón que RECOVERY): GET /m/<token> deja de llamar resolve_management_token (deja de leer la BD) en el canje. Solo hashea el token y fija un handle MANAGE_ENTRY firmado propio (link-handle.ts, clave HKDF distinta de la de RECOVERY), con Set-Cookie y 303 a /manage SIEMPRE idénticos (válido, inexistente o rotado son indistinguibles). resolve_management_token(token_hash) se ejecuta recién en GET /manage (render, solo lectura), contra el hash del handle; si no resuelve, 404 uniforme byte-idéntico de la propia pantalla (frame 59:3), nunca del framework. Sin cambio de `enables`/`rotation`/`guard`/`invariant` ni de semántica de consentimiento/revocación/elegibilidad."
 
 guards:
   - id: GRD-RV-01
