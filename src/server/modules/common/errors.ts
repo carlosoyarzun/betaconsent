@@ -10,6 +10,7 @@ export type DomainErrorCode =
   | "ERR-CM-10" // ACTOR_NOT_ALLOWED
   | "ERR-RC-01" // GRD-RC-07 onFail (origin != CHANNEL_UNREACHABLE) — respuesta uniforme sin evento
   | "ERR-RC-09" // CASE_NOT_BOUND_TO_HANDLE — respuesta uniforme sin efecto
+  | "ERR-RV-05" // RECOVERY_TOKEN_INVALID (GRD-RV-06 onFail) — respuesta uniforme, sin consumir el token
   | "ERR-RV-20" // GRD-RV-10 onFail (RH3 sin RH2/RH2v ATTESTED previa)
   // specs/state-machines/invitation.spec.yaml
   | "ERR-IV-01" // INVITATION_TOKEN_NOT_RESOLVED — 404 uniforme (GRD-IV-07)

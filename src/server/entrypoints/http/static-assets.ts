@@ -42,6 +42,7 @@ const STATIC_ASSETS: ReadonlyMap<string, StaticAsset> = new Map([
   ["/assets/decision.js", { filePath: appAssetPath("decision.js"), contentType: "text/javascript; charset=utf-8" }],
   ["/assets/manage.js", { filePath: appAssetPath("manage.js"), contentType: "text/javascript; charset=utf-8" }],
   ["/assets/revocation.js", { filePath: appAssetPath("revocation.js"), contentType: "text/javascript; charset=utf-8" }],
+  ["/assets/recovery.js", { filePath: appAssetPath("recovery.js"), contentType: "text/javascript; charset=utf-8" }],
 ]);
 
 export interface ResolvedStaticAsset {

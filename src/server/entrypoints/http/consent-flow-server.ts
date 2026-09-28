@@ -12,6 +12,9 @@ import { createInMemoryLedgerAdapter } from "../../../infra/adapters/in-memory-l
 import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
+import { createInMemoryRecoveryLinkChannelSink } from "../../../infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import type { InMemoryRecoveryLinkChannelSink } from "../../../infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import { createInMemoryRecoveryTokenRepository } from "../../../infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
@@ -21,6 +24,7 @@ import type { Environment } from "../../modules/common/types.ts";
 import type { InvitationPorts } from "../../modules/invitation/invitation.ts";
 import type { OtpChallengePorts, OtpPolicy } from "../../modules/otp-challenge/otp-challenge.ts";
 import type { ConsentDecisionPorts } from "../../modules/consent-decision/consent-decision.ts";
+import type { RecoveryTokenPolicy } from "../../modules/revocation/recovery-token-policy.config.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import {
@@ -39,7 +43,9 @@ import {
   handleConfirmRevocation,
   handleIssueRecoveryLink,
   handleOpenRightsCase,
+  handleRecoveryRevoke,
   handleRedeemManagementLink,
+  handleRedeemRecoveryLink,
   handleRequestRevocation,
   handleVerifyRevocation,
   handleWithdrawRevocation,
@@ -53,6 +59,7 @@ import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
 import { renderManageEntryPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
 import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from "./revocation-page.ts";
+import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 
@@ -71,6 +78,10 @@ export interface ConsentFlowHttpServerOptions {
   readonly otpPolicy?: OtpPolicy;
   /** GRD-CD-04 (decision-relationship.config.ts); requerido si no se inyectan `ports` propios. */
   readonly relationshipConfig?: DecisionRelationshipConfig;
+  /** P-15 (recovery-token-policy.config.ts, CA-116 PR 2); si se omite junto con
+   * `revocationPorts`, createDefaultRevocationFlowPorts exige pasarlo explícito (fail-closed,
+   * mismo patrón que otpPolicy). */
+  readonly recoveryTokenPolicy?: RecoveryTokenPolicy;
   /**
    * Entorno de ejecución (GRD-CM-13). Solo cuando es exactamente "LOCAL" este servidor expone
    * GET /__dev/otp-sink (dev.ts, D4/D5 report a Carlos: sink de depuración, cero PII más allá
@@ -108,14 +119,33 @@ export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationship
   return { invitation, otp, decision };
 }
 
-/** CA-116: ports de GET /m/{token} + R1-R3/R8/RV0(BEARER)/RC1(BEARER). `ledger` compartido con
+/** Convenience LOCAL/test-only (nunca de producción real: esta función entera solo construye
+ * adaptadores in-memory): a diferencia de `loadRecoveryTokenPolicyConfig` (fail-closed, D4, sin
+ * default), la mayoría de los tests HTTP de este repo no ejercitan recovery y no deberían tener
+ * que pasar un P-15 explícito solo para construir el servidor. Mismo criterio que el default
+ * `sessionSecret ?? randomBytes(32)` de createConsentFlowHttpServer: válido solo mientras el
+ * proceso vive, nunca persistido ni usado como recomendación de producto. dev.ts y los tests que
+ * SÍ prueban recovery pasan su propio override vía `loadRecoveryTokenPolicyConfig`. */
+const DEFAULT_TEST_RECOVERY_TOKEN_POLICY: RecoveryTokenPolicy = { ttlMs: 15 * 60_000 };
+
+/** CA-116: ports de GET /m/{token} + R1-R3/R8/RV0(BEARER)/RC1(BEARER), y (PR 2) GET /r/{token}
+ * + POST /recovery/revoke (R1r/R2r/R3r/R10/R11). `ledger` compartido con
  * `createDefaultConsentFlowPorts` (mismo proceso in-memory) si el caller lo pasa; si no, uno
  * nuevo. El `TenantHandlePort` nace vacío: dev.ts y los tests siembran handles con `.issue()`
  * (import { createInMemoryTenantHandleAdapter } directamente para poder sembrar). */
-export function createDefaultRevocationFlowPorts(ledger: LedgerPort = createInMemoryLedgerAdapter()): RevocationFlowPorts {
+export function createDefaultRevocationFlowPorts(
+  recoveryTokenPolicy: RecoveryTokenPolicy = DEFAULT_TEST_RECOVERY_TOKEN_POLICY,
+  ledger: LedgerPort = createInMemoryLedgerAdapter(),
+): RevocationFlowPorts {
   return {
     tenantHandle: createInMemoryTenantHandleAdapter(),
-    revocation: { revocationRepo: createInMemoryRevocationRepository(), ledger },
+    revocation: {
+      revocationRepo: createInMemoryRevocationRepository(),
+      ledger,
+      recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+      recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+      recoveryTokenPolicy,
+    },
     rightsCase: { rightsCaseRepo: createInMemoryRightsCaseRepository(), ledger },
   };
 }
@@ -195,7 +225,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig);
     })();
-  const revocationPorts = options.revocationPorts ?? createDefaultRevocationFlowPorts(ports.decision.ledger);
+  const revocationPorts = options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger);
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "";
@@ -289,6 +319,21 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "GET" && path.startsWith("/r/") && path.length > "/r/".length) {
+      // API-CNS-103 (P-18, CA-116 PR 2): único GET de canje del token de recuperación
+      // (INV-CM-08, no transiciona ni consume). Token vacío o no decodificable -> misma
+      // respuesta uniforme que un token inválido (ERR-RV-05), nunca un 404 crudo.
+      let token: string | undefined;
+      try {
+        token = decodeURIComponent(path.slice("/r/".length));
+      } catch {
+        token = undefined;
+      }
+      const result = handleRedeemRecoveryLink(token ?? "", revocationPorts, sessionSecret);
+      writeResult(res, config, result);
+      return;
+    }
+
     if (req.method === "GET" && path === "/manage") {
       // UX-CNS-004 §1 (33:2 entrada / 33:21 estado): una sola ruta, dos renders según la
       // sesión (INV-CM-08: este GET nunca transiciona, solo lee la sesión ya creada por
@@ -355,6 +400,24 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "GET" && path === "/recovery/confirm") {
+      // CA-116 PR 2 (33:87 recovery/confirmar): exige la sesión RECOVERY creada por
+      // GET /r/{token} (recoveryTokenHash); sin ella, error uniforme (33:106), mismo patrón que
+      // /manage/revocation/confirm.
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session || !session.recoveryTokenHash || !session.chainRef || !session.revokedDecisionRef) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderRecoveryUniformErrorPage());
+        return;
+      }
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderRecoveryConfirmPage());
+      return;
+    }
+
     if (req.method === "GET" && path.startsWith("/assets/")) {
       // Lista blanca cerrada (static-assets.ts): el lookup es por igualdad exacta, nunca por
       // join de filesystem, así que un intento de traversal (`../`, codificado o no) nunca
@@ -384,6 +447,21 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
       }
       const sink = ports.otp.channel as InMemoryOtpChannelSink;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ sent: sink.sent }));
+      return;
+    }
+
+    if (req.method === "GET" && path === "/__dev/recovery-sink") {
+      // Mismo patrón fail-closed que /__dev/otp-sink (GRD-CM-13): CA-116 PR 2, único lugar
+      // donde el enlace /r/<token> en claro es legible en LOCAL (Cero PII: nunca en la
+      // respuesta HTTP de /manage/recovery-link ni en logs).
+      if (options.environment !== "LOCAL") {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      const sink = revocationPorts.revocation.recoveryLinkChannel as InMemoryRecoveryLinkChannelSink;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ sent: sink.sent }));
       return;
@@ -437,6 +515,9 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         break;
       case "/manage/recovery-link":
         result = handleIssueRecoveryLink(request, revocationPorts, config, sessionSecret);
+        break;
+      case "/recovery/revoke":
+        result = handleRecoveryRevoke(request, revocationPorts, config, sessionSecret);
         break;
       case "/rights-case/open":
         result = handleOpenRightsCase(request, revocationPorts, config, sessionSecret);

@@ -16,6 +16,8 @@ import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/i
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 
 /** Registro de tenants "vivo" fuera de las máquinas RIGHTS, solo para el fixture del test. */
 const suspendedTenants = new Map<string, { active: boolean }>([["tenant-suspended", { active: false }]]);
@@ -54,7 +56,18 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
   });
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  const ports = { tenantHandle, rightsCaseRepo, revocationRepo, ledger };
+  // CA-116 PR 2: RevocationPorts ganó recoveryTokenRepo/recoveryLinkChannel/recoveryTokenPolicy
+  // (RV0 BEARER + GET /r/{token} + POST /recovery/revoke), ajenos a RC3/RH2/RH3/R4 (fuente
+  // RECOVERY HUMAN_ASSISTED) bajo prueba aquí.
+  const ports = {
+    tenantHandle,
+    rightsCaseRepo,
+    revocationRepo,
+    ledger,
+    recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+    recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+    recoveryTokenPolicy: { ttlMs: 60_000 },
+  };
 
   // RC3
   const { revocation } = expressRevocationIntentInCase(ports, "handle-suspended");

@@ -15,9 +15,19 @@ import {
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+
+const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 
 function makePorts() {
-  return { revocationRepo: createInMemoryRevocationRepository(), ledger: createInMemoryLedgerAdapter() };
+  return {
+    revocationRepo: createInMemoryRevocationRepository(),
+    ledger: createInMemoryLedgerAdapter(),
+    recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+    recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+    recoveryTokenPolicy: LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY,
+  };
 }
 
 test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED -> APPLIED (R4 síncrono) y encola un solo CONSENT_REVOKED", () => {
