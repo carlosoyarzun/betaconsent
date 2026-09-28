@@ -96,6 +96,15 @@ function serializeSessionCookie(config: RightsCaseHttpConfig, value: string): st
   return `${config.sessionCookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict`;
 }
 
+/** P1: contracts/openapi/consent-it0.openapi.yaml fija application/problem+json en
+ * components.responses.CsrfRejected (403), components.responses.Problem (409/422 genérico) y
+ * en el 422 de /otp/submit (OtpRejected); el resto (incluida UniformNotFound, 404) es
+ * application/json. En los dos entrypoints de este repo (consent-flow-server.ts, server.ts)
+ * los únicos usos de 403/409/422 son, precisamente, esos tres. */
+function contentTypeForStatus(status: number): string {
+  return status === 403 || status === 409 || status === 422 ? "application/problem+json" : "application/json";
+}
+
 function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: HttpResult): void {
   if (result.setSessionCookie) {
     res.setHeader("Set-Cookie", serializeSessionCookie(config, result.setSessionCookie));
@@ -108,7 +117,7 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   if (result.location) {
     res.setHeader("Location", result.location);
   }
-  res.writeHead(result.status, { "content-type": "application/json" });
+  res.writeHead(result.status, { "content-type": contentTypeForStatus(result.status) });
   res.end(JSON.stringify(result.body));
 }
 

@@ -214,7 +214,10 @@ test("TEST-CNS-503: código incorrecto en /otp/submit -> 422 uniforme, sin filtr
     });
     assert.equal(rejected.status, 422);
     const body = (await rejected.json()) as { code: string };
-    assert.equal(body.code, "OTP_REJECTED");
+    // OtpRejected (contracts/api-payloads.schema.json): code del enum del contrato
+    // (OTP_CODE_REJECTED), no el ID interno ni el literal "OTP_REJECTED" (P1, ver
+    // tests/contract/http/consent-flow-http-contract.test.ts TEST-CNS-519).
+    assert.equal(body.code, "OTP_CODE_REJECTED");
     assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-503")?.state, "OPENED");
   } finally {
     await harness.close();

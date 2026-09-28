@@ -57,6 +57,13 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return value;
 }
 
+/** P1: contracts/openapi/consent-it0.openapi.yaml fija application/problem+json en
+ * components.responses.CsrfRejected (403); el resto (200 InReviewAck, 404 UniformNotFound) es
+ * application/json. */
+function contentTypeForStatus(status: number): string {
+  return status === 403 ? "application/problem+json" : "application/json";
+}
+
 export function createRightsCaseHttpServer(options: RightsCaseHttpServerOptions = {}): Server {
   const config = loadRightsCaseHttpConfig(options.config);
   const ports = options.ports ?? createDefaultInMemoryPorts();
@@ -77,7 +84,7 @@ export function createRightsCaseHttpServer(options: RightsCaseHttpServerOptions 
         config,
       );
       const payload = JSON.stringify(result.body);
-      res.writeHead(result.status, { "content-type": "application/json" });
+      res.writeHead(result.status, { "content-type": contentTypeForStatus(result.status) });
       res.end(payload);
       return;
     }

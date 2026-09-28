@@ -122,7 +122,16 @@ export function markInvitationReady(
     aggregateId: invitationRef,
     actorType: "HUMAN",
     actorRole: "INVITER",
-    payload: { invitationRef, consentVersion: input.consentVersion },
+    // ledger-event-payloads.schema.json#/$defs/INVITATION_READY exige también expiresAt y
+    // recipientBinding (P1: faltaban). recipientBinding es siempre RECIPIENT_CHANNEL en este
+    // archivo: el guard de arriba exige recipientChannelRef en todo I2 (UNBOUND no está
+    // implementado en este slice, ver cabecera del archivo).
+    payload: {
+      invitationRef,
+      consentVersion: input.consentVersion,
+      expiresAt: input.expiresAt.toISOString(),
+      recipientBinding: "RECIPIENT_CHANNEL",
+    },
     idempotencyKey: `${invitationRef}:ready`,
   });
   return ready;
