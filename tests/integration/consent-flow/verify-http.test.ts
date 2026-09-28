@@ -28,7 +28,7 @@ const CHANNEL_REF = "test+verify@example.invalid";
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 2 };
 // LOCAL-only sintetico (GRD-CD-04, decision-relationship.config.ts): estos tests no ejercen
 // pasos de decision, pero createDefaultConsentFlowPorts exige la config igual que otpPolicy.
-const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] };
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 interface Harness {
   readonly baseUrl: string;

@@ -89,7 +89,7 @@ function buildPorts(): Ports {
     invitation,
     config: LECTORPRO_BETA_CONFIG,
     // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
-    relationships: { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] },
+    relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
   };
   return { ledger, invitation, otp, decision };
 }
@@ -139,7 +139,7 @@ function bringToPendingDecision(ports: Ports, suffix: string): PendingDecision {
   recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
   recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
     stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
-    relationshipRef: "IT0_SYNTHETIC_GUARDIAN",
+    relationshipRef: "SYNTHETIC_GUARDIAN",
     authorityDeclared: true,
   });
   recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {

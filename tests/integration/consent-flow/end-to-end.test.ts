@@ -52,7 +52,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
     invitation: invitationPorts,
     config: LECTORPRO_BETA_CONFIG,
     // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
-    relationships: { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] },
+    relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
   };
 
   // Invitation: I1 -> I2 -> I3 -> I4.
@@ -86,7 +86,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
   recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", { stepKind: "CONSENT_VERSION_VIEWED" });
   recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", {
     stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
-    relationshipRef: "IT0_SYNTHETIC_GUARDIAN",
+    relationshipRef: "SYNTHETIC_GUARDIAN",
     authorityDeclared: true,
   });
   recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true });

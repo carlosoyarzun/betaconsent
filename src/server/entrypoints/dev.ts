@@ -14,6 +14,7 @@ import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.
 import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
+import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG } from "./dev-local-config.ts";
 
 const environment = process.env.CNS_ENVIRONMENT ?? "";
 if (environment !== "LOCAL") {
@@ -29,14 +30,14 @@ if (environment !== "LOCAL") {
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 const allowedOrigin = process.env.CNS_ALLOWED_ORIGIN ?? `http://127.0.0.1:${port}`;
 
-// D4: P-01/P-02/P-03 no tienen valor aprobado en specs/contracts; este override es
-// LOCAL-only, nunca un default de producción (ver otp-policy.config.ts).
-const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: 6, ttlMs: 5 * 60_000, maxAttempts: 3, maxResends: 3 };
+// D4: P-01/P-02/P-03 no tienen valor aprobado en specs/contracts; este override es LOCAL-only,
+// nunca un default de producción (ver otp-policy.config.ts). Valor compartido con
+// TEST-CNS-566 (dev-local-config.test.ts) vía dev-local-config.ts, para que CI detecte si deja
+// de cumplir lo que exige el loader real.
 const otpPolicy = loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY);
 
 // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos,
 // 2026-09-27): el enum legal real sigue PENDING DEC-BR-003 / EXT-A / LD-01.
-const LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] };
 const relationshipConfig = loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
 
 const ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig);

@@ -17,7 +17,7 @@ const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 // LOCAL-only sintetico (GRD-CD-04, decision-relationship.config.ts): estos tests no ejercen
 // pasos de decision, pero createDefaultConsentFlowPorts exige la config igual que otpPolicy.
-const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] };
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTION" | undefined): Promise<{
   baseUrl: string;

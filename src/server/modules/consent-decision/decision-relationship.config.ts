@@ -12,7 +12,7 @@
 // Sin default de producción (mismo fail-closed que loadOtpPolicyConfig): si no hay override
 // explícito ni `CNS_DECISION_RELATIONSHIP_REFS`, esta función lanza. Los únicos valores
 // sintéticos permitidos viven en dev.ts y en tests, marcados LOCAL_ONLY_* (p.ej.
-// `IT0_SYNTHETIC_GUARDIAN`), y deben cumplir el mismo patrón `^[A-Z_]{1,40}$` que el contrato.
+// `SYNTHETIC_GUARDIAN`), y deben cumplir el mismo patrón `^[A-Z_]{1,40}$` que el contrato.
 
 const RELATIONSHIP_REF_PATTERN = /^[A-Z_]{1,40}$/;
 

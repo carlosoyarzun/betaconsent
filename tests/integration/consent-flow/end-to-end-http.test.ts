@@ -28,7 +28,7 @@ const CHANNEL_REF = "test+e2e-http@example.invalid";
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
-const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["IT0_SYNTHETIC_GUARDIAN"] };
+const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
@@ -122,7 +122,7 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
     const stepBodies: unknown[] = [
       { stepKind: "CONTEXT_INFORMATION_VIEWED" },
       { stepKind: "CONSENT_VERSION_VIEWED" },
-      { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "IT0_SYNTHETIC_GUARDIAN", authorityDeclared: true },
+      { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true },
       { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
     ];
     let sessionAfterSteps = sessionVerified;
