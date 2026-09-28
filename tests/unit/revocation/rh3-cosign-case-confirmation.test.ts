@@ -6,6 +6,7 @@
 // TEST-CNS-660..666.
 
 import test from "node:test";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
 import {
@@ -83,41 +84,41 @@ function revokedEvents(ledger: LedgerPort, ref: string) {
 test("TEST-CNS-660: cosign sin RH2/RH2v ATTESTED previa -> ERR-RV-20 (GRD-RV-10)", () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  revocationRepo.save({ revocationRef: "rv-660", tenantId: "tenant-1", chainRef: "chain-660", caseRef: "case-660", status: "REQUESTED" });
-  const code = errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", "rv-660", "case-660", { cosignedByPrincipalRef: "staff-synthetic-02" }));
+  revocationRepo.save({ revocationRef: fixtureUuid("rv-660"), tenantId: "tenant-1", chainRef: "chain-660", caseRef: "case-660", status: "REQUESTED" });
+  const code = errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", fixtureUuid("rv-660"), "case-660", { cosignedByPrincipalRef: "staff-synthetic-02" }));
   assert.equal(code, "ERR-RV-20");
 });
 
 test("TEST-CNS-661: cosign con revocationRef de otro tenant o caseRef distinto -> ERR-CM-01 (GRD-CM-01, tenant_id)", () => {
-  const { ports } = seed("rv-661");
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", "rv-661", "case-rv-661", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-661", "case-otro", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+  const { ports } = seed(fixtureUuid("rv-661"));
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", fixtureUuid("rv-661"), `case-${fixtureUuid("rv-661")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-661"), "case-otro", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
 });
 
 test("TEST-CNS-662: cosign sin confirmación previa registrada (paso 1) -> ERR-RV-18, sin efecto", () => {
-  const { ports, revocationRepo, ledger } = seed("rv-662", { record: false });
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-662", "case-rv-662", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RV-18");
-  assert.equal(revocationRepo.findByRef("tenant-1", "rv-662")?.status, "VERIFIED");
-  assert.equal(confirmedEvents(ledger, "rv-662").length, 0);
+  const { ports, revocationRepo, ledger } = seed(fixtureUuid("rv-662"), { record: false });
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-662"), `case-${fixtureUuid("rv-662")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RV-18");
+  assert.equal(revocationRepo.findByRef("tenant-1", fixtureUuid("rv-662"))?.status, "VERIFIED");
+  assert.equal(confirmedEvents(ledger, fixtureUuid("rv-662")).length, 0);
 });
 
 test("TEST-CNS-663: cosign por la misma persona que registró -> ERR-RV-18 (cosignedByRef <> recordedByRef), sin efecto", () => {
-  const { ports, revocationRepo, ledger } = seed("rv-663");
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", "rv-663", "case-rv-663", { cosignedByPrincipalRef: "staff-synthetic-01" })), "ERR-RV-18");
-  const stored = revocationRepo.findByRef("tenant-1", "rv-663");
+  const { ports, revocationRepo, ledger } = seed(fixtureUuid("rv-663"));
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-663"), `case-${fixtureUuid("rv-663")}`, { cosignedByPrincipalRef: "staff-synthetic-01" })), "ERR-RV-18");
+  const stored = revocationRepo.findByRef("tenant-1", fixtureUuid("rv-663"));
   assert.equal(stored?.status, "VERIFIED");
   assert.equal(stored?.cosignedByRef, undefined);
-  assert.equal(confirmedEvents(ledger, "rv-663").length, 0);
+  assert.equal(confirmedEvents(ledger, fixtureUuid("rv-663")).length, 0);
 });
 
 test("TEST-CNS-664: dotación insuficiente -> ERR-RC-10 (GRD-RC-15), fail-closed", () => {
-  const { ports } = seed("rv-664");
+  const { ports } = seed(fixtureUuid("rv-664"));
   const shortStaff = createInMemoryStaffIdentityAdapter([
     { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-03", role: "APPROVER" },
   ]);
-  assert.equal(errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", "rv-664", "case-rv-664", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RC-10");
+  assert.equal(errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", fixtureUuid("rv-664"), `case-${fixtureUuid("rv-664")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RC-10");
 });
 
 /** Refs UUIDv4 sintéticas: el schema exige Ref = UUIDv4 opaco (common.schema.json). Las refs
@@ -158,12 +159,12 @@ test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recor
 });
 
 test("TEST-CNS-666: cosign idempotente por revocationRef — repetir no duplica REVOCATION_CONFIRMED", () => {
-  const { ports, ledger } = seed("rv-666");
-  cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
-  const again = cosignCaseConfirmation(ports, staff, "tenant-1", "rv-666", "case-rv-666", { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const { ports, ledger } = seed(fixtureUuid("rv-666"));
+  cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), `case-${fixtureUuid("rv-666")}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const again = cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), `case-${fixtureUuid("rv-666")}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
   assert.equal(again.status, "APPLIED");
-  assert.equal(confirmedEvents(ledger, "rv-666").length, 1);
-  assert.equal(revokedEvents(ledger, "rv-666").length, 1);
+  assert.equal(confirmedEvents(ledger, fixtureUuid("rv-666")).length, 1);
+  assert.equal(revokedEvents(ledger, fixtureUuid("rv-666")).length, 1);
 });
 
 const REV_676 = "7a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f11";
