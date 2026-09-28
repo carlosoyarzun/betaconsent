@@ -1,0 +1,26 @@
+/* CSS propio de la app (no del design system, design-system/ no se edita en esta tarea).
+   Gobierna: CLAUDE.md UX-CNS-001 (/welcome), handoff ravena-ux P1 (DS<->accesibilidad: .lp-btn
+   no define min-height) y decisión de Carlos, 2026-09-27: el CTA principal del flujo de
+   invitación lleva una altura mínima de 44px (WCAG 2.5.8, tap target ideal), fijada aquí en el
+   CSS de la app y no en el design system porque .lp-btn/components.css es genérico para todo
+   LectorPro y esta decisión es específica de Consent App. Sin token `--lp-*` de 44px en
+   design-system/css/tokens.css (handoff §7, P1); valor literal citando esta decisión. */
+
+.lp-welcome-cta {
+  min-height: 44px; /* Carlos, 2026-09-27: tap target ideal del CTA, en CSS de app, no en DS */
+}
+
+.lp-welcome-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: var(--lp-spacing-24, 24px);
+}
+
+.lp-welcome-help {
+  display: block;
+  margin-top: var(--lp-spacing-16, 16px);
+}
+
+[hidden] {
+  display: none;
+}

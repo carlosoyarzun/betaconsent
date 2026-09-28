@@ -28,6 +28,12 @@ import {
   type HttpResult,
   type RawConsentRequest,
 } from "./consent-flow.handler.ts";
+import { parseCookies } from "./cookies.ts";
+import { decodeSession } from "./consent-session.ts";
+import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
+import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
+import { renderVerifyPlaceholderPage } from "./verify-page.ts";
+import { resolveStaticAsset } from "./static-assets.ts";
 
 export interface ConsentFlowHttpServerOptions {
   readonly config?: Partial<RightsCaseHttpConfig>;
@@ -105,6 +111,16 @@ function contentTypeForStatus(status: number): string {
   return status === 403 || status === 409 || status === 422 ? "application/problem+json" : "application/json";
 }
 
+/** Cabeceras de las páginas HTML servidas por este entrypoint (/welcome, /verify): CLAUDE.md
+ * UX-CNS-001. CSP estricta sin scripts inline (todo el JS/CSS de la app va como estático bajo
+ * /assets/**, static-assets.ts); `no-store` evita que un proxy/navegador cachee una pantalla
+ * ligada a una sesión de un solo uso; `no-referrer` evita filtrar la URL a terceros. */
+function writeHtmlSecurityHeaders(res: ServerResponse): void {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'self'");
+}
+
 function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: HttpResult): void {
   if (result.setSessionCookie) {
     res.setHeader("Set-Cookie", serializeSessionCookie(config, result.setSessionCookie));
@@ -147,6 +163,57 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       const result = token ? handleRedeemInvitationLink(token, ports, sessionSecret) : { status: 404 as const, body: { status: 404 } };
       writeResult(res, config, result);
+      return;
+    }
+
+    if (req.method === "GET" && path === "/welcome") {
+      // UX-CNS-001: GET /welcome exige la sesión LANDING creada por GET /i/{token} (INV-CM-08:
+      // esta ruta nunca transiciona nada, solo lee la sesión). Sin sesión válida, se sirve el
+      // estado de error uniforme de la propia pantalla (INV-CM-05: sin distinguir causa), nunca
+      // un 404 crudo del framework.
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      writeHtmlSecurityHeaders(res);
+      if (!session) {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end(renderWelcomeUniformErrorPage());
+        return;
+      }
+      // Cookie CSRF del double-submit (csrf.ts): legible por welcome.js, distinta de la cookie
+      // de sesión (siempre HttpOnly).
+      res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderWelcomePage());
+      return;
+    }
+
+    if (req.method === "GET" && path === "/verify") {
+      // Placeholder mínimo (CLAUDE.md): todavía no hay pantalla de OTP; welcome.js redirige acá
+      // cuando /otp/request responde 202.
+      writeHtmlSecurityHeaders(res);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderVerifyPlaceholderPage());
+      return;
+    }
+
+    if (req.method === "GET" && path.startsWith("/assets/")) {
+      // Lista blanca cerrada (static-assets.ts): el lookup es por igualdad exacta, nunca por
+      // join de filesystem, así que un intento de traversal (`../`, codificado o no) nunca
+      // resuelve a una entrada y cae directo al 404 de abajo.
+      let decodedPath: string | undefined;
+      try {
+        decodedPath = decodeURIComponent(path);
+      } catch {
+        decodedPath = undefined;
+      }
+      const asset = decodedPath ? resolveStaticAsset(decodedPath) : null;
+      if (!asset) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      res.writeHead(200, { "content-type": asset.contentType, "cache-control": "no-store" });
+      res.end(asset.content);
       return;
     }
 
