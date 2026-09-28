@@ -90,7 +90,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
     receiptRef: `receipt-${consentId}`,
   });
-  const revocationPorts = createDefaultRevocationFlowPorts(LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY, ports.decision.ledger);
+  const revocationPorts = createDefaultRevocationFlowPorts(LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY, ports.decision.ledger, ports.decision.repo);
   (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
     handle: mgmtToken,
     tenantId: TENANT_ID,

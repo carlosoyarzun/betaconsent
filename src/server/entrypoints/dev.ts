@@ -90,7 +90,7 @@ ports.decision.repo.save({
 // P-15 (recovery-token-policy.config.ts): mismo patrón D4 que otpPolicy, LOCAL-only, PENDING
 // de valor aprobado en SEC-CNS-006 (CA-116 PR 2, UX-CNS-004 recovery).
 const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY);
-const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger);
+const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
 (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
   handle: MGMT_TOKEN,
   tenantId: TENANT_ID,

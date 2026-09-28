@@ -1,12 +1,14 @@
 // Gobierna: specs/state-machines/revocation.spec.yaml R1 (RequestRevocation), R2
 // (VerifyRevocationOtp), R3 (ConfirmRevocation), R8 (WithdrawRevocationRequest), RV0
-// guardsBySource.BEARER. Subconjunto mínimo IT0 (ver revocation.ts). TEST-CNS-575..TEST-CNS-579.
+// guardsBySource.BEARER. Subconjunto mínimo IT0 (ver revocation.ts). TEST-CNS-575..TEST-CNS-579,
+// TEST-CNS-589..591, TEST-CNS-598 (SEC-CNS-014, FINDING P1-01).
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   confirmRevocation,
+  evaluateRecoveryTokenEligibility,
   issueRecoveryLinkBearer,
   requestRevocation,
   resolveRecoveryTokenForRedeem,
@@ -19,6 +21,8 @@ import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
+import type { ConsentDecisionState } from "../../../src/server/ports/consent-decision-repository.port.ts";
 
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 
@@ -29,7 +33,36 @@ function makePorts() {
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY,
+    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
   };
+}
+
+/** Siembra directa (bypass de submitDecision/GRD-CD-08) de la GRANTED vigente que
+ * findActiveGrantByChain debe ver. INV-CM-06: revocation.ts nunca escribe este port; estos
+ * tests simulan a mano el "otro ciclo" (D1 deja de ser vigente, nace D2 GRANTED) que en el
+ * producto real ocurriría en un flujo posterior fuera de este módulo. */
+function seedGrantedDecision(
+  ports: ReturnType<typeof makePorts>,
+  tenantId: string,
+  chainRef: string,
+  consentId: string,
+  state: ConsentDecisionState = "GRANTED",
+): void {
+  ports.consentDecisionRepo.save({
+    consentId,
+    tenantId,
+    contextRef: "ctx-test",
+    productRef: "prod-test",
+    subjectRef: "subject-test@example.invalid",
+    decisionMakerRef: "dm-test",
+    invitationRef: "inv-test",
+    verificationRef: "ver-test",
+    chainRef,
+    state,
+    purposes: [],
+    priorStepsComplete: true,
+    stepsRecorded: [],
+  });
 }
 
 test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED -> APPLIED (R4 síncrono) y encola un solo CONSENT_REVOKED", () => {
@@ -102,6 +135,7 @@ test("TEST-CNS-580: un revocationRef inexistente en R2/R3/R8 da 404 uniforme (ER
 
 test("TEST-CNS-589: revokeWithRecoveryLink sin Revocation abierta (token fresco) recorre R1r+R2r+R3r hasta CONFIRMED (APPLIED síncrono, GRD-RV-06)", () => {
   const ports = makePorts();
+  seedGrantedDecision(ports, "tenant-1", "chain-589b", "consent-589b");
   issueRecoveryLinkBearer(ports, "tenant-1", "chain-589b", "consent-589b", "REQUESTER_ASKED");
   const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
   const token = sent.recoveryPath.replace("/r/", "");
@@ -129,6 +163,7 @@ test("TEST-CNS-590: revokeWithRecoveryLink con un token inválido/inexistente re
 
 test("TEST-CNS-591: revokeWithRecoveryLink sobre una Revocation ya CONFIRMED (antes de que R4 la aplique) responde R11 NOOP: no consume el token ni emite evento", () => {
   const ports = makePorts();
+  seedGrantedDecision(ports, "tenant-1", "chain-595", "consent-595");
   ports.revocationRepo.save({
     revocationRef: "rv-595",
     tenantId: "tenant-1",
@@ -149,5 +184,40 @@ test("TEST-CNS-591: revokeWithRecoveryLink sobre una Revocation ya CONFIRMED (an
   assert.equal(after, before);
 
   // SEC N-05: R11 nunca consume el token (sigue resolviendo).
+  assert.ok(resolveRecoveryTokenForRedeem(ports, token));
+});
+
+test("TEST-CNS-598: revokeWithRecoveryLink rechaza un token de un ciclo anterior (D1) cuando la cadena ya tiene una GRANTED nueva (D2), sin revocar D2 ni consumir el token (SEC-CNS-014, FINDING P1-01, GRD-RV-06)", () => {
+  const ports = makePorts();
+  const tenantId = "tenant-1";
+  const chainRef = "chain-598";
+
+  // D1 GRANTED, se emite el enlace de recuperación (RV0 BEARER) mientras D1 sigue vigente.
+  seedGrantedDecision(ports, tenantId, chainRef, "consent-598-d1");
+  issueRecoveryLinkBearer(ports, tenantId, chainRef, "consent-598-d1", "REQUESTER_ASKED");
+  const sent = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!;
+  const token = sent.recoveryPath.replace("/r/", "");
+  const resolved = resolveRecoveryTokenForRedeem(ports, token);
+  assert.ok(resolved);
+
+  // D1 se revoca por otra vía (fuera del boundary de revocation.ts, INV-CM-06) y nace D2
+  // GRANTED en la misma cadena: el token de D1, sin consumir y todavía dentro de P-15, ya no
+  // es elegible para el ciclo nuevo.
+  seedGrantedDecision(ports, tenantId, chainRef, "consent-598-d1", "DECLINED");
+  seedGrantedDecision(ports, tenantId, chainRef, "consent-598-d2");
+
+  assert.equal(
+    evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, "consent-598-d1", resolved!.tokenHash),
+    null,
+  );
+
+  const outcome = revokeWithRecoveryLink(ports, tenantId, chainRef, "consent-598-d1", resolved!.tokenHash);
+  assert.deepEqual(outcome, { kind: "UNIFORM" });
+
+  // No debe haber creado ninguna Revocation para la cadena (D2 sigue intacto).
+  assert.equal(ports.revocationRepo.findOpenByChain(tenantId, chainRef), null);
+
+  // GRD-RV-06 onFail: el token no se consume (defensa en profundidad; sigue sin resolver como
+  // vigente para D2, pero no queda "gastado" al azar por un intento inválido).
   assert.ok(resolveRecoveryTokenForRedeem(ports, token));
 });

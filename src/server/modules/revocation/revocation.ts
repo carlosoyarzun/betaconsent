@@ -19,8 +19,9 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DomainError } from "../common/errors.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
-import type { RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
+import type { RecoveryTokenRecord, RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
 import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.port.ts";
+import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 
 export interface RevocationPorts {
@@ -30,6 +31,10 @@ export interface RevocationPorts {
   readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
   readonly recoveryLinkChannel: RecoveryLinkChannelPort;
   readonly recoveryTokenPolicy: RecoveryTokenPolicy;
+  /** SEC-CNS-014 (FINDING P1-01): fuente de verdad de la GRANTED vigente de la cadena, para
+   * que GRD-RV-06 pueda comparar contra el ciclo real en vez de solo contra el propio token
+   * (evaluateRecoveryTokenEligibility). */
+  readonly consentDecisionRepo: ConsentDecisionRepositoryPort;
 }
 
 function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
@@ -444,14 +449,73 @@ export type RecoveryRevokeOutcome =
   | { readonly kind: "IN_PROGRESS" }
   | { readonly kind: "UNIFORM" };
 
+export interface RecoveryTokenEligibility {
+  readonly tokenRecord: RecoveryTokenRecord;
+  /** Revocation abierta (no terminal) de la cadena, si existe. */
+  readonly existing: RevocationRecord | null;
+}
+
+/**
+ * GRD-RV-06 (SEC-CNS-014, FINDING P1-01): predicado puro (sin efectos: no consume el token ni
+ * escribe nada), reutilizable por revokeWithRecoveryLink (POST /recovery/revoke, que sí
+ * transiciona) y por GET /recovery/confirm en modo solo lectura (siguiente PR). Devuelve null
+ * si el "otro ciclo" no es elegible; en ese caso el llamador SIEMPRE responde "UNIFORM"
+ * (ERR-RV-05) sin consumir el token ni emitir eventos. Exige, en orden:
+ *
+ * 1) el token existe, no está consumido/expirado, y coincide con (tenantId, chainRef,
+ *    revokedDecisionRef) tal como llegan en la sesión RECOVERY (defensa en profundidad; esos
+ *    tres valores se derivaron del mismo tokenRecord en GET /r/{token}, así que esta
+ *    comparación por sí sola NUNCA basta para detectar un ciclo viejo -- ver [2]).
+ * 2) la decisión GRANTED vigente de la cadena (`consentDecisionRepo.findActiveGrantByChain`,
+ *    NUNCA el valor que trae el propio token) es igual a `tokenRecord.revokedDecisionRef`: un
+ *    token emitido para D1, sin consumir y dentro de P-15, deja de ser elegible en cuanto la
+ *    cadena tiene una GRANTED nueva (D2) -- antes de este fix [1] siempre pasaba porque
+ *    comparaba el token contra sí mismo.
+ * 3) si hay una Revocation abierta para la cadena, su `revokedDecisionRef` también coincide con
+ *    el del token (mismo ciclo que la Revocation en curso, no una entrelazada de otro ciclo).
+ */
+export function evaluateRecoveryTokenEligibility(
+  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "revocationRepo" | "consentDecisionRepo">,
+  tenantId: string,
+  chainRef: string,
+  revokedDecisionRef: string,
+  tokenHash: string,
+): RecoveryTokenEligibility | null {
+  const tokenRecord = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+  if (
+    !tokenRecord ||
+    tokenRecord.tenantId !== tenantId ||
+    tokenRecord.chainRef !== chainRef ||
+    tokenRecord.revokedDecisionRef !== revokedDecisionRef ||
+    tokenRecord.consumedAt ||
+    tokenRecord.expiresAt.getTime() <= Date.now()
+  ) {
+    return null;
+  }
+
+  // [2] SEC-CNS-014 P1-01: la GRANTED vigente real de la cadena, no la que trae el token.
+  const activeGrant = ports.consentDecisionRepo.findActiveGrantByChain(tenantId, chainRef);
+  if (!activeGrant || activeGrant.consentId !== tokenRecord.revokedDecisionRef) {
+    return null;
+  }
+
+  const existing = ports.revocationRepo.findOpenByChain(tenantId, chainRef);
+  if (existing && existing.revokedDecisionRef !== tokenRecord.revokedDecisionRef) {
+    return null;
+  }
+
+  return { tokenRecord, existing };
+}
+
 /**
  * POST /recovery/revoke (API-CNS-135, GRD-RV-06): único punto de entrada del authPath
  * RECOVERY/CHANNEL_LINK. `tenantId`/`chainRef`/`revokedDecisionRef` vienen SIEMPRE de la sesión
  * RECOVERY creada por GET /r/{token} (nunca del body); `tokenHash` es el del token que esa
  * misma sesión ligó al canjear el enlace.
  *
- * - Token inválido/consumido/expirado o ligado a otra cadena/decisión (GRD-RV-06 onFail):
- *   "UNIFORM" (ERR-RV-05), sin consumir nada ni emitir evento.
+ * - Token inválido/consumido/expirado, ligado a otra cadena/decisión, o de un ciclo que ya no
+ *   es el vigente de la cadena (GRD-RV-06 onFail, evaluateRecoveryTokenEligibility): "UNIFORM"
+ *   (ERR-RV-05), sin consumir nada ni emitir evento.
  * - Sin Revocation abierta para la cadena: R1r (REQUESTED) + R2r (VERIFIED) + R3r (CONFIRMED,
  *   con R4 síncrono) en la misma llamada.
  * - Revocation REQUESTED (p. ej. abierta por R1 self-service): R2r + R3r.
@@ -466,20 +530,12 @@ export function revokeWithRecoveryLink(
   revokedDecisionRef: string,
   tokenHash: string,
 ): RecoveryRevokeOutcome {
-  const tokenRecord = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
-  if (
-    !tokenRecord ||
-    tokenRecord.tenantId !== tenantId ||
-    tokenRecord.chainRef !== chainRef ||
-    tokenRecord.revokedDecisionRef !== revokedDecisionRef ||
-    tokenRecord.consumedAt ||
-    tokenRecord.expiresAt.getTime() <= Date.now()
-  ) {
+  const eligibility = evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+  if (!eligibility) {
     // GRD-RV-06 onFail: ERR-RV-05, respuesta uniforme, sin revelar revocationRef, sin evento.
     return { kind: "UNIFORM" };
   }
-
-  const existing = ports.revocationRepo.findOpenByChain(tenantId, chainRef);
+  const { tokenRecord, existing } = eligibility;
 
   if (existing?.status === "CONFIRMED") {
     // R11 (kind NOOP, SEC N-05): ni consume el token ni emite evento.
