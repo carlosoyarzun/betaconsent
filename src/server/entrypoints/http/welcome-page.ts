@@ -78,6 +78,7 @@ export function renderWelcomeUniformErrorPage(): string {
       <p>No pudimos abrir esta invitación.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
+    <a href="mailto:ayuda@example.invalid" class="lp-link lp-welcome-help">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a>
   </main>
 </body>
 </html>

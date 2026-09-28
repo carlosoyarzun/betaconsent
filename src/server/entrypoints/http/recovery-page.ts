@@ -87,6 +87,8 @@ export function renderRecoveryUniformErrorPage(): string {
       <p>No pudimos continuar con este retiro.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
+    <p>¿Tampoco tienes tu enlace de gestión? Contáctanos y te ayudamos a recuperar el acceso sin revelar datos de otras personas.</p>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
   </main>
 </body>
 </html>
