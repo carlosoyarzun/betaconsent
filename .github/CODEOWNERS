@@ -20,3 +20,5 @@
 /traceability/                              @carlosoyarzun
 /evidence/README.md                         @carlosoyarzun
 /.npmrc                                     @carlosoyarzun
+/db/migrations/                             @carlosoyarzun
+/src/infra/adapters/postgres/               @carlosoyarzun

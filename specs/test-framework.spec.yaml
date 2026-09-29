@@ -194,7 +194,7 @@ integrationHarness:
       (sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54,
       postgres 16.15 sobre debian:trixie-slim). El usuario/contraseña/DB los define el
       propio job como variables efímeras del step (no secrets de GitHub, no hay nada
-      que proteger: es una instancia desechable, solo para el smoke test, sin red hacia
+      que proteger: es una instancia desechable, solo para los tests de integración, sin red hacia
       ningún otro entorno). Nunca corre en el mismo job que sube artefactos con
       credenciales de despliegue (ADR-003 C14). `ports: 5432:5432` publica el puerto en
       todas las interfaces del runner; esto solo es aceptable en runners alojados por
@@ -202,6 +202,29 @@ integrationHarness:
       autoalojado) — si este job alguna vez corriera en un runner compartido o
       autoalojado, ese binding queda prohibido (SEC-CNS-011 P2-05).
     smokeTest: "tests/integration/postgres-smoke.test.ts: SELECT 1, una sola verificación (conectividad + que el servidor responde), sin esquema ni fixtures."
+    domainHarness: >
+      CA-124 (H09), decisiones de Carlos 2026-09-29 (D1 pg en runtime, D2 migraciones SQL
+      planas con runner propio, D4 Postgres 16, D9 idle_in_transaction_session_timeout = 10 s y
+      credencial del migrador efímera por corrida). tests/integration/postgres/harness.ts:
+      bajo un pg_advisory_lock, el superusuario del service container (TEST_DATABASE_URL) solo
+      crea los roles del cluster (db/migrations/0000_roles.sql, scope cluster) y fija sus
+      contraseñas efímeras (TEST_APP_DB_PASSWORD para app_rw/worker/platform_rw,
+      TEST_MIGRATOR_DB_PASSWORD para consent_migrator; en CI derivadas de run_id y run_attempt,
+      sin GitHub Secrets); consent_migrator migra una plantilla `consent_tpl_<digest>`
+      (src/infra/adapters/postgres/migrate.ts); cada archivo de test crea su base con
+      CREATE DATABASE ... TEMPLATE, se conecta como app_rw (nunca como superusuario salvo
+      inspección explícita) y la elimina al terminar. Mismo skip/fail-closed que el smoke:
+      sin TEST_DATABASE_URL, TEST_APP_DB_PASSWORD y TEST_MIGRATOR_DB_PASSWORD, fuera de CI
+      se omite y en CI falla (SEC-CNS-011 P1-01). Los tests sin Postgres (dobles de pg,
+      escaneo de src/**, parseo de migraciones) viven en tests/unit/postgres/ y corren en
+      `npm run ci` sin base.
+    domainTestIds: >
+      Mapeo del diseño de CA-124 (TEST-CNS-710..725, ya usados por CA-125/PR #31) a los IDs
+      reales desde TEST-CNS-740: 710->740, 711->741, 712->742, 713->743 (parte de
+      infraestructura), 716->744 (roles), 720->745, 723->746, 724->747, 725->748;
+      nuevos: 749 (runner de migraciones) y 750 (app.current_tenant_id()). Los demás IDs del
+      diseño (714, 715, 717..719, 721, 722) llegan con PR-B/PR-C/PR-D y recibirán IDs libres
+      posteriores a 750.
     localDev: >
       Si hay Docker disponible, el desarrollador levanta un Postgres local (docker
       compose de infra/ una vez exista, o `docker run postgres:16`) y exporta

@@ -252,3 +252,42 @@ TEST-CNS-723,integration,tests/integration/staff/staff-invitations-http.test.ts,
 TEST-CNS-724,integration,tests/integration/staff/staff-invitations-http.test.ts,"login STAFF y sink de invitaciones solo LOCAL","CA-125;GRD-CM-13",ACTIVE
 TEST-CNS-725,integration,tests/integration/staff/staff-invitations-http.test.ts,"consolas STAFF y CASE no comparten sesión ni cookie","CA-125;GRD-CM-07;P-26",ACTIVE
 TEST-CNS-726,integration,tests/integration/consent-flow/dev-local-config.test.ts,"roster dev sin reutilización de personas entre roles, TENANT_ADMIN con tenant propio, política LOCAL válida","CA-125;GRD-RC-15",ACTIVE
+TEST-CNS-740,integration,tests/integration/postgres/tenant-context.test.ts,"pg: una conexión con app.tenant_id de sesión se destruye al adquirirla (fuga A->B)","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-740,integration,tests/integration/postgres/tenant-context.test.ts,"pg: inTenant A y luego B con la misma conexión (max=1) no arrastra el tenant","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-740,unit,tests/unit/postgres/unit-of-work.test.ts,"acquireCleanClient devuelve la conexión si app.tenant_id está vacío o NULL","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-740,unit,tests/unit/postgres/unit-of-work.test.ts,"acquireCleanClient destruye la conexión con app.tenant_id residual y falla cerrado","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-740,unit,tests/unit/postgres/unit-of-work.test.ts,"acquireCleanClient destruye la conexión si la verificación misma falla","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-741,unit,tests/unit/postgres/tenant-context-scan.test.ts,"src/** y db/migrations/** no fijan app.tenant_id a nivel de sesión","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-741,unit,tests/unit/postgres/tenant-context-scan.test.ts,"unit-of-work.ts es el único punto que llama a set_config('app.tenant_id') y lo hace local","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-741,unit,tests/unit/postgres/tenant-context-scan.test.ts,"el escáner detecta las variantes prohibidas (control positivo)","CA-124;ADR-006;INV-CM-02;P1-1",ACTIVE
+TEST-CNS-742,integration,tests/integration/postgres/tenant-context.test.ts,"pg: un error del trabajo hace ROLLBACK y la conexión vuelve limpia al pool","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,integration,tests/integration/postgres/tenant-context.test.ts,"pg: idle_in_transaction_session_timeout = 10s para app_rw, worker y platform_rw (D9)","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant: BEGIN, set_config local como primer statement, trabajo, COMMIT, release(false)","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant: error del trabajo hace ROLLBACK, propaga y devuelve la conexión","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant: si el ROLLBACK falla la conexión se destruye (release(true))","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant: si el COMMIT falla se hace ROLLBACK y, si también falla, release(true)","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant reintenta 40001/40P01 hasta 3 intentos y luego propaga","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant no reintenta errores no serializables","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"inTenant rechaza un tenantId que no es UUID sin tocar la conexión","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-742,unit,tests/unit/postgres/unit-of-work.test.ts,"la tx entregada al trabajo deja de funcionar al terminar","CA-124;ADR-006;P1-1;D9",ACTIVE
+TEST-CNS-743,integration,tests/integration/postgres/catalog.test.ts,"pg: EXECUTE por defecto no llega a PUBLIC y tenant_resolve queda cerrado (P1-2, parte de infraestructura)","CA-124;ADR-006;P1-2",ACTIVE
+TEST-CNS-744,integration,tests/integration/postgres/catalog.test.ts,"pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, fuera de los owners y sin session_replication_role","CA-124;ADR-002;P1-3",ACTIVE
+TEST-CNS-744,integration,tests/integration/postgres/catalog.test.ts,"pg: las conexiones de runtime no pueden crear objetos ni cambiar de rol a un owner","CA-124;ADR-002;P1-3",ACTIVE
+TEST-CNS-745,integration,tests/integration/postgres/catalog.test.ts,"pg: ops.db_catalog es de fila única, SYNTHETIC/LOCAL, inmutable y sin escritura para runtime","CA-124;ADR-002;GRD-CM-11;P1-5",ACTIVE
+TEST-CNS-746,integration,tests/integration/postgres/catalog.test.ts,"pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app","CA-124;ADR-006;P1-6",ACTIVE
+TEST-CNS-747,integration,tests/integration/postgres/catalog.test.ts,"pg: los chequeos de arranque aceptan app_rw/worker/platform_rw y rechazan migrador y superusuario","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
+TEST-CNS-747,unit,tests/unit/postgres/startup-checks.test.ts,"un rol de runtime sano y un catálogo SYNTHETIC/LOCAL arrancan","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
+TEST-CNS-747,unit,tests/unit/postgres/startup-checks.test.ts,"no arranca: superusuario, BYPASSRLS, miembro de owner, CREATE en esquema, session_replication_role","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
+TEST-CNS-747,unit,tests/unit/postgres/startup-checks.test.ts,"no arranca: catálogo no SYNTHETIC, environment no permitido, sin fila, ilegible o distinto del configurado","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
+TEST-CNS-747,unit,tests/unit/postgres/startup-checks.test.ts,"assertStartupChecks lanza StartupCheckError con ERR-CM-11","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
+TEST-CNS-748,guardrail,tests/guardrails/ports-adapters/guardrail.test.ts,"guardrail pg: el comodín pg-* coincide por prefijo y no con pgpass","CA-124;ADR-001;RULE-GUARDRAIL-10;RULE-GUARDRAIL-11",ACTIVE
+TEST-CNS-748,guardrail,tests/guardrails/ports-adapters/guardrail.test.ts,"guardrail pg: fixtures pg-adapter-allowed, pg-import-outside-adapters, pg-prefix-import-outside-adapters, pg-native-forbidden, pg-cloudflare-import-forbidden, second-db-driver-forbidden, node-sqlite-forbidden, pg-native-transitive","CA-124;ADR-001;RULE-GUARDRAIL-10;RULE-GUARDRAIL-11",ACTIVE
+TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: re-aplicar es idempotente y ops.schema_migration registra versión y sha256","CA-124;D2",ACTIVE
+TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: un checksum distinto en una migración ya aplicada falla","CA-124;D2",ACTIVE
+TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: una migración que falla no deja cambios parciales ni se registra; la siguiente sí se aplica","CA-124;D2",ACTIVE
+TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: el alcance cluster no se ejecuta en el paso database","CA-124;D2",ACTIVE
+TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"parseMigration valida nombre, alcance y calcula sha256","CA-124;D2",ACTIVE
+TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"las migraciones del repo: 0000 es cluster, el resto database, versiones únicas y ordenadas","CA-124;D2",ACTIVE
+TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"ninguna migración contiene contraseñas ni credenciales (cero secretos en el repo)","CA-124;D2",ACTIVE
+TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"setRolePasswords escapa la contraseña como literal y rechaza contraseñas cortas","CA-124;D2",ACTIVE
+TEST-CNS-750,integration,tests/integration/postgres/tenant-context.test.ts,"pg: app.current_tenant_id() es NULL sin tenant, con '' y devuelve el uuid con tenant","CA-124;ADR-006;INV-CM-02",ACTIVE
