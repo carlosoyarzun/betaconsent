@@ -41,6 +41,11 @@ export interface CreateInvitationInput {
   readonly contextRef: string;
   readonly productRef: string;
   readonly subjectRef: string;
+  /** CA-125: refs que el contrato exige en I1 (CreateInvitationRequest); opcionales para los
+   * llamadores legacy (fixtures) que no pasan por la API de staff. */
+  readonly enrollmentRef?: string;
+  readonly participationRef?: string;
+  readonly reissueOfRef?: string;
 }
 
 /** I1: DRAFT. Guards cubiertos: GRD-CM-05, GRD-CM-07, GRD-IV-01. */
@@ -66,6 +71,9 @@ export function createInvitation(
     productRef: input.productRef,
     subjectRef: input.subjectRef,
     state: "DRAFT",
+    ...(input.enrollmentRef !== undefined ? { enrollmentRef: input.enrollmentRef } : {}),
+    ...(input.participationRef !== undefined ? { participationRef: input.participationRef } : {}),
+    ...(input.reissueOfRef !== undefined ? { reissueOfRef: input.reissueOfRef } : {}),
   };
   ports.invitationRepo.save(record);
   ports.ledger.append({
@@ -75,7 +83,20 @@ export function createInvitation(
     aggregateId: record.invitationRef,
     actorType: "HUMAN",
     actorRole: "INVITER",
-    payload: { invitationRef: record.invitationRef, subjectRef: record.subjectRef },
+    // ledger-event-payloads.schema.json#/$defs/INVITATION_CREATED exige participationRef,
+    // enrollmentRef y reissueOfRef (nullable). Con la API de staff (CA-125) el payload es completo;
+    // los llamadores legacy sin esas refs conservan el payload anterior (discrepancia previa,
+    // documentada en tests/contract/ledger/ledger-event-payloads-contract.test.ts).
+    payload:
+      input.participationRef !== undefined && input.enrollmentRef !== undefined
+        ? {
+            invitationRef: record.invitationRef,
+            participationRef: input.participationRef,
+            enrollmentRef: input.enrollmentRef,
+            subjectRef: record.subjectRef,
+            reissueOfRef: input.reissueOfRef ?? null,
+          }
+        : { invitationRef: record.invitationRef, subjectRef: record.subjectRef },
     idempotencyKey: record.invitationRef,
   });
   return record;
@@ -84,8 +105,11 @@ export function createInvitation(
 export interface MarkInvitationReadyInput {
   readonly consentVersion: string;
   readonly expiresAt: Date;
-  /** GRD-OT-02: único canal al que V1 podrá enviar el OTP de esta invitación. */
-  readonly recipientChannelRef: string;
+  /** GRD-OT-02: único canal al que V1 podrá enviar el OTP de esta invitación. Obligatorio si y
+   * solo si recipientBinding = RECIPIENT_CHANNEL (GRD-IV-03). */
+  readonly recipientChannelRef?: string;
+  /** CA-125: default RECIPIENT_CHANNEL (comportamiento legacy). UNBOUND: sin canal esperado. */
+  readonly recipientBinding?: "RECIPIENT_CHANNEL" | "UNBOUND";
 }
 
 /** I2: DRAFT -> READY. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-03. */
@@ -102,8 +126,11 @@ export function markInvitationReady(
   if (found.state !== "DRAFT") {
     throw new DomainError("ERR-CM-06");
   }
-  if (!input.consentVersion || !input.expiresAt || !input.recipientChannelRef) {
-    // GRD-IV-03 (ready_fields_fixed).
+  const recipientBinding = input.recipientBinding ?? "RECIPIENT_CHANNEL";
+  const channelOk =
+    recipientBinding === "RECIPIENT_CHANNEL" ? Boolean(input.recipientChannelRef) : input.recipientChannelRef === undefined;
+  if (!input.consentVersion || !input.expiresAt || !channelOk) {
+    // GRD-IV-03 (ready_fields_fixed): recipientChannelRef si y solo si RECIPIENT_CHANNEL.
     throw new DomainError("ERR-IV-03");
   }
 
@@ -112,7 +139,8 @@ export function markInvitationReady(
     state: "READY",
     consentVersion: input.consentVersion,
     expiresAt: input.expiresAt,
-    recipientChannelRef: input.recipientChannelRef,
+    recipientBinding,
+    ...(input.recipientChannelRef !== undefined ? { recipientChannelRef: input.recipientChannelRef } : {}),
   };
   ports.invitationRepo.save(ready);
   ports.ledger.append({
@@ -123,14 +151,12 @@ export function markInvitationReady(
     actorType: "HUMAN",
     actorRole: "INVITER",
     // ledger-event-payloads.schema.json#/$defs/INVITATION_READY exige también expiresAt y
-    // recipientBinding (P1: faltaban). recipientBinding es siempre RECIPIENT_CHANNEL en este
-    // archivo: el guard de arriba exige recipientChannelRef en todo I2 (UNBOUND no está
-    // implementado en este slice, ver cabecera del archivo).
+    // recipientBinding (P1: faltaban).
     payload: {
       invitationRef,
       consentVersion: input.consentVersion,
       expiresAt: input.expiresAt.toISOString(),
-      recipientBinding: "RECIPIENT_CHANNEL",
+      recipientBinding,
     },
     idempotencyKey: `${invitationRef}:ready`,
   });
@@ -153,12 +179,21 @@ export function hashInvitationToken(token: string): string {
   return hashToken(token);
 }
 
+export interface SendInvitationOptions {
+  /** CA-125: INVITATION_SENT.deliveryChannel (EXT-B, sin fijar): lo inyecta la política del
+   * entrypoint. Sin él, el payload legacy (sin deliveryChannel) se conserva para fixtures. */
+  readonly deliveryChannel?: "SCHOOL_CHANNEL" | "CONSENT_APP_EMAIL";
+  /** CA-125 (GRD-IV-12): expiresAt = SENT + P-10, calculado por el servidor; reemplaza el de I2. */
+  readonly expiresAt?: Date;
+}
+
 /** I3: READY -> SENT. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-04 (parcial), GRD-IV-05. */
 export function sendInvitation(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   invitationRef: string,
+  options: SendInvitationOptions = {},
 ): SendInvitationResult {
   const found = requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
@@ -173,7 +208,8 @@ export function sendInvitation(
 
   const token = randomBytes(32).toString("hex"); // GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashToken(token);
-  const sent: InvitationRecord = { ...found, state: "SENT", tokenHash };
+  const expiresAt = options.expiresAt ?? found.expiresAt;
+  const sent: InvitationRecord = { ...found, state: "SENT", tokenHash, ...(expiresAt !== undefined ? { expiresAt } : {}) };
   ports.invitationRepo.save(sent);
   ports.ledger.append({
     eventType: "INVITATION_SENT",
@@ -182,7 +218,11 @@ export function sendInvitation(
     aggregateId: invitationRef,
     actorType: "HUMAN",
     actorRole: "INVITER",
-    payload: { invitationRef, expiresAt: found.expiresAt?.toISOString() },
+    payload: {
+      invitationRef,
+      ...(options.deliveryChannel !== undefined ? { deliveryChannel: options.deliveryChannel } : {}),
+      expiresAt: expiresAt?.toISOString(),
+    },
     idempotencyKey: `${invitationRef}:sent`,
   });
   return { record: sent, token };

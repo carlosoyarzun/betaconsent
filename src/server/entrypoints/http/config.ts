@@ -39,6 +39,12 @@ export interface RightsCaseHttpConfig {
    * csrfCookieName (bearer) para que comprometer una no comprometa la otra, mismo criterio que
    * recoveryHandleCookieName. */
   readonly caseCsrfCookieName: string;
+  /** Cookie de la sesión STAFF (contracts/openapi securitySchemes.staffSession, nombre exacto
+   * `__Host-cns-staff` ya fijado en el contrato; P-26 pendiente). CA-125. */
+  readonly staffSessionCookieName: string;
+  /** Cookie CSRF propia de la consola STAFF (P-26 PENDIENTE, nombre provisional): aislada de
+   * csrfCookieName (bearer) y caseCsrfCookieName. */
+  readonly staffCsrfCookieName: string;
 }
 
 const DEFAULT_MANAGE_HANDLE_COOKIE_NAME = "__Host-cns-manage";
@@ -50,6 +56,8 @@ const DEFAULT_INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const DEFAULT_MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
 const DEFAULT_CASE_SESSION_COOKIE_NAME = "__Host-cns-case";
 const DEFAULT_CASE_CSRF_COOKIE_NAME = "__Host-cns-case-csrf";
+const DEFAULT_STAFF_SESSION_COOKIE_NAME = "__Host-cns-staff";
+const DEFAULT_STAFF_CSRF_COOKIE_NAME = "__Host-cns-staff-csrf";
 
 /**
  * Construye la configuración del entrypoint. `allowedOrigin` debe venir siempre de
@@ -75,5 +83,7 @@ export function loadRightsCaseHttpConfig(overrides: Partial<RightsCaseHttpConfig
     manageEntryHandleCookieName: overrides.manageEntryHandleCookieName ?? DEFAULT_MANAGE_ENTRY_HANDLE_COOKIE_NAME,
     caseSessionCookieName: overrides.caseSessionCookieName ?? DEFAULT_CASE_SESSION_COOKIE_NAME,
     caseCsrfCookieName: overrides.caseCsrfCookieName ?? DEFAULT_CASE_CSRF_COOKIE_NAME,
+    staffSessionCookieName: overrides.staffSessionCookieName ?? DEFAULT_STAFF_SESSION_COOKIE_NAME,
+    staffCsrfCookieName: overrides.staffCsrfCookieName ?? DEFAULT_STAFF_CSRF_COOKIE_NAME,
   };
 }

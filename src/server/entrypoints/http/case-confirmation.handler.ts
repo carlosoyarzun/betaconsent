@@ -256,6 +256,10 @@ export function handleDevStaffLogin(
     return { status: 422, body: { status: 422 } };
   }
 
+  if (principal.role === "TENANT_ADMIN") {
+    // CA-125: TENANT_ADMIN pertenece a la consola STAFF (staff-console.handler.ts), nunca a la CASE.
+    return { status: 422, body: { status: 422 } };
+  }
   const session: CaseSessionPayload = { tenantId, caseRef, principalRef: principal.principalRef, role: principal.role };
   return {
     status: 200,

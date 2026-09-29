@@ -40,9 +40,32 @@ export const LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
  * LOCAL-only que arriba. */
 export const LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
 
+/** Refs opacas sintéticas de dev.ts (LOCAL-only): TenantRef/Ref válidos contra common.schema.json
+ * (:27, :35), porque viajan tal cual en el sobre de consent.revoked (CA-127). */
+export const LOCAL_ONLY_DEV_TENANT_ID = "c3a1f5d2-8b47-4e69-a0d3-5f7b9e1c2a48";
+export const LOCAL_ONLY_DEV_SUBJECT_REF = "e8d2b4a6-3c19-4f75-b6e0-1a9c7d5f3b82";
+
+/** Otro colegio (tenant distinto), solo para probar el aislamiento por tenant de la consola STAFF. */
+export const LOCAL_ONLY_DEV_OTHER_TENANT_ID = "5d2e8a1c-6b3f-4d97-9c04-7e1a3b5d9f20";
+
+/** CA-125 (LOCAL-only, SYNTHETIC DATA ONLY): refs UUIDv4 del sujeto, la SchoolParticipation y el
+ * canal esperado del destinatario que dev.ts siembra en el catálogo del tenant de dev (IT0 no
+ * tiene todavía un flujo de alta de sujetos ni participaciones: FINDING P1). Cero PII. */
+export const LOCAL_ONLY_DEV_STAFF_SUBJECT_REF = "b7c3d1e5-2a48-4f96-8d10-6e9f0a2c4b73";
+export const LOCAL_ONLY_DEV_PARTICIPATION_REF = "d4f8a2c6-7b13-4e59-a8c2-0f3d5b7e9a14";
+export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "f1a5c9e3-4d27-4b68-9e30-2c4e6a8b0d51";
+
+/** CA-125: P-10 (vigencia de la invitación; sin valor aprobado en el repo) y deliveryChannel
+ * (EXT-B / F-014, DEC-BR-014 §7: decisión de Carlos pendiente). Valores LOCAL-only de
+ * conveniencia para el sink de dev, sin ninguna salida de red; NO son una recomendación. */
+export const LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY = {
+  expiresInMs: 24 * 60 * 60_000,
+  deliveryChannel: "CONSENT_APP_EMAIL" as const,
+};
+
 /** LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos, 2026-09-28, opción (ii); CA-128,
  * API-CNS-138): lista nominal de 4 personas ficticias, sin reutilización entre roles (NF-19,
- * GRD-RC-15) — 2 RIGHTS_OPERATOR y 2 APPROVER. Sin IdP real en IT0: dev.ts inyecta este roster
+ * GRD-RC-15) — 2 RIGHTS_OPERATOR y 2 APPROVER (consola CASE), más 2 TENANT_ADMIN (consola STAFF, CA-125). Sin IdP real en IT0: dev.ts inyecta este roster
  * en StaffIdentityPort (in-memory-staff-identity.adapter.ts) y lo resuelve únicamente el
  * endpoint de desarrollo /__dev/staff-login (case-confirmation.handler.ts, LOCAL-only,
  * GRD-CM-13). Cero PII: solo refs opacas sintéticas, nunca email, nombre ni RUT. LEGAL DECISION
@@ -52,9 +75,9 @@ export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
   { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" as const },
   { principalRef: "staff-synthetic-03", role: "APPROVER" as const },
   { principalRef: "staff-synthetic-04", role: "APPROVER" as const },
+  // CA-125 (contracts/openapi /staff/*, staffSession): miembros TENANT_ADMIN de la consola STAFF,
+  // cada uno con su membership de tenant (GRD-CM-01) y sin reutilizar personas entre roles
+  // (GRD-RC-15). 05 = colegio de dev; 06 = OTRO colegio, para probar el aislamiento por tenant.
+  { principalRef: "staff-synthetic-05", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
+  { principalRef: "staff-synthetic-06", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_OTHER_TENANT_ID },
 ];
-
-/** Refs opacas sintéticas de dev.ts (LOCAL-only): TenantRef/Ref válidos contra common.schema.json
- * (:27, :35), porque viajan tal cual en el sobre de consent.revoked (CA-127). */
-export const LOCAL_ONLY_DEV_TENANT_ID = "c3a1f5d2-8b47-4e69-a0d3-5f7b9e1c2a48";
-export const LOCAL_ONLY_DEV_SUBJECT_REF = "e8d2b4a6-3c19-4f75-b6e0-1a9c7d5f3b82";

@@ -4,10 +4,15 @@
 export type DomainErrorCode =
   | "ERR-CM-01" // TENANT_NOT_RESOLVED — 404 uniforme, sin evento
   | "ERR-CM-02" // INVITER_TENANT_MISMATCH (GRD-CM-02, Guard T)
+  | "ERR-CM-03" // INVITER_NOT_PARTICIPATING (GRD-CM-03, Guard P)
+  | "ERR-CM-04" // ENROLLMENT_NOT_ACTIVE (GRD-CM-04, Guard E)
   | "ERR-CM-05" // CONTEXT_NOT_ACTIVE (GRD-CM-05, route class ISSUANCE_DECISION)
   | "ERR-CM-06" // INVALID_TRANSITION
+  | "ERR-CM-07" // IDEMPOTENCY_CONFLICT (GRD-CM-08)
   | "ERR-CM-09" // CSRF_REJECTED
   | "ERR-CM-10" // ACTOR_NOT_ALLOWED
+  | "ERR-CM-12" // GUARD_EVALUATOR_UNAVAILABLE (política/parámetro requerido sin valor: fail-closed)
+  | "ERR-TC-03" // ENROLLMENT_ALREADY_ACTIVE (GRD-TC-03)
   | "ERR-RC-01" // GRD-RC-07 onFail (origin != CHANNEL_UNREACHABLE) — respuesta uniforme sin evento
   | "ERR-RC-09" // CASE_NOT_BOUND_TO_HANDLE — respuesta uniforme sin efecto
   | "ERR-RC-10" // GRD-RC-15 onFail (ROSTER_INSUFFICIENT) — dotación <4 personas o reutilización de rol
@@ -20,6 +25,7 @@ export type DomainErrorCode =
   | "ERR-IV-02" // INVITATION_ALREADY_ACTIVE (GRD-IV-01)
   | "ERR-IV-03" // INVITATION_NOT_READY (GRD-IV-03)
   | "ERR-IV-04" // VERSION_OR_MODE_GUARD_FAILED (GRD-IV-04)
+  | "ERR-IV-07" // REISSUE_LIMIT_REACHED (GRD-IV-11)
   | "ERR-IV-10" // INVITATION_TERMINAL
   // specs/state-machines/otp-challenge.spec.yaml
   | "ERR-OT-01" // OTP_GENERIC_RESPONSE (GRD-OT-01/02/08)
