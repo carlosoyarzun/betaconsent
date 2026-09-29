@@ -21,6 +21,14 @@ import { createInMemoryRevocationRepository } from "../../../infra/adapters/in-m
 import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../infra/adapters/in-memory-staff-identity.adapter.ts";
+import { createInMemoryEnrollmentRepository } from "../../../infra/adapters/in-memory-enrollment-repository.adapter.ts";
+import { createInMemoryIdempotencyAdapter } from "../../../infra/adapters/in-memory-idempotency.adapter.ts";
+import {
+  createInMemoryInvitationLinkChannelSink,
+  type InMemoryInvitationLinkChannelSink,
+} from "../../../infra/adapters/in-memory-invitation-link-channel-sink.adapter.ts";
+import { createInMemoryTenantCatalogAdapter } from "../../../infra/adapters/in-memory-tenant-catalog.adapter.ts";
+import type { InvitationIssuancePolicy } from "../../modules/invitation/invitation-issuance-policy.config.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
 import type { Environment } from "../../modules/common/types.ts";
@@ -66,6 +74,15 @@ import { handleCosignCaseConfirmation, handleDevStaffLogin, handleRecordCaseConf
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { deriveCaseSessionKey } from "./case-session.ts";
+import { deriveStaffSessionKey } from "./staff-session.ts";
+import {
+  handleCreateInvitation,
+  handleDevStaffConsoleLogin,
+  handleMarkInvitationReady,
+  handleOpenEnrollment,
+  handleSendInvitation,
+  type StaffConsolePorts,
+} from "./staff-console.handler.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { deriveRecoveryCsrfKey, deriveRecoveryHandleKey, generateRecoveryCsrfToken } from "./recovery-handle.ts";
 import { deriveLinkHandleKey } from "./link-handle.ts";
@@ -125,6 +142,33 @@ export interface ConsentFlowHttpServerOptions {
    * nunca una lista de producción hardcodeada.
    */
   readonly staffIdentity?: StaffIdentityPort;
+  /**
+   * CA-125 (API-CNS-105/110/111/112): ports de la consola STAFF (enrolar e invitar). Si se omite,
+   * createDefaultStaffConsolePorts los cablea sobre el mismo `ports.invitation` del flujo del
+   * portador (así una invitación creada por staff se abre por GET /i/{token}), con catálogo de
+   * tenant VACÍO y sin `invitationIssuancePolicy` (fail-closed: EN0/I1 responden 404/409 y
+   * I2/I3 ERR-CM-12). dev.ts y los tests inyectan catálogo y política LOCAL-only.
+   */
+  readonly staffConsole?: StaffConsolePorts;
+}
+
+/** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
+ * EXT-B) no tiene default de producción: sin él, I2/I3 fallan cerrado. */
+export function createDefaultStaffConsolePorts(
+  invitation: InvitationPorts,
+  staffIdentity: StaffIdentityPort,
+  policy?: InvitationIssuancePolicy,
+): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink } {
+  const enrollmentRepo = createInMemoryEnrollmentRepository();
+  const tenantCatalog = createInMemoryTenantCatalogAdapter();
+  const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
+  return {
+    issuance: { invitation, enrollmentRepo, tenantCatalog, invitationLinkChannel: invitationLinkSink, ...(policy ? { policy } : {}) },
+    enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger },
+    idempotency: createInMemoryIdempotencyAdapter(),
+    staffIdentity,
+    invitationLinkSink,
+  };
 }
 
 /** `relationshipConfig` es obligatorio, mismo patrón fail-closed que `otpPolicy` (D4,
@@ -308,6 +352,8 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   if (result.setRecoveryHandleCookie) cookies.push(result.setRecoveryHandleCookie);
   if (result.setCaseSessionCookie) cookies.push(result.setCaseSessionCookie);
   if (result.setCaseCsrfCookie) cookies.push(result.setCaseCsrfCookie);
+  if (result.setStaffSessionCookie) cookies.push(result.setStaffSessionCookie);
+  if (result.setStaffCsrfCookie) cookies.push(result.setStaffCsrfCookie);
   if (cookies.length > 0) {
     res.setHeader("Set-Cookie", cookies);
   }
@@ -357,6 +403,9 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING: roster vacío por defecto (fail-closed,
   // GRD-RC-15 ERR-RC-10 siempre sin override explícito).
   const staffIdentity: StaffIdentityPort = options.staffIdentity ?? createInMemoryStaffIdentityAdapter([]);
+  // CA-125: clave propia de la sesión STAFF (staff-session.ts), aislada de las de arriba.
+  const staffSessionKey = deriveStaffSessionKey(sessionSecret);
+  const staffConsolePorts: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
   const caseConfirmationPorts: CaseConfirmationPorts = {
     revocation: revocationPorts.revocation,
     rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo,
@@ -663,6 +712,21 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "GET" && path === "/__dev/invitation-sink") {
+      // CA-125: mismo patrón fail-closed que /__dev/recovery-sink (GRD-CM-13). Único lugar donde
+      // el enlace /i/<token> en claro es legible en LOCAL (nunca en la respuesta de /send, ni en
+      // ledger, eventos o logs). No está en OpenAPI.
+      if (options.environment !== "LOCAL") {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      const sink = staffConsolePorts.issuance.invitationLinkChannel as InMemoryInvitationLinkChannelSink;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ sent: sink.sent }));
+      return;
+    }
+
     if (req.method !== "POST") {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ status: 404 }));
@@ -675,9 +739,18 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       csrfHeaderToken: headerValue(req.headers[config.csrfHeaderName]),
       cookieHeader: headerValue(req.headers.cookie),
       body,
+      idempotencyKeyHeader: headerValue(req.headers["idempotency-key"]),
     };
 
     if (path === "/__dev/staff-login") {
+      // CA-125: un principal TENANT_ADMIN recibe la sesión STAFF (staff-session.ts); cualquier
+      // otro rol sigue el login CASE de CA-128. El rol lo decide el roster, no el body.
+      const requestedPrincipal = (request.body as { principalRef?: unknown } | undefined)?.principalRef;
+      const requestedRole = typeof requestedPrincipal === "string" ? staffIdentity.findByPrincipalRef(requestedPrincipal)?.role : undefined;
+      if (requestedRole === "TENANT_ADMIN") {
+        writeResult(res, config, handleDevStaffConsoleLogin(request, options.environment ?? "DEV", staffIdentity, config, staffSessionKey));
+        return;
+      }
       // CA-128 (Carlos 2026-09-28, opción (ii)): mismo guard GRD-CM-13 que /__dev/otp-sink;
       // handleDevStaffLogin ya rechaza fuera de LOCAL, aquí solo se enruta.
       const result = handleDevStaffLogin(
@@ -708,6 +781,31 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       if (caseRef.length > 0 && !caseRef.includes("/")) {
         const result = handleRecordCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
         writeResult(res, config, result);
+        return;
+      }
+    }
+
+    // CA-125: consola STAFF (API-CNS-105/110/111/112). invitationRef es el único segmento
+    // intermedio; un path con "/" adicional nunca resuelve (cae al 404 genérico).
+    if (path === "/staff/enrollments") {
+      writeResult(res, config, handleOpenEnrollment(request, staffConsolePorts, config, staffSessionKey));
+      return;
+    }
+    if (path === "/staff/invitations") {
+      writeResult(res, config, handleCreateInvitation(request, staffConsolePorts, config, staffSessionKey));
+      return;
+    }
+    if (path.startsWith("/staff/invitations/")) {
+      const rest = path.slice("/staff/invitations/".length);
+      const slash = rest.indexOf("/");
+      const invitationRef = slash === -1 ? "" : rest.slice(0, slash);
+      const action = slash === -1 ? "" : rest.slice(slash + 1);
+      if (invitationRef.length > 0 && action === "ready") {
+        writeResult(res, config, handleMarkInvitationReady(request, invitationRef, staffConsolePorts, config, staffSessionKey));
+        return;
+      }
+      if (invitationRef.length > 0 && action === "send") {
+        writeResult(res, config, handleSendInvitation(request, invitationRef, staffConsolePorts, config, staffSessionKey));
         return;
       }
     }

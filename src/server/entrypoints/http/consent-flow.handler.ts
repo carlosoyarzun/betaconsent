@@ -72,10 +72,13 @@ export interface RawConsentRequest {
   readonly csrfHeaderToken: string | undefined;
   readonly cookieHeader: string | undefined;
   readonly body: unknown;
+  /** CA-125: cabecera Idempotency-Key (GRD-CM-08); solo la usan las rutas /staff/*. Opcional para
+   * no romper a los llamadores existentes. */
+  readonly idempotencyKeyHeader?: string | undefined;
 }
 
 export interface HttpResult {
-  readonly status: 200 | 202 | 303 | 403 | 404 | 409 | 422;
+  readonly status: 200 | 201 | 202 | 303 | 403 | 404 | 409 | 422;
   readonly body: Readonly<Record<string, unknown>>;
   /** Si está presente, el transporte (server.ts) debe fijar esta cookie de sesión (D5). */
   readonly setSessionCookie?: string;
@@ -96,6 +99,11 @@ export interface HttpResult {
   /** CA-128: `Set-Cookie` de la cookie CSRF de la consola CASE (csrf.ts serializeCsrfCookie),
    * emitido junto con setCaseSessionCookie por /__dev/staff-login. */
   readonly setCaseCsrfCookie?: string;
+  /** CA-125 (staff-console.handler.ts): `Set-Cookie` de `__Host-cns-staff` ya serializado
+   * (staff-session.ts), emitido solo por /__dev/staff-login (LOCAL-only) para TENANT_ADMIN. */
+  readonly setStaffSessionCookie?: string;
+  /** CA-125: cookie CSRF de la consola STAFF, emitida junto con setStaffSessionCookie. */
+  readonly setStaffCsrfCookie?: string;
   /** Solo 303 (RedeemSeeOther): ruta relativa sin token (contracts/openapi Location header). */
   readonly location?: string;
   /** Cabeceras adicionales exigidas por el contrato para esta respuesta (p. ej. RedemptionToken
