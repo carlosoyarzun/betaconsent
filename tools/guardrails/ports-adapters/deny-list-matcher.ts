@@ -12,6 +12,8 @@ export interface DenyListEntry {
   mode: DenyListMode;
   category?: string;
   note?: string;
+  /** Solo con mode "forbidden": admite el paquete como transitivo en package-lock.json (CA-124, pg-cloudflare). */
+  lockfileAllowed?: boolean;
 }
 
 export interface DenyList {
@@ -54,7 +56,7 @@ export function extractPackageName(specifier: string): string | null {
 
 /**
  * Determina si un nombre de paquete (ya extraído, sin subpath, ya normalizado) coincide con
- * una entrada de la lista de denegación. Soporta wildcard de scope completo: "@scope/*".
+ * una entrada de la lista de denegación. Soporta wildcard de scope completo ("@scope/*") y de prefijo ("pg-*").
  */
 export function packageMatchesEntry(packageName: string, entryPattern: string): boolean {
   const pattern = normalize(entryPattern);
@@ -62,6 +64,11 @@ export function packageMatchesEntry(packageName: string, entryPattern: string): 
   if (pattern.endsWith("/*")) {
     const scope = pattern.slice(0, -1); // "@aws-sdk/"
     return name.startsWith(scope) && name.length > scope.length;
+  }
+  if (pattern.endsWith("-*")) {
+    // Comodín de prefijo (CA-124, "pg-*"): coincide con "pg-pool" pero no con "pg" ni "pgpass".
+    const prefix = pattern.slice(0, -1); // "pg-"
+    return name.startsWith(prefix) && name.length > prefix.length;
   }
   return name === pattern;
 }
