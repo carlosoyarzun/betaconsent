@@ -88,10 +88,11 @@ export function renderManageStatusPage(): string {
 `;
 }
 
-/** GET /manage con sesión MANAGE verificada y la decisión ya REVOKED (C6, INV-5). Neutro: sin
- * estado otorgado y SIN CTA de retirar. FINDING (CA-127): no hay frame Figma ni copy UX/spec
- * para "consentimiento ya retirado" en /manage; el texto es un marcador visible, no copy final
- * (y no se redacta copy legal). */
+/** GET /manage con sesión MANAGE verificada y la decisión ya REVOKED (C6, INV-5). Frame Figma
+ * 73:2 manage/mobile/ya-retirado (aprobado por Carlos, 2026-09-28). Neutro: sin fecha de
+ * retiro, sin colegio ni estudio (no recibe datos del dominio), sin CTA de retirar ni de volver
+ * a consentir. "Contactar a soporte" es el mismo mailto de ayuda que 59:3 y NO abre un caso RC1.
+ * El marcador [LEGAL DECISION] es el mismo literal que usa el comprobante de retiro. */
 export function renderManageRevokedPage(): string {
   return `<!doctype html>
 <html lang="es">
@@ -102,8 +103,11 @@ export function renderManageRevokedPage(): string {
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
     <h1 id="manage-h1">Tu consentimiento</h1>
     <section class="lp-card-default lp-manage-status" role="status" aria-live="polite" id="manage-revoked">
-      <p>[UX — copy pendiente: estado "consentimiento ya retirado" sin frame Figma ni copy definido]</p>
+      <p><strong>Tu consentimiento ya fue retirado.</strong></p>
+      <p>No necesitas hacer nada más. Ya no hay una acción de retiro pendiente en este enlace.</p>
+      <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
     </section>
+    <a href="mailto:ayuda@example.invalid" class="lp-btn lp-btn-primary lp-verify-tap-target" id="contact-support-btn">Contactar a soporte</a>
     <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
   </main>
 </body>
