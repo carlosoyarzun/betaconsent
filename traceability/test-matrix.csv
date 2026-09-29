@@ -235,3 +235,20 @@ TEST-CNS-703,integration,tests/integration/consent-flow/manage-revocation-http.t
 TEST-CNS-704,integration,tests/integration/consent-flow/recovery-http.test.ts,"tras revocar por enlace, el enlace viejo da error uniforme y RV0 no emite token","CA-127;GRD-RV-06;GRD-RV-02",ACTIVE
 TEST-CNS-705,unit,tests/unit/revocation/manage-revoked-page.test.ts,"página ya-retirado 73:2: copy exacto, role=status, sin Retirar/GRANTED/marcador UX, mailto de ayuda","CA-127;UX-CNS-004;frame 73:2",ACTIVE
 TEST-CNS-706,integration,tests/integration/consent-flow/manage-revocation-http.test.ts,"REVOKED sin sesión MANAGE verificada no muestra el estado ya-retirado (entrada)","CA-127;UX-CNS-004;GRD-RV-20",ACTIVE
+TEST-CNS-710,unit,tests/unit/staff/staff-issuance.test.ts,"EN0 abre Enrollment ACTIVE, evento válido, un solo ACTIVE, sujeto ajeno ERR-CM-01, rol ERR-CM-10","CA-125;EN0;GRD-TC-03;GRD-CM-07",ACTIVE
+TEST-CNS-711,unit,tests/unit/staff/staff-issuance.test.ts,"I1-I2-I3 emiten eventos válidos contra el schema, sequence 1..3 y el token solo llega al sink","CA-125;I1;I2;I3;INV-IV-03",ACTIVE
+TEST-CNS-712,unit,tests/unit/staff/staff-issuance.test.ts,"I1 falla cerrado: otro tenant ERR-CM-01, Guard P ERR-CM-03, Guard E ERR-CM-04, reemisión ERR-IV-07, ERR-IV-02","CA-125;GRD-IV-02;GRD-CM-03;GRD-CM-04;GRD-IV-11;GRD-IV-01",ACTIVE
+TEST-CNS-713,unit,tests/unit/staff/staff-issuance.test.ts,"sin política P-10/deliveryChannel I2/I3 ERR-CM-12; UNBOUND vs RECIPIENT_CHANNEL (GRD-IV-03)","CA-125;GRD-IV-03;GRD-IV-12",ACTIVE
+TEST-CNS-714,integration,tests/integration/staff/staff-invitations-http.test.ts,"sin sesión STAFF las 4 rutas dan 404 uniforme sin efecto","CA-125;GRD-CM-01;staffSession",ACTIVE
+TEST-CNS-715,integration,tests/integration/staff/staff-invitations-http.test.ts,"rol no permitido 403 ACTOR_NOT_ALLOWED; login solo TENANT_ADMIN; membership no vigente 404","CA-125;GRD-CM-07;GRD-CM-01;GRD-CM-02",ACTIVE
+TEST-CNS-716,integration,tests/integration/staff/staff-invitations-http.test.ts,"CSRF/Origin: 403 CSRF_REJECTED sin efecto en las 4 rutas","CA-125;GRD-CM-10;ERR-CM-09",ACTIVE
+TEST-CNS-717,integration,tests/integration/staff/staff-invitations-http.test.ts,"aislamiento por tenant: refs de otro colegio 404, tenantId en body 422, login sin tenantId","CA-125;GRD-CM-01;GRD-CM-02;DEC-BR-015",ACTIVE
+TEST-CNS-718,integration,tests/integration/staff/staff-invitations-http.test.ts,"campos extra en el body 422 sin efecto (actor, tenant, expiresAt, FIXTURE)","CA-125;GRD-CM-07;GRD-CM-15;TEST-CNS-446",ACTIVE
+TEST-CNS-719,integration,tests/integration/staff/staff-invitations-http.test.ts,"idempotencia GRD-CM-08: replay, conflicto 422, key obligatoria en I1, ligada al principal, sin doble entrega","CA-125;GRD-CM-08;ERR-CM-07;GRD-IV-01",ACTIVE
+TEST-CNS-720,integration,tests/integration/staff/staff-invitations-http.test.ts,"token ausente de respuestas HTTP, ledger y outbox; solo en el sink; ledger válido contra schema","CA-125;INV-IV-03;GRD-IV-05",ACTIVE
+TEST-CNS-721,integration,tests/integration/staff/staff-invitations-http.test.ts,"E2E: invitación creada por staff, enlace del sink, GET /i/{token} 303 a /welcome 200 y POST open","CA-125;X4;API-CNS-101;INV-CM-08",ACTIVE
+TEST-CNS-722,integration,tests/integration/staff/staff-invitations-http.test.ts,"cuerpos de solicitud y respuesta válidos contra api-payloads.schema.json y common Problem","CA-125;API-CNS-105;API-CNS-110;API-CNS-111;API-CNS-112",ACTIVE
+TEST-CNS-723,integration,tests/integration/staff/staff-invitations-http.test.ts,"fail-closed sin política P-10/EXT-B: 409 GUARD_EVALUATOR_UNAVAILABLE; catálogo vacío 404","CA-125;P-10;EXT-B;ERR-CM-12",ACTIVE
+TEST-CNS-724,integration,tests/integration/staff/staff-invitations-http.test.ts,"login STAFF y sink de invitaciones solo LOCAL","CA-125;GRD-CM-13",ACTIVE
+TEST-CNS-725,integration,tests/integration/staff/staff-invitations-http.test.ts,"consolas STAFF y CASE no comparten sesión ni cookie","CA-125;GRD-CM-07;P-26",ACTIVE
+TEST-CNS-726,integration,tests/integration/consent-flow/dev-local-config.test.ts,"roster dev sin reutilización de personas entre roles, TENANT_ADMIN con tenant propio, política LOCAL válida","CA-125;GRD-RC-15",ACTIVE
