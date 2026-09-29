@@ -15,9 +15,11 @@
     "guardrail:dependency-allowlist": "node tools/guardrails/dependency-allowlist-check.ts",
     "ci": "npm run typecheck && npm run test && npm run guardrail:ports-adapters && npm run guardrail:dependency-allowlist && npm run test:unit && npm run test:integration && npm run test:contract"
   },
+  "dependencies": {
+    "pg": "8.23.0"
+  },
   "devDependencies": {
     "@types/node": "24.13.4",
-    "pg": "8.23.0",
     "typescript": "6.0.3"
   }
 }

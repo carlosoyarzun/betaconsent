@@ -133,6 +133,25 @@ rules:
       Para deny-list modo "forbidden", además se revisa package-lock.json (lockfile v3,
       `packages`) incluidos transitivos. (SEC-CNS-010 P1-05.)
 
+  - id: RULE-GUARDRAIL-10
+    name: database-driver-deny-list
+    description: >
+      CA-124 (H09), D1/D2 de Carlos (2026-09-29). `pg` y `pg-*` (comodín de prefijo,
+      categoría database-driver) son adapters-only: solo importables desde
+      src/infra/adapters/** (RULE-GUARDRAIL-08 exige además el adaptador consumidor).
+      `pg-native`, `pg-cloudflare`, `postgres`, `pg-promise`, `knex`, `kysely`, `@prisma/*`,
+      `drizzle-orm`, `mysql2`, `better-sqlite3` y `@electric-sql/*` son forbidden en IT0
+      (sin segundo driver ni ORM). Excepción explícita: `pg-cloudflare` (transitivo opcional
+      de pg) se admite en package-lock.json (`lockfileAllowed`), nunca importable ni
+      declarable. En la deny-list el primer patrón que coincide gana, así que las excepciones
+      preceden al comodín `pg-*`.
+  - id: RULE-GUARDRAIL-11
+    name: forbidden-builtin-node-sqlite
+    description: >
+      CA-124 (H09). El builtin `node:sqlite` está vetado en todo src/** (incluidos los
+      adaptadores): el único motor de BD de IT0 es PostgreSQL vía pg. Violación
+      DENY_LIST_FORBIDDEN.
+
 implementation:
   language: "TypeScript, ejecutado directamente por Node LTS con type-stripping nativo (sin ts-node/tsx)"
   entrypoint: tools/guardrails/ports-adapters/check.ts
@@ -145,7 +164,7 @@ implementation:
   constraints:
     - "Sin scripts postinstall/preinstall en package.json"
     - "Versiones exactas (sin rangos ^ ni ~), lockfile (package-lock.json) commiteado"
-    - "Sin dependencias de runtime nuevas; solo devDependencies"
+    - "Sin dependencias de runtime nuevas salvo aprobación humana en la allowlist (ADR-001 §5); CA-124 D1 (Carlos, 2026-09-29) aprobó pg 8.23.0 como dependencia de runtime (allowlist, RULE-GUARDRAIL-10)"
 
 testCases:
   location: tests/guardrails/ports-adapters/*.test.ts
@@ -243,6 +262,38 @@ testCases:
       fixture: config-alias-not-supported-package-imports
       expect: FAIL
       reason: "package.json con \"imports\": el guardrail no resuelve subpath imports, P1-03"
+    - id: TC-25
+      fixture: pg-adapter-allowed
+      expect: PASS
+      reason: "CA-124: pg importado desde src/infra/adapters/postgres/**; pg-pool y pg-cloudflare (opcional) como transitivos en el lock (TEST-CNS-748)"
+    - id: TC-26
+      fixture: pg-import-outside-adapters
+      expect: FAIL
+      reason: "CA-124: import de pg desde src/server/modules/** (TEST-CNS-748)"
+    - id: TC-27
+      fixture: pg-prefix-import-outside-adapters
+      expect: FAIL
+      reason: "CA-124: import de pg-pool (comodín pg-*) fuera de adaptadores (TEST-CNS-748)"
+    - id: TC-28
+      fixture: pg-native-forbidden
+      expect: FAIL
+      reason: "CA-124: pg-native forbidden, importado y declarado (TEST-CNS-748)"
+    - id: TC-29
+      fixture: pg-cloudflare-import-forbidden
+      expect: FAIL
+      reason: "CA-124: pg-cloudflare no se puede importar aunque se admita en el lockfile (TEST-CNS-748)"
+    - id: TC-30
+      fixture: second-db-driver-forbidden
+      expect: FAIL
+      reason: "CA-124: segundo driver (postgres) forbidden (TEST-CNS-748)"
+    - id: TC-31
+      fixture: node-sqlite-forbidden
+      expect: FAIL
+      reason: "CA-124: import del builtin node:sqlite en un adaptador (TEST-CNS-748)"
+    - id: TC-32
+      fixture: pg-native-transitive
+      expect: FAIL
+      reason: "CA-124: pg-native transitivo en package-lock.json (TEST-CNS-748)"
     - id: TC-24
       fixture: evasion-corpus-sec-cns-010
       expect: FAIL

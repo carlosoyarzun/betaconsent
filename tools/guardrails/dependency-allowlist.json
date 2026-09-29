@@ -40,11 +40,14 @@
     {
       "name": "pg",
       "version": "8.23.0",
-      "kind": "devDependency",
+      "kind": "dependency",
       "owner": "carlosoyarzun",
       "proposedBy": "lampone-dev",
-      "status": "pending-human-review",
-      "reason": "Cliente PostgreSQL puro JS (sin compilación nativa, sin scripts de ciclo de vida) usado solo por el smoke test de integración (tests/integration/postgres-smoke.test.ts, CA-118/H03) contra el service container de CI. No se usa en src/: no prejuzga el driver final de platform/db que fije ADR-002/ADR-001 §9 para producción. Publicado 2026-08-08 (>7 días, ADR-001 §5)."
+      "status": "approved",
+      "approvedBy": "carlosoyarzun",
+      "approvedOn": "2026-09-29",
+      "decision": "CA-124 D1 (Carlos, 2026-09-29): pg 8.23.0 aprobado como dependencia de runtime; D2: migraciones SQL planas con runner propio, sin dependencia nueva.",
+      "reason": "Driver PostgreSQL puro JS (sin compilación nativa, sin scripts de ciclo de vida, transitivos ya en el lock) para el adaptador src/infra/adapters/postgres/** (CA-124, ADR-002). Solo importable desde src/infra/adapters/** (deny-list database-driver, ADR-001 §11); también lo usan los tests de integración. Publicado 2026-08-08 (>7 días, ADR-001 §5)."
     }
   ]
 }

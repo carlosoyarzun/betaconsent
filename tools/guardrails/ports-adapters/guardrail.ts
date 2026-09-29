@@ -70,6 +70,10 @@ const DANGEROUS_BUILTIN_SPECIFIERS = new Set([
   "node:inspector",
 ]);
 
+/** Builtins de Node vetados en todo src/** (incluidos adaptadores): segundo motor de BD
+ * embebido, sin camino para datos de dominio en IT0 (ADR-002, CA-124). */
+const FORBIDDEN_BUILTIN_SPECIFIERS = new Set(["node:sqlite"]);
+
 function toRelPosix(root: string, absPath: string): string {
   return relative(root, absPath).split(sep).join("/");
 }
@@ -228,6 +232,17 @@ export function runGuardrail(root: string): GuardrailResult {
         });
       }
 
+      // --- Builtins vetados (node:sqlite): prohibidos también en adaptadores ---
+      if (FORBIDDEN_BUILTIN_SPECIFIERS.has(imp.specifier.toLowerCase())) {
+        violations.push({
+          kind: "DENY_LIST_FORBIDDEN",
+          file: relPath,
+          line: imp.line,
+          specifier: imp.specifier,
+          message: `"${imp.specifier}" es un builtin vetado en todo src/** (incluidos los adaptadores): el único motor de BD de IT0 es PostgreSQL vía pg en src/infra/adapters/postgres/** (ADR-002, CA-124). ${relPath}:${imp.line} (${imp.kind}).`,
+        });
+      }
+
       // --- Deny-list (por modo): adapters-only vs forbidden ---
       const match = findDenyListMatch(imp.specifier, denyList);
       if (match !== null) {
@@ -343,7 +358,7 @@ export function runGuardrail(root: string): GuardrailResult {
   } else {
     for (const lockedName of lockfile.names) {
       const match = findDenyListMatchForPackageName(lockedName, denyList);
-      if (match !== null && match.mode === "forbidden") {
+      if (match !== null && match.mode === "forbidden" && match.lockfileAllowed !== true) {
         violations.push({
           kind: "MANIFEST_FORBIDDEN_SDK_TRANSITIVE",
           specifier: lockedName,
