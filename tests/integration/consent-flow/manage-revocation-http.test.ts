@@ -435,11 +435,30 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
     assert.doesNotMatch(html, /Retirar mi consentimiento/);
     assert.doesNotMatch(html, /GRANTED/);
     assert.match(html, /id="manage-revoked"/);
+    assert.match(html, /role="status"/);
+    assert.doesNotMatch(html, /\[UX — copy pendiente/);
+    assert.match(html, /Tu consentimiento ya fue retirado\./);
 
     // R1 sobre la cadena revocada: 202 uniforme, sin revocationRef ni Revocation nueva.
     const r1Again = await post(baseUrl, { path: "/manage/revocation", ...VALID_CSRF, sessionCookie: again });
     assert.equal(r1Again.status, 202);
     assert.deepEqual(await r1Again.json(), { result: "RECEIVED" });
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+test("TEST-CNS-706: /manage con la decisión REVOKED pero sin sesión MANAGE verificada muestra la entrada, no el estado ya-retirado", async () => {
+  const { ports, server, baseUrl } = await setUp("chain-706", "consent-706", "mgmt-token-706");
+  try {
+    const seeded = ports.decision.repo.findByConsentId(TENANT_ID, "consent-706");
+    assert.ok(seeded);
+    ports.decision.repo.save({ ...seeded, state: "REVOKED" });
+    const sessionCookie = await redeemManage(baseUrl, "mgmt-token-706");
+    const html = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).text();
+    assert.match(html, /start-verify-btn/);
+    assert.doesNotMatch(html, /manage-revoked/);
+    assert.doesNotMatch(html, /ya fue retirado/);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }

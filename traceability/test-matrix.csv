@@ -231,5 +231,7 @@ TEST-CNS-699,unit,tests/unit/revocation/c6-revoked-projection.test.ts,"findActiv
 TEST-CNS-700,unit,tests/unit/revocation/c6-revoked-projection.test.ts,"reintentar R4 no reproyecta ni duplica (un guardado REVOKED, 1 CONSENT_REVOKED, 1 outbox)","CA-127;SPEC-CNS-SM-REVOCATION R4;C6 idempotencyKey",ACTIVE
 TEST-CNS-701,unit,tests/unit/revocation/c6-revoked-projection.test.ts,"cadena REVOKED: R1 ERR-RV-02, RV0 sin token y token previo no elegible (GRD-RV-06)","CA-127;GRD-RV-02;GRD-RV-06",ACTIVE
 TEST-CNS-702,unit,tests/unit/revocation/c6-revoked-projection.test.ts,"C6 solo revoca GRANTED: PENDING/DECLINED -> ERR-CM-06 sin efectos","CA-127;GRD-CD-09",ACTIVE
-TEST-CNS-703,integration,tests/integration/consent-flow/manage-revocation-http.test.ts,"tras revocar, /manage con OTP no ofrece retirar ni dice GRANTED; R1 uniforme","CA-127;UX-CNS-004;INV-5;GRD-RV-02",ACTIVE
+TEST-CNS-703,integration,tests/integration/consent-flow/manage-revocation-http.test.ts,"tras revocar, /manage con OTP no ofrece retirar ni dice GRANTED, muestra 73:2 (role=status); R1 uniforme","CA-127;UX-CNS-004;INV-5;GRD-RV-02",ACTIVE
 TEST-CNS-704,integration,tests/integration/consent-flow/recovery-http.test.ts,"tras revocar por enlace, el enlace viejo da error uniforme y RV0 no emite token","CA-127;GRD-RV-06;GRD-RV-02",ACTIVE
+TEST-CNS-705,unit,tests/unit/revocation/manage-revoked-page.test.ts,"página ya-retirado 73:2: copy exacto, role=status, sin Retirar/GRANTED/marcador UX, mailto de ayuda","CA-127;UX-CNS-004;frame 73:2",ACTIVE
+TEST-CNS-706,integration,tests/integration/consent-flow/manage-revocation-http.test.ts,"REVOKED sin sesión MANAGE verificada no muestra el estado ya-retirado (entrada)","CA-127;UX-CNS-004;GRD-RV-20",ACTIVE
