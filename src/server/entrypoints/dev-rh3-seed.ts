@@ -22,7 +22,7 @@ export function seedRh3DevCase(ports: ConsentFlowPorts, revocationPorts: Revocat
     tenantId,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
-    subjectRef: "dev-rh3-subject@example.invalid",
+    subjectRef: "6b1f0c2a-7d3e-4a58-9b41-2c8e5f0a7d13", // Ref opaca UUIDv4: viaja en el sobre de consent.revoked (CA-127), nunca email/PII
     decisionMakerRef: "dm:dev-rh3",
     invitationRef: "inv-dev-rh3-seed",
     verificationRef: "ver-dev-rh3-seed",

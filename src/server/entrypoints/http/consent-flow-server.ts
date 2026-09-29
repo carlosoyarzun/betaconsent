@@ -12,6 +12,8 @@ import { createInMemoryLedgerAdapter } from "../../../infra/adapters/in-memory-l
 import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
+import { createInMemoryOutboxAdapter } from "../../../infra/adapters/in-memory-outbox.adapter.ts";
+import type { InMemoryOutbox } from "../../../infra/adapters/in-memory-outbox.adapter.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import type { InMemoryRecoveryLinkChannelSink } from "../../../infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../infra/adapters/in-memory-recovery-token-repository.adapter.ts";
@@ -70,7 +72,7 @@ import { deriveLinkHandleKey } from "./link-handle.ts";
 import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
 import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
 import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
-import { renderManageEntryPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
+import { renderManageEntryPage, renderManageRevokedPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
 import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from "./revocation-page.ts";
 import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
@@ -201,6 +203,7 @@ export function createDefaultRevocationFlowPorts(
     revocation: {
       revocationRepo: createInMemoryRevocationRepository(),
       ledger,
+      outbox: createInMemoryOutboxAdapter(),
       recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
       recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
       recoveryTokenPolicy,
@@ -509,7 +512,18 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
       res.setHeader("Set-Cookie", cookiesToSet);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(view.session.manageDecisionMakerRef ? renderManageStatusPage() : renderManageEntryPage());
+      // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
+      const decisionRevoked =
+        view.session.revokedDecisionRef !== undefined &&
+        revocationPorts.revocation.consentDecisionRepo.findByConsentId(view.session.tenantId, view.session.revokedDecisionRef)?.state ===
+          "REVOKED";
+      res.end(
+        !view.session.manageDecisionMakerRef
+          ? renderManageEntryPage()
+          : decisionRevoked
+            ? renderManageRevokedPage()
+            : renderManageStatusPage(),
+      );
       return;
     }
 
@@ -617,6 +631,20 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const sink = ports.otp.channel as InMemoryOtpChannelSink;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ sent: sink.sent }));
+      return;
+    }
+
+    if (req.method === "GET" && path === "/__dev/outbox-sink") {
+      // CA-127: mismo guard fail-closed que /__dev/otp-sink (GRD-CM-13). Solo refs opacas y enums;
+      // no está en OpenAPI.
+      if (options.environment !== "LOCAL") {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      const outbox = revocationPorts.revocation.outbox as InMemoryOutbox;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ enqueued: outbox.enqueued.map((r) => r.envelope) }));
       return;
     }
 

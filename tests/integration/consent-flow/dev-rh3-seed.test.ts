@@ -9,16 +9,17 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefaultRevocationFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
-import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, LOCAL_ONLY_DEV_STAFF_ROSTER } from "../../../src/server/entrypoints/dev-local-config.ts";
+import { LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, LOCAL_ONLY_DEV_STAFF_ROSTER, LOCAL_ONLY_DEV_TENANT_ID } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { RH3_DEV_CASE_REF, RH3_DEV_CONSENT_ID, RH3_DEV_REVOCATION_REF, seedRh3DevCase } from "../../../src/server/entrypoints/dev-rh3-seed.ts";
 import { loadOtpPolicyConfig } from "../../../src/server/modules/otp-challenge/otp-policy.config.ts";
 import { loadDecisionRelationshipConfig } from "../../../src/server/modules/consent-decision/decision-relationship.config.ts";
 import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revocation/recovery-token-policy.config.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
-import { validateApiPayload } from "../../contract/schema-lite.ts";
+import { validateApiPayload, validateOutboxEvent } from "../../contract/schema-lite.ts";
+import type { InMemoryOutbox } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
 
-const TENANT_ID = "tenant-dev";
+const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 const ORIGIN = "http://127.0.0.1:3000";
 
 function cookiesOf(res: Response): Record<string, string> {
@@ -33,7 +34,7 @@ function cookiesOf(res: Response): Record<string, string> {
   return out;
 }
 
-test("TEST-CNS-687: el caso RH3 sembrado con la config de dev completa confirmación + co-firma y llega a APPLIED con evidencia válida contra el schema", async () => {
+async function runSeededRh3Flow() {
   const ports = createDefaultConsentFlowPorts(loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY), loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG));
   const revocationPorts = createDefaultRevocationFlowPorts(loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY), ports.decision.ledger, ports.decision.repo);
   seedRh3DevCase(ports, revocationPorts, TENANT_ID);
@@ -80,7 +81,25 @@ test("TEST-CNS-687: el caso RH3 sembrado con la config de dev completa confirmac
       recoveryMethod: "HUMAN_ASSISTED",
       revokedDecisionRef: RH3_DEV_CONSENT_ID,
     });
+    return revocationPorts;
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
+}
+
+test("TEST-CNS-687: el caso RH3 sembrado con la config de dev completa confirmación + co-firma y llega a APPLIED con evidencia válida contra el schema", async () => {
+  await runSeededRh3Flow();
+});
+
+test("TEST-CNS-697: el seed RH3 de dev queda APPLIED con exactamente un consent.revoked válido en el outbox (CA-127)", async () => {
+  const revocationPorts = await runSeededRh3Flow();
+  const outbox = revocationPorts.revocation.outbox as InMemoryOutbox;
+  assert.equal(outbox.enqueued.length, 1);
+  const record = outbox.enqueued[0]!;
+  assert.equal(record.envelope.tenantRef, TENANT_ID);
+  assert.ok(validateOutboxEvent(record.envelope).ok);
+  assert.equal(record.envelope.payload.revocationRef, RH3_DEV_REVOCATION_REF);
+  const revoked = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", RH3_DEV_REVOCATION_REF).find((e) => e.eventType === "CONSENT_REVOKED");
+  assert.equal(record.envelope.occurredAt, (revoked!.payload as { effectiveAt: string }).effectiveAt);
+  assert.equal(record.envelope.eventType, "consent.revoked");
 });

@@ -19,6 +19,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DomainError } from "../common/errors.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { OutboxPort } from "../../ports/outbox.port.ts";
 import type { RecoveryTokenRecord, RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
 import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
@@ -28,6 +29,8 @@ import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
   readonly ledger: LedgerPort;
+  /** CA-127: outbox transaccional; R4 encola consent.revoked (revocation.spec R4 emits, GRD-RV-11). */
+  readonly outbox: OutboxPort;
   /** CA-116 PR 2 (RV0 BEARER, GET /r/{token}, POST /recovery/revoke). */
   readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
   readonly recoveryLinkChannel: RecoveryLinkChannelPort;
@@ -259,12 +262,29 @@ export interface RequestRevocationInput {
   readonly revokedDecisionRef: string;
 }
 
+/** GRD-RV-02 (parcial, ver FINDING P2 del reporte CA-127): una decisión ya REVOKED por C6 no es
+ * elegible para una revocación nueva (R1) ni para emitir enlace (RV0). La verificación completa
+ * "es la GRANTED vigente de la cadena" exige fixtures con chainRef coherente en los tests. */
+function isAlreadyRevoked(
+  ports: Pick<RevocationPorts, "consentDecisionRepo">,
+  tenantId: string,
+  decisionRef: string,
+): boolean {
+  return ports.consentDecisionRepo.findByConsentId(tenantId, decisionRef)?.state === "REVOKED";
+}
+
 /** R1: null -> REQUESTED. Idempotente por revocationRef: si ya existe una Revocation abierta
  * para esta (tenantId, revocationRef), la devuelve sin duplicar el evento (mismo criterio que
  * requestOtp/GRD-OT-08 más arriba en el módulo hermano). */
 export function requestRevocation(ports: RevocationPorts, tenantId: string, input: RequestRevocationInput): RevocationRecord {
   const existing = ports.revocationRepo.findByRef(tenantId, input.revocationRef);
   if (existing) return existing;
+
+  // GRD-RV-02 (chain_granted, ERR-RV-02): la cadena debe tener aún la GRANTED vigente que se
+  // revoca; una decisión ya REVOKED por C6 no es elegible. Sin escrituras ni eventos.
+  if (isAlreadyRevoked(ports, tenantId, input.revokedDecisionRef)) {
+    throw new DomainError("ERR-RV-02");
+  }
 
   const record: RevocationRecord = {
     revocationRef: input.revocationRef,
@@ -405,9 +425,14 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   if (!verifiedAuthPath || !revokedDecisionRef || (verifiedAuthPath === "RECOVERY" && !verifiedRecoveryMethod)) {
     throw new DomainError("ERR-CM-06");
   }
-  const applied: RevocationRecord = { ...found, status: "APPLIED" };
-  ports.revocationRepo.save(applied);
-  ports.ledger.append({
+  // CA-127: todo lo que puede fallar va antes de la primera escritura. contextRef y subjectRef
+  // del sobre salen de la decisión revocada; si no existe, falla cerrado sin escrituras.
+  const decision = ports.consentDecisionRepo.findByConsentId(tenantId, revokedDecisionRef);
+  // C6 (GRD-CD-09): solo una decisión GRANTED se revoca; REVOKED = reintento de R4 (converge).
+  if (!decision || (decision.state !== "GRANTED" && decision.state !== "REVOKED")) {
+    throw new DomainError("ERR-CM-06");
+  }
+  const rev = ports.ledger.append({
     eventType: "CONSENT_REVOKED",
     tenantId,
     aggregateType: "Revocation",
@@ -437,6 +462,26 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
     payload: { receiptRef: revocationRef, managementLinkIssued: false },
     idempotencyKey: `${revocationRef}:receipt`,
   });
+  // effectiveAt se lee del registro devuelto: ante dedupe es el original (un solo reloj).
+  const effectiveAt = (rev.payload as { effectiveAt: string }).effectiveAt;
+  ports.outbox.enqueue({
+    tenantId,
+    eventType: "consent.revoked",
+    contextRef: decision.contextRef,
+    subjectRef: decision.subjectRef,
+    occurredAt: effectiveAt,
+    payload: { revocationRef, scope: "ALL", effectiveAt },
+    dedupeKey: `${revocationRef}:consent.revoked`,
+  });
+  // C6 (consent-decision.spec.yaml): GRANTED -> REVOKED en el mismo lote que R4. Ya REVOKED
+  // (reintento): no se reproyecta; ledger y outbox ya deduplicaron arriba (sin segundo evento).
+  if (decision.state === "GRANTED") {
+    ports.consentDecisionRepo.save({ ...decision, state: "REVOKED" });
+  }
+  // La proyección se guarda al final: si algo falla queda CONFIRMED y el reintento converge
+  // (ledger y outbox deduplican) sin duplicados. La tx real llega con el adaptador Postgres.
+  const applied: RevocationRecord = { ...found, status: "APPLIED" };
+  ports.revocationRepo.save(applied);
   return applied;
 }
 
@@ -472,6 +517,11 @@ export function issueRecoveryLinkBearer(
   revokedDecisionRef: string,
   trigger: Rv0BearerTrigger,
 ): Rv0BearerResult {
+  // GRD-RV-02 (precondición de RV0, ERR-RV-02 uniforme): cadena ya REVOKED (C6) o de otro ciclo
+  // -> no se emite token ni evento; la respuesta HTTP sigue siendo la uniforme.
+  if (isAlreadyRevoked(ports, tenantId, revokedDecisionRef)) {
+    return { sent: false };
+  }
   const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashRecoveryToken(token);
   const recoveryRef = `rec-${randomUUID()}`;

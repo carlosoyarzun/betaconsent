@@ -3,8 +3,7 @@
 // contracts/schemas/ledger-event-payloads.schema.json CONSENT_REVOKED / RECEIPT_CREATED;
 // contracts/schemas/api-payloads.schema.json CaseConfirmationAck. CA-127 (FINDING P1;
 // decisión de Carlos 2026-09-28, opción (a)). TEST-CNS-680..685.
-// El outbox consent.revoked de R4 NO se prueba aquí: el dominio no tiene puerto de outbox
-// (FINDING P1 reportado; no se crea infraestructura nueva).
+// El outbox consent.revoked de R4 se prueba en outbox-consent-revoked.test.ts (TEST-CNS-688..697).
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -26,6 +25,8 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
+import { withSyntheticFallback } from "../../contract/synthetic-decision.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -40,10 +41,11 @@ function makePorts(revocationRepo: RevocationRepositoryPort = createInMemoryRevo
   const ports = {
     revocationRepo,
     ledger: createInMemoryLedgerAdapter(),
+    outbox: createInMemoryOutboxAdapter(),
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
-    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
+    consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
   };
   return ports;
 }
@@ -151,7 +153,9 @@ test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfi
   const ports = rh3(REV, makePorts(flaky));
   assert.throws(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" }), /R4 falló/);
   assert.equal(inner.findByRef(T, REV)?.status, "CONFIRMED");
-  assert.equal(ports.ledger.listByAggregate(T, "Revocation", REV).filter((e) => e.eventType === "CONSENT_REVOKED").length, 0);
+  // CA-127: la proyección se guarda al final, así que el ledger ya tiene el CONSENT_REVOKED
+  // (idempotente por revocationRef) aunque el save haya fallado; el reintento converge sin duplicar.
+  assert.equal(ports.ledger.listByAggregate(T, "Revocation", REV).filter((e) => e.eventType === "CONSENT_REVOKED").length, 1);
 
   failApply = false; // reintento: reaplica R4 sin duplicar REVOCATION_CONFIRMED
   const retried = cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" });

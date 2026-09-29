@@ -27,6 +27,8 @@ import {
   LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY,
   LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG,
   LOCAL_ONLY_DEV_STAFF_ROSTER,
+  LOCAL_ONLY_DEV_TENANT_ID,
+  LOCAL_ONLY_DEV_SUBJECT_REF,
 } from "./dev-local-config.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
@@ -58,9 +60,9 @@ const relationshipConfig = loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIO
 const ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig);
 const sessionSecret = randomBytes(32);
 
-const TENANT_ID = "tenant-dev";
+const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 const INVITATION_REF = "inv-dev-001";
-const SUBJECT_REF = "dev-subject@example.invalid";
+const SUBJECT_REF = LOCAL_ONLY_DEV_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
 createInvitation(ports.invitation, TENANT_ID, "INVITER", {
@@ -89,7 +91,7 @@ ports.decision.repo.save({
   tenantId: TENANT_ID,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
   productRef: LECTORPRO_BETA_CONFIG.productRef,
-  subjectRef: "dev-mgmt-subject@example.invalid",
+  subjectRef: "a4c7e9b2-1f3d-4e60-8a52-9d0b7c3e1f46", // Ref opaca UUIDv4: viaja en el sobre de consent.revoked (CA-127), nunca email/PII
   decisionMakerRef: "dm:dev-mgmt",
   invitationRef: "inv-dev-mgmt-seed",
   verificationRef: "ver-dev-mgmt-seed",
@@ -157,6 +159,8 @@ server.listen(port, "127.0.0.1", () => {
   // "Enviar enlace de recuperación" (POST /manage/recovery-link) y lee el enlace /r/<token> real
   // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
   console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
+  // CA-127: R4 encola consent.revoked en el outbox in-memory; se lee aquí (solo LOCAL, sin entrega: R5).
+  console.log(`Leer los eventos del outbox: GET ${baseUrl}/__dev/outbox-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
   // (RH3_CASE_REF). Cuatro ojos: registra staff-synthetic-01 y co-firma otro RIGHTS_OPERATOR
   // distinto (staff-synthetic-02; un APPROVER no co-firma, revocation.spec RH3). Cada persona

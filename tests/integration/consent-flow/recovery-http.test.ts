@@ -288,7 +288,12 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
 
     const secondToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-592");
     const { recoveryCookie: secondCookie } = await redeemRecoveryToken(baseUrl, secondToken);
-    const { csrfToken: secondCsrf } = await renderRecoveryConfirm(baseUrl, secondCookie);
+    // C6 (GRD-RV-06): con la decisión ya REVOKED el render de /recovery/confirm da el error
+    // uniforme (404, sin CSRF); el POST directo (mismo par CSRF del primero) sigue uniforme.
+    const { res: secondRender, csrfToken: noCsrf } = await renderRecoveryConfirm(baseUrl, secondCookie);
+    assert.equal(secondRender.status, 404);
+    assert.equal(noCsrf, undefined);
+    const secondCsrf = firstCsrf;
     const secondRevoke = await post(baseUrl, {
       path: "/recovery/revoke",
       ...VALID_CSRF_ORIGIN,
@@ -508,6 +513,38 @@ test("TEST-CNS-605: aislamiento de cookies — una sesión MANAGE/DECISION no si
 
     const decisionWithRecoveryCookie = await fetch(`${baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${recoveryCookie}` } });
     assert.equal(decisionWithRecoveryCookie.status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+const CONSENT_704 = "704a3c52-8d4e-4a7b-9c21-0e5a7d3b9f04";
+
+test("TEST-CNS-704: tras revocar por enlace (C6/REVOKED), el enlace viejo da el error uniforme (render 404 sin CSRF) y pedir otro enlace (RV0) responde 202 sin emitir token nuevo", async () => {
+  const { revocationPorts, server, baseUrl } = await setUp("chain-704", CONSENT_704, "mgmt-token-704");
+  try {
+    const oldToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-704");
+    const { recoveryCookie: cookie } = await redeemRecoveryToken(baseUrl, oldToken);
+    const { csrfToken } = await renderRecoveryConfirm(baseUrl, cookie);
+    const revoked = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: csrfToken, csrfCookie: csrfToken, recoveryCookie: cookie, body: { confirmTotalWithdrawal: true } });
+    assert.equal(revoked.status, 200);
+    assert.equal(revocationPorts.revocation.consentDecisionRepo.findByConsentId(TENANT_ID, CONSENT_704)?.state, "REVOKED");
+
+    // Enlace viejo (misma cookie de recuperación): error uniforme, sin CSRF.
+    const { res: oldRender, csrfToken: noCsrf } = await renderRecoveryConfirm(baseUrl, cookie);
+    assert.equal(oldRender.status, 404);
+    assert.equal(noCsrf, undefined);
+
+    // RV0 sobre la cadena ya revocada: 202 uniforme, sin token nuevo en el sink.
+    const sink = revocationPorts.revocation.recoveryLinkChannel as InMemoryRecoveryLinkChannelSink;
+    const sentBefore = sink.sent.length;
+    const redeemed = await fetch(`${baseUrl}/m/mgmt-token-704`, { redirect: "manual" });
+    const handleCookie = parseSetCookie(redeemed)[MANAGE_ENTRY_HANDLE_COOKIE_NAME];
+    const manage = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${handleCookie}` } });
+    const sessionCookie = parseAllSetCookies(manage)[SESSION_COOKIE_NAME];
+    const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh", sessionCookie });
+    assert.equal(rv0.status, 202);
+    assert.equal(sink.sent.length, sentBefore);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }

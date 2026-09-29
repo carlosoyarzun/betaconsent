@@ -1,6 +1,6 @@
 // Gobierna: specs/state-machines/common.spec.yaml INV-CM-06 (eligibility_to_participate !=
 // eligibility_to_revoke), GRD-CM-06 (route_class_rights); specs/state-machines/revocation.spec.yaml
-// INV-6. TEST-CNS-461, TEST-CNS-462.
+// INV-6. TEST-CNS-461, TEST-CNS-462, TEST-CNS-695 (CA-127: consent.revoked se encola aunque el tenant esté suspendido).
 //
 // Un registro de tenant "suspendido" se simula en un mapa separado, NUNCA pasado a las
 // funciones RIGHTS bajo prueba: la propiedad verificada es que closeCase/RC3/RH2/RH3/R4 ni
@@ -18,6 +18,10 @@ import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
+import { syntheticDecision, withSyntheticFallback } from "../../contract/synthetic-decision.ts";
+import { assertConsentRevokedOutbox } from "../../contract/outbox-evidence.ts";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 
@@ -66,11 +70,12 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
     rightsCaseRepo,
     revocationRepo,
     ledger,
+    outbox: createInMemoryOutboxAdapter(),
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     // SEC-CNS-014 (FINDING P1-01): ajeno a RC3/RH2/RH3/R4 bajo prueba aquí, uno vacío basta.
-    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
+    consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
   };
 
   // RC3
@@ -96,4 +101,45 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
   });
   // R4 síncrono dentro del cosign en IT0 (Carlos 2026-09-28): la cadena termina en APPLIED.
   assert.equal(confirmed.status, "APPLIED");
+});
+
+test("TEST-CNS-695 (INV-6): con tenant SUSPENDED la cadena RC3->RH2->RH3->R4 encola igual un consent.revoked válido (eligibility_to_revoke)", () => {
+  const TS = fixtureUuid("tenant-suspended-695");
+  const D = fixtureUuid("decision-695");
+  suspendedTenants.set(TS, { active: false });
+  assert.equal(suspendedTenants.get(TS)?.active, false);
+
+  const rightsCaseRepo = createInMemoryRightsCaseRepository();
+  rightsCaseRepo.save({ caseRef: "case-695", tenantId: TS, chainRef: "chain-695", revokedDecisionRef: D, status: "CONTACTING" });
+  const consentDecisionRepo = createInMemoryConsentDecisionRepository();
+  consentDecisionRepo.save(syntheticDecision(TS, D));
+  const outbox = createInMemoryOutboxAdapter();
+  const ports = {
+    tenantHandle: createInMemoryTenantHandleAdapter([{ handle: "handle-695", tenantId: TS, chainRef: "chain-695", revokedDecisionRef: D }]),
+    rightsCaseRepo,
+    revocationRepo: createInMemoryRevocationRepository(),
+    ledger: createInMemoryLedgerAdapter(),
+    outbox,
+    recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+    recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+    recoveryTokenPolicy: { ttlMs: 60_000 },
+    consentDecisionRepo,
+  };
+  const { revocation } = expressRevocationIntentInCase(ports, "handle-695");
+  attestHumanAssistedVerification(ports, TS, revocation.revocationRef, "case-695");
+  const staffIdentity = createInMemoryStaffIdentityAdapter([
+    { principalRef: "operator-a", role: "RIGHTS_OPERATOR" },
+    { principalRef: "operator-b", role: "RIGHTS_OPERATOR" },
+    { principalRef: "approver-c", role: "APPROVER" },
+    { principalRef: "approver-d", role: "APPROVER" },
+  ]);
+  recordCaseConfirmationPendingCosign(ports, staffIdentity, TS, revocation.revocationRef, "case-695", { recordedByPrincipalRef: "operator-a" });
+  const confirmed = cosignCaseConfirmation(ports, staffIdentity, TS, revocation.revocationRef, "case-695", { cosignedByPrincipalRef: "operator-b" });
+  assert.equal(confirmed.status, "APPLIED");
+  assert.equal(outbox.enqueued.length, 1);
+  assertConsentRevokedOutbox(outbox.enqueued, ports.ledger.listByAggregate(TS, "Revocation", revocation.revocationRef), {
+    tenantId: TS,
+    revocationRef: revocation.revocationRef,
+    decision: syntheticDecision(TS, D),
+  });
 });

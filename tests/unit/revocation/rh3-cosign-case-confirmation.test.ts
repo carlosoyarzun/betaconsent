@@ -19,6 +19,8 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
+import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
+import { withSyntheticFallback } from "../../contract/synthetic-decision.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -32,10 +34,11 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
   return {
     revocationRepo,
     ledger,
+    outbox: createInMemoryOutboxAdapter(),
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
-    consentDecisionRepo: createInMemoryConsentDecisionRepository(),
+    consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
   };
 }
 

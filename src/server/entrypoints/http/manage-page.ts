@@ -88,6 +88,29 @@ export function renderManageStatusPage(): string {
 `;
 }
 
+/** GET /manage con sesión MANAGE verificada y la decisión ya REVOKED (C6, INV-5). Neutro: sin
+ * estado otorgado y SIN CTA de retirar. FINDING (CA-127): no hay frame Figma ni copy UX/spec
+ * para "consentimiento ya retirado" en /manage; el texto es un marcador visible, no copy final
+ * (y no se redacta copy legal). */
+export function renderManageRevokedPage(): string {
+  return `<!doctype html>
+<html lang="es">
+<head>
+  ${HEAD}
+</head>
+<body>
+  <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
+    <h1 id="manage-h1">Tu consentimiento</h1>
+    <section class="lp-card-default lp-manage-status" role="status" aria-live="polite" id="manage-revoked">
+      <p>[UX — copy pendiente: estado "consentimiento ya retirado" sin frame Figma ni copy definido]</p>
+    </section>
+    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
+  </main>
+</body>
+</html>
+`;
+}
+
 /** Estado de error uniforme (handle inexistente/rotado/usado/vencido, GRD-CM-01): mismo patrón
  * que renderVerifyUniformErrorPage/renderWelcomeUniformErrorPage (INV-CM-05). Frame 59:3
  * (Carlos, 2026-09-28): copy propio de esta pantalla, distinto del de /welcome (9:12). El botón

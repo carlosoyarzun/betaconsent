@@ -97,7 +97,11 @@ export function expressRevocationIntentInCase(
       actorType: UNVERIFIED_BEARER_ACTOR.actorType,
       actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
       payload: { caseRef: rightsCase.caseRef },
-      idempotencyKey: revocationRef,
+      // ":rc3" evita colisionar con el idempotencyKey plano `revocationRef` de R4 (CONSENT_REVOKED,
+      // mismo aggregateId): el ledger dedupea por (tenant, aggregateType, aggregateId, key), no por
+      // eventType, y con la key plana R4 devolvía este REQUESTED en vez de emitir CONSENT_REVOKED
+      // (CA-127, FINDING P1).
+      idempotencyKey: `${revocationRef}:rc3`,
     });
     return { rightsCase: updatedCase, revocation };
   }

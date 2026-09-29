@@ -53,3 +53,8 @@ export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
   { principalRef: "staff-synthetic-03", role: "APPROVER" as const },
   { principalRef: "staff-synthetic-04", role: "APPROVER" as const },
 ];
+
+/** Refs opacas sintéticas de dev.ts (LOCAL-only): TenantRef/Ref válidos contra common.schema.json
+ * (:27, :35), porque viajan tal cual en el sobre de consent.revoked (CA-127). */
+export const LOCAL_ONLY_DEV_TENANT_ID = "c3a1f5d2-8b47-4e69-a0d3-5f7b9e1c2a48";
+export const LOCAL_ONLY_DEV_SUBJECT_REF = "e8d2b4a6-3c19-4f75-b6e0-1a9c7d5f3b82";
