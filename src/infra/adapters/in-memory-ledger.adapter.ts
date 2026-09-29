@@ -19,7 +19,7 @@ export function createInMemoryLedgerAdapter(): LedgerPort {
   }
 
   return {
-    append(event: LedgerEventInput): LedgerRecord {
+    async append(event: LedgerEventInput): Promise<LedgerRecord> {
       if (event.idempotencyKey) {
         const key = idempotencyStoreKey(event.tenantId, event.aggregateType, event.aggregateId, event.idempotencyKey);
         const existing = byIdempotencyKey.get(key);
@@ -47,7 +47,7 @@ export function createInMemoryLedgerAdapter(): LedgerPort {
 
       return record;
     },
-    listByAggregate(tenantId, aggregateType, aggregateId) {
+    async listByAggregate(tenantId, aggregateType, aggregateId) {
       return records.filter(
         (r) => r.tenantId === tenantId && r.aggregateType === aggregateType && r.aggregateId === aggregateId,
       );

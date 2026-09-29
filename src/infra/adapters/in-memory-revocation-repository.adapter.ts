@@ -13,16 +13,16 @@ export function createInMemoryRevocationRepository(): RevocationRepositoryPort {
   }
 
   return {
-    findByRef(tenantId, revocationRef) {
+    async findByRef(tenantId, revocationRef) {
       return byKey.get(key(tenantId, revocationRef)) ?? null;
     },
-    findByCase(tenantId, caseRef) {
+    async findByCase(tenantId, caseRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.caseRef === caseRef) return record;
       }
       return null;
     },
-    findOpenByChain(tenantId, chainRef) {
+    async findOpenByChain(tenantId, chainRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.chainRef === chainRef && record.status !== "FAILED") {
           return record;
@@ -30,7 +30,7 @@ export function createInMemoryRevocationRepository(): RevocationRepositoryPort {
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.revocationRef), { ...record });
     },
   };

@@ -7,10 +7,10 @@ export function createInMemoryEnrollmentRepository(): EnrollmentRepositoryPort {
   const key = (tenantId: string, enrollmentRef: string): string => `${tenantId}\u0000${enrollmentRef}`;
 
   return {
-    findByRef(tenantId, enrollmentRef) {
+    async findByRef(tenantId, enrollmentRef) {
       return byKey.get(key(tenantId, enrollmentRef)) ?? null;
     },
-    findActive(tenantId, subjectRef, participationRef) {
+    async findActive(tenantId, subjectRef, participationRef) {
       for (const record of byKey.values()) {
         if (
           record.tenantId === tenantId &&
@@ -23,7 +23,7 @@ export function createInMemoryEnrollmentRepository(): EnrollmentRepositoryPort {
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.enrollmentRef), { ...record });
     },
   };

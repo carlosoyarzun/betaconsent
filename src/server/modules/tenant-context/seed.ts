@@ -19,10 +19,10 @@ export interface SeedTenantPorts {
  * cualquiera sea el campo que la request declare. GRD-CM-13: además exige environment LOCAL.
  * El ledger registra SIEMPRE actorType FIXTURE, nunca HUMAN ni SYSTEM_GUARD (TEST-CNS-472).
  */
-export function seedTenant(ctx: ExecutionContext, ports: SeedTenantPorts, tenantId: string): void {
+export async function seedTenant(ctx: ExecutionContext, ports: SeedTenantPorts, tenantId: string): Promise<void> {
   assertExecutionSourceIsSeed(ctx);
   assertFixtureEnvironment("FIXTURE", ctx.environment);
-  ports.ledger.append({
+  await ports.ledger.append({
     eventType: "TENANT_SEEDED",
     tenantId,
     aggregateType: "Tenant",
@@ -36,15 +36,15 @@ export function seedTenant(ctx: ExecutionContext, ports: SeedTenantPorts, tenant
 /**
  * SP1 (seed sintético de SchoolParticipation). Mismos guards que TN1 (GRD-CM-13/14).
  */
-export function seedSchoolParticipation(
+export async function seedSchoolParticipation(
   ctx: ExecutionContext,
   ports: SeedTenantPorts,
   tenantId: string,
   participationRef: string,
-): void {
+): Promise<void> {
   assertExecutionSourceIsSeed(ctx);
   assertFixtureEnvironment("FIXTURE", ctx.environment);
-  ports.ledger.append({
+  await ports.ledger.append({
     eventType: "SCHOOL_PARTICIPATION_SEEDED",
     tenantId,
     aggregateType: "SchoolParticipation",

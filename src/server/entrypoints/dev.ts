@@ -75,18 +75,18 @@ const INVITATION_REF = "inv-dev-001";
 const SUBJECT_REF = LOCAL_ONLY_DEV_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
-createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
   invitationRef: INVITATION_REF,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
   productRef: LECTORPRO_BETA_CONFIG.productRef,
   subjectRef: SUBJECT_REF,
 });
-markInvitationReady(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF, {
+await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF, {
   consentVersion: "v1-dev",
   expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
   recipientChannelRef: CHANNEL_REF,
 });
-const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF);
+const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF);
 
 // CA-116 (revocación IT0, UX-CNS-004): además del enlace /i/<token>, siembra un enlace
 // /m/<token> sintético sobre una decisión GRANTED ya existente (sin pasar por el flujo HTTP de
@@ -96,7 +96,7 @@ const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", INVITAT
 const MGMT_CHAIN_REF = "chain-dev-mgmt";
 const MGMT_CONSENT_ID = "consent-dev-mgmt-001";
 const MGMT_TOKEN = "dev-mgmt-token-001";
-ports.decision.repo.save({
+await ports.decision.repo.save({
   consentId: MGMT_CONSENT_ID,
   tenantId: TENANT_ID,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -135,7 +135,7 @@ const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, po
 // mano sin repetir HTTP para RC1/RH2 (fuera de alcance de este slice). Cadena/decisión propias
 // (RH3_*), separadas de MGMT_* de arriba, para no interferir con el flujo de gestión.
 const RH3_CASE_REF = RH3_DEV_CASE_REF;
-seedRh3DevCase(ports, revocationPorts, TENANT_ID);
+await seedRh3DevCase(ports, revocationPorts, TENANT_ID);
 // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos 2026-09-28 opción (ii)).
 const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
 

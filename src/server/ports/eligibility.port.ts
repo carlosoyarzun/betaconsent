@@ -11,5 +11,5 @@ import type { TenantId } from "../modules/common/types.ts";
 
 export interface EligibilityPort {
   /** Estado desconocido, desactualizado o con error = false (fail-closed, GRD-CM-05). */
-  isEligibleForIssuance(tenantId: TenantId, contextRef: string, productRef: string): boolean;
+  isEligibleForIssuance(tenantId: TenantId, contextRef: string, productRef: string): Promise<boolean>;
 }

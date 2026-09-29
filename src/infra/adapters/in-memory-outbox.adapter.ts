@@ -17,7 +17,7 @@ export function createInMemoryOutboxAdapter(): InMemoryOutbox {
   const enqueued: OutboxRecord[] = [];
   const byKey = new Map<string, OutboxRecord>();
   return {
-    enqueue(input: OutboxEnqueueInput): OutboxRecord {
+    async enqueue(input: OutboxEnqueueInput): Promise<OutboxRecord> {
       const storeKey = `${input.tenantId}\u0000${input.dedupeKey}`;
       const existing = byKey.get(storeKey);
       if (existing) return existing;

@@ -41,8 +41,8 @@ export interface RevocationPorts {
   readonly consentDecisionRepo: ConsentDecisionRepositoryPort;
 }
 
-function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
-  const found = ports.revocationRepo.findByRef(tenantId, revocationRef);
+async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const found = await ports.revocationRepo.findByRef(tenantId, revocationRef);
   if (!found) {
     // GRD-CM-01/06: revocationRef de otro tenant (o inexistente) -> 404 uniforme (TEST-CNS-464).
     throw new DomainError("ERR-CM-01");
@@ -55,13 +55,13 @@ function requireRevocation(ports: RevocationPorts, tenantId: string, revocationR
  * para este slice. Deja constancia de (revocationRef, caseRef) ATTESTED para que RH3
  * (GRD-RV-10) pueda exigirla.
  */
-export function attestHumanAssistedVerification(
+export async function attestHumanAssistedVerification(
   ports: RevocationPorts,
   tenantId: string,
   revocationRef: string,
   caseRef: string,
-): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
   }
@@ -72,8 +72,8 @@ export function attestHumanAssistedVerification(
     verifiedAuthPath: "RECOVERY",
     verifiedRecoveryMethod: "HUMAN_ASSISTED",
   };
-  ports.revocationRepo.save(verified);
-  ports.ledger.append({
+  await ports.revocationRepo.save(verified);
+  await ports.ledger.append({
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -111,8 +111,8 @@ export interface CaseConfirmationRecordContext {
  * roles. Fail-closed: dotación insuficiente -> ERR-RC-10 (ROSTER_INSUFFICIENT), el caso sigue
  * abierto, nunca FAILED.
  */
-function assertNominalRosterMinimum(staffIdentity: StaffIdentityPort): void {
-  const roster = staffIdentity.listRoster();
+async function assertNominalRosterMinimum(staffIdentity: StaffIdentityPort): Promise<void> {
+  const roster = await staffIdentity.listRoster();
   const operatorRefs = new Set(roster.filter((principal) => principal.role === "RIGHTS_OPERATOR").map((principal) => principal.principalRef));
   const approverRefs = new Set(roster.filter((principal) => principal.role === "APPROVER").map((principal) => principal.principalRef));
   if (operatorRefs.size < 2 || approverRefs.size < 2) {
@@ -132,15 +132,15 @@ function assertNominalRosterMinimum(staffIdentity: StaffIdentityPort): void {
  *   caseRef).
  * - GRD-RC-15 (ERR-RC-10): dotación nominal mínima (arriba).
  */
-export function recordCaseConfirmationPendingCosign(
+export async function recordCaseConfirmationPendingCosign(
   ports: RevocationPorts,
   staffIdentity: StaffIdentityPort,
   tenantId: string,
   revocationRef: string,
   caseRef: string,
   ctx: CaseConfirmationRecordContext,
-): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
   }
@@ -156,14 +156,14 @@ export function recordCaseConfirmationPendingCosign(
     throw new DomainError("ERR-RV-20");
   }
 
-  assertNominalRosterMinimum(staffIdentity);
+  await assertNominalRosterMinimum(staffIdentity);
 
   // Paso 1 literal (effect: none): registra recordedByRef, sin tocar `status` ni emitir evento.
   const recorded: RevocationRecord = {
     ...found,
     recordedByRef: ctx.recordedByPrincipalRef,
   };
-  ports.revocationRepo.save(recorded);
+  await ports.revocationRepo.save(recorded);
   return recorded;
 }
 
@@ -184,15 +184,15 @@ export interface CaseConfirmationCosignContext {
  * registro sin reemitir REVOCATION_CONFIRMED. R4 (applyRevocation) se ejecuta aquí de forma
  * síncrona (IT0, decisión de Carlos 2026-09-28; worker asíncrono diferido): devuelve APPLIED.
  */
-export function cosignCaseConfirmation(
+export async function cosignCaseConfirmation(
   ports: RevocationPorts,
   staffIdentity: StaffIdentityPort,
   tenantId: string,
   revocationRef: string,
   caseRef: string,
   ctx: CaseConfirmationCosignContext,
-): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
   }
@@ -214,7 +214,7 @@ export function cosignCaseConfirmation(
     throw new DomainError("ERR-RV-20");
   }
 
-  assertNominalRosterMinimum(staffIdentity);
+  await assertNominalRosterMinimum(staffIdentity);
 
   // GRD-RV-26: sin confirmación registrada (paso 1) o con el mismo principal -> sin efecto.
   const recordedByRef = found.recordedByRef;
@@ -223,8 +223,8 @@ export function cosignCaseConfirmation(
   }
 
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
-  ports.revocationRepo.save(confirmed);
-  ports.ledger.append({
+  await ports.revocationRepo.save(confirmed);
+  await ports.ledger.append({
     eventType: "REVOCATION_CONFIRMED",
     tenantId,
     aggregateType: "Revocation",
@@ -265,24 +265,24 @@ export interface RequestRevocationInput {
 /** GRD-RV-02 (parcial, ver FINDING P2 del reporte CA-127): una decisión ya REVOKED por C6 no es
  * elegible para una revocación nueva (R1) ni para emitir enlace (RV0). La verificación completa
  * "es la GRANTED vigente de la cadena" exige fixtures con chainRef coherente en los tests. */
-function isAlreadyRevoked(
+async function isAlreadyRevoked(
   ports: Pick<RevocationPorts, "consentDecisionRepo">,
   tenantId: string,
   decisionRef: string,
-): boolean {
-  return ports.consentDecisionRepo.findByConsentId(tenantId, decisionRef)?.state === "REVOKED";
+): Promise<boolean> {
+  return (await ports.consentDecisionRepo.findByConsentId(tenantId, decisionRef))?.state === "REVOKED";
 }
 
 /** R1: null -> REQUESTED. Idempotente por revocationRef: si ya existe una Revocation abierta
  * para esta (tenantId, revocationRef), la devuelve sin duplicar el evento (mismo criterio que
  * requestOtp/GRD-OT-08 más arriba en el módulo hermano). */
-export function requestRevocation(ports: RevocationPorts, tenantId: string, input: RequestRevocationInput): RevocationRecord {
-  const existing = ports.revocationRepo.findByRef(tenantId, input.revocationRef);
+export async function requestRevocation(ports: RevocationPorts, tenantId: string, input: RequestRevocationInput): Promise<RevocationRecord> {
+  const existing = await ports.revocationRepo.findByRef(tenantId, input.revocationRef);
   if (existing) return existing;
 
   // GRD-RV-02 (chain_granted, ERR-RV-02): la cadena debe tener aún la GRANTED vigente que se
   // revoca; una decisión ya REVOKED por C6 no es elegible. Sin escrituras ni eventos.
-  if (isAlreadyRevoked(ports, tenantId, input.revokedDecisionRef)) {
+  if (await isAlreadyRevoked(ports, tenantId, input.revokedDecisionRef)) {
     throw new DomainError("ERR-RV-02");
   }
 
@@ -293,8 +293,8 @@ export function requestRevocation(ports: RevocationPorts, tenantId: string, inpu
     revokedDecisionRef: input.revokedDecisionRef,
     status: "REQUESTED",
   };
-  ports.revocationRepo.save(record);
-  ports.ledger.append({
+  await ports.revocationRepo.save(record);
+  await ports.ledger.append({
     eventType: "REVOCATION_REQUESTED",
     tenantId,
     aggregateType: "Revocation",
@@ -312,13 +312,13 @@ export function requestRevocation(ports: RevocationPorts, tenantId: string, inpu
 /** R2: REQUESTED -> VERIFIED, tras un V3 scope REVOCATION correcto posterior a R1 (GRD-RV-05,
  * verificado por el llamador HTTP: el OTP scope REVOCATION solo se puede pedir sobre una sesión
  * que ya tiene revocationRef, es decir después de R1). */
-export function verifyRevocationOtp(
+export async function verifyRevocationOtp(
   ports: RevocationPorts,
   tenantId: string,
   revocationRef: string,
   verificationRef: string,
-): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status === "VERIFIED" || found.status === "CONFIRMED") {
     // Idempotente: un R2 repetido con el mismo resultado no reemite el evento.
     return found;
@@ -327,8 +327,8 @@ export function verifyRevocationOtp(
     throw new DomainError("ERR-CM-06");
   }
   const verified: RevocationRecord = { ...found, status: "VERIFIED", verifiedAuthPath: "OTP", verifiedRecoveryMethod: undefined };
-  ports.revocationRepo.save(verified);
-  ports.ledger.append({
+  await ports.revocationRepo.save(verified);
+  await ports.ledger.append({
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -345,8 +345,8 @@ export function verifyRevocationOtp(
  * ejecuta R4 (applyRevocation) de inmediato: el comprobante nunca es visible al usuario como un
  * estado intermedio (revocation.spec.yaml R4 "nunca visible al usuario"), así que aplicarlo en
  * el mismo request síncrono es equivalente en efecto observable para IT0 in-memory. */
-export function confirmRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+export async function confirmRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status === "CONFIRMED" || found.status === "APPLIED") {
     return found;
   }
@@ -354,8 +354,8 @@ export function confirmRevocation(ports: RevocationPorts, tenantId: string, revo
     throw new DomainError("ERR-CM-06");
   }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED" };
-  ports.revocationRepo.save(confirmed);
-  ports.ledger.append({
+  await ports.revocationRepo.save(confirmed);
+  await ports.ledger.append({
     eventType: "REVOCATION_CONFIRMED",
     tenantId,
     aggregateType: "Revocation",
@@ -374,8 +374,8 @@ export function confirmRevocation(ports: RevocationPorts, tenantId: string, revo
 
 /** R8: REQUESTED|VERIFIED|CONFIRMED -> FAILED (WITHDRAWN_BY_REQUESTER). No admite retiro sobre
  * APPLIED (ya no hay solicitud abierta que retirar). */
-export function withdrawRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+export async function withdrawRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status === "FAILED") {
     return found;
   }
@@ -384,8 +384,8 @@ export function withdrawRevocation(ports: RevocationPorts, tenantId: string, rev
     throw new DomainError("ERR-CM-06");
   }
   const failed: RevocationRecord = { ...found, status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" };
-  ports.revocationRepo.save(failed);
-  ports.ledger.append({
+  await ports.revocationRepo.save(failed);
+  await ports.ledger.append({
     eventType: "REVOCATION_FAILED",
     tenantId,
     aggregateType: "Revocation",
@@ -404,7 +404,7 @@ export function withdrawRevocation(ports: RevocationPorts, tenantId: string, rev
  * la misma función. Expuesta también como `applyRevocation` más abajo para el caso RH3 (worker
  * separado del confirm de doble control).
  */
-function applyRevocationSync(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
+async function applyRevocationSync(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
   return applyRevocation(ports, tenantId, revocationRef);
 }
 
@@ -413,8 +413,8 @@ function applyRevocationSync(ports: RevocationPorts, tenantId: string, revocatio
  * ningún puerto de tenant/Study/SchoolParticipation/Enrollment: una ruta RIGHTS nunca puede
  * consultar su estado (INV-CM-06; TEST-CNS-462).
  */
-export function applyRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): RevocationRecord {
-  const found = requireRevocation(ports, tenantId, revocationRef);
+export async function applyRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status !== "CONFIRMED") {
     throw new DomainError("ERR-CM-06");
   }
@@ -427,12 +427,12 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   }
   // CA-127: todo lo que puede fallar va antes de la primera escritura. contextRef y subjectRef
   // del sobre salen de la decisión revocada; si no existe, falla cerrado sin escrituras.
-  const decision = ports.consentDecisionRepo.findByConsentId(tenantId, revokedDecisionRef);
+  const decision = await ports.consentDecisionRepo.findByConsentId(tenantId, revokedDecisionRef);
   // C6 (GRD-CD-09): solo una decisión GRANTED se revoca; REVOKED = reintento de R4 (converge).
   if (!decision || (decision.state !== "GRANTED" && decision.state !== "REVOKED")) {
     throw new DomainError("ERR-CM-06");
   }
-  const rev = ports.ledger.append({
+  const rev = await ports.ledger.append({
     eventType: "CONSENT_REVOKED",
     tenantId,
     aggregateType: "Revocation",
@@ -452,7 +452,7 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   });
   // Recibo de la revocación: receiptRef = revocationRef, el mismo "Comprobante" que muestra la
   // UI de autoservicio/recuperación. managementLinkIssued=false (IT0: sin management_token).
-  ports.ledger.append({
+  await ports.ledger.append({
     eventType: "RECEIPT_CREATED",
     tenantId,
     aggregateType: "Revocation",
@@ -464,7 +464,7 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   });
   // effectiveAt se lee del registro devuelto: ante dedupe es el original (un solo reloj).
   const effectiveAt = (rev.payload as { effectiveAt: string }).effectiveAt;
-  ports.outbox.enqueue({
+  await ports.outbox.enqueue({
     tenantId,
     eventType: "consent.revoked",
     contextRef: decision.contextRef,
@@ -476,12 +476,12 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   // C6 (consent-decision.spec.yaml): GRANTED -> REVOKED en el mismo lote que R4. Ya REVOKED
   // (reintento): no se reproyecta; ledger y outbox ya deduplicaron arriba (sin segundo evento).
   if (decision.state === "GRANTED") {
-    ports.consentDecisionRepo.save({ ...decision, state: "REVOKED" });
+    await ports.consentDecisionRepo.save({ ...decision, state: "REVOKED" });
   }
   // La proyección se guarda al final: si algo falla queda CONFIRMED y el reintento converge
   // (ledger y outbox deduplican) sin duplicados. La tx real llega con el adaptador Postgres.
   const applied: RevocationRecord = { ...found, status: "APPLIED" };
-  ports.revocationRepo.save(applied);
+  await ports.revocationRepo.save(applied);
   return applied;
 }
 
@@ -510,26 +510,26 @@ export function hashRecoveryToken(token: string): string {
  * (revocation.spec RV0 effects): cada emisión crea un token nuevo sin invalidar los vigentes,
  * sin límite todavía (documentado como alcance mínimo IT0, igual que el resto de este archivo).
  */
-export function issueRecoveryLinkBearer(
+export async function issueRecoveryLinkBearer(
   ports: RevocationPorts,
   tenantId: string,
   chainRef: string,
   revokedDecisionRef: string,
   trigger: Rv0BearerTrigger,
-): Rv0BearerResult {
+): Promise<Rv0BearerResult> {
   // GRD-RV-02 (precondición de RV0, ERR-RV-02 uniforme): cadena ya REVOKED (C6) o de otro ciclo
   // -> no se emite token ni evento; la respuesta HTTP sigue siendo la uniforme.
-  if (isAlreadyRevoked(ports, tenantId, revokedDecisionRef)) {
+  if (await isAlreadyRevoked(ports, tenantId, revokedDecisionRef)) {
     return { sent: false };
   }
   const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashRecoveryToken(token);
   const recoveryRef = `rec-${randomUUID()}`;
   const expiresAt = new Date(Date.now() + ports.recoveryTokenPolicy.ttlMs);
-  ports.recoveryTokenRepo.save({ tokenHash, recoveryRef, tenantId, chainRef, revokedDecisionRef, expiresAt });
+  await ports.recoveryTokenRepo.save({ tokenHash, recoveryRef, tenantId, chainRef, revokedDecisionRef, expiresAt });
   // El token en claro solo vive en este mensaje del sink LOCAL; se descarta al retornar.
-  ports.recoveryLinkChannel.send({ recoveryPath: `/r/${token}` });
-  ports.ledger.append({
+  await ports.recoveryLinkChannel.send({ recoveryPath: `/r/${token}` });
+  await ports.ledger.append({
     eventType: "RECOVERY_TOKEN_ISSUED",
     tenantId,
     aggregateType: "Revocation",
@@ -558,12 +558,12 @@ export function issueRecoveryLinkBearer(
  * SIN consumirlo ni transicionar nada (el consumo ocurre solo en POST /recovery/revoke,
  * revokeWithRecoveryLink). Devuelve `null` si el hash no resuelve, si ya fue consumido o si
  * expiró (GRD-RV-06). */
-export function resolveRecoveryTokenForRedeem(
+export async function resolveRecoveryTokenForRedeem(
   ports: Pick<RevocationPorts, "recoveryTokenRepo">,
   token: string,
-): { tenantId: string; chainRef: string; revokedDecisionRef: string; tokenHash: string } | null {
+): Promise<{ tenantId: string; chainRef: string; revokedDecisionRef: string; tokenHash: string } | null> {
   const tokenHash = hashRecoveryToken(token);
-  const found = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+  const found = await ports.recoveryTokenRepo.findByTokenHash(tokenHash);
   if (!found) return null;
   if (found.consumedAt) return null;
   if (found.expiresAt.getTime() <= Date.now()) return null;
@@ -574,18 +574,18 @@ export function resolveRecoveryTokenForRedeem(
  * /recovery/revoke, revocation.spec.yaml:197-218). A diferencia de requestRevocation (R1, OTP),
  * siempre crea: el llamador (revokeWithRecoveryLink) solo entra aquí cuando ya confirmó que no
  * hay Revocation abierta para esta cadena (findOpenByChain). */
-function requestRevocationRecovery(
+async function requestRevocationRecovery(
   ports: RevocationPorts,
   tenantId: string,
   chainRef: string,
   revokedDecisionRef: string,
   recoveryRef: string,
-): RevocationRecord {
+): Promise<RevocationRecord> {
   // Ref UUIDv4 opaco (common.schema.json Ref); el prefijo "rv-" incumplía el contrato (FINDING P1).
   const revocationRef = randomUUID();
   const record: RevocationRecord = { revocationRef, tenantId, chainRef, revokedDecisionRef, status: "REQUESTED" };
-  ports.revocationRepo.save(record);
-  ports.ledger.append({
+  await ports.revocationRepo.save(record);
+  await ports.ledger.append({
     eventType: "REVOCATION_REQUESTED",
     tenantId,
     aggregateType: "Revocation",
@@ -603,15 +603,15 @@ function requestRevocationRecovery(
  * aquí) y emiten REVOCATION_VERIFIED authPath RECOVERY (revocation.spec.yaml:255-271,489-497).
  * El idempotencyKey incluye recoveryRef porque R10 puede repetirse con un token distinto sobre
  * la misma revocationRef (cada re-verificación es un hecho nuevo, no un replay). */
-function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string, found: RevocationRecord, recoveryRef: string): RevocationRecord {
+async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string, found: RevocationRecord, recoveryRef: string): Promise<RevocationRecord> {
   const verified: RevocationRecord = {
     ...found,
     status: "VERIFIED",
     verifiedAuthPath: "RECOVERY",
     verifiedRecoveryMethod: "CHANNEL_LINK",
   };
-  ports.revocationRepo.save(verified);
-  ports.ledger.append({
+  await ports.revocationRepo.save(verified);
+  await ports.ledger.append({
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -654,14 +654,14 @@ export interface RecoveryTokenEligibility {
  * 3) si hay una Revocation abierta para la cadena, su `revokedDecisionRef` también coincide con
  *    el del token (mismo ciclo que la Revocation en curso, no una entrelazada de otro ciclo).
  */
-export function evaluateRecoveryTokenEligibility(
+export async function evaluateRecoveryTokenEligibility(
   ports: Pick<RevocationPorts, "recoveryTokenRepo" | "revocationRepo" | "consentDecisionRepo">,
   tenantId: string,
   chainRef: string,
   revokedDecisionRef: string,
   tokenHash: string,
-): RecoveryTokenEligibility | null {
-  const tokenRecord = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+): Promise<RecoveryTokenEligibility | null> {
+  const tokenRecord = await ports.recoveryTokenRepo.findByTokenHash(tokenHash);
   if (
     !tokenRecord ||
     tokenRecord.tenantId !== tenantId ||
@@ -674,12 +674,12 @@ export function evaluateRecoveryTokenEligibility(
   }
 
   // [2] SEC-CNS-014 P1-01: la GRANTED vigente real de la cadena, no la que trae el token.
-  const activeGrant = ports.consentDecisionRepo.findActiveGrantByChain(tenantId, chainRef);
+  const activeGrant = await ports.consentDecisionRepo.findActiveGrantByChain(tenantId, chainRef);
   if (!activeGrant || activeGrant.consentId !== tokenRecord.revokedDecisionRef) {
     return null;
   }
 
-  const existing = ports.revocationRepo.findOpenByChain(tenantId, chainRef);
+  const existing = await ports.revocationRepo.findOpenByChain(tenantId, chainRef);
   if (existing && existing.revokedDecisionRef !== tokenRecord.revokedDecisionRef) {
     return null;
   }
@@ -696,11 +696,11 @@ export function evaluateRecoveryTokenEligibility(
  * primer chequeo de `evaluateRecoveryTokenEligibility` (`!tokenRecord`), sin usar esta
  * identidad vacía para nada más.
  */
-function identityFromTokenHash(
+async function identityFromTokenHash(
   ports: Pick<RevocationPorts, "recoveryTokenRepo">,
   tokenHash: string,
-): { tenantId: string; chainRef: string; revokedDecisionRef: string } {
-  const record = ports.recoveryTokenRepo.findByTokenHash(tokenHash);
+): Promise<{ tenantId: string; chainRef: string; revokedDecisionRef: string }> {
+  const record = await ports.recoveryTokenRepo.findByTokenHash(tokenHash);
   return record
     ? { tenantId: record.tenantId, chainRef: record.chainRef, revokedDecisionRef: record.revokedDecisionRef }
     : { tenantId: "", chainRef: "", revokedDecisionRef: "" };
@@ -715,11 +715,11 @@ function identityFromTokenHash(
  * sesión) se vuelve una comparación del registro contra sí mismo — los chequeos [2] (GRANTED
  * vigente real) y [3] (Revocation abierta del mismo ciclo) siguen aplicando sin cambios.
  */
-export function evaluateRecoveryTokenEligibilityByHash(
+export async function evaluateRecoveryTokenEligibilityByHash(
   ports: Pick<RevocationPorts, "recoveryTokenRepo" | "revocationRepo" | "consentDecisionRepo">,
   tokenHash: string,
-): RecoveryTokenEligibility | null {
-  const { tenantId, chainRef, revokedDecisionRef } = identityFromTokenHash(ports, tokenHash);
+): Promise<RecoveryTokenEligibility | null> {
+  const { tenantId, chainRef, revokedDecisionRef } = await identityFromTokenHash(ports, tokenHash);
   return evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
 }
 
@@ -728,8 +728,8 @@ export function evaluateRecoveryTokenEligibilityByHash(
  * tenantId/chainRef/revokedDecisionRef en servidor desde el hash del portador (GRD-CM-01),
  * nunca desde la cookie ni el body (la cookie `__Host-cns-recovery` solo trae el hash).
  */
-export function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): RecoveryRevokeOutcome {
-  const { tenantId, chainRef, revokedDecisionRef } = identityFromTokenHash(ports, tokenHash);
+export async function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): Promise<RecoveryRevokeOutcome> {
+  const { tenantId, chainRef, revokedDecisionRef } = await identityFromTokenHash(ports, tokenHash);
   return revokeWithRecoveryLink(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
 }
 
@@ -749,14 +749,14 @@ export function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: 
  * - Revocation CONFIRMED: R11, NOOP — "en curso", el token NO se consume, sin evento.
  * - Revocation APPLIED (GRD-RV-27, más allá de APPLIED): "UNIFORM", sin consumir el token.
  */
-export function revokeWithRecoveryLink(
+export async function revokeWithRecoveryLink(
   ports: RevocationPorts,
   tenantId: string,
   chainRef: string,
   revokedDecisionRef: string,
   tokenHash: string,
-): RecoveryRevokeOutcome {
-  const eligibility = evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+): Promise<RecoveryRevokeOutcome> {
+  const eligibility = await evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
   if (!eligibility) {
     // GRD-RV-06 onFail: ERR-RV-05, respuesta uniforme, sin revelar revocationRef, sin evento.
     return { kind: "UNIFORM" };
@@ -774,22 +774,22 @@ export function revokeWithRecoveryLink(
   }
 
   // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto.
-  ports.recoveryTokenRepo.consume(tokenHash);
+  await ports.recoveryTokenRepo.consume(tokenHash);
 
   let record: RevocationRecord;
   if (!existing) {
     // R1r: null -> REQUESTED, seguido de R2r en el mismo POST.
-    record = requestRevocationRecovery(ports, tenantId, chainRef, revokedDecisionRef, tokenRecord.recoveryRef);
-    record = verifyRevocationRecovery(ports, tenantId, record, tokenRecord.recoveryRef);
+    record = await requestRevocationRecovery(ports, tenantId, chainRef, revokedDecisionRef, tokenRecord.recoveryRef);
+    record = await verifyRevocationRecovery(ports, tenantId, record, tokenRecord.recoveryRef);
   } else if (existing.status === "VERIFIED") {
     // R10: VERIFIED -> VERIFIED (re-verificación).
-    record = verifyRevocationRecovery(ports, tenantId, existing, tokenRecord.recoveryRef);
+    record = await verifyRevocationRecovery(ports, tenantId, existing, tokenRecord.recoveryRef);
   } else {
     // existing.status === "REQUESTED": R2r directo sobre una solicitud abierta por otra vía.
-    record = verifyRevocationRecovery(ports, tenantId, existing, tokenRecord.recoveryRef);
+    record = await verifyRevocationRecovery(ports, tenantId, existing, tokenRecord.recoveryRef);
   }
 
   // R3r: VERIFIED -> CONFIRMED, mismo POST (confirmRevocation ya encola R4 síncrono).
-  const confirmed = confirmRevocation(ports, tenantId, record.revocationRef);
+  const confirmed = await confirmRevocation(ports, tenantId, record.revocationRef);
   return { kind: "CONFIRMED", revocationRef: confirmed.revocationRef };
 }

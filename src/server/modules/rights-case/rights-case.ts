@@ -33,13 +33,13 @@ export interface RightsCasePorts {
  * (404 uniforme, sin evento; TEST-CNS-458). Un caseRef de otro tenant nunca se resuelve
  * porque este método nunca lo consulta (TEST-CNS-459).
  */
-export function resolveCaseForHandle(
+export async function resolveCaseForHandle(
   ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo">,
   handle: string,
   _clientSuppliedCaseRef?: string,
-): RightsCaseRecord {
-  const resolved = resolveHandleOrReject(ports.tenantHandle, handle);
-  const found = ports.rightsCaseRepo.findOpenByChain(
+): Promise<RightsCaseRecord> {
+  const resolved = await resolveHandleOrReject(ports.tenantHandle, handle);
+  const found = await ports.rightsCaseRepo.findOpenByChain(
     resolved.tenantId,
     resolved.chainRef,
     resolved.revokedDecisionRef,
@@ -64,12 +64,12 @@ export interface RevocationIntentResult {
  * función no acepta ni deriva el actor de ningún parámetro del llamador, así que no puede
  * registrar SYSTEM_GUARD ni ningún otro actorRole (TEST-CNS-460).
  */
-export function expressRevocationIntentInCase(
+export async function expressRevocationIntentInCase(
   ports: RightsCasePorts,
   handle: string,
   clientSuppliedCaseRef?: string,
-): RevocationIntentResult {
-  const rightsCase = resolveCaseForHandle(ports, handle, clientSuppliedCaseRef);
+): Promise<RevocationIntentResult> {
+  const rightsCase = await resolveCaseForHandle(ports, handle, clientSuppliedCaseRef);
 
   if (!rightsCase.revocationRef) {
     // RC3: no hay Revocation abierta -> crea REQUESTED en el mismo lote.
@@ -82,14 +82,14 @@ export function expressRevocationIntentInCase(
       revokedDecisionRef: rightsCase.revokedDecisionRef, // fuente de CONSENT_REVOKED.revokedDecisionRef en R4
       status: "REQUESTED",
     };
-    ports.revocationRepo.save(revocation);
+    await ports.revocationRepo.save(revocation);
     const updatedCase: RightsCaseRecord = {
       ...rightsCase,
       revocationRef,
       status: "IN_VERIFICATION",
     };
-    ports.rightsCaseRepo.save(updatedCase);
-    ports.ledger.append({
+    await ports.rightsCaseRepo.save(updatedCase);
+    await ports.ledger.append({
       eventType: "REVOCATION_REQUESTED",
       tenantId: rightsCase.tenantId,
       aggregateType: "Revocation",
@@ -107,11 +107,11 @@ export function expressRevocationIntentInCase(
   }
 
   // R12: ya hay Revocation abierta de la decisión vigente -> se adjunta, no crea otra.
-  const existing = ports.revocationRepo.findByRef(rightsCase.tenantId, rightsCase.revocationRef);
+  const existing = await ports.revocationRepo.findByRef(rightsCase.tenantId, rightsCase.revocationRef);
   if (!existing) {
     throw new DomainError("ERR-CM-01");
   }
-  ports.ledger.append({
+  await ports.ledger.append({
     eventType: "REVOCATION_REQUESTED",
     tenantId: rightsCase.tenantId,
     aggregateType: "Revocation",
@@ -134,11 +134,11 @@ export function expressRevocationIntentInCase(
  * CONTACTING, un reintento devuelve el mismo resultado sin reemitir RIGHTS_CASE_CONTACTING ni
  * consumir el handle (TEST-CNS-470); el handle de /m/ nunca se rota ni invalida aquí.
  */
-export function confirmCaseReturnViaHandle(
+export async function confirmCaseReturnViaHandle(
   ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger">,
   handle: string,
-): RightsCaseRecord {
-  const rightsCase = resolveCaseForHandle(ports, handle);
+): Promise<RightsCaseRecord> {
+  const rightsCase = await resolveCaseForHandle(ports, handle);
 
   if (rightsCase.status === "CONTACTING") {
     // Reintento tras un POST previo ya aplicado: mismo resultado, sin nuevo evento
@@ -156,8 +156,8 @@ export function confirmCaseReturnViaHandle(
   }
 
   const updated: RightsCaseRecord = { ...rightsCase, status: "CONTACTING" };
-  ports.rightsCaseRepo.save(updated);
-  ports.ledger.append({
+  await ports.rightsCaseRepo.save(updated);
+  await ports.ledger.append({
     eventType: "RIGHTS_CASE_CONTACTING",
     tenantId: rightsCase.tenantId,
     aggregateType: "RightsCase",
@@ -187,12 +187,12 @@ export interface OpenRightsCaseInput {
  * case_contact opcional (CHANNEL_UNREACHABLE) ni FLAG-escalated/REVOCATION_ESCALATED sobre una
  * Revocation ya abierta (eso pertenece a R12/RC3a, fuera de alcance de este slice).
  */
-export function openRightsCase(
+export async function openRightsCase(
   ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger">,
   tenantId: string,
   input: OpenRightsCaseInput,
-): RightsCaseRecord {
-  const existing = ports.rightsCaseRepo.findOpenByChain(tenantId, input.chainRef, input.revokedDecisionRef);
+): Promise<RightsCaseRecord> {
+  const existing = await ports.rightsCaseRepo.findOpenByChain(tenantId, input.chainRef, input.revokedDecisionRef);
   if (existing) return existing;
 
   const record: RightsCaseRecord = {
@@ -203,8 +203,8 @@ export function openRightsCase(
     status: "OPEN",
     origin: input.origin,
   };
-  ports.rightsCaseRepo.save(record);
-  ports.ledger.append({
+  await ports.rightsCaseRepo.save(record);
+  await ports.ledger.append({
     eventType: "RIGHTS_CASE_OPENED",
     tenantId,
     aggregateType: "RightsCase",
@@ -226,13 +226,13 @@ export type CaseCloseOutcome = "RESOLVED" | "WITHDRAWN";
  * hecho no recibe ningún puerto de esos agregados, así que un tenant SUSPENDED en un
  * registro aparte no puede afectarla (TEST-CNS-461).
  */
-export function closeCase(
+export async function closeCase(
   ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger">,
   tenantId: string,
   caseRef: string,
   outcome: CaseCloseOutcome,
-): RightsCaseRecord {
-  const found = ports.rightsCaseRepo.findByRef(tenantId, caseRef);
+): Promise<RightsCaseRecord> {
+  const found = await ports.rightsCaseRepo.findByRef(tenantId, caseRef);
   if (!found) {
     throw new DomainError("ERR-CM-01");
   }
@@ -240,8 +240,8 @@ export function closeCase(
     throw new DomainError("ERR-CM-06");
   }
   const closed: RightsCaseRecord = { ...found, status: outcome };
-  ports.rightsCaseRepo.save(closed);
-  ports.ledger.append({
+  await ports.rightsCaseRepo.save(closed);
+  await ports.ledger.append({
     eventType: "RIGHTS_CASE_CLOSED",
     tenantId,
     aggregateType: "RightsCase",

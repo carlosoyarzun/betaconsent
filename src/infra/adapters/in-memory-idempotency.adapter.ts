@@ -6,10 +6,10 @@ import type { IdempotencyPort, StoredIdempotentResponse } from "../../server/por
 export function createInMemoryIdempotencyAdapter(): IdempotencyPort {
   const entries = new Map<string, StoredIdempotentResponse>();
   return {
-    find(scopeKeyHash) {
+    async find(scopeKeyHash) {
       return entries.get(scopeKeyHash) ?? null;
     },
-    store(scopeKeyHash, response) {
+    async store(scopeKeyHash, response) {
       if (!entries.has(scopeKeyHash)) entries.set(scopeKeyHash, response);
     },
   };

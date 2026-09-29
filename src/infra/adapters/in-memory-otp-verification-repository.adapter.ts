@@ -14,10 +14,10 @@ export function createInMemoryOtpVerificationRepository(): OtpVerificationReposi
   }
 
   return {
-    findByRef(tenantId, verificationRef) {
+    async findByRef(tenantId, verificationRef) {
       return byKey.get(key(tenantId, verificationRef)) ?? null;
     },
-    findActiveByParent(tenantId, parentRef, scope) {
+    async findActiveByParent(tenantId, parentRef, scope) {
       for (const record of byKey.values()) {
         if (
           record.tenantId === tenantId &&
@@ -30,7 +30,7 @@ export function createInMemoryOtpVerificationRepository(): OtpVerificationReposi
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.verificationRef), { ...record });
     },
   };

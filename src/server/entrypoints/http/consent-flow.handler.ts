@@ -246,17 +246,17 @@ function sameInvitationIdentity(session: ConsentSessionPayload, tenantId: string
   return session.tenantId === tenantId && session.invitationRef === invitationRef;
 }
 
-export function resolveWelcomeLandingSession(
+export async function resolveWelcomeLandingSession(
   ports: Pick<ConsentFlowPorts, "invitation">,
   sessionSecret: Buffer,
   existingSession: ConsentSessionPayload | null,
   invitationHandleKey: Buffer,
   cookies: Readonly<Record<string, string>>,
   invitationHandleCookieName: string,
-): WelcomeLandingView {
+): Promise<WelcomeLandingView> {
   const handle = decodeLinkHandle(invitationHandleKey, INVITATION_LANDING_HANDLE_TYPE, cookies[invitationHandleCookieName]);
   if (handle) {
-    const found = resolveInvitationForRedeemByHash(ports.invitation, handle.h);
+    const found = await resolveInvitationForRedeemByHash(ports.invitation, handle.h);
     if (!found) {
       // Handle inválido: nunca reutiliza una sesión previa, la que sea (P1: "el último enlace
       // abierto manda" incluye el caso "el último enlace es inválido").
@@ -280,12 +280,12 @@ export function resolveWelcomeLandingSession(
 // POST /invitation/open (I4). API-CNS-115: EmptyCommand; la invitación se toma de la sesión
 // LANDING creada por GET /i/{token}, nunca de un token en el body.
 // ---------------------------------------------------------------------------
-export function handleOpenInvitation(
+export async function handleOpenInvitation(
   request: RawConsentRequest,
   ports: Pick<ConsentFlowPorts, "invitation">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -293,7 +293,7 @@ export function handleOpenInvitation(
   if (!session || !session.invitationRef) return uniformNotFound();
 
   try {
-    const opened = openInvitationByRef(ports.invitation, session.tenantId, session.invitationRef);
+    const opened = await openInvitationByRef(ports.invitation, session.tenantId, session.invitationRef);
     const nextSession: ConsentSessionPayload = { tenantId: opened.tenantId, invitationRef: opened.invitationRef };
     return {
       // InvitationOpenedAck (contracts/api-payloads.schema.json:303-315, additionalProperties
@@ -340,12 +340,12 @@ function manageChannelRef(chainRef: string): string {
 // POST /otp/request (V1). API-CNS-120. Respuesta uniforme (x-uniform-response): 202 siempre
 // que la sesión resuelva, sin distinguir ERR-OT-01/ERR-OT-08 del éxito.
 // ---------------------------------------------------------------------------
-export function handleRequestOtp(
+export async function handleRequestOtp(
   request: RawConsentRequest,
   ports: Pick<ConsentFlowPorts, "invitation" | "otp">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -359,7 +359,7 @@ export function handleRequestOtp(
     const verificationRef =
       scope === "MANAGE" ? (session.manageVerificationRef ?? randomUUID()) : (session.revocationVerificationRef ?? randomUUID());
     try {
-      requestRightsOtp(ports.otp, session.tenantId, verificationRef, scope, chainRef, manageChannelRef(chainRef));
+      await requestRightsOtp(ports.otp, session.tenantId, verificationRef, scope, chainRef, manageChannelRef(chainRef));
     } catch (err) {
       if (!(err instanceof DomainError)) throw err;
       // INV-OT-06: RIGHTS nunca deniega (respuesta uniforme igual que el éxito).
@@ -370,12 +370,12 @@ export function handleRequestOtp(
   }
 
   if (scope !== "DECISION" || !session.invitationRef) return uniformNotFound();
-  const invitation = ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
+  const invitation = await ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   const verificationRef = session.verificationRef ?? randomUUID();
   try {
-    requestOtp(ports.otp, session.tenantId, verificationRef, session.invitationRef, invitation.recipientChannelRef);
+    await requestOtp(ports.otp, session.tenantId, verificationRef, session.invitationRef, invitation.recipientChannelRef);
   } catch (err) {
     if (!(err instanceof DomainError)) throw err;
     // ERR-OT-01/ERR-OT-08: x-uniform-response, no se distingue del éxito (202 igual).
@@ -390,12 +390,12 @@ export function handleRequestOtp(
 // POST /otp/resend (V2r). API-CNS-122. Reemplaza el código sin reiniciar attempts ni el
 // presupuesto (GRD-OT-06); requiere sesión con verificationRef (mismo challenge que V1 creó).
 // ---------------------------------------------------------------------------
-export function handleResendOtp(
+export async function handleResendOtp(
   request: RawConsentRequest,
   ports: Pick<ConsentFlowPorts, "otp">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -403,7 +403,7 @@ export function handleResendOtp(
   if (!session || !session.verificationRef) return uniformNotFound();
 
   try {
-    resendOtp(ports.otp, session.tenantId, session.verificationRef);
+    await resendOtp(ports.otp, session.tenantId, session.verificationRef);
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();
@@ -423,12 +423,12 @@ export function handleResendOtp(
 // POST /otp/submit (V3). API-CNS-121. Crea la sesión verificada (decisionMakerRef derivado
 // del canal ligado, nunca del body, D5/GRD-OT-02).
 // ---------------------------------------------------------------------------
-export function handleSubmitOtp(
+export async function handleSubmitOtp(
   request: RawConsentRequest,
   ports: Pick<ConsentFlowPorts, "invitation" | "otp">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -441,7 +441,7 @@ export function handleSubmitOtp(
     const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
     if (!verificationRef) return uniformNotFound();
     try {
-      submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code);
+      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code);
       const verifiedSession: ConsentSessionPayload =
         scope === "MANAGE"
           ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(manageChannelRef(session.chainRef ?? "")) }
@@ -463,13 +463,13 @@ export function handleSubmitOtp(
   }
 
   if (scope !== "DECISION" || !session.verificationRef || !session.invitationRef) return uniformNotFound();
-  const invitation = ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
+  const invitation = await ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   const decisionMakerRef = deriveDecisionMakerRef(invitation.recipientChannelRef);
 
   try {
-    submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef);
+    await submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef);
     const verifiedSession: ConsentSessionPayload = { ...session, decisionMakerRef };
     return {
       // OtpVerified (contracts/api-payloads.schema.json $defs/OtpVerified): scope es requerido
@@ -522,12 +522,12 @@ function parseDecisionStepInput(body: unknown): DecisionStepInput | null {
   }
 }
 
-export function handleRecordDecisionStep(
+export async function handleRecordDecisionStep(
   request: RawConsentRequest,
   ports: ConsentFlowPorts,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -543,7 +543,7 @@ export function handleRecordDecisionStep(
     // C1 perezoso (x-scope-note arriba): primera llamada de /decision/steps de esta sesión.
     consentId = randomUUID();
     try {
-      startDecision(ports.decision, session.tenantId, "DECISION_MAKER", {
+      await startDecision(ports.decision, session.tenantId, "DECISION_MAKER", {
         consentId,
         invitationRef: session.invitationRef,
         verificationRef: session.verificationRef,
@@ -557,7 +557,7 @@ export function handleRecordDecisionStep(
   }
 
   try {
-    recordDecisionStep(ports.decision, session.tenantId, "DECISION_MAKER", session.decisionMakerRef, consentId, step);
+    await recordDecisionStep(ports.decision, session.tenantId, "DECISION_MAKER", session.decisionMakerRef, consentId, step);
     // DecisionStepRecorded (contracts/api-payloads.schema.json:517-562): servedVersion solo en
     // CONSENT_VERSION_VIEWED (if/then/else del schema).
     const body: Record<string, unknown> = { stepKind: step.stepKind, state: "PENDING" };
@@ -584,12 +584,12 @@ export interface SubmitDecisionBody {
   readonly decisionMakerRef?: unknown;
 }
 
-export function handleSubmitDecision(
+export async function handleSubmitDecision(
   request: RawConsentRequest,
   ports: ConsentFlowPorts,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -603,7 +603,7 @@ export function handleSubmitDecision(
     .map((p) => ({ purpose: p.purpose as string, choice: p.choice as PurposeChoice }));
 
   try {
-    const decided = submitDecision(
+    const decided = await submitDecision(
       ports.decision,
       session.tenantId,
       "DECISION_MAKER",

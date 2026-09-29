@@ -31,10 +31,10 @@ export interface InvitationRecord {
 }
 
 export interface InvitationRepositoryPort {
-  findByRef(tenantId: TenantId, invitationRef: string): InvitationRecord | null;
+  findByRef(tenantId: TenantId, invitationRef: string): Promise<InvitationRecord | null>;
   /** GRD-IV-01: no debe existir otra Invitation no terminal para (tenantId, contextRef, subjectRef). */
-  findActiveBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): InvitationRecord | null;
+  findActiveBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): Promise<InvitationRecord | null>;
   /** GRD-IV-07: resuelve por tokenHash (igualdad exacta), nunca por el token en claro. */
-  findByTokenHash(tokenHash: string): InvitationRecord | null;
-  save(record: InvitationRecord): void;
+  findByTokenHash(tokenHash: string): Promise<InvitationRecord | null>;
+  save(record: InvitationRecord): Promise<void>;
 }

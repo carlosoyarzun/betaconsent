@@ -11,7 +11,7 @@ export interface InMemoryOtpChannelSink extends OtpChannelPort {
 export function createInMemoryOtpChannelSink(): InMemoryOtpChannelSink {
   const sent: OtpChannelMessage[] = [];
   return {
-    send(message) {
+    async send(message) {
       sent.push(message);
     },
     sent,

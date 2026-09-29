@@ -6,13 +6,13 @@ export function createInMemoryRecoveryTokenRepository(): RecoveryTokenRepository
   const byTokenHash = new Map<string, RecoveryTokenRecord>();
 
   return {
-    findByTokenHash(tokenHash) {
+    async findByTokenHash(tokenHash) {
       return byTokenHash.get(tokenHash) ?? null;
     },
-    save(record) {
+    async save(record) {
       byTokenHash.set(record.tokenHash, { ...record });
     },
-    consume(tokenHash) {
+    async consume(tokenHash) {
       const found = byTokenHash.get(tokenHash);
       if (!found) return;
       byTokenHash.set(tokenHash, { ...found, consumedAt: new Date() });

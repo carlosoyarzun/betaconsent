@@ -104,45 +104,45 @@ interface PendingDecision {
  * invitationRef/consentId/subjectRef son UUIDv4 reales (common.schema.json#/$defs/Ref exige el
  * patrón; los demás refs de este archivo no se validan contra Ref, así que se mantienen
  * legibles para depurar). */
-function bringToPendingDecision(ports: Ports, suffix: string): PendingDecision {
+async function bringToPendingDecision(ports: Ports, suffix: string): Promise<PendingDecision> {
   const invitationRef = randomUUID();
   const verificationRef = `ver-${suffix}`;
   const consentId = randomUUID();
   const decisionMakerRef = `dm-${suffix}`;
 
-  createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef: randomUUID(),
   });
-  markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
-  openInvitation(ports.invitation, TENANT_ID, token);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  await openInvitation(ports.invitation, TENANT_ID, token);
 
-  requestOtp(ports.otp, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
+  await requestOtp(ports.otp, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
   const sink = ports.otp.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
   const code = sink.sent[sink.sent.length - 1]?.code ?? "";
-  submitOtp(ports.otp, TENANT_ID, verificationRef, code, decisionMakerRef);
+  await submitOtp(ports.otp, TENANT_ID, verificationRef, code, decisionMakerRef);
 
-  startDecision(ports.decision, TENANT_ID, "DECISION_MAKER", {
+  await startDecision(ports.decision, TENANT_ID, "DECISION_MAKER", {
     consentId,
     invitationRef,
     verificationRef,
     decisionMakerRef,
   });
-  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONTEXT_INFORMATION_VIEWED" });
-  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
-  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
+  await recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONTEXT_INFORMATION_VIEWED" });
+  await recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
+  await recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
     stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
     relationshipRef: "SYNTHETIC_GUARDIAN",
     authorityDeclared: true,
   });
-  recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
+  await recordDecisionStep(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, {
     stepKind: "SUBJECT_CONFIRMED",
     subjectConfirmed: true,
   });
@@ -153,12 +153,12 @@ function bringToPendingDecision(ports: Ports, suffix: string): PendingDecision {
 // RECEIPT_CREATED (ledger-event-payloads.schema.json:415-430) — el P1 de este fix.
 // ---------------------------------------------------------------------------
 
-test("TEST-CNS-525: RECEIPT_CREATED (C3 GRANTED) valida contra el schema y usa el mismo receiptRef (UUID) que expone POST /decision/submit", () => {
+test("TEST-CNS-525: RECEIPT_CREATED (C3 GRANTED) valida contra el schema y usa el mismo receiptRef (UUID) que expone POST /decision/submit", async () => {
   const ports = buildPorts();
-  const { consentId, decisionMakerRef } = bringToPendingDecision(ports, "525");
-  const decided = submitDecision(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, GRANT_ALL);
+  const { consentId, decisionMakerRef } = await bringToPendingDecision(ports, "525");
+  const decided = await submitDecision(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, GRANT_ALL);
 
-  const receiptEvents = ports.ledger.listByAggregate(TENANT_ID, "ConsentDecision", consentId).filter((e) => e.eventType === "RECEIPT_CREATED");
+  const receiptEvents = (await ports.ledger.listByAggregate(TENANT_ID, "ConsentDecision", consentId)).filter((e) => e.eventType === "RECEIPT_CREATED");
   assert.equal(receiptEvents.length, 1);
   const payload = receiptEvents[0]?.payload as { receiptRef: string; managementLinkIssued: boolean };
   assertValid(validateLedgerEventPayload("RECEIPT_CREATED", payload));
@@ -170,12 +170,12 @@ test("TEST-CNS-525: RECEIPT_CREATED (C3 GRANTED) valida contra el schema y usa e
   assert.equal(payload.managementLinkIssued, false);
 });
 
-test("TEST-CNS-526: RECEIPT_CREATED (C5 DECLINED) también valida contra el schema con su propio receiptRef (UUID)", () => {
+test("TEST-CNS-526: RECEIPT_CREATED (C5 DECLINED) también valida contra el schema con su propio receiptRef (UUID)", async () => {
   const ports = buildPorts();
-  const { consentId, decisionMakerRef } = bringToPendingDecision(ports, "526");
-  const decided = submitDecision(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, DECLINE_FIRST);
+  const { consentId, decisionMakerRef } = await bringToPendingDecision(ports, "526");
+  const decided = await submitDecision(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, DECLINE_FIRST);
 
-  const receiptEvents = ports.ledger.listByAggregate(TENANT_ID, "ConsentDecision", consentId).filter((e) => e.eventType === "RECEIPT_CREATED");
+  const receiptEvents = (await ports.ledger.listByAggregate(TENANT_ID, "ConsentDecision", consentId)).filter((e) => e.eventType === "RECEIPT_CREATED");
   assert.equal(receiptEvents.length, 1);
   const payload = receiptEvents[0]?.payload as { receiptRef: string; managementLinkIssued: boolean };
   assertValid(validateLedgerEventPayload("RECEIPT_CREATED", payload));
@@ -187,30 +187,30 @@ test("TEST-CNS-526: RECEIPT_CREATED (C5 DECLINED) también valida contra el sche
 // Otros eventos ya emitidos por el dominio: validados contra el mismo schema.
 // ---------------------------------------------------------------------------
 
-test("TEST-CNS-527: INVITATION_READY valida contra el schema (expiresAt y recipientBinding, antes ausentes)", () => {
+test("TEST-CNS-527: INVITATION_READY valida contra el schema (expiresAt y recipientBinding, antes ausentes)", async () => {
   const ports = buildPorts();
   const invitationRef = randomUUID();
-  createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef: randomUUID(),
   });
-  markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const event = ports.ledger.listByAggregate(TENANT_ID, "Invitation", invitationRef).find((e) => e.eventType === "INVITATION_READY");
+  const event = (await ports.ledger.listByAggregate(TENANT_ID, "Invitation", invitationRef)).find((e) => e.eventType === "INVITATION_READY");
   assert.ok(event);
   assertValid(validateLedgerEventPayload("INVITATION_READY", event.payload));
 });
 
-test("TEST-CNS-528: INVITATION_OPENED, INVITATION_COMPLETED y INVITATION_DECLINED ya cumplían el schema (regresión)", () => {
+test("TEST-CNS-528: INVITATION_OPENED, INVITATION_COMPLETED y INVITATION_DECLINED ya cumplían el schema (regresión)", async () => {
   const grantedPorts = buildPorts();
-  const granted = bringToPendingDecision(grantedPorts, "528g");
-  submitDecision(grantedPorts.decision, TENANT_ID, "DECISION_MAKER", granted.decisionMakerRef, granted.consentId, GRANT_ALL);
-  const grantedEvents = grantedPorts.ledger.listByAggregate(TENANT_ID, "Invitation", granted.invitationRef);
+  const granted = await bringToPendingDecision(grantedPorts, "528g");
+  await submitDecision(grantedPorts.decision, TENANT_ID, "DECISION_MAKER", granted.decisionMakerRef, granted.consentId, GRANT_ALL);
+  const grantedEvents = await grantedPorts.ledger.listByAggregate(TENANT_ID, "Invitation", granted.invitationRef);
   const opened = grantedEvents.find((e) => e.eventType === "INVITATION_OPENED");
   const completed = grantedEvents.find((e) => e.eventType === "INVITATION_COMPLETED");
   assert.ok(opened && completed);
@@ -218,20 +218,20 @@ test("TEST-CNS-528: INVITATION_OPENED, INVITATION_COMPLETED y INVITATION_DECLINE
   assertValid(validateLedgerEventPayload("INVITATION_COMPLETED", completed.payload));
 
   const declinedPorts = buildPorts();
-  const declined = bringToPendingDecision(declinedPorts, "528d");
-  submitDecision(declinedPorts.decision, TENANT_ID, "DECISION_MAKER", declined.decisionMakerRef, declined.consentId, DECLINE_FIRST);
-  const declinedEvent = declinedPorts.ledger
-    .listByAggregate(TENANT_ID, "Invitation", declined.invitationRef)
+  const declined = await bringToPendingDecision(declinedPorts, "528d");
+  await submitDecision(declinedPorts.decision, TENANT_ID, "DECISION_MAKER", declined.decisionMakerRef, declined.consentId, DECLINE_FIRST);
+  const declinedEvent = (await declinedPorts.ledger
+    .listByAggregate(TENANT_ID, "Invitation", declined.invitationRef))
     .find((e) => e.eventType === "INVITATION_DECLINED");
   assert.ok(declinedEvent);
   assertValid(validateLedgerEventPayload("INVITATION_DECLINED", declinedEvent.payload));
 });
 
-test("TEST-CNS-529: CONTEXT_INFORMATION_VIEWED, SUBJECT_CONFIRMED y PURPOSE_DECISION_RECORDED ya cumplían el schema (regresión)", () => {
+test("TEST-CNS-529: CONTEXT_INFORMATION_VIEWED, SUBJECT_CONFIRMED y PURPOSE_DECISION_RECORDED ya cumplían el schema (regresión)", async () => {
   const ports = buildPorts();
-  const { consentId, decisionMakerRef } = bringToPendingDecision(ports, "529");
-  submitDecision(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, GRANT_ALL);
-  const events = ports.ledger.listByAggregate(TENANT_ID, "ConsentDecision", consentId);
+  const { consentId, decisionMakerRef } = await bringToPendingDecision(ports, "529");
+  await submitDecision(ports.decision, TENANT_ID, "DECISION_MAKER", decisionMakerRef, consentId, GRANT_ALL);
+  const events = await ports.ledger.listByAggregate(TENANT_ID, "ConsentDecision", consentId);
 
   const contextViewed = events.find((e) => e.eventType === "CONTEXT_INFORMATION_VIEWED");
   const subjectConfirmed = events.find((e) => e.eventType === "SUBJECT_CONFIRMED");
@@ -262,11 +262,11 @@ function buildRightsCasePorts(): RightsCaseTestPorts {
   };
 }
 
-test("TEST-CNS-530: RIGHTS_CASE_CONTACTING valida contra el schema (caseRef, antes ausente y requerido)", () => {
+test("TEST-CNS-530: RIGHTS_CASE_CONTACTING valida contra el schema (caseRef, antes ausente y requerido)", async () => {
   const ports = buildRightsCasePorts();
   const caseRef = randomUUID();
   ports.tenantHandle.issue({ handle: "handle-530", tenantId: TENANT_ID, chainRef: "chain-530", revokedDecisionRef: "decision-530" });
-  ports.rightsCaseRepo.save({
+  await ports.rightsCaseRepo.save({
     caseRef,
     tenantId: TENANT_ID,
     chainRef: "chain-530",
@@ -274,16 +274,16 @@ test("TEST-CNS-530: RIGHTS_CASE_CONTACTING valida contra el schema (caseRef, ant
     status: "OPEN",
     origin: "CHANNEL_UNREACHABLE",
   });
-  confirmCaseReturnViaHandle(ports, "handle-530");
-  const event = ports.ledger.listByAggregate(TENANT_ID, "RightsCase", caseRef).find((e) => e.eventType === "RIGHTS_CASE_CONTACTING");
+  await confirmCaseReturnViaHandle(ports, "handle-530");
+  const event = (await ports.ledger.listByAggregate(TENANT_ID, "RightsCase", caseRef)).find((e) => e.eventType === "RIGHTS_CASE_CONTACTING");
   assert.ok(event);
   assertValid(validateLedgerEventPayload("RIGHTS_CASE_CONTACTING", event.payload));
 });
 
-test("TEST-CNS-531: RIGHTS_CASE_CLOSED valida contra el schema (caseRef, antes ausente y requerido)", () => {
+test("TEST-CNS-531: RIGHTS_CASE_CLOSED valida contra el schema (caseRef, antes ausente y requerido)", async () => {
   const ports = buildRightsCasePorts();
   const caseRef = randomUUID();
-  ports.rightsCaseRepo.save({
+  await ports.rightsCaseRepo.save({
     caseRef,
     tenantId: TENANT_ID,
     chainRef: "chain-531",
@@ -291,8 +291,8 @@ test("TEST-CNS-531: RIGHTS_CASE_CLOSED valida contra el schema (caseRef, antes a
     status: "CONTACTING",
     origin: "CHANNEL_UNREACHABLE",
   });
-  closeCase(ports, TENANT_ID, caseRef, "RESOLVED");
-  const event = ports.ledger.listByAggregate(TENANT_ID, "RightsCase", caseRef).find((e) => e.eventType === "RIGHTS_CASE_CLOSED");
+  await closeCase(ports, TENANT_ID, caseRef, "RESOLVED");
+  const event = (await ports.ledger.listByAggregate(TENANT_ID, "RightsCase", caseRef)).find((e) => e.eventType === "RIGHTS_CASE_CLOSED");
   assert.ok(event);
   assertValid(validateLedgerEventPayload("RIGHTS_CASE_CLOSED", event.payload));
 });

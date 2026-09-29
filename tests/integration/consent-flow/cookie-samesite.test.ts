@@ -40,18 +40,18 @@ function parseSetCookie(res: Response): Record<string, string> {
 
 test("TEST-CNS-599: __Host-cns-session y __Host-cns-csrf se fijan con SameSite=Lax (Secure/HttpOnly/Path=/ intactos); un POST sin token CSRF o con Origin ajeno sigue rechazado (GRD-CM-10)", async () => {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
-  createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
     invitationRef: "inv-599",
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef: "subject-599@example.invalid",
   });
-  markInvitationReady(ports.invitation, TENANT_ID, "INVITER", "inv-599", {
+  await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", "inv-599", {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: "channel-599@example.invalid",
   });
-  const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-599");
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-599");
 
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   const baseUrl = await new Promise<string>((resolve) => {

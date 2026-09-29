@@ -18,7 +18,7 @@ export interface TenantHandlePort {
    * Devuelve la resolución vigente del handle, o `null` si el handle es desconocido, rotado
    * o expirado (GRD-CM-01 onFail: ERR-CM-01, 404 uniforme, sin evento).
    */
-  resolve(handle: string): ResolvedHandle | null;
+  resolve(handle: string): Promise<ResolvedHandle | null>;
   /**
    * SEC-CNS-014 patrón (Carlos, 2026-09-28): resuelve por `hashTenantHandle(handle)`, para que
    * GET /manage (consent-flow-server.ts) pueda validar el handle MANAGE_ENTRY que fijó GET
@@ -27,7 +27,7 @@ export interface TenantHandlePort {
    * por el handle EN CLARO (uso existente, RC2u vía `manageHandleCookieName`,
    * rights-case-resume.handler.ts), sin relación con este método.
    */
-  resolveByHash(handleHash: string): ResolvedHandle | null;
+  resolveByHash(handleHash: string): Promise<ResolvedHandle | null>;
 }
 
 /** SEC-CNS-014 patrón (Carlos, 2026-09-28): sha256 hex del handle en claro. GET /m/{token}

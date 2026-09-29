@@ -11,16 +11,16 @@ import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/i
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import type { RightsCaseRecord } from "../../../src/server/ports/rights-case-repository.port.ts";
 
-function seedCase(repo: ReturnType<typeof createInMemoryRightsCaseRepository>, record: RightsCaseRecord): void {
-  repo.save(record);
+async function seedCase(repo: ReturnType<typeof createInMemoryRightsCaseRepository>, record: RightsCaseRecord): Promise<void> {
+  await repo.save(record);
 }
 
-test("TEST-CNS-458: handle rotado en /m/ -> 404 uniforme (ERR-CM-01), sin resolver caso (GRD-RC-14/GRD-CM-01)", () => {
+test("TEST-CNS-458: handle rotado en /m/ -> 404 uniforme (ERR-CM-01), sin resolver caso (GRD-RC-14/GRD-CM-01)", async () => {
   const tenantHandle = createInMemoryTenantHandleAdapter([
     { handle: "handle-A", tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
-  seedCase(rightsCaseRepo, {
+  await seedCase(rightsCaseRepo, {
     caseRef: "case-1",
     tenantId: "tenant-1",
     chainRef: "chain-1",
@@ -31,18 +31,18 @@ test("TEST-CNS-458: handle rotado en /m/ -> 404 uniforme (ERR-CM-01), sin resolv
   // El handle se rota: el token viejo deja de resolver.
   tenantHandle.rotate("handle-A");
 
-  assert.throws(
+  await assert.rejects(
     () => resolveCaseForHandle({ tenantHandle, rightsCaseRepo }, "handle-A"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
   );
 });
 
-test("TEST-CNS-459: un caseRef de otro tenant enviado por el cliente se ignora; el caso resuelve SIEMPRE desde (tenant_id, chainRef) del handle", () => {
+test("TEST-CNS-459: un caseRef de otro tenant enviado por el cliente se ignora; el caso resuelve SIEMPRE desde (tenant_id, chainRef) del handle", async () => {
   const tenantHandle = createInMemoryTenantHandleAdapter([
     { handle: "handle-tenant-1", tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
-  seedCase(rightsCaseRepo, {
+  await seedCase(rightsCaseRepo, {
     caseRef: "case-tenant-1",
     tenantId: "tenant-1",
     chainRef: "chain-1",
@@ -50,7 +50,7 @@ test("TEST-CNS-459: un caseRef de otro tenant enviado por el cliente se ignora; 
     status: "OPEN",
   });
   // Caso de OTRO tenant, con un caseRef que un atacante podría intentar inyectar.
-  seedCase(rightsCaseRepo, {
+  await seedCase(rightsCaseRepo, {
     caseRef: "case-tenant-2-victim",
     tenantId: "tenant-2",
     chainRef: "chain-2",
@@ -58,7 +58,7 @@ test("TEST-CNS-459: un caseRef de otro tenant enviado por el cliente se ignora; 
     status: "OPEN",
   });
 
-  const resolved = resolveCaseForHandle({ tenantHandle, rightsCaseRepo }, "handle-tenant-1", "case-tenant-2-victim");
+  const resolved = await resolveCaseForHandle({ tenantHandle, rightsCaseRepo }, "handle-tenant-1", "case-tenant-2-victim");
 
   assert.equal(resolved.caseRef, "case-tenant-1");
   assert.equal(resolved.tenantId, "tenant-1");

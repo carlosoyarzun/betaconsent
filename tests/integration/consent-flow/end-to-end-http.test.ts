@@ -94,18 +94,18 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
   });
 
   try {
-    createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+    await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
       invitationRef: "inv-507",
       contextRef: LECTORPRO_BETA_CONFIG.contextRef,
       productRef: LECTORPRO_BETA_CONFIG.productRef,
       subjectRef: "subject-507@example.invalid",
     });
-    markInvitationReady(ports.invitation, TENANT_ID, "INVITER", "inv-507", {
+    await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", "inv-507", {
       consentVersion: "v1",
       expiresAt: new Date(Date.now() + 60_000),
       recipientChannelRef: CHANNEL_REF,
     });
-    const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-507");
+    const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-507");
 
     // GET /i/{token} (API-CNS-101, P-12, SEC-CNS-014): canje uniforme sin transición
     // (INV-CM-08 reforzado), fija solo el handle INVITATION_LANDING (Carlos, 2026-09-28).
@@ -165,13 +165,13 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
     const decidedBody = (await decided.json()) as { consentId: string; state: string };
     assert.equal(decidedBody.state, "GRANTED");
 
-    assert.equal(ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-507")?.state, "COMPLETED");
+    assert.equal((await ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-507"))?.state, "COMPLETED");
 
     for (const [aggregateType, aggregateId] of [
       ["Invitation", "inv-507"],
       ["ConsentDecision", decidedBody.consentId],
     ] as const) {
-      const events = ports.decision.ledger.listByAggregate(TENANT_ID, aggregateType, aggregateId);
+      const events = await ports.decision.ledger.listByAggregate(TENANT_ID, aggregateType, aggregateId);
       assert.ok(events.length > 0, `${aggregateType} debía tener eventos en el ledger`);
       for (const event of events) {
         assert.equal(event.tenantId, TENANT_ID);

@@ -34,6 +34,6 @@ export interface LedgerPort {
    * Append-only (INV-CM-01). Si `idempotencyKey` coincide con un evento ya registrado del
    * mismo agregado, devuelve el registro existente sin duplicar (GRD-CM-08).
    */
-  append(event: LedgerEventInput): LedgerRecord;
-  listByAggregate(tenantId: TenantId, aggregateType: string, aggregateId: string): readonly LedgerRecord[];
+  append(event: LedgerEventInput): Promise<LedgerRecord>;
+  listByAggregate(tenantId: TenantId, aggregateType: string, aggregateId: string): Promise<readonly LedgerRecord[]>;
 }

@@ -48,11 +48,11 @@ function uniformNotFound(): HttpResult {
  * cookie manage y llama confirmCaseReturnViaHandle, que ya encapsula GRD-CM-01/GRD-RC-14/
  * GRD-RC-07. No consume el handle: la cookie no se toca ni se rota aquí (TEST-CNS-470).
  */
-export function handleConfirmCaseReturnViaHandle(
+export async function handleConfirmCaseReturnViaHandle(
   request: RawRequestInfo,
   ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger">,
   config: RightsCaseHttpConfig,
-): HttpResult {
+): Promise<HttpResult> {
   const cookies = parseCookies(request.cookieHeader);
 
   try {
@@ -64,7 +64,7 @@ export function handleConfirmCaseReturnViaHandle(
     });
 
     const handle = cookies[config.manageHandleCookieName] ?? "";
-    confirmCaseReturnViaHandle(ports, handle);
+    await confirmCaseReturnViaHandle(ports, handle);
     return inReviewAck();
   } catch (err) {
     if (err instanceof DomainError) {

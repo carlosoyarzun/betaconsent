@@ -27,8 +27,8 @@ export interface RecoveryTokenRecord {
 
 export interface RecoveryTokenRepositoryPort {
   /** GRD-RV-06: resuelve por tokenHash (igualdad exacta), nunca por el token en claro. */
-  findByTokenHash(tokenHash: string): RecoveryTokenRecord | null;
-  save(record: RecoveryTokenRecord): void;
+  findByTokenHash(tokenHash: string): Promise<RecoveryTokenRecord | null>;
+  save(record: RecoveryTokenRecord): Promise<void>;
   /** Marca el token como consumido (un solo uso); no-op si el tokenHash no existe. */
-  consume(tokenHash: string): void;
+  consume(tokenHash: string): Promise<void>;
 }

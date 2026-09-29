@@ -10,8 +10,8 @@ import type { ResolvedHandle, TenantHandlePort } from "../../ports/tenant-handle
  * GRD-CM-01 (tenant_resolved_server_side): resuelve el handle del lado servidor; vacío,
  * expirado o rotado -> 404 uniforme (ERR-CM-01), sin evento.
  */
-export function resolveHandleOrReject(port: TenantHandlePort, handle: string): ResolvedHandle {
-  const resolved = port.resolve(handle);
+export async function resolveHandleOrReject(port: TenantHandlePort, handle: string): Promise<ResolvedHandle> {
+  const resolved = await port.resolve(handle);
   if (!resolved) {
     throw new DomainError("ERR-CM-01");
   }

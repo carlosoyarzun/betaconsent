@@ -31,8 +31,8 @@ export interface OtpVerificationRecord {
 }
 
 export interface OtpVerificationRepositoryPort {
-  findByRef(tenantId: TenantId, verificationRef: string): OtpVerificationRecord | null;
+  findByRef(tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord | null>;
   /** GRD-OT-08: uno activo por (tenantId, parentRef, scope). */
-  findActiveByParent(tenantId: TenantId, parentRef: string, scope: OtpScope): OtpVerificationRecord | null;
-  save(record: OtpVerificationRecord): void;
+  findActiveByParent(tenantId: TenantId, parentRef: string, scope: OtpScope): Promise<OtpVerificationRecord | null>;
+  save(record: OtpVerificationRecord): Promise<void>;
 }

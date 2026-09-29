@@ -16,8 +16,8 @@ export const RH3_DEV_CONSENT_ID = "3d9b7c1e-2a4f-4b6d-8e10-5f7a9c3b1d20";
 export const RH3_DEV_CASE_REF = "case-dev-rh3-001";
 export const RH3_DEV_REVOCATION_REF = "8e2c4a6b-1d3f-4a5c-9b7e-0f2d4c6a8b10";
 
-export function seedRh3DevCase(ports: ConsentFlowPorts, revocationPorts: RevocationFlowPorts, tenantId: string): void {
-  ports.decision.repo.save({
+export async function seedRh3DevCase(ports: ConsentFlowPorts, revocationPorts: RevocationFlowPorts, tenantId: string): Promise<void> {
+  await ports.decision.repo.save({
     consentId: RH3_DEV_CONSENT_ID,
     tenantId,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -33,14 +33,14 @@ export function seedRh3DevCase(ports: ConsentFlowPorts, revocationPorts: Revocat
     stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
     receiptRef: "receipt-dev-rh3-001",
   });
-  revocationPorts.rightsCase.rightsCaseRepo.save({
+  await revocationPorts.rightsCase.rightsCaseRepo.save({
     caseRef: RH3_DEV_CASE_REF,
     tenantId,
     chainRef: RH3_DEV_CHAIN_REF,
     revokedDecisionRef: RH3_DEV_CONSENT_ID,
     status: "OPEN",
   });
-  revocationPorts.revocation.revocationRepo.save({
+  await revocationPorts.revocation.revocationRepo.save({
     revocationRef: RH3_DEV_REVOCATION_REF,
     tenantId,
     chainRef: RH3_DEV_CHAIN_REF,
@@ -48,8 +48,8 @@ export function seedRh3DevCase(ports: ConsentFlowPorts, revocationPorts: Revocat
     revokedDecisionRef: RH3_DEV_CONSENT_ID,
     status: "REQUESTED",
   });
-  attestHumanAssistedVerification(revocationPorts.revocation, tenantId, RH3_DEV_REVOCATION_REF, RH3_DEV_CASE_REF);
-  revocationPorts.rightsCase.rightsCaseRepo.save({
+  await attestHumanAssistedVerification(revocationPorts.revocation, tenantId, RH3_DEV_REVOCATION_REF, RH3_DEV_CASE_REF);
+  await revocationPorts.rightsCase.rightsCaseRepo.save({
     caseRef: RH3_DEV_CASE_REF,
     tenantId,
     chainRef: RH3_DEV_CHAIN_REF,

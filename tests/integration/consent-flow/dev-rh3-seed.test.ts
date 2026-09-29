@@ -37,7 +37,7 @@ function cookiesOf(res: Response): Record<string, string> {
 async function runSeededRh3Flow() {
   const ports = createDefaultConsentFlowPorts(loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY), loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG));
   const revocationPorts = createDefaultRevocationFlowPorts(loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY), ports.decision.ledger, ports.decision.repo);
-  seedRh3DevCase(ports, revocationPorts, TENANT_ID);
+  await seedRh3DevCase(ports, revocationPorts, TENANT_ID);
   const server = createConsentFlowHttpServer({
     config: { allowedOrigin: ORIGIN },
     ports,
@@ -74,8 +74,8 @@ async function runSeededRh3Flow() {
     assert.deepEqual(ack, { cosign: "COSIGNED", revocationState: "APPLIED" });
     assert.ok(validateApiPayload("CaseConfirmationAck", ack).ok);
 
-    assert.equal(revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, RH3_DEV_REVOCATION_REF)?.status, "APPLIED");
-    assertRevocationEvidence(revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", RH3_DEV_REVOCATION_REF), {
+    assert.equal((await revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, RH3_DEV_REVOCATION_REF))?.status, "APPLIED");
+    assertRevocationEvidence(await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", RH3_DEV_REVOCATION_REF), {
       revocationRef: RH3_DEV_REVOCATION_REF,
       authPath: "RECOVERY",
       recoveryMethod: "HUMAN_ASSISTED",
@@ -99,7 +99,7 @@ test("TEST-CNS-697: el seed RH3 de dev queda APPLIED con exactamente un consent.
   assert.equal(record.envelope.tenantRef, TENANT_ID);
   assert.ok(validateOutboxEvent(record.envelope).ok);
   assert.equal(record.envelope.payload.revocationRef, RH3_DEV_REVOCATION_REF);
-  const revoked = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", RH3_DEV_REVOCATION_REF).find((e) => e.eventType === "CONSENT_REVOKED");
+  const revoked = (await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", RH3_DEV_REVOCATION_REF)).find((e) => e.eventType === "CONSENT_REVOKED");
   assert.equal(record.envelope.occurredAt, (revoked!.payload as { effectiveAt: string }).effectiveAt);
   assert.equal(record.envelope.eventType, "consent.revoked");
 });

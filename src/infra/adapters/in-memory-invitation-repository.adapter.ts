@@ -11,10 +11,10 @@ export function createInMemoryInvitationRepository(): InvitationRepositoryPort {
   }
 
   return {
-    findByRef(tenantId, invitationRef) {
+    async findByRef(tenantId, invitationRef) {
       return byKey.get(key(tenantId, invitationRef)) ?? null;
     },
-    findActiveBySubject(tenantId, contextRef, subjectRef) {
+    async findActiveBySubject(tenantId, contextRef, subjectRef) {
       for (const record of byKey.values()) {
         if (
           record.tenantId === tenantId &&
@@ -27,7 +27,7 @@ export function createInMemoryInvitationRepository(): InvitationRepositoryPort {
       }
       return null;
     },
-    findByTokenHash(tokenHash) {
+    async findByTokenHash(tokenHash) {
       for (const record of byKey.values()) {
         if (record.tokenHash === tokenHash) {
           return record;
@@ -35,7 +35,7 @@ export function createInMemoryInvitationRepository(): InvitationRepositoryPort {
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.invitationRef), { ...record });
     },
   };

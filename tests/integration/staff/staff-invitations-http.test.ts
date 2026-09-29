@@ -208,7 +208,7 @@ test("TEST-CNS-714: sin sesión STAFF (sin cookie, cookie basura, firma ajena o 
         assertValid(validateCommon("UniformNotFound", res.json));
       }
     }
-    assert.equal(h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
   } finally {
     await h.close();
@@ -226,7 +226,7 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
     assert.equal(denied.status, 403);
     assert.equal(denied.json.code, "ACTOR_NOT_ALLOWED");
     assertValid(validateCommon("Problem", denied.json));
-    assert.equal(h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
 
     // Login: RIGHTS_OPERATOR (consola CASE), APPROVER e inexistentes no obtienen sesión STAFF.
     for (const principalRef of ["staff-synthetic-01", "staff-synthetic-03", "no-existe"]) {
@@ -252,8 +252,8 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
       });
       assert.equal(res.status, 404, JSON.stringify(forged));
     }
-    assert.equal(h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
-    assert.equal(h.staff.enrollment.enrollmentRepo.findActive(TENANT_B, SUBJECT, PARTICIPATION), null);
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_B, SUBJECT, PARTICIPATION), null);
   } finally {
     await h.close();
   }
@@ -287,7 +287,7 @@ test("TEST-CNS-716: CSRF/Origin (GRD-CM-10): sin cabecera, cabecera distinta de 
       }
     }
     // Sin efecto: la invitación sigue DRAFT y nada llegó al sink.
-    assert.equal(h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)?.state, "DRAFT");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "DRAFT");
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
   } finally {
     await h.close();
@@ -311,13 +311,13 @@ test("TEST-CNS-717: aislamiento por tenant: el tenant sale de la sesión; refs d
     const sendFromB = await post(h.baseUrl, `/staff/invitations/${invitationRef}/send`, {}, { login: adminB });
     assert.equal(sendFromB.status, 404);
     for (const res of [enrollFromB, inviteFromB, readyFromB, sendFromB]) assertValid(validateCommon("UniformNotFound", res.json));
-    assert.equal(h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)?.state, "DRAFT");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "DRAFT");
 
     // B opera lo suyo dentro de su tenant; las refs quedan en su propio tenant.
     const bEnroll = await post(h.baseUrl, "/staff/enrollments", { subjectRef: SUBJECT_B, participationRef: PARTICIPATION_B }, { login: adminB });
     assert.equal(bEnroll.status, 201);
-    assert.equal(h.staff.enrollment.enrollmentRepo.findByRef(TENANT_A, bEnroll.json.enrollmentRef as string), null);
-    assert.equal(h.staff.enrollment.enrollmentRepo.findByRef(TENANT_B, bEnroll.json.enrollmentRef as string)?.tenantId, TENANT_B);
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findByRef(TENANT_A, bEnroll.json.enrollmentRef as string), null);
+    assert.equal((await h.staff.enrollment.enrollmentRepo.findByRef(TENANT_B, bEnroll.json.enrollmentRef as string))?.tenantId, TENANT_B);
 
     // tenantId / organizationRef en el body: additionalProperties=false -> 422, sin efecto.
     for (const extra of [{ tenantId: TENANT_B }, { tenantRef: TENANT_B }, { organizationRef: TENANT_B }]) {
@@ -376,7 +376,7 @@ test("TEST-CNS-718: campos extra en el body (actor, tenant, expiresAt, tokenHash
       const res = await post(h.baseUrl, path, body, { login: admin, ...opts });
       assert.equal(res.status, 422, `${path} ${JSON.stringify(body)}`);
     }
-    assert.equal(h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)?.state, "DRAFT");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "DRAFT");
   } finally {
     await h.close();
   }
@@ -438,7 +438,7 @@ test("TEST-CNS-719: idempotencia (GRD-CM-08): misma Idempotency-Key + mismo payl
     assert.equal(s3.json.code, "INVALID_TRANSITION");
     assert.equal(h.staff.invitationLinkSink.sent.length, 1);
     // Un solo evento de creación en el ledger pese al replay.
-    assert.equal(h.ports.invitation.ledger.listByAggregate(TENANT_A, "Invitation", ref).filter((e) => e.eventType === "INVITATION_CREATED").length, 1);
+    assert.equal((await h.ports.invitation.ledger.listByAggregate(TENANT_A, "Invitation", ref)).filter((e) => e.eventType === "INVITATION_CREATED").length, 1);
   } finally {
     await h.close();
   }
@@ -459,14 +459,14 @@ test("TEST-CNS-720: el token nunca aparece en ninguna respuesta HTTP, en el ledg
 
     for (const raw of responses) assert.equal(raw.includes(token), false, "token en una respuesta HTTP");
     const events = [
-      ...h.ports.invitation.ledger.listByAggregate(TENANT_A, "Invitation", invitationRef),
-      ...h.ports.invitation.ledger.listByAggregate(TENANT_A, "Enrollment", enrollmentRef),
+      ...await h.ports.invitation.ledger.listByAggregate(TENANT_A, "Invitation", invitationRef),
+      ...await h.ports.invitation.ledger.listByAggregate(TENANT_A, "Enrollment", enrollmentRef),
     ];
     assert.ok(events.length >= 4);
     assert.equal(JSON.stringify(events).includes(token), false, "token en un evento del ledger");
     const outbox = await (await fetch(`${h.baseUrl}/__dev/outbox-sink`)).text();
     assert.equal(outbox.includes(token), false, "token en el outbox");
-    const stored = h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)!;
+    const stored = (await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))!;
     assert.equal(JSON.stringify(stored).includes(token), false, "token persistido");
     assert.match(stored.tokenHash ?? "", /^[0-9a-f]{64}$/);
     for (const event of events) {
@@ -501,7 +501,7 @@ test("TEST-CNS-721: E2E: invitación creada por TENANT_ADMIN sintético (enrollm
     assert.ok(parseAllSetCookies(welcome)[SESSION_COOKIE], "GET /welcome crea la sesión LANDING real");
 
     // El GET no transiciona (INV-CM-08): la invitación sigue SENT hasta el primer POST.
-    assert.equal(h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)?.state, "SENT");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "SENT");
     const sess = parseAllSetCookies(welcome)[SESSION_COOKIE]!;
     const csrf = parseAllSetCookies(welcome)["__Host-cns-csrf"]!;
     const opened = await fetch(`${h.baseUrl}/invitation/open`, {
@@ -510,7 +510,7 @@ test("TEST-CNS-721: E2E: invitación creada por TENANT_ADMIN sintético (enrollm
       body: "{}",
     });
     assert.equal(opened.status, 200);
-    assert.equal(h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)?.state, "OPENED");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "OPENED");
   } finally {
     await h.close();
   }
@@ -568,7 +568,7 @@ test("TEST-CNS-723: fail-closed sin política de emisión (P-10/EXT-B): I2 e I3 
     const send = await post(h.baseUrl, `/staff/invitations/${invitationRef}/send`, {}, { login: admin });
     assert.equal(send.status, 409);
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
-    assert.equal(h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef)?.state, "DRAFT");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "DRAFT");
 
     const empty = await startServer({ withPolicy: false });
     try {

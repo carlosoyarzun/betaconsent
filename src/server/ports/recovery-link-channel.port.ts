@@ -11,5 +11,5 @@ export interface RecoveryLinkMessage {
 }
 
 export interface RecoveryLinkChannelPort {
-  send(message: RecoveryLinkMessage): void;
+  send(message: RecoveryLinkMessage): Promise<void>;
 }

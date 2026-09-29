@@ -38,9 +38,9 @@ export interface ConsentDecisionRecord {
 }
 
 export interface ConsentDecisionRepositoryPort {
-  findByConsentId(tenantId: TenantId, consentId: string): ConsentDecisionRecord | null;
+  findByConsentId(tenantId: TenantId, consentId: string): Promise<ConsentDecisionRecord | null>;
   /** GRD-CD-08 (single_active_grant_per_chain): ¿hay ya GRANTED (o PARTIALLY_GRANTED, no modelado en IT0) en esta cadena?
    * Una decisión REVOKED (C6) ya no cuenta como vigente (INV-1, INV-5). */
-  findActiveGrantByChain(tenantId: TenantId, chainRef: string): ConsentDecisionRecord | null;
-  save(record: ConsentDecisionRecord): void;
+  findActiveGrantByChain(tenantId: TenantId, chainRef: string): Promise<ConsentDecisionRecord | null>;
+  save(record: ConsentDecisionRecord): Promise<void>;
 }

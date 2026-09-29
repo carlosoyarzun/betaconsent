@@ -13,6 +13,6 @@ export interface StoredIdempotentResponse {
 }
 
 export interface IdempotencyPort {
-  find(scopeKeyHash: string): StoredIdempotentResponse | null;
-  store(scopeKeyHash: string, response: StoredIdempotentResponse): void;
+  find(scopeKeyHash: string): Promise<StoredIdempotentResponse | null>;
+  store(scopeKeyHash: string, response: StoredIdempotentResponse): Promise<void>;
 }

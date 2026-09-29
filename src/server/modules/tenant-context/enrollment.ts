@@ -43,21 +43,21 @@ export interface OpenEnrollmentResult {
  * tenant es indistinguible de uno inexistente (ERR-CM-01, 404 uniforme): nunca revela que existe
  * en otro colegio.
  */
-export function openEnrollment(
+export async function openEnrollment(
   ports: EnrollmentPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   input: OpenEnrollmentInput,
-): OpenEnrollmentResult {
+): Promise<OpenEnrollmentResult> {
   assertActorRoleIn(actorRole, EN0_STAFF_ROLES); // GRD-CM-07
 
   if (
-    !ports.tenantCatalog.subjectBelongsToTenant(tenantId, input.subjectRef) ||
-    ports.tenantCatalog.findParticipation(tenantId, input.participationRef) === null
+    !await ports.tenantCatalog.subjectBelongsToTenant(tenantId, input.subjectRef) ||
+    await ports.tenantCatalog.findParticipation(tenantId, input.participationRef) === null
   ) {
     throw new DomainError("ERR-CM-01"); // GRD-TC-03 (pertenencia al tenant resuelto)
   }
-  if (ports.enrollmentRepo.findActive(tenantId, input.subjectRef, input.participationRef)) {
+  if (await ports.enrollmentRepo.findActive(tenantId, input.subjectRef, input.participationRef)) {
     throw new DomainError("ERR-TC-03"); // GRD-TC-03 (single_active_enrollment)
   }
 
@@ -68,8 +68,8 @@ export function openEnrollment(
     participationRef: input.participationRef,
     state: "ACTIVE",
   };
-  ports.enrollmentRepo.save(record);
-  const event = ports.ledger.append({
+  await ports.enrollmentRepo.save(record);
+  const event = await ports.ledger.append({
     eventType: "ENROLLMENT_STATUS_CHANGED",
     tenantId,
     aggregateType: "Enrollment",

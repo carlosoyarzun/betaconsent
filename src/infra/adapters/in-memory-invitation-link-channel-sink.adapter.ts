@@ -12,7 +12,7 @@ export interface InMemoryInvitationLinkChannelSink extends InvitationLinkChannel
 export function createInMemoryInvitationLinkChannelSink(): InMemoryInvitationLinkChannelSink {
   const sent: InvitationLinkMessage[] = [];
   return {
-    send(message) {
+    async send(message) {
       sent.push(message);
     },
     sent,

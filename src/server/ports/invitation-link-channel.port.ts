@@ -17,5 +17,5 @@ export interface InvitationLinkMessage {
 }
 
 export interface InvitationLinkChannelPort {
-  send(message: InvitationLinkMessage): void;
+  send(message: InvitationLinkMessage): Promise<void>;
 }

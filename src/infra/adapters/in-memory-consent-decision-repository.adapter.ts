@@ -13,10 +13,10 @@ export function createInMemoryConsentDecisionRepository(): ConsentDecisionReposi
   }
 
   return {
-    findByConsentId(tenantId, consentId) {
+    async findByConsentId(tenantId, consentId) {
       return byKey.get(key(tenantId, consentId)) ?? null;
     },
-    findActiveGrantByChain(tenantId, chainRef) {
+    async findActiveGrantByChain(tenantId, chainRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.chainRef === chainRef && record.state === "GRANTED") {
           return record;
@@ -24,7 +24,7 @@ export function createInMemoryConsentDecisionRepository(): ConsentDecisionReposi
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.consentId), { ...record });
     },
   };

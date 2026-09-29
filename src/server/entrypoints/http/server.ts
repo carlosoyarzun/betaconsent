@@ -74,7 +74,7 @@ export function createRightsCaseHttpServer(options: RightsCaseHttpServerOptions 
 
     if (req.method === "POST" && path === "/rights-case/resume") {
       await readBody(req);
-      const result = handleConfirmCaseReturnViaHandle(
+      const result = await handleConfirmCaseReturnViaHandle(
         {
           originHeader: headerValue(req.headers.origin),
           csrfHeaderToken: headerValue(req.headers[config.csrfHeaderName]),

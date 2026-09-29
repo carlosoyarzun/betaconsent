@@ -31,7 +31,7 @@ export interface StaffPrincipal {
 }
 
 export interface StaffIdentityPort {
-  findByPrincipalRef(principalRef: string): StaffPrincipal | null;
+  findByPrincipalRef(principalRef: string): Promise<StaffPrincipal | null>;
   /** GRD-RC-15: la lista nominal completa, para contar distintos por rol sin reutilización. */
-  listRoster(): readonly StaffPrincipal[];
+  listRoster(): Promise<readonly StaffPrincipal[]>;
 }

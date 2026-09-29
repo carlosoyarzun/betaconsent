@@ -8,10 +8,10 @@ import type { StaffIdentityPort, StaffPrincipal } from "../../server/ports/staff
 export function createInMemoryStaffIdentityAdapter(roster: readonly StaffPrincipal[]): StaffIdentityPort {
   const byRef = new Map(roster.map((principal) => [principal.principalRef, principal]));
   return {
-    findByPrincipalRef(principalRef) {
+    async findByPrincipalRef(principalRef) {
       return byRef.get(principalRef) ?? null;
     },
-    listRoster() {
+    async listRoster() {
       return roster;
     },
   };

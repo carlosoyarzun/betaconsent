@@ -28,7 +28,7 @@ export interface RightsCaseRecord {
 
 export interface RightsCaseRepositoryPort {
   /** GRD-RC-02: ≤1 caso no terminal por (tenantId, chainRef, revokedDecisionRef). */
-  findOpenByChain(tenantId: TenantId, chainRef: ChainRef, revokedDecisionRef: string): RightsCaseRecord | null;
-  findByRef(tenantId: TenantId, caseRef: string): RightsCaseRecord | null;
-  save(record: RightsCaseRecord): void;
+  findOpenByChain(tenantId: TenantId, chainRef: ChainRef, revokedDecisionRef: string): Promise<RightsCaseRecord | null>;
+  findByRef(tenantId: TenantId, caseRef: string): Promise<RightsCaseRecord | null>;
+  save(record: RightsCaseRecord): Promise<void>;
 }
