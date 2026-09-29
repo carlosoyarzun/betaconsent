@@ -21,6 +21,13 @@ export interface InvitationRecord {
   /** SHA-256 del token opaco (GRD-IV-05); el token nunca persiste. */
   readonly tokenHash?: string;
   readonly boundDecisionMakerRef?: string;
+  /** CA-125 (I1/I2, contrato CreateInvitationRequest/MarkInvitationReadyRequest): presentes solo
+   * en invitaciones creadas por la API de staff; las sembradas por fixtures legacy no las llevan. */
+  readonly enrollmentRef?: string;
+  readonly participationRef?: string;
+  readonly reissueOfRef?: string;
+  /** I2: RECIPIENT_CHANNEL exige recipientChannelRef; UNBOUND no lo lleva (GRD-IV-03). */
+  readonly recipientBinding?: "RECIPIENT_CHANNEL" | "UNBOUND";
 }
 
 export interface InvitationRepositoryPort {

@@ -16,7 +16,7 @@
 // modela el piso técnico (rol RIGHTS_OPERATOR vs. APPROVER) que GRD-CM-07/GRD-RC-15 exigen.
 
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
-import type { StaffRole } from "../../ports/staff-identity.port.ts";
+import type { CaseStaffRole } from "../../ports/staff-identity.port.ts";
 
 const CASE_SESSION_HKDF_INFO = "CNS-CASE-SESSION-v1";
 
@@ -26,7 +26,7 @@ export interface CaseSessionPayload {
   /** Ref opaca sintética del principal de plataforma; nunca PII (P-26 pendiente de nombre exacto
    * de cookie/cabecera, no de este campo). */
   readonly principalRef: string;
-  readonly role: StaffRole;
+  readonly role: CaseStaffRole;
 }
 
 /** Clave propia de la sesión CASE, nunca la de consent-session.ts ni la de recovery-handle.ts. */
