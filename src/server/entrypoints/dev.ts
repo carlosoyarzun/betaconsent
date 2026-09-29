@@ -9,18 +9,28 @@
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
-import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefaultRevocationFlowPorts } from "./http/consent-flow-server.ts";
+import {
+  createConsentFlowHttpServer,
+  createDefaultConsentFlowPorts,
+  createDefaultRevocationFlowPorts,
+  createDefaultStaffConsolePorts,
+} from "./http/consent-flow-server.ts";
 import { loadOtpPolicyConfig } from "../modules/otp-challenge/otp-policy.config.ts";
 import { loadDecisionRelationshipConfig } from "../modules/consent-decision/decision-relationship.config.ts";
 import { loadRecoveryTokenPolicyConfig } from "../modules/revocation/recovery-token-policy.config.ts";
 import { loadRecoveryHandlePolicyConfig } from "../modules/revocation/recovery-handle-policy.config.ts";
 import { loadInvitationHandlePolicyConfig } from "../modules/invitation/invitation-handle-policy.config.ts";
+import { loadInvitationIssuancePolicyConfig } from "../modules/invitation/invitation-issuance-policy.config.ts";
 import { loadManageHandlePolicyConfig } from "../modules/revocation/manage-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { RH3_DEV_CASE_REF, seedRh3DevCase } from "./dev-rh3-seed.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
   LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY,
+  LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY,
+  LOCAL_ONLY_DEV_PARTICIPATION_REF,
+  LOCAL_ONLY_DEV_STAFF_CHANNEL_REF,
+  LOCAL_ONLY_DEV_STAFF_SUBJECT_REF,
   LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY,
   LOCAL_ONLY_DEV_OTP_POLICY,
   LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY,
@@ -129,6 +139,22 @@ seedRh3DevCase(ports, revocationPorts, TENANT_ID);
 // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos 2026-09-28 opción (ii)).
 const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
 
+// CA-125 (API-CNS-105/110/111/112): consola STAFF para enrolar e invitar. LOCAL-only: catálogo
+// del tenant sembrado por fixture (IT0 no tiene alta de sujetos/participaciones: FINDING P1), y
+// política P-10 + deliveryChannel (EXT-B) con valores sintéticos LOCAL, sin default de producción.
+const staffConsole = createDefaultStaffConsolePorts(
+  ports.invitation,
+  staffIdentity,
+  loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
+);
+staffConsole.catalog.seedSubject(TENANT_ID, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF);
+staffConsole.catalog.seedParticipation(TENANT_ID, {
+  participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
+  contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+  productRef: LECTORPRO_BETA_CONFIG.productRef,
+  status: "ACTIVE",
+});
+
 const server = createConsentFlowHttpServer({
   config: { allowedOrigin },
   ports,
@@ -139,6 +165,7 @@ const server = createConsentFlowHttpServer({
   manageHandlePolicy,
   environment: "LOCAL",
   staffIdentity,
+  staffConsole,
 });
 
 server.listen(port, "127.0.0.1", () => {
@@ -179,4 +206,36 @@ server.listen(port, "127.0.0.1", () => {
   console.log(
     `  curl -i -b /tmp/cns-case-op2.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation/cosign -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF2>" -H 'content-type: application/json' -d '{}'`,
   );
+  // CA-125: flujo iniciado por el colegio (login TENANT_ADMIN -> enrollment -> invitación -> sink -> /i/{token}).
+  // Todos los pasos usan el mismo cookie jar; <CSRF> es el valor de __Host-cns-staff-csrf del Set-Cookie del
+  // login; <ENROLLMENT_REF>/<INVITATION_REF> vienen de las respuestas JSON. El token NUNCA está en esas
+  // respuestas: solo en el sink de dev.
+  const staffJar = "/tmp/cns-staff-admin.txt";
+  const staffPost = (route: string, extraHeaders: string, payload: string): string =>
+    `  curl -i -b ${staffJar} -X POST ${baseUrl}${route} -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF>" -H 'content-type: application/json'${extraHeaders} -d '${payload}'`;
+  console.log(`Flujo STAFF (CA-125, TENANT_ADMIN sintético staff-synthetic-05, colegio de dev):`);
+  console.log(`  1) login (solo LOCAL; el tenant sale del roster, no del body):`);
+  console.log(
+    `  curl -i -c ${staffJar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"principalRef":"staff-synthetic-05"}'`,
+  );
+  console.log(`  2) crear enrollment (EN0):`);
+  console.log(staffPost("/staff/enrollments", "", `{"subjectRef":"${LOCAL_ONLY_DEV_STAFF_SUBJECT_REF}","participationRef":"${LOCAL_ONLY_DEV_PARTICIPATION_REF}"}`));
+  console.log(`  3) crear invitación (I1, Idempotency-Key obligatoria), marcarla lista (I2) y enviarla (I3):`);
+  console.log(
+    staffPost(
+      "/staff/invitations",
+      ` -H 'idempotency-key: dev-staff-inv-0001-aaaa'`,
+      `{"subjectRef":"${LOCAL_ONLY_DEV_STAFF_SUBJECT_REF}","enrollmentRef":"<ENROLLMENT_REF>","participationRef":"${LOCAL_ONLY_DEV_PARTICIPATION_REF}","contextRef":"${LECTORPRO_BETA_CONFIG.contextRef}"}`,
+    ),
+  );
+  console.log(
+    staffPost(
+      "/staff/invitations/<INVITATION_REF>/ready",
+      "",
+      `{"consentVersion":"v1-dev","recipientBinding":"RECIPIENT_CHANNEL","recipientChannelRef":"${LOCAL_ONLY_DEV_STAFF_CHANNEL_REF}"}`,
+    ),
+  );
+  console.log(staffPost("/staff/invitations/<INVITATION_REF>/send", "", "{}"));
+  console.log(`  4) leer el enlace entregado al sink de dev (solo LOCAL): curl ${baseUrl}/__dev/invitation-sink`);
+  console.log(`  5) abrir el enlace del sink: curl -i ${baseUrl}<invitationPath>   # 303 a /welcome; seguir en el navegador`);
 });

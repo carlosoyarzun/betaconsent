@@ -27,7 +27,7 @@ import {
   createInMemoryInvitationLinkChannelSink,
   type InMemoryInvitationLinkChannelSink,
 } from "../../../infra/adapters/in-memory-invitation-link-channel-sink.adapter.ts";
-import { createInMemoryTenantCatalogAdapter } from "../../../infra/adapters/in-memory-tenant-catalog.adapter.ts";
+import { createInMemoryTenantCatalogAdapter, type FixtureTenantCatalogPort } from "../../../infra/adapters/in-memory-tenant-catalog.adapter.ts";
 import type { InvitationIssuancePolicy } from "../../modules/invitation/invitation-issuance-policy.config.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
@@ -158,7 +158,7 @@ export function createDefaultStaffConsolePorts(
   invitation: InvitationPorts,
   staffIdentity: StaffIdentityPort,
   policy?: InvitationIssuancePolicy,
-): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink } {
+): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink; readonly catalog: FixtureTenantCatalogPort } {
   const enrollmentRepo = createInMemoryEnrollmentRepository();
   const tenantCatalog = createInMemoryTenantCatalogAdapter();
   const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
@@ -168,6 +168,7 @@ export function createDefaultStaffConsolePorts(
     idempotency: createInMemoryIdempotencyAdapter(),
     staffIdentity,
     invitationLinkSink,
+    catalog: tenantCatalog,
   };
 }
 
