@@ -27,11 +27,12 @@ import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapte
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import type { ConsentDecisionState } from "../../../src/server/ports/consent-decision-repository.port.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 
 function makePorts() {
-  return {
+  return withInMemoryTenancy({
     revocationRepo: createInMemoryRevocationRepository(),
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),
@@ -39,7 +40,7 @@ function makePorts() {
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY,
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
 }
 
 /** Siembra directa (bypass de submitDecision/GRD-CD-08) de la GRANTED vigente que

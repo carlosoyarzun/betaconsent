@@ -17,6 +17,7 @@ import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adap
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 /** CA-116 PR 2: RevocationPorts ganó recoveryTokenRepo/recoveryLinkChannel/recoveryTokenPolicy
  * (RV0 BEARER + GET /r/{token} + POST /recovery/revoke), ajenos a RH2/RH3 (fuente RECOVERY
@@ -32,7 +33,7 @@ const staffIdentity = createInMemoryStaffIdentityAdapter([
 ]);
 
 function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
-  return {
+  return withInMemoryTenancy({
     revocationRepo,
     ledger,
     outbox: createInMemoryOutboxAdapter(),
@@ -40,7 +41,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
 }
 
 test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocationRef, caseRef) -> ERR-RV-20 (GRD-RV-10)", async () => {

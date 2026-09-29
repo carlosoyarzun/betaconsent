@@ -4,15 +4,21 @@ import type {
   ConsentDecisionRecord,
   ConsentDecisionRepositoryPort,
 } from "../../server/ports/consent-decision-repository.port.ts";
+import { JournaledMap, TX_JOURNAL, type TxParticipant } from "./in-memory-tx.ts";
 
-export function createInMemoryConsentDecisionRepository(): ConsentDecisionRepositoryPort {
-  const byKey = new Map<string, ConsentDecisionRecord>();
+export type InMemoryConsentDecisionRepository = ConsentDecisionRepositoryPort & TxParticipant;
+
+export function createInMemoryConsentDecisionRepository(): InMemoryConsentDecisionRepository {
+  const byKey = new JournaledMap<string, ConsentDecisionRecord>();
 
   function key(tenantId: string, consentId: string): string {
     return `${tenantId}\u0000${consentId}`;
   }
 
   return {
+    [TX_JOURNAL](journal) {
+      byKey.journal = journal;
+    },
     async findByConsentId(tenantId, consentId) {
       return byKey.get(key(tenantId, consentId)) ?? null;
     },

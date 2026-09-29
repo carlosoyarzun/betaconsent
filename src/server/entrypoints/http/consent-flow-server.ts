@@ -9,6 +9,7 @@ import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryInvitationRepository } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../infra/adapters/in-memory-tenancy.ts";
 import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
@@ -243,16 +244,22 @@ export function createDefaultRevocationFlowPorts(
   ledger: LedgerPort = createInMemoryLedgerAdapter(),
   consentDecisionRepo: ConsentDecisionRepositoryPort = createInMemoryConsentDecisionRepository(),
 ): RevocationFlowPorts {
+  const tenantHandle = createInMemoryTenantHandleAdapter();
+  const revocationRepo = createInMemoryRevocationRepository();
+  const outbox = createInMemoryOutboxAdapter();
+  const recoveryTokenRepo = createInMemoryRecoveryTokenRepository();
   return {
-    tenantHandle: createInMemoryTenantHandleAdapter(),
+    tenantHandle,
     revocation: {
-      revocationRepo: createInMemoryRevocationRepository(),
+      revocationRepo,
       ledger,
-      outbox: createInMemoryOutboxAdapter(),
-      recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+      outbox,
+      recoveryTokenRepo,
       recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
       recoveryTokenPolicy,
       consentDecisionRepo,
+      // CA-124: UoW + resolver in-memory sobre los MISMOS adaptadores del proceso.
+      ...createInMemoryTenancy({ revocationRepo, ledger, outbox, recoveryTokenRepo, consentDecisionRepo, tenantHandle }),
     },
     rightsCase: { rightsCaseRepo: createInMemoryRightsCaseRepository(), ledger },
   };

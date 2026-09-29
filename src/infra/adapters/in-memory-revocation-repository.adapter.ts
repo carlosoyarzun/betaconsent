@@ -4,15 +4,21 @@ import type {
   RevocationRecord,
   RevocationRepositoryPort,
 } from "../../server/ports/revocation-repository.port.ts";
+import { JournaledMap, TX_JOURNAL, type TxParticipant } from "./in-memory-tx.ts";
 
-export function createInMemoryRevocationRepository(): RevocationRepositoryPort {
-  const byKey = new Map<string, RevocationRecord>();
+export type InMemoryRevocationRepository = RevocationRepositoryPort & TxParticipant;
+
+export function createInMemoryRevocationRepository(): InMemoryRevocationRepository {
+  const byKey = new JournaledMap<string, RevocationRecord>();
 
   function key(tenantId: string, revocationRef: string): string {
     return `${tenantId}\u0000${revocationRef}`;
   }
 
   return {
+    [TX_JOURNAL](journal) {
+      byKey.journal = journal;
+    },
     async findByRef(tenantId, revocationRef) {
       return byKey.get(key(tenantId, revocationRef)) ?? null;
     },

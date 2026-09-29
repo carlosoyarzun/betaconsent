@@ -33,12 +33,13 @@ import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import { validateApiPayload, validateLedgerEventPayload } from "../../contract/schema-lite.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 const T = "tenant-1";
 const D1 = "680a3c52-8d4e-4a7b-9c21-0e5a7d3b9f01"; // revokedDecisionRef sintético (UUIDv4)
 
 function makePorts(revocationRepo: RevocationRepositoryPort = createInMemoryRevocationRepository()) {
-  const ports = {
+  const ports = withInMemoryTenancy({
     revocationRepo,
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),
@@ -46,7 +47,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort = createInMemoryRevo
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
   return ports;
 }
 
@@ -136,7 +137,7 @@ test("TEST-CNS-684: aplicar dos veces (autoservicio y RH3) no duplica CONSENT_RE
   assertRevocationEvidence(await p2.ledger.listByAggregate(T, "Revocation", REV2), { revocationRef: REV2, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
 });
 
-test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfirmationAck); si R4 falla el error se propaga y la Revocation queda CONFIRMED", async () => {
+test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfirmationAck); si R4 falla el error se propaga y la Revocation queda como antes del cosign (VERIFIED, todo-o-nada)", async () => {
   assert.ok(validateApiPayload("CaseConfirmationAck", { cosign: "COSIGNED", revocationState: "APPLIED" }).ok);
 
   const REV = "685b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
@@ -152,12 +153,12 @@ test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfi
   };
   const ports = await rh3(REV, makePorts(flaky));
   await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" }), /R4 falló/);
-  assert.equal((await inner.findByRef(T, REV))?.status, "CONFIRMED");
-  // CA-127: la proyección se guarda al final, así que el ledger ya tiene el CONSENT_REVOKED
-  // (idempotente por revocationRef) aunque el save haya fallado; el reintento converge sin duplicar.
-  assert.equal((await ports.ledger.listByAggregate(T, "Revocation", REV)).filter((e) => e.eventType === "CONSENT_REVOKED").length, 1);
+  // CA-124 (P2 de lampone-security): cosign + R4 son UNA unidad de trabajo; si R4 falla no queda
+  // ninguna escritura (la Revocation sigue VERIFIED, sin REVOCATION_CONFIRMED ni CONSENT_REVOKED).
+  assert.equal((await inner.findByRef(T, REV))?.status, "VERIFIED");
+  assert.equal((await ports.ledger.listByAggregate(T, "Revocation", REV)).filter((e) => e.eventType === "CONSENT_REVOKED" || e.eventType === "REVOCATION_CONFIRMED").length, 0);
 
-  failApply = false; // reintento: reaplica R4 sin duplicar REVOCATION_CONFIRMED
+  failApply = false; // reintento: repite cosign + R4 completos y converge sin duplicar eventos
   const retried = await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
   assert.equal(retried.status, "APPLIED");
   assertRevocationEvidence(await ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });

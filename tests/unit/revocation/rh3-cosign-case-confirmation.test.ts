@@ -29,9 +29,10 @@ import type { RevocationRepositoryPort } from "../../../src/server/ports/revocat
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { validateLedgerEventPayload } from "../../contract/schema-lite.ts";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
-  return {
+  return withInMemoryTenancy({
     revocationRepo,
     ledger,
     outbox: createInMemoryOutboxAdapter(),
@@ -39,7 +40,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
 }
 
 /** SYNTHETIC DATA ONLY: 4 personas ficticias, sin reutilización entre roles (GRD-RC-15). */

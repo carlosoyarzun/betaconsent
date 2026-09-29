@@ -346,16 +346,26 @@ test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [L
 test("TEST-CNS-600: GET /r/{token} responde idéntico (status, headers, Location, atributos y largo del Set-Cookie) para un token válido, inexistente, consumido, expirado y demasiado largo; findByTokenHash nunca se llama en este GET", async () => {
   const { revocationPorts, server, baseUrl } = await setUp("chain-600", "consent-600", "mgmt-token-600");
   try {
+    // CA-124: la resolución por hash ya no es `recoveryTokenRepo.findByTokenHash` sino
+    // `tenantResolver.byRecoveryTokenHash` (+ `recoveryTokenRepo.findByRef`); GET /r/{token} no
+    // debe tocar ninguna de las dos.
     let findByTokenHashCalls = 0;
+    const realResolver = revocationPorts.revocation.tenantResolver;
     const realRepo: RecoveryTokenRepositoryPort = revocationPorts.revocation.recoveryTokenRepo;
-    const spiedRepo: RecoveryTokenRepositoryPort = {
-      ...realRepo,
-      findByTokenHash: (hash) => {
+    (revocationPorts.revocation as { tenantResolver: typeof realResolver }).tenantResolver = {
+      ...realResolver,
+      byRecoveryTokenHash: (hash) => {
         findByTokenHashCalls += 1;
-        return realRepo.findByTokenHash(hash);
+        return realResolver.byRecoveryTokenHash(hash);
       },
     };
-    (revocationPorts.revocation as { recoveryTokenRepo: RecoveryTokenRepositoryPort }).recoveryTokenRepo = spiedRepo;
+    (revocationPorts.revocation as { recoveryTokenRepo: RecoveryTokenRepositoryPort }).recoveryTokenRepo = {
+      ...realRepo,
+      findByRef: (tenantId, recoveryRef) => {
+        findByTokenHashCalls += 1;
+        return realRepo.findByRef(tenantId, recoveryRef);
+      },
+    };
 
     const validToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-600");
 

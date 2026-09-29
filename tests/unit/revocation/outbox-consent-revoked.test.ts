@@ -34,6 +34,7 @@ import { assertConsentRevokedOutbox, OUTBOX_FORBIDDEN_KEYS } from "../../contrac
 import { validateOutboxEvent } from "../../contract/schema-lite.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 const T = fixtureUuid("tenant-688");
 const staff = createInMemoryStaffIdentityAdapter([
@@ -48,7 +49,7 @@ type Ports = RevocationPorts & { readonly outbox: InMemoryOutbox; readonly recov
 async function makePorts(opts: { revocationRepo?: RevocationRepositoryPort; seedDecisionId?: string } = {}): Promise<Ports> {
   const consentDecisionRepo = createInMemoryConsentDecisionRepository();
   if (opts.seedDecisionId) await consentDecisionRepo.save(syntheticDecision(T, opts.seedDecisionId));
-  return {
+  return withInMemoryTenancy({
     revocationRepo: opts.revocationRepo ?? createInMemoryRevocationRepository(),
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),
@@ -56,7 +57,7 @@ async function makePorts(opts: { revocationRepo?: RevocationRepositoryPort; seed
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo,
-  };
+  });
 }
 
 function ledgerOf(ports: Ports, ref: string) {
@@ -125,9 +126,11 @@ test("TEST-CNS-690: fallo inyectado en revocationRepo.save y reintento: 1 CONSEN
   const ports = await makePorts({ revocationRepo: flaky, seedDecisionId: D });
   await seedRh3(ports, REV, D);
   await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN), /save falló/);
-  assert.equal((await inner.findByRef(T, REV))?.status, "CONFIRMED");
-  assert.equal(ports.outbox.enqueued.length, 1);
-  const firstEventId = ports.outbox.enqueued[0]!.envelope.eventId;
+  // CA-124 (P2 de lampone-security): cosign + R4 son UNA unidad de trabajo; el fallo de
+  // `revocationRepo.save` deja todo como antes del cosign (antes: CONFIRMED huérfana + outbox).
+  assert.equal((await inner.findByRef(T, REV))?.status, "VERIFIED");
+  assert.equal((await ledgerOf(ports, REV)).filter((e) => e.eventType === "REVOCATION_CONFIRMED" || e.eventType === "CONSENT_REVOKED" || e.eventType === "RECEIPT_CREATED").length, 0);
+  assert.equal(ports.outbox.enqueued.length, 0);
 
   failApply = false;
   const retried = await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
@@ -135,8 +138,8 @@ test("TEST-CNS-690: fallo inyectado en revocationRepo.save y reintento: 1 CONSEN
   const events = await ledgerOf(ports, REV);
   assert.equal(events.filter((e) => e.eventType === "CONSENT_REVOKED").length, 1);
   assert.equal(events.filter((e) => e.eventType === "RECEIPT_CREATED").length, 1);
+  assert.equal(events.filter((e) => e.eventType === "REVOCATION_CONFIRMED").length, 1);
   assert.equal(ports.outbox.enqueued.length, 1);
-  assert.equal(ports.outbox.enqueued[0]!.envelope.eventId, firstEventId);
   assertConsentRevokedOutbox(ports.outbox.enqueued, events, { tenantId: T, revocationRef: REV, decision: syntheticDecision(T, D) });
 
   // Reaplicar una vez APPLIED tampoco duplica (R4 exige CONFIRMED).
@@ -144,7 +147,7 @@ test("TEST-CNS-690: fallo inyectado en revocationRepo.save y reintento: 1 CONSEN
   assert.equal(ports.outbox.enqueued.length, 1);
 });
 
-test("TEST-CNS-691: decisión revocada inexistente -> ERR-CM-06 sin CONSENT_REVOKED, sin RECEIPT_CREATED, sin outbox y estado CONFIRMED", async () => {
+test("TEST-CNS-691: decisión revocada inexistente -> ERR-CM-06 sin CONSENT_REVOKED, sin RECEIPT_CREATED, sin outbox y estado VERIFIED (todo-o-nada, CA-124)", async () => {
   const D = fixtureUuid("decision-691");
   const REV = fixtureUuid("rev-691");
   const ports = await makePorts(); // sin decisión sembrada
@@ -152,7 +155,8 @@ test("TEST-CNS-691: decisión revocada inexistente -> ERR-CM-06 sin CONSENT_REVO
   await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06");
   assert.equal((await ledgerOf(ports, REV)).filter((e) => e.eventType === "CONSENT_REVOKED" || e.eventType === "RECEIPT_CREATED").length, 0);
   assert.equal(ports.outbox.enqueued.length, 0);
-  assert.equal((await ports.revocationRepo.findByRef(T, REV))?.status, "CONFIRMED");
+  assert.equal((await ledgerOf(ports, REV)).filter((e) => e.eventType === "REVOCATION_CONFIRMED").length, 0, "el cosign se revirtió completo");
+  assert.equal((await ports.revocationRepo.findByRef(T, REV))?.status, "VERIFIED");
 });
 
 test("TEST-CNS-692: whitelist del sobre y del payload: 3 claves en el payload, ninguna clave prohibida, LOCAL/SYNTHETIC, eventId distinto de revocationRef", async () => {

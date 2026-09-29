@@ -32,6 +32,7 @@ import type { RevocationRepositoryPort } from "../../../src/server/ports/revocat
 import type { ConsentDecisionRecord, ConsentDecisionRepositoryPort } from "../../../src/server/ports/consent-decision-repository.port.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 const T = fixtureUuid("tenant-698");
 const staff = createInMemoryStaffIdentityAdapter([
@@ -47,7 +48,7 @@ type Ports = RevocationPorts & { readonly outbox: InMemoryOutbox; readonly recov
 async function makePorts(decision: ConsentDecisionRecord, opts: { revocationRepo?: RevocationRepositoryPort; decisionRepo?: ConsentDecisionRepositoryPort } = {}): Promise<Ports> {
   const consentDecisionRepo = opts.decisionRepo ?? createInMemoryConsentDecisionRepository();
   await consentDecisionRepo.save(decision);
-  return {
+  return withInMemoryTenancy({
     revocationRepo: opts.revocationRepo ?? createInMemoryRevocationRepository(),
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),
@@ -55,7 +56,7 @@ async function makePorts(decision: ConsentDecisionRecord, opts: { revocationRepo
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo,
-  };
+  });
 }
 
 async function stateOf(ports: Ports, id: string) {
@@ -141,18 +142,21 @@ test("TEST-CNS-700: reintentar R4 no reproyecta ni duplica: un solo guardado REV
   const ports = await makePorts(syntheticDecision(T, D), { revocationRepo: flaky, decisionRepo: countingDecisions });
   await seedRh3(ports, REV, D);
   await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN), /save falló/);
-  assert.equal(await stateOf(ports, D), "REVOKED", "C6 ya proyectada aunque APPLIED falló");
-  assert.equal((await inner.findByRef(T, REV))?.status, "CONFIRMED");
+  // CA-124 (P2 de lampone-security): RH3 cosign + R4 son UNA unidad de trabajo; el fallo deja todo
+  // como estaba antes del cosign (antes: C6 proyectada y Revocation CONFIRMED huérfana).
+  assert.equal(revokedSaves, 1, "R4 intentó proyectar C6 antes de fallar");
+  assert.equal(await stateOf(ports, D), "GRANTED", "C6 revertida junto con el resto de la unidad de trabajo");
+  assert.equal((await inner.findByRef(T, REV))?.status, "VERIFIED");
 
   failApply = false;
   const retried = await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
   assert.equal(retried.status, "APPLIED");
-  assert.equal(revokedSaves, 1, "el reintento no reproyecta la decisión");
+  assert.equal(revokedSaves, 2, "la proyección REVOKED confirmada ocurre una sola vez (la del primer intento se revirtió)");
   const events = await ports.ledger.listByAggregate(T, "Revocation", REV);
   assert.equal(events.filter((e) => e.eventType === "CONSENT_REVOKED").length, 1);
   assert.equal(ports.outbox.enqueued.length, 1);
   await assert.rejects(() => applyRevocation(ports, T, REV), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06");
-  assert.equal(revokedSaves, 1);
+  assert.equal(revokedSaves, 2);
 });
 
 test("TEST-CNS-701: sobre una cadena ya REVOKED, R1 (ERR-RV-02) y RV0 no crean revocación ni emiten token; el token de recuperación previo deja de ser elegible (GRD-RV-06)", async () => {

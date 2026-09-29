@@ -21,9 +21,10 @@ import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/
 import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import type { StaffIdentityPort, StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
-  return {
+  return withInMemoryTenancy({
     revocationRepo,
     ledger,
     outbox: createInMemoryOutboxAdapter(),
@@ -31,7 +32,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
 }
 
 /** LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos, 2026-09-28 opción (ii)): 4

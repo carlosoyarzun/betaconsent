@@ -24,6 +24,7 @@ import { assertConsentRevokedOutbox } from "../../contract/outbox-evidence.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 /** Registro de tenants "vivo" fuera de las máquinas RIGHTS, solo para el fixture del test. */
 const suspendedTenants = new Map<string, { active: boolean }>([["tenant-suspended", { active: false }]]);
@@ -65,7 +66,7 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
   // CA-116 PR 2: RevocationPorts ganó recoveryTokenRepo/recoveryLinkChannel/recoveryTokenPolicy
   // (RV0 BEARER + GET /r/{token} + POST /recovery/revoke), ajenos a RC3/RH2/RH3/R4 (fuente
   // RECOVERY HUMAN_ASSISTED) bajo prueba aquí.
-  const ports = {
+  const ports = withInMemoryTenancy({
     tenantHandle,
     rightsCaseRepo,
     revocationRepo,
@@ -76,7 +77,7 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
     recoveryTokenPolicy: { ttlMs: 60_000 },
     // SEC-CNS-014 (FINDING P1-01): ajeno a RC3/RH2/RH3/R4 bajo prueba aquí, uno vacío basta.
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
 
   // RC3
   const { revocation } = await expressRevocationIntentInCase(ports, "handle-suspended");
@@ -114,7 +115,7 @@ test("TEST-CNS-695 (INV-6): con tenant SUSPENDED la cadena RC3->RH2->RH3->R4 enc
   const consentDecisionRepo = createInMemoryConsentDecisionRepository();
   await consentDecisionRepo.save(syntheticDecision(TS, D));
   const outbox = createInMemoryOutboxAdapter();
-  const ports = {
+  const ports = withInMemoryTenancy({
     tenantHandle: createInMemoryTenantHandleAdapter([{ handle: "handle-695", tenantId: TS, chainRef: "chain-695", revokedDecisionRef: D }]),
     rightsCaseRepo,
     revocationRepo: createInMemoryRevocationRepository(),
@@ -124,7 +125,7 @@ test("TEST-CNS-695 (INV-6): con tenant SUSPENDED la cadena RC3->RH2->RH3->R4 enc
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo,
-  };
+  });
   const { revocation } = await expressRevocationIntentInCase(ports, "handle-695");
   await attestHumanAssistedVerification(ports, TS, revocation.revocationRef, "case-695");
   const staffIdentity = createInMemoryStaffIdentityAdapter([

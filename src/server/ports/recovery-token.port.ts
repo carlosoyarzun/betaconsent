@@ -26,9 +26,10 @@ export interface RecoveryTokenRecord {
 }
 
 export interface RecoveryTokenRepositoryPort {
-  /** GRD-RV-06: resuelve por tokenHash (igualdad exacta), nunca por el token en claro. */
-  findByTokenHash(tokenHash: string): Promise<RecoveryTokenRecord | null>;
+  /** Relectura bajo tenant (RLS) del token que `TenantResolverPort.byRecoveryTokenHash` resolvió
+   * por su hash: nunca por el token en claro ni sin tenant (diseño CA-124 §5). */
+  findByRef(tenantId: TenantId, recoveryRef: string): Promise<RecoveryTokenRecord | null>;
   save(record: RecoveryTokenRecord): Promise<void>;
-  /** Marca el token como consumido (un solo uso); no-op si el tokenHash no existe. */
-  consume(tokenHash: string): Promise<void>;
+  /** Marca el token como consumido (un solo uso); no-op si (tenantId, recoveryRef) no existe. */
+  consume(tenantId: TenantId, recoveryRef: string): Promise<void>;
 }

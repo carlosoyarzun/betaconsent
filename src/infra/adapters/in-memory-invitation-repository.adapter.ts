@@ -1,8 +1,11 @@
 // Gobierna: src/server/ports/invitation-repository.port.ts. Adaptador in-memory IT0.
 
 import type { InvitationRecord, InvitationRepositoryPort } from "../../server/ports/invitation-repository.port.ts";
+import { UNSCOPED_LOOKUP, type UnscopedTokenLookup } from "./in-memory-tx.ts";
 
-export function createInMemoryInvitationRepository(): InvitationRepositoryPort {
+export type InMemoryInvitationRepository = InvitationRepositoryPort & UnscopedTokenLookup<InvitationRecord>;
+
+export function createInMemoryInvitationRepository(): InMemoryInvitationRepository {
   const byKey = new Map<string, InvitationRecord>();
   const nonTerminalStates = new Set(["DRAFT", "READY", "SENT", "OPENED", "VERIFIED"]);
 
@@ -10,7 +13,16 @@ export function createInMemoryInvitationRepository(): InvitationRepositoryPort {
     return `${tenantId}\u0000${invitationRef}`;
   }
 
+  function lookupByTokenHash(tokenHash: string): InvitationRecord | null {
+    for (const record of byKey.values()) {
+      if (record.tokenHash === tokenHash) return record;
+    }
+    return null;
+  }
+
   return {
+    // Lookup sin tenant solo para el TenantResolverPort in-memory (CA-124 §5).
+    [UNSCOPED_LOOKUP]: lookupByTokenHash,
     async findByRef(tenantId, invitationRef) {
       return byKey.get(key(tenantId, invitationRef)) ?? null;
     },
