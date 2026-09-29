@@ -90,7 +90,7 @@ async function setUp(
 ): Promise<Fixture> {
   const consentId = opts.consentId ?? `consent-${opts.chainRef}`;
   const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
-  ports.decision.repo.save({
+  await ports.decision.repo.save({
     consentId,
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -110,7 +110,7 @@ async function setUp(
   const revocationPorts = createDefaultRevocationFlowPorts(LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY, ports.decision.ledger, ports.decision.repo);
 
   // RC1 (rights-case.ts openRightsCase, sin HTTP en este slice: el caso ya OPEN de partida).
-  revocationPorts.rightsCase.rightsCaseRepo.save({
+  await revocationPorts.rightsCase.rightsCaseRepo.save({
     caseRef: opts.caseRef,
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
@@ -119,7 +119,7 @@ async function setUp(
   });
 
   // Revocation REQUESTED -> RH2 (attestHumanAssistedVerification, VERIFIED + attestedVerification).
-  revocationPorts.revocation.revocationRepo.save({
+  await revocationPorts.revocation.revocationRepo.save({
     revocationRef: opts.revocationRef,
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
@@ -127,11 +127,11 @@ async function setUp(
     revokedDecisionRef: consentId,
     status: "REQUESTED",
   });
-  attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, opts.revocationRef, opts.caseRef);
+  await attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, opts.revocationRef, opts.caseRef);
 
   // RC3 (liga la Revocation al caso, mismo efecto que expressRevocationIntentInCase sin repetir
   // el handle HTTP en este slice): el handler resuelve el revocationRef desde el caso.
-  revocationPorts.rightsCase.rightsCaseRepo.save({
+  await revocationPorts.rightsCase.rightsCaseRepo.save({
     caseRef: opts.caseRef,
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
@@ -240,9 +240,9 @@ async function record(fx: Fixture, principalRef: string): Promise<Session> {
   return s;
 }
 
-function confirmedEvents(fx: Fixture) {
-  return fx.revocationPorts.revocation.ledger
-    .listByAggregate(TENANT_ID, "Revocation", fx.revocationRef)
+async function confirmedEvents(fx: Fixture) {
+  return (await fx.revocationPorts.revocation.ledger
+    .listByAggregate(TENANT_ID, "Revocation", fx.revocationRef))
     .filter((e) => e.eventType === "REVOCATION_CONFIRMED");
 }
 
@@ -256,8 +256,8 @@ test("TEST-CNS-667: cosign con sesión APPROVER (rol no permitido) -> 403 ACTOR_
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "ACTOR_NOT_ALLOWED");
     assertRightsProblem(body);
-    assert.equal(fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef)?.status, "VERIFIED");
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef))?.status, "VERIFIED");
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -273,10 +273,10 @@ test("TEST-CNS-668: cosignedByRef en el body viola additionalProperties:false de
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "INVALID_TRANSITION");
     assertRightsProblem(body);
-    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     assert.equal(stored?.status, "VERIFIED");
     assert.equal(stored?.cosignedByRef, undefined);
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -291,8 +291,8 @@ test("TEST-CNS-669: cosign por la misma persona que registró -> 409 RH3_FOUR_EY
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "RH3_FOUR_EYES_REQUIRED");
     assertRightsProblem(body);
-    assert.equal(fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef)?.status, "VERIFIED");
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef))?.status, "VERIFIED");
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -307,8 +307,8 @@ test("TEST-CNS-670: cosign sin confirmación previa (sin AWAITING_COSIGN) -> 409
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "RH3_FOUR_EYES_REQUIRED");
     assertRightsProblem(body);
-    assert.equal(fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef)?.status, "VERIFIED");
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef))?.status, "VERIFIED");
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -324,7 +324,7 @@ test("TEST-CNS-671: sesión de otro caso (path distinto) o sin sesión -> 404 un
     const csrf = "csrf-token-abcdefgh";
     const noSession = await postCosign(fx.baseUrl, { caseRef: fx.caseRef, caseCsrfCookie: csrf, origin: ALLOWED_ORIGIN, csrfHeader: csrf });
     assert.equal(noSession.status, 404);
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -338,7 +338,7 @@ test("TEST-CNS-672: CSRF/Origin incorrecto en cosign -> 403 CSRF_REJECTED (GRD-C
     const res = await postCosign(fx.baseUrl, authed(fx, op2, { origin: "http://otro-origen.test.localhost" }));
     assert.equal(res.status, 403);
     assert.equal(((await res.json()) as { code: string }).code, "CSRF_REJECTED");
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -358,7 +358,7 @@ test("TEST-CNS-673: dotación insuficiente en cosign -> 409 ROSTER_INSUFFICIENT 
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "ROSTER_INSUFFICIENT");
     assertRightsProblem(body);
-    assert.equal(confirmedEvents(fx).length, 0);
+    assert.equal((await confirmedEvents(fx)).length, 0);
   } finally {
     await fx.close();
   }
@@ -388,12 +388,12 @@ test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> 
     assert.deepEqual(body, { cosign: "COSIGNED", revocationState: "APPLIED" }); // Carlos 2026-09-28 (a): R4 síncrono -> APPLIED
     assertValid(validateApiPayload("CaseConfirmationAck", body));
 
-    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, revocationRef);
+    const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, revocationRef);
     assert.equal(stored?.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28); la ack devuelve APPLIED (contrato enmendado)
     assert.equal(stored?.recordedByRef, opA);
     assert.equal(stored?.cosignedByRef, opB); // de la sesión CASE del co-firmante, nunca del body
 
-    const events = confirmedEvents(fx);
+    const events = await confirmedEvents(fx);
     assert.equal(events.length, 1);
     assert.equal(events[0]?.recordedByRef, opA);
     assert.equal(events[0]?.cosignedByRef, opB);
@@ -416,8 +416,8 @@ test("TEST-CNS-675: cosign repetido es idempotente — 200 con el mismo ack y un
     const secondBody = await second.json();
     assert.deepEqual(secondBody, { cosign: "COSIGNED", revocationState: "APPLIED" });
     assertValid(validateApiPayload("CaseConfirmationAck", secondBody));
-    assert.equal(confirmedEvents(fx).length, 1);
-    const events = fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef);
+    assert.equal((await confirmedEvents(fx)).length, 1);
+    const events = await fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef);
     // CA-127: un solo CONSENT_REVOKED y un solo RECEIPT_CREATED, ambos válidos contra el schema.
     assertRevocationEvidence(events, { revocationRef: REVOCATION_675, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED", revokedDecisionRef: CONSENT_675 });
   } finally {

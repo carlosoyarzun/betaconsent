@@ -17,6 +17,7 @@ import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adap
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 /** CA-116 PR 2: RevocationPorts ganó recoveryTokenRepo/recoveryLinkChannel/recoveryTokenPolicy
  * (RV0 BEARER + GET /r/{token} + POST /recovery/revoke), ajenos a RH2/RH3 (fuente RECOVERY
@@ -32,7 +33,7 @@ const staffIdentity = createInMemoryStaffIdentityAdapter([
 ]);
 
 function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort): RevocationPorts {
-  return {
+  return withInMemoryTenancy({
     revocationRepo,
     ledger,
     outbox: createInMemoryOutboxAdapter(),
@@ -40,12 +41,12 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
 }
 
-test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocationRef, caseRef) -> ERR-RV-20 (GRD-RV-10)", () => {
+test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocationRef, caseRef) -> ERR-RV-20 (GRD-RV-10)", async () => {
   const revocationRepo = createInMemoryRevocationRepository();
-  revocationRepo.save({
+  await revocationRepo.save({
     revocationRef: fixtureUuid("rv-1"),
     tenantId: "tenant-1",
     chainRef: "chain-1",
@@ -54,7 +55,7 @@ test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocation
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  assert.throws(
+  await assert.rejects(
     () =>
       recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), staffIdentity, "tenant-1", fixtureUuid("rv-1"), "case-1", {
         recordedByPrincipalRef: "operator-a",
@@ -63,9 +64,9 @@ test("TEST-CNS-463: RH3 sin una RH2/RH2v ATTESTED previa de la misma (revocation
   );
 });
 
-test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 uniforme (GRD-CM-01/06)", () => {
+test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 uniforme (GRD-CM-01/06)", async () => {
   const revocationRepo = createInMemoryRevocationRepository();
-  revocationRepo.save({
+  await revocationRepo.save({
     revocationRef: "rv-tenant-a",
     tenantId: "tenant-a",
     chainRef: "chain-a",
@@ -74,13 +75,13 @@ test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 un
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  assert.throws(
+  await assert.rejects(
     () => attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-b", "rv-tenant-a", "case-a"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
     "RH2 con revocationRef de otro tenant debía dar 404 uniforme",
   );
 
-  assert.throws(
+  await assert.rejects(
     () =>
       recordCaseConfirmationPendingCosign(makePorts(revocationRepo, ledger), staffIdentity, "tenant-b", "rv-tenant-a", "case-a", {
         recordedByPrincipalRef: "operator-a",
@@ -88,7 +89,7 @@ test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 un
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
     "RH3 paso 1 con revocationRef de otro tenant debía dar 404 uniforme",
   );
-  assert.throws(
+  await assert.rejects(
     () =>
       cosignCaseConfirmation(makePorts(revocationRepo, ledger), staffIdentity, "tenant-b", "rv-tenant-a", "case-a", {
         cosignedByPrincipalRef: "operator-b",
@@ -98,9 +99,9 @@ test("TEST-CNS-464: RH2 y RH3 con caseRef/revocationRef de otro tenant -> 404 un
   );
 });
 
-test("TEST-CNS-465: recordedByRef/cosignedByRef de RH3 se derivan de la sesión del ejecutor, nunca de un campo enviado en el request", () => {
+test("TEST-CNS-465: recordedByRef/cosignedByRef de RH3 se derivan de la sesión del ejecutor, nunca de un campo enviado en el request", async () => {
   const revocationRepo = createInMemoryRevocationRepository();
-  revocationRepo.save({
+  await revocationRepo.save({
     revocationRef: fixtureUuid("rv-2"),
     tenantId: "tenant-1",
     chainRef: "chain-1",
@@ -110,18 +111,18 @@ test("TEST-CNS-465: recordedByRef/cosignedByRef de RH3 se derivan de la sesión 
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-1", fixtureUuid("rv-2"), "case-2");
+  await attestHumanAssistedVerification(makePorts(revocationRepo, ledger), "tenant-1", fixtureUuid("rv-2"), "case-2");
 
   // Los ctx llevan solo refs derivadas de la sesión; el tipo ni siquiera admite campos del
   // request (recordedByRef/cosignedByRef del body se rechazan en el borde HTTP, 422).
   const ports = makePorts(revocationRepo, ledger);
-  recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", fixtureUuid("rv-2"), "case-2", { recordedByPrincipalRef: "operator-a" });
-  const confirmed = cosignCaseConfirmation(ports, staffIdentity, "tenant-1", fixtureUuid("rv-2"), "case-2", { cosignedByPrincipalRef: "operator-b" });
+  await recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-1", fixtureUuid("rv-2"), "case-2", { recordedByPrincipalRef: "operator-a" });
+  const confirmed = await cosignCaseConfirmation(ports, staffIdentity, "tenant-1", fixtureUuid("rv-2"), "case-2", { cosignedByPrincipalRef: "operator-b" });
 
   assert.equal(confirmed.recordedByRef, "operator-a");
   assert.equal(confirmed.cosignedByRef, "operator-b");
 
-  const events = ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-2"));
+  const events = await ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-2"));
   const confirmedEvent = events.find((e) => e.eventType === "REVOCATION_CONFIRMED");
   assert.ok(confirmedEvent);
   assert.equal(confirmedEvent?.recordedByRef, "operator-a");

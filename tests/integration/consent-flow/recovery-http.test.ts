@@ -105,7 +105,7 @@ interface Fixture {
 
 async function setUp(chainRef: string, consentId: string, mgmtToken: string): Promise<Fixture> {
   const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
-  ports.decision.repo.save({
+  await ports.decision.repo.save({
     consentId,
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -215,7 +215,7 @@ test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token
     assert.equal(body.state, "CONFIRMED");
     assert.equal(body.receiptDelivery, "BOUND_CHANNEL");
 
-    const events = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", body.revocationRef);
+    const events = await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", body.revocationRef);
     assert.deepEqual(
       events.map((e) => e.eventType),
       ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
@@ -242,7 +242,7 @@ test("TEST-CNS-593: reutilizar el mismo token de recuperación tras confirmarlo 
     assert.equal(second.status, 202);
     assert.deepEqual(await second.json(), { result: "RECEIVED" });
 
-    const events = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", firstBody.revocationRef);
+    const events = await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", firstBody.revocationRef);
     assert.equal(events.filter((e) => e.eventType === "REVOCATION_CONFIRMED").length, 1);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
@@ -305,7 +305,7 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
     assert.equal(secondRevoke.status, 202);
     assert.deepEqual(await secondRevoke.json(), { result: "RECEIVED" });
 
-    const events = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", firstBody.revocationRef);
+    const events = await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", firstBody.revocationRef);
     assert.equal(events.filter((e) => e.eventType === "REVOCATION_CONFIRMED").length, 1);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
@@ -346,16 +346,26 @@ test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [L
 test("TEST-CNS-600: GET /r/{token} responde idéntico (status, headers, Location, atributos y largo del Set-Cookie) para un token válido, inexistente, consumido, expirado y demasiado largo; findByTokenHash nunca se llama en este GET", async () => {
   const { revocationPorts, server, baseUrl } = await setUp("chain-600", "consent-600", "mgmt-token-600");
   try {
+    // CA-124: la resolución por hash ya no es `recoveryTokenRepo.findByTokenHash` sino
+    // `tenantResolver.byRecoveryTokenHash` (+ `recoveryTokenRepo.findByRef`); GET /r/{token} no
+    // debe tocar ninguna de las dos.
     let findByTokenHashCalls = 0;
+    const realResolver = revocationPorts.revocation.tenantResolver;
     const realRepo: RecoveryTokenRepositoryPort = revocationPorts.revocation.recoveryTokenRepo;
-    const spiedRepo: RecoveryTokenRepositoryPort = {
-      ...realRepo,
-      findByTokenHash: (hash) => {
+    (revocationPorts.revocation as { tenantResolver: typeof realResolver }).tenantResolver = {
+      ...realResolver,
+      byRecoveryTokenHash: (hash) => {
         findByTokenHashCalls += 1;
-        return realRepo.findByTokenHash(hash);
+        return realResolver.byRecoveryTokenHash(hash);
       },
     };
-    (revocationPorts.revocation as { recoveryTokenRepo: RecoveryTokenRepositoryPort }).recoveryTokenRepo = spiedRepo;
+    (revocationPorts.revocation as { recoveryTokenRepo: RecoveryTokenRepositoryPort }).recoveryTokenRepo = {
+      ...realRepo,
+      findByRef: (tenantId, recoveryRef) => {
+        findByTokenHashCalls += 1;
+        return realRepo.findByRef(tenantId, recoveryRef);
+      },
+    };
 
     const validToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-600");
 
@@ -410,7 +420,7 @@ test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) p
     const { csrfToken: consumedCsrf } = await renderRecoveryConfirm(baseUrl, consumedCookie);
     const consumedRevoke = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: consumedCsrf, csrfCookie: consumedCsrf, recoveryCookie: consumedCookie, body: { confirmTotalWithdrawal: true } });
     const { revocationRef: consumedRevocationRef } = (await consumedRevoke.json()) as { revocationRef: string };
-    const eventsBefore = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", consumedRevocationRef).length;
+    const eventsBefore = (await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", consumedRevocationRef)).length;
     const consumedRes = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${RECOVERY_COOKIE_NAME}=${consumedCookie}` } });
 
     // Expirado: TTL del handle (P-18) vencido -> decodeRecoveryHandle ya lo trata como ausente.
@@ -450,7 +460,7 @@ test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) p
       // no-op: expiringServer.server ya se cerró arriba.
     }
 
-    const eventsAfter = revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", consumedRevocationRef).length;
+    const eventsAfter = (await revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", consumedRevocationRef)).length;
     assert.equal(eventsAfter, eventsBefore, "ningún GET /recovery/confirm debe emitir eventos");
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
@@ -528,7 +538,7 @@ test("TEST-CNS-704: tras revocar por enlace (C6/REVOKED), el enlace viejo da el 
     const { csrfToken } = await renderRecoveryConfirm(baseUrl, cookie);
     const revoked = await post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: csrfToken, csrfCookie: csrfToken, recoveryCookie: cookie, body: { confirmTotalWithdrawal: true } });
     assert.equal(revoked.status, 200);
-    assert.equal(revocationPorts.revocation.consentDecisionRepo.findByConsentId(TENANT_ID, CONSENT_704)?.state, "REVOKED");
+    assert.equal((await revocationPorts.revocation.consentDecisionRepo.findByConsentId(TENANT_ID, CONSENT_704))?.state, "REVOKED");
 
     // Enlace viejo (misma cookie de recuperación): error uniforme, sin CSRF.
     const { res: oldRender, csrfToken: noCsrf } = await renderRecoveryConfirm(baseUrl, cookie);

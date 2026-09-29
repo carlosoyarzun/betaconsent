@@ -52,19 +52,19 @@ function startServer(): Promise<Harness> {
   });
 }
 
-function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): string {
-  createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): Promise<string> {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef,
   });
-  markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
   return token;
 }
 
@@ -123,7 +123,7 @@ async function bringToOtpRequested(
   invitationRef: string,
   subjectRef: string,
 ): Promise<{ session: string; sink: InMemoryOtpChannelSink }> {
-  const token = seedSentInvitation(harness.ports, invitationRef, subjectRef);
+  const token = await seedSentInvitation(harness.ports, invitationRef, subjectRef);
   const landingSession = await redeem(harness.baseUrl, token);
   const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
   const sessionAfterOpen = parseAllSetCookies(opened)[SESSION_COOKIE_NAME] ?? landingSession;
@@ -226,7 +226,7 @@ test("TEST-CNS-557: /assets/verify.js responde 200 con content-type javascript y
 test("TEST-CNS-558: flujo completo GET /i/{token} -> /welcome -> open -> request -> /verify -> submit con el código correcto del sink -> /decision", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-558", "subject-558@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-558", "subject-558@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseAllSetCookies(opened)[SESSION_COOKIE_NAME] ?? landingSession;

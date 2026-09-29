@@ -99,13 +99,13 @@ function checkCaseCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig)
 // POST /platform/rights-cases/{caseRef}/confirmation (API-CNS-138, RH3 paso 1). caseRef llega
 // del path; GRD-CM-01 exige que coincida con el de la sesión CASE, o 404 uniforme.
 // ---------------------------------------------------------------------------
-export function handleRecordCaseConfirmation(
+export async function handleRecordCaseConfirmation(
   request: RawConsentRequest,
   caseRefFromPath: string,
   ports: CaseConfirmationPorts,
   config: RightsCaseHttpConfig,
   caseSessionKey: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -136,13 +136,13 @@ export function handleRecordCaseConfirmation(
     return problem(422, "ERR-CM-06");
   }
 
-  const rightsCase = ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
+  const rightsCase = await ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
     return uniformNotFound();
   }
 
   try {
-    const recorded = recordCaseConfirmationPendingCosign(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, {
+    const recorded = await recordCaseConfirmationPendingCosign(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, {
       recordedByPrincipalRef: session.principalRef,
     });
     // CaseConfirmationAck: sin co-firma, cosign = AWAITING_COSIGN y revocationState = VERIFIED
@@ -161,13 +161,13 @@ export function handleRecordCaseConfirmation(
 // POST /platform/rights-cases/{caseRef}/confirmation/cosign (API-CNS-139, RH3 paso 2). Mismo
 // patrón que el paso 1; cosignedByRef SIEMPRE de la sesión CASE (GRD-CM-07), nunca del body.
 // ---------------------------------------------------------------------------
-export function handleCosignCaseConfirmation(
+export async function handleCosignCaseConfirmation(
   request: RawConsentRequest,
   caseRefFromPath: string,
   ports: CaseConfirmationPorts,
   config: RightsCaseHttpConfig,
   caseSessionKey: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -192,13 +192,13 @@ export function handleCosignCaseConfirmation(
     return problem(422, "ERR-CM-06");
   }
 
-  const rightsCase = ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
+  const rightsCase = await ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
     return uniformNotFound();
   }
 
   try {
-    const cosigned = cosignCaseConfirmation(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, {
+    const cosigned = await cosignCaseConfirmation(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, {
       cosignedByPrincipalRef: session.principalRef,
     });
     // CaseConfirmationAck.revocationState admite APPLIED (Carlos 2026-09-28, opción (a)): R4 síncrono
@@ -225,13 +225,13 @@ export interface DevStaffLoginPorts {
   readonly rightsCaseRepo: Pick<RightsCaseRepositoryPort, "findByRef">;
 }
 
-export function handleDevStaffLogin(
+export async function handleDevStaffLogin(
   request: RawConsentRequest,
   environment: Environment,
   ports: DevStaffLoginPorts,
   config: RightsCaseHttpConfig,
   caseSessionKey: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   if (environment !== "LOCAL") {
     // Fail-closed (GRD-CM-13): fuera de LOCAL esta ruta no existe, ni siquiera como 403 (mismo
     // criterio que /__dev/otp-sink, consent-flow-server.ts).
@@ -246,12 +246,12 @@ export function handleDevStaffLogin(
     return { status: 422, body: { status: 422 } };
   }
 
-  const principal = ports.staffIdentity.findByPrincipalRef(principalRef);
+  const principal = await ports.staffIdentity.findByPrincipalRef(principalRef);
   if (!principal) {
     return { status: 422, body: { status: 422 } };
   }
 
-  const rightsCase = ports.rightsCaseRepo.findByRef(tenantId, caseRef);
+  const rightsCase = await ports.rightsCaseRepo.findByRef(tenantId, caseRef);
   if (!rightsCase || rightsCase.caseRef !== caseRef) {
     return { status: 422, body: { status: 422 } };
   }

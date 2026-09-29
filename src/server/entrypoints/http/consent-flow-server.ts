@@ -9,6 +9,7 @@ import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryInvitationRepository } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../infra/adapters/in-memory-tenancy.ts";
 import { createInMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../infra/adapters/in-memory-otp-channel-sink.adapter.ts";
@@ -243,16 +244,22 @@ export function createDefaultRevocationFlowPorts(
   ledger: LedgerPort = createInMemoryLedgerAdapter(),
   consentDecisionRepo: ConsentDecisionRepositoryPort = createInMemoryConsentDecisionRepository(),
 ): RevocationFlowPorts {
+  const tenantHandle = createInMemoryTenantHandleAdapter();
+  const revocationRepo = createInMemoryRevocationRepository();
+  const outbox = createInMemoryOutboxAdapter();
+  const recoveryTokenRepo = createInMemoryRecoveryTokenRepository();
   return {
-    tenantHandle: createInMemoryTenantHandleAdapter(),
+    tenantHandle,
     revocation: {
-      revocationRepo: createInMemoryRevocationRepository(),
+      revocationRepo,
       ledger,
-      outbox: createInMemoryOutboxAdapter(),
-      recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
+      outbox,
+      recoveryTokenRepo,
       recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
       recoveryTokenPolicy,
       consentDecisionRepo,
+      // CA-124: UoW + resolver in-memory sobre los MISMOS adaptadores del proceso.
+      ...createInMemoryTenancy({ revocationRepo, ledger, outbox, recoveryTokenRepo, consentDecisionRepo, tenantHandle }),
     },
     rightsCase: { rightsCaseRepo: createInMemoryRightsCaseRepository(), ledger },
   };
@@ -443,7 +450,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // un 404 crudo del framework, y cualquier sesión previa queda invalidada.
       const cookies = parseCookies(headerValue(req.headers.cookie));
       const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
-      const view = resolveWelcomeLandingSession(ports, sessionSecret, existingSession, invitationHandleKey, cookies, config.invitationHandleCookieName);
+      const view = await resolveWelcomeLandingSession(ports, sessionSecret, existingSession, invitationHandleKey, cookies, config.invitationHandleCookieName);
       writeHtmlSecurityHeaders(res);
       if (!view.session) {
         if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
@@ -543,7 +550,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // 59:3), nunca un 404 crudo, y cualquier sesión previa queda invalidada.
       const cookies = parseCookies(headerValue(req.headers.cookie));
       const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
-      const view = resolveManageLandingSession(
+      const view = await resolveManageLandingSession(
         revocationPorts,
         sessionSecret,
         existingSession,
@@ -565,7 +572,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
       const decisionRevoked =
         view.session.revokedDecisionRef !== undefined &&
-        revocationPorts.revocation.consentDecisionRepo.findByConsentId(view.session.tenantId, view.session.revokedDecisionRef)?.state ===
+        (await revocationPorts.revocation.consentDecisionRepo.findByConsentId(view.session.tenantId, view.session.revokedDecisionRef))?.state ===
           "REVOKED";
       res.end(
         !view.session.manageDecisionMakerRef
@@ -633,7 +640,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // consumido, expirado o de otro ciclo: 404 byte-idéntico (UniformNotFound, mismo criterio
       // INV-CM-05), con un piso de tiempo común para no distinguir la causa por temporización.
       const startedAt = process.hrtime.bigint();
-      const view = resolveRecoveryConfirmView(revocationPorts, recoveryHandleKey, headerValue(req.headers.cookie), config.recoveryHandleCookieName);
+      const view = await resolveRecoveryConfirmView(revocationPorts, recoveryHandleKey, headerValue(req.headers.cookie), config.recoveryHandleCookieName);
       writeRecoveryHtmlSecurityHeaders(res);
       if (!view.eligible || !view.tokenHash) {
         await floorDelay(startedAt, RECOVERY_CONFIRM_UNIFORM_FLOOR_MS);
@@ -747,14 +754,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // CA-125: un principal TENANT_ADMIN recibe la sesión STAFF (staff-session.ts); cualquier
       // otro rol sigue el login CASE de CA-128. El rol lo decide el roster, no el body.
       const requestedPrincipal = (request.body as { principalRef?: unknown } | undefined)?.principalRef;
-      const requestedRole = typeof requestedPrincipal === "string" ? staffIdentity.findByPrincipalRef(requestedPrincipal)?.role : undefined;
+      const requestedRole = typeof requestedPrincipal === "string" ? (await staffIdentity.findByPrincipalRef(requestedPrincipal))?.role : undefined;
       if (requestedRole === "TENANT_ADMIN") {
-        writeResult(res, config, handleDevStaffConsoleLogin(request, options.environment ?? "DEV", staffIdentity, config, staffSessionKey));
+        writeResult(res, config, await handleDevStaffConsoleLogin(request, options.environment ?? "DEV", staffIdentity, config, staffSessionKey));
         return;
       }
       // CA-128 (Carlos 2026-09-28, opción (ii)): mismo guard GRD-CM-13 que /__dev/otp-sink;
       // handleDevStaffLogin ya rechaza fuera de LOCAL, aquí solo se enruta.
-      const result = handleDevStaffLogin(
+      const result = await handleDevStaffLogin(
         request,
         options.environment ?? "DEV",
         { staffIdentity, rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo },
@@ -769,7 +776,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // API-CNS-139: mismo criterio de un solo segmento intermedio que API-CNS-138.
       const caseRef = path.slice("/platform/rights-cases/".length, path.length - "/confirmation/cosign".length);
       if (caseRef.length > 0 && !caseRef.includes("/")) {
-        const result = handleCosignCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
+        const result = await handleCosignCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
         writeResult(res, config, result);
         return;
       }
@@ -780,7 +787,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       // (intento de traversal o de apuntar a otra sub-ruta) nunca resuelve, cae al 404 genérico.
       const caseRef = path.slice("/platform/rights-cases/".length, path.length - "/confirmation".length);
       if (caseRef.length > 0 && !caseRef.includes("/")) {
-        const result = handleRecordCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
+        const result = await handleRecordCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
         writeResult(res, config, result);
         return;
       }
@@ -789,11 +796,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     // CA-125: consola STAFF (API-CNS-105/110/111/112). invitationRef es el único segmento
     // intermedio; un path con "/" adicional nunca resuelve (cae al 404 genérico).
     if (path === "/staff/enrollments") {
-      writeResult(res, config, handleOpenEnrollment(request, staffConsolePorts, config, staffSessionKey));
+      writeResult(res, config, await handleOpenEnrollment(request, staffConsolePorts, config, staffSessionKey));
       return;
     }
     if (path === "/staff/invitations") {
-      writeResult(res, config, handleCreateInvitation(request, staffConsolePorts, config, staffSessionKey));
+      writeResult(res, config, await handleCreateInvitation(request, staffConsolePorts, config, staffSessionKey));
       return;
     }
     if (path.startsWith("/staff/invitations/")) {
@@ -802,11 +809,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const invitationRef = slash === -1 ? "" : rest.slice(0, slash);
       const action = slash === -1 ? "" : rest.slice(slash + 1);
       if (invitationRef.length > 0 && action === "ready") {
-        writeResult(res, config, handleMarkInvitationReady(request, invitationRef, staffConsolePorts, config, staffSessionKey));
+        writeResult(res, config, await handleMarkInvitationReady(request, invitationRef, staffConsolePorts, config, staffSessionKey));
         return;
       }
       if (invitationRef.length > 0 && action === "send") {
-        writeResult(res, config, handleSendInvitation(request, invitationRef, staffConsolePorts, config, staffSessionKey));
+        writeResult(res, config, await handleSendInvitation(request, invitationRef, staffConsolePorts, config, staffSessionKey));
         return;
       }
     }
@@ -814,43 +821,43 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     let result: HttpResult;
     switch (path) {
       case "/invitation/open":
-        result = handleOpenInvitation(request, ports, config, sessionSecret);
+        result = await handleOpenInvitation(request, ports, config, sessionSecret);
         break;
       case "/otp/request":
-        result = handleRequestOtp(request, ports, config, sessionSecret);
+        result = await handleRequestOtp(request, ports, config, sessionSecret);
         break;
       case "/otp/resend":
-        result = handleResendOtp(request, ports, config, sessionSecret);
+        result = await handleResendOtp(request, ports, config, sessionSecret);
         break;
       case "/otp/submit":
-        result = handleSubmitOtp(request, ports, config, sessionSecret);
+        result = await handleSubmitOtp(request, ports, config, sessionSecret);
         break;
       case "/decision/steps":
-        result = handleRecordDecisionStep(request, ports, config, sessionSecret);
+        result = await handleRecordDecisionStep(request, ports, config, sessionSecret);
         break;
       case "/decision/submit":
-        result = handleSubmitDecision(request, ports, config, sessionSecret);
+        result = await handleSubmitDecision(request, ports, config, sessionSecret);
         break;
       case "/manage/revocation":
-        result = handleRequestRevocation(request, revocationPorts, config, sessionSecret);
+        result = await handleRequestRevocation(request, revocationPorts, config, sessionSecret);
         break;
       case "/manage/revocation/verify":
-        result = handleVerifyRevocation(request, revocationPorts, config, sessionSecret);
+        result = await handleVerifyRevocation(request, revocationPorts, config, sessionSecret);
         break;
       case "/manage/revocation/confirm":
-        result = handleConfirmRevocation(request, revocationPorts, config, sessionSecret);
+        result = await handleConfirmRevocation(request, revocationPorts, config, sessionSecret);
         break;
       case "/manage/revocation/withdraw":
-        result = handleWithdrawRevocation(request, revocationPorts, config, sessionSecret);
+        result = await handleWithdrawRevocation(request, revocationPorts, config, sessionSecret);
         break;
       case "/manage/recovery-link":
-        result = handleIssueRecoveryLink(request, revocationPorts, config, sessionSecret);
+        result = await handleIssueRecoveryLink(request, revocationPorts, config, sessionSecret);
         break;
       case "/recovery/revoke":
-        result = handleRecoveryRevoke(request, revocationPorts, config, recoveryHandleKey, recoveryCsrfKey);
+        result = await handleRecoveryRevoke(request, revocationPorts, config, recoveryHandleKey, recoveryCsrfKey);
         break;
       case "/rights-case/open":
-        result = handleOpenRightsCase(request, revocationPorts, config, sessionSecret);
+        result = await handleOpenRightsCase(request, revocationPorts, config, sessionSecret);
         break;
       default:
         res.writeHead(404, { "content-type": "application/json" });

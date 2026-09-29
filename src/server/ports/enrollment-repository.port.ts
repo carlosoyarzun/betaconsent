@@ -17,8 +17,8 @@ export interface EnrollmentRecord {
 }
 
 export interface EnrollmentRepositoryPort {
-  findByRef(tenantId: TenantId, enrollmentRef: string): EnrollmentRecord | null;
+  findByRef(tenantId: TenantId, enrollmentRef: string): Promise<EnrollmentRecord | null>;
   /** GRD-TC-03: como máximo un Enrollment ACTIVE por (tenantId, subjectRef, participationRef). */
-  findActive(tenantId: TenantId, subjectRef: string, participationRef: string): EnrollmentRecord | null;
-  save(record: EnrollmentRecord): void;
+  findActive(tenantId: TenantId, subjectRef: string, participationRef: string): Promise<EnrollmentRecord | null>;
+  save(record: EnrollmentRecord): Promise<void>;
 }

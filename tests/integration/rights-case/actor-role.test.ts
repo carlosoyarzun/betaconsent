@@ -10,12 +10,12 @@ import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 
-function buildPorts() {
+async function buildPorts() {
   const tenantHandle = createInMemoryTenantHandleAdapter([
     { handle: "handle-1", tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
-  rightsCaseRepo.save({
+  await rightsCaseRepo.save({
     caseRef: "case-1",
     tenantId: "tenant-1",
     chainRef: "chain-1",
@@ -27,28 +27,28 @@ function buildPorts() {
   return { tenantHandle, rightsCaseRepo, revocationRepo, ledger };
 }
 
-test("TEST-CNS-460: RC3 (primera Revocation del caso) registra actorRole=UNVERIFIED_BEARER en el ledger, nunca SYSTEM_GUARD ni otro actorRole", () => {
-  const ports = buildPorts();
+test("TEST-CNS-460: RC3 (primera Revocation del caso) registra actorRole=UNVERIFIED_BEARER en el ledger, nunca SYSTEM_GUARD ni otro actorRole", async () => {
+  const ports = await buildPorts();
 
-  const result = expressRevocationIntentInCase(ports, "handle-1");
+  const result = await expressRevocationIntentInCase(ports, "handle-1");
 
-  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", result.revocation.revocationRef);
+  const events = await ports.ledger.listByAggregate("tenant-1", "Revocation", result.revocation.revocationRef);
   assert.equal(events.length, 1);
   assert.equal(events[0]?.actorType, "HUMAN");
   assert.equal(events[0]?.actorRole, "UNVERIFIED_BEARER");
   assert.notEqual(events[0]?.actorType, "SYSTEM_GUARD");
 });
 
-test("TEST-CNS-460: R12 (Revocation ya abierta se adjunta) también registra actorRole=UNVERIFIED_BEARER", () => {
-  const ports = buildPorts();
+test("TEST-CNS-460: R12 (Revocation ya abierta se adjunta) también registra actorRole=UNVERIFIED_BEARER", async () => {
+  const ports = await buildPorts();
 
   // Primera llamada abre la Revocation (RC3).
-  const first = expressRevocationIntentInCase(ports, "handle-1");
+  const first = await expressRevocationIntentInCase(ports, "handle-1");
   // Segunda llamada: ya hay Revocation abierta -> rama R12 (adjunta, no crea otra).
-  const second = expressRevocationIntentInCase(ports, "handle-1");
+  const second = await expressRevocationIntentInCase(ports, "handle-1");
 
   assert.equal(second.revocation.revocationRef, first.revocation.revocationRef);
-  const events = ports.ledger.listByAggregate("tenant-1", "Revocation", first.revocation.revocationRef);
+  const events = await ports.ledger.listByAggregate("tenant-1", "Revocation", first.revocation.revocationRef);
   assert.equal(events.length, 2);
   for (const event of events) {
     assert.equal(event.actorRole, "UNVERIFIED_BEARER");

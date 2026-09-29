@@ -4,19 +4,25 @@ import type {
   ConsentDecisionRecord,
   ConsentDecisionRepositoryPort,
 } from "../../server/ports/consent-decision-repository.port.ts";
+import { JournaledMap, TX_JOURNAL, type TxParticipant } from "./in-memory-tx.ts";
 
-export function createInMemoryConsentDecisionRepository(): ConsentDecisionRepositoryPort {
-  const byKey = new Map<string, ConsentDecisionRecord>();
+export type InMemoryConsentDecisionRepository = ConsentDecisionRepositoryPort & TxParticipant;
+
+export function createInMemoryConsentDecisionRepository(): InMemoryConsentDecisionRepository {
+  const byKey = new JournaledMap<string, ConsentDecisionRecord>();
 
   function key(tenantId: string, consentId: string): string {
     return `${tenantId}\u0000${consentId}`;
   }
 
   return {
-    findByConsentId(tenantId, consentId) {
+    [TX_JOURNAL](journal) {
+      byKey.journal = journal;
+    },
+    async findByConsentId(tenantId, consentId) {
       return byKey.get(key(tenantId, consentId)) ?? null;
     },
-    findActiveGrantByChain(tenantId, chainRef) {
+    async findActiveGrantByChain(tenantId, chainRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.chainRef === chainRef && record.state === "GRANTED") {
           return record;
@@ -24,7 +30,7 @@ export function createInMemoryConsentDecisionRepository(): ConsentDecisionReposi
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.consentId), { ...record });
     },
   };

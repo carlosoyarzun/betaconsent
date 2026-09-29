@@ -33,9 +33,9 @@ interface Observation {
 /** Ejecuta `fn`, y si lanza DomainError la registra como observación (transitionId, code);
  * si no lanza, no registra nada. Cualquier otro tipo de excepción se re-lanza (no es del
  * dominio de este checker). */
-function observe(transitionId: string, fn: () => void, sink: Observation[]): void {
+async function observe(transitionId: string, fn: () => unknown, sink: Observation[]): Promise<void> {
   try {
-    fn();
+    await fn();
   } catch (err) {
     if (err instanceof DomainError) {
       sink.push({ transitionId, code: err.code });
@@ -45,7 +45,7 @@ function observe(transitionId: string, fn: () => void, sink: Observation[]): voi
   }
 }
 
-test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece a errors[] de su transición (OPEN-RV-12)", () => {
+test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece a errors[] de su transición (OPEN-RV-12)", async () => {
   const index = loadTransitionErrorsIndex(SPEC_DIR);
 
   const tenantHandle = createInMemoryTenantHandleAdapter([
@@ -60,7 +60,7 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
   const ports: RightsCasePorts = { tenantHandle, rightsCaseRepo, revocationRepo, ledger };
 
   // Caso A: origin != CHANNEL_UNREACHABLE (GRD-RC-07 no se cumple).
-  rightsCaseRepo.save({
+  await rightsCaseRepo.save({
     caseRef: "case-A",
     tenantId: "tenant-1",
     chainRef: "chain-A",
@@ -69,7 +69,7 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
     origin: "LIMIT_REACHED",
   });
   // Caso B: origin = CHANNEL_UNREACHABLE (RC2u sí aplica).
-  rightsCaseRepo.save({
+  await rightsCaseRepo.save({
     caseRef: "case-B",
     tenantId: "tenant-1",
     chainRef: "chain-B",
@@ -81,25 +81,25 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
   const observed: Observation[] = [];
 
   // RC2u: handle desconocido -> ERR-CM-01 (GRD-CM-01 onFail).
-  observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-desconocido"), observed);
+  await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-desconocido"), observed);
   // RC2u: handle resuelto pero sin caso ligado -> ERR-RC-09 (GRD-RC-14 onFail).
-  observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-orphan"), observed);
+  await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-orphan"), observed);
   // RC2u: caso ligado pero origin != CHANNEL_UNREACHABLE -> ERR-RC-01 (GRD-RC-07 onFail).
-  observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-A"), observed);
+  await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-A"), observed);
   // RC2u: camino feliz, sin error -> transiciona case-B a CONTACTING.
-  observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-B"), observed);
-  assert.equal(rightsCaseRepo.findByRef("tenant-1", "case-B")?.status, "CONTACTING");
+  await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-B"), observed);
+  assert.equal((await rightsCaseRepo.findByRef("tenant-1", "case-B"))?.status, "CONTACTING");
   // RC2u: reintento idempotente (caso ya CONTACTING) -> sin error, sin nuevo evento.
-  observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-B"), observed);
-  assert.equal(ledger.listByAggregate("tenant-1", "RightsCase", "case-B").length, 1);
+  await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-B"), observed);
+  assert.equal((await ledger.listByAggregate("tenant-1", "RightsCase", "case-B")).length, 1);
 
   // RC3: handle desconocido -> ERR-CM-01.
-  observe("RC3", () => expressRevocationIntentInCase(ports, "handle-desconocido"), observed);
+  await observe("RC3", () => expressRevocationIntentInCase(ports, "handle-desconocido"), observed);
   // RC3: handle resuelto pero sin caso ligado -> ERR-RC-09.
-  observe("RC3", () => expressRevocationIntentInCase(ports, "handle-orphan"), observed);
+  await observe("RC3", () => expressRevocationIntentInCase(ports, "handle-orphan"), observed);
   // RC3: camino feliz (case-B ya en CONTACTING) -> sin error; crea Revocation REQUESTED.
-  observe("RC3", () => expressRevocationIntentInCase(ports, "handle-B"), observed);
-  assert.equal(rightsCaseRepo.findByRef("tenant-1", "case-B")?.status, "IN_VERIFICATION");
+  await observe("RC3", () => expressRevocationIntentInCase(ports, "handle-B"), observed);
+  assert.equal((await rightsCaseRepo.findByRef("tenant-1", "case-B"))?.status, "IN_VERIFICATION");
 
   assert.equal(observed.length, 5, `se esperaban 5 observaciones de error, hubo ${observed.length}`);
 

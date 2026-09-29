@@ -10,5 +10,5 @@ export interface OtpChannelMessage {
 }
 
 export interface OtpChannelPort {
-  send(message: OtpChannelMessage): void;
+  send(message: OtpChannelMessage): Promise<void>;
 }

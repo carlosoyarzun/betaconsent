@@ -42,8 +42,8 @@ function deriveChainRef(tenantId: TenantId, contextRef: string, subjectRef: stri
   return `chain:${tenantId}:${contextRef}:${subjectRef}:${decisionMakerRef}`;
 }
 
-function requireDecision(ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): ConsentDecisionRecord {
-  const found = ports.repo.findByConsentId(tenantId, consentId);
+async function requireDecision(ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): Promise<ConsentDecisionRecord> {
+  const found = await ports.repo.findByConsentId(tenantId, consentId);
   if (!found) {
     throw new DomainError("ERR-CM-01");
   }
@@ -59,15 +59,15 @@ export interface StartDecisionInput {
 }
 
 /** C1: null -> PENDING. Guards: GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CD-01, GRD-CD-02. */
-export function startDecision(
+export async function startDecision(
   ports: ConsentDecisionPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   input: StartDecisionInput,
-): ConsentDecisionRecord {
+): Promise<ConsentDecisionRecord> {
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-07
 
-  const invitation = ports.invitation.invitationRepo.findByRef(tenantId, input.invitationRef);
+  const invitation = await ports.invitation.invitationRepo.findByRef(tenantId, input.invitationRef);
   if (!invitation) {
     throw new DomainError("ERR-CM-01");
   }
@@ -78,7 +78,7 @@ export function startDecision(
     throw new DomainError("ERR-CD-07");
   }
   assertRouteEligible(
-    ports.invitation.eligibility.isEligibleForIssuance(tenantId, invitation.contextRef, invitation.productRef),
+    await ports.invitation.eligibility.isEligibleForIssuance(tenantId, invitation.contextRef, invitation.productRef),
   ); // GRD-CM-05
 
   const record: ConsentDecisionRecord = {
@@ -96,7 +96,7 @@ export function startDecision(
     priorStepsComplete: false,
     stepsRecorded: [],
   };
-  ports.repo.save(record);
+  await ports.repo.save(record);
   // C1 emits: [] (SM-CNS-001 §4 C1): sin evento de ledger propio.
   return record;
 }
@@ -131,15 +131,15 @@ function isStepsComplete(stepsRecorded: readonly string[]): boolean {
  * GRD-CD-01, GRD-CD-03, GRD-CD-04. Reemplaza el antiguo `recordRequiredSteps` (que marcaba los
  * 4 pasos como completos sin ninguna entrada real del usuario, violando GRD-CD-04): ahora cada
  * paso se registra uno a uno con los datos reales que exige DecisionStepRequest. */
-export function recordDecisionStep(
+export async function recordDecisionStep(
   ports: ConsentDecisionPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   decisionMakerRef: string,
   consentId: string,
   step: DecisionStepInput,
-): ConsentDecisionRecord {
-  const found = requireDecision(ports, tenantId, consentId);
+): Promise<ConsentDecisionRecord> {
+  const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
   if (found.decisionMakerRef !== decisionMakerRef) {
     // Mismo patrón que submitDecision: solo el DecisionMaker verificado de esta cadena.
@@ -169,7 +169,7 @@ export function recordDecisionStep(
     payload.subjectRef = found.subjectRef;
   }
 
-  ports.ledger.append({
+  await ports.ledger.append({
     eventType: step.stepKind,
     tenantId,
     aggregateType: "ConsentDecision",
@@ -188,7 +188,7 @@ export function recordDecisionStep(
     stepsRecorded,
     priorStepsComplete: isStepsComplete(stepsRecorded),
   };
-  ports.repo.save(updated);
+  await ports.repo.save(updated);
   return updated;
 }
 
@@ -220,15 +220,15 @@ function validatePurposes(config: LectorProBetaConfig, purposes: readonly Purpos
 }
 
 /** C3 (all_required_granted) / C5 (required_declined): PENDING -> GRANTED | DECLINED. */
-export function submitDecision(
+export async function submitDecision(
   ports: ConsentDecisionPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   decisionMakerRef: string,
   consentId: string,
   purposes: readonly PurposeDecision[],
-): ConsentDecisionRecord {
-  const found = requireDecision(ports, tenantId, consentId);
+): Promise<ConsentDecisionRecord> {
+  const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
   if (found.decisionMakerRef !== decisionMakerRef) {
     // GRD-CD-11 (actor_is_decision_maker): solo el DecisionMaker verificado de esta cadena.
@@ -243,7 +243,7 @@ export function submitDecision(
     throw new DomainError("ERR-CD-04");
   }
   assertRouteEligible(
-    ports.invitation.eligibility.isEligibleForIssuance(tenantId, found.contextRef, found.productRef),
+    await ports.invitation.eligibility.isEligibleForIssuance(tenantId, found.contextRef, found.productRef),
   ); // GRD-CD-12 (context_guards_at_submit, re-evaluado)
 
   validatePurposes(ports.config, purposes); // GRD-CD-06/07
@@ -253,7 +253,7 @@ export function submitDecision(
   );
 
   if (allGranted) {
-    const existingGrant = ports.repo.findActiveGrantByChain(tenantId, found.chainRef);
+    const existingGrant = await ports.repo.findActiveGrantByChain(tenantId, found.chainRef);
     if (existingGrant) {
       // GRD-CD-08 (single_active_grant_per_chain, INV-1).
       throw new DomainError("ERR-CD-01");
@@ -268,10 +268,10 @@ export function submitDecision(
   // HTTP).
   const receiptRef = randomUUID();
   const decided: ConsentDecisionRecord = { ...found, state: nextState, purposes, receiptRef };
-  ports.repo.save(decided);
+  await ports.repo.save(decided);
 
   for (const p of purposes) {
-    ports.ledger.append({
+    await ports.ledger.append({
       eventType: "PURPOSE_DECISION_RECORDED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -284,7 +284,7 @@ export function submitDecision(
   }
 
   if (allGranted) {
-    ports.ledger.append({
+    await ports.ledger.append({
       eventType: "CONSENT_GRANTED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -294,7 +294,7 @@ export function submitDecision(
       payload: { consentId, chainRef: found.chainRef },
       idempotencyKey: `${consentId}:granted`,
     });
-    ports.ledger.append({
+    await ports.ledger.append({
       eventType: "RECEIPT_CREATED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -306,9 +306,9 @@ export function submitDecision(
       payload: { receiptRef, managementLinkIssued: false },
       idempotencyKey: `${consentId}:receipt`,
     });
-    markInvitationCompleted(ports.invitation, tenantId, found.invitationRef, consentId); // I6
+    await markInvitationCompleted(ports.invitation, tenantId, found.invitationRef, consentId); // I6
   } else {
-    ports.ledger.append({
+    await ports.ledger.append({
       eventType: "CONSENT_DECLINED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -318,7 +318,7 @@ export function submitDecision(
       payload: { consentId, chainRef: found.chainRef },
       idempotencyKey: `${consentId}:declined`,
     });
-    ports.ledger.append({
+    await ports.ledger.append({
       eventType: "RECEIPT_CREATED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -330,7 +330,7 @@ export function submitDecision(
       payload: { receiptRef, managementLinkIssued: false },
       idempotencyKey: `${consentId}:receipt`,
     });
-    markInvitationDeclined(ports.invitation, tenantId, found.invitationRef, consentId); // I7
+    await markInvitationDeclined(ports.invitation, tenantId, found.invitationRef, consentId); // I7
   }
 
   return decided;

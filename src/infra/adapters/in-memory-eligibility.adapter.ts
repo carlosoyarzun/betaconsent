@@ -17,7 +17,7 @@ export function createInMemoryEligibilityAdapter(defaultEligible = true): Fixtur
   }
 
   return {
-    isEligibleForIssuance(tenantId, contextRef, productRef) {
+    async isEligibleForIssuance(tenantId, contextRef, productRef) {
       const override = overrides.get(key(tenantId, contextRef, productRef));
       return override ?? defaultEligible;
     },

@@ -26,8 +26,8 @@ export interface InvitationPorts {
 
 const INVITER_ROLES: readonly ActorRole[] = ["INVITER"];
 
-function requireInvitation(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): InvitationRecord {
-  const found = ports.invitationRepo.findByRef(tenantId, invitationRef);
+async function requireInvitation(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): Promise<InvitationRecord> {
+  const found = await ports.invitationRepo.findByRef(tenantId, invitationRef);
   if (!found) {
     // GRD-CM-01: invitationRef inexistente o de otro tenant -> 404 uniforme.
     throw new DomainError("ERR-CM-01");
@@ -49,16 +49,16 @@ export interface CreateInvitationInput {
 }
 
 /** I1: DRAFT. Guards cubiertos: GRD-CM-05, GRD-CM-07, GRD-IV-01. */
-export function createInvitation(
+export async function createInvitation(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   input: CreateInvitationInput,
-): InvitationRecord {
+): Promise<InvitationRecord> {
   assertActorRoleIn(actorRole, INVITER_ROLES); // GRD-CM-07
-  assertRouteEligible(ports.eligibility.isEligibleForIssuance(tenantId, input.contextRef, input.productRef)); // GRD-CM-05
+  assertRouteEligible(await ports.eligibility.isEligibleForIssuance(tenantId, input.contextRef, input.productRef)); // GRD-CM-05
 
-  const activeExisting = ports.invitationRepo.findActiveBySubject(tenantId, input.contextRef, input.subjectRef);
+  const activeExisting = await ports.invitationRepo.findActiveBySubject(tenantId, input.contextRef, input.subjectRef);
   if (activeExisting) {
     // GRD-IV-01 (single_non_terminal_invitation).
     throw new DomainError("ERR-IV-02");
@@ -75,8 +75,8 @@ export function createInvitation(
     ...(input.participationRef !== undefined ? { participationRef: input.participationRef } : {}),
     ...(input.reissueOfRef !== undefined ? { reissueOfRef: input.reissueOfRef } : {}),
   };
-  ports.invitationRepo.save(record);
-  ports.ledger.append({
+  await ports.invitationRepo.save(record);
+  await ports.ledger.append({
     eventType: "INVITATION_CREATED",
     tenantId,
     aggregateType: "Invitation",
@@ -113,14 +113,14 @@ export interface MarkInvitationReadyInput {
 }
 
 /** I2: DRAFT -> READY. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-03. */
-export function markInvitationReady(
+export async function markInvitationReady(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   invitationRef: string,
   input: MarkInvitationReadyInput,
-): InvitationRecord {
-  const found = requireInvitation(ports, tenantId, invitationRef);
+): Promise<InvitationRecord> {
+  const found = await requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
 
   if (found.state !== "DRAFT") {
@@ -142,8 +142,8 @@ export function markInvitationReady(
     recipientBinding,
     ...(input.recipientChannelRef !== undefined ? { recipientChannelRef: input.recipientChannelRef } : {}),
   };
-  ports.invitationRepo.save(ready);
-  ports.ledger.append({
+  await ports.invitationRepo.save(ready);
+  await ports.ledger.append({
     eventType: "INVITATION_READY",
     tenantId,
     aggregateType: "Invitation",
@@ -188,14 +188,14 @@ export interface SendInvitationOptions {
 }
 
 /** I3: READY -> SENT. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-04 (parcial), GRD-IV-05. */
-export function sendInvitation(
+export async function sendInvitation(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   invitationRef: string,
   options: SendInvitationOptions = {},
-): SendInvitationResult {
-  const found = requireInvitation(ports, tenantId, invitationRef);
+): Promise<SendInvitationResult> {
+  const found = await requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
 
   if (found.state !== "READY") {
@@ -210,8 +210,8 @@ export function sendInvitation(
   const tokenHash = hashToken(token);
   const expiresAt = options.expiresAt ?? found.expiresAt;
   const sent: InvitationRecord = { ...found, state: "SENT", tokenHash, ...(expiresAt !== undefined ? { expiresAt } : {}) };
-  ports.invitationRepo.save(sent);
-  ports.ledger.append({
+  await ports.invitationRepo.save(sent);
+  await ports.ledger.append({
     eventType: "INVITATION_SENT",
     tenantId,
     aggregateType: "Invitation",
@@ -231,7 +231,7 @@ export function sendInvitation(
 /** Efecto compartido de I4 (SENT -> OPENED), sin resolver el token: ambas vías de entrada
  * (openInvitation por token, openInvitationByRef por sesión ya resuelta en el GET de canje)
  * terminan aquí. Guards: GRD-IV-07 (expiración), GRD-IV-08 (first_post_only, idempotente). */
-function transitionInvitationToOpened(ports: InvitationPorts, tenantId: TenantId, found: InvitationRecord): InvitationRecord {
+async function transitionInvitationToOpened(ports: InvitationPorts, tenantId: TenantId, found: InvitationRecord): Promise<InvitationRecord> {
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) {
     throw new DomainError("ERR-IV-01");
   }
@@ -244,8 +244,8 @@ function transitionInvitationToOpened(ports: InvitationPorts, tenantId: TenantId
   }
 
   const opened: InvitationRecord = { ...found, state: "OPENED" };
-  ports.invitationRepo.save(opened);
-  ports.ledger.append({
+  await ports.invitationRepo.save(opened);
+  await ports.ledger.append({
     eventType: "INVITATION_OPENED",
     tenantId,
     aggregateType: "Invitation",
@@ -262,9 +262,9 @@ function transitionInvitationToOpened(ports: InvitationPorts, tenantId: TenantId
  * Uso: pruebas de dominio y cualquier llamador que aún tenga el token en mano. El flujo HTTP
  * (P-12, GET /i/{token} + POST /invitation/open) usa `openInvitationByRef` en su lugar, porque
  * el POST del contrato (EmptyCommand) nunca vuelve a recibir el token. */
-export function openInvitation(ports: InvitationPorts, tenantId: TenantId, token: string): InvitationRecord {
+export async function openInvitation(ports: InvitationPorts, tenantId: TenantId, token: string): Promise<InvitationRecord> {
   const tokenHash = hashToken(token);
-  const found = ports.invitationRepo.findByTokenHash(tokenHash);
+  const found = await ports.invitationRepo.findByTokenHash(tokenHash);
   if (!found || found.tenantId !== tenantId) {
     // GRD-IV-07: token inexistente, o de otro tenant -> 404 uniforme (ERR-IV-01).
     throw new DomainError("ERR-IV-01");
@@ -275,8 +275,8 @@ export function openInvitation(ports: InvitationPorts, tenantId: TenantId, token
 /** I4 vía sesión (P-12): el GET /i/{token} ya resolvió el token (GRD-IV-07), creó la sesión
  * LANDING con (tenantId, invitationRef) y descartó el token. Este POST transiciona por esa
  * referencia; nunca recibe ni vuelve a resolver el token (contracts/openapi EmptyCommand). */
-export function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): InvitationRecord {
-  const found = requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
+export async function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): Promise<InvitationRecord> {
+  const found = await requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
   return transitionInvitationToOpened(ports, tenantId, found);
 }
 
@@ -285,7 +285,7 @@ export function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, 
  * está expirada (GRD-IV-07); el llamador SIEMPRE trata `null` como 404 uniforme, sin distinguir
  * el motivo. GRD-IV-13 (cascada de cancelación pendiente) sigue diferido: requiere
  * tenant-context, fuera del alcance de este archivo (ver cabecera). */
-export function resolveInvitationForRedeem(ports: InvitationPorts, token: string): InvitationRecord | null {
+export async function resolveInvitationForRedeem(ports: InvitationPorts, token: string): Promise<InvitationRecord | null> {
   return resolveInvitationForRedeemByHash(ports, hashToken(token));
 }
 
@@ -294,28 +294,28 @@ export function resolveInvitationForRedeem(ports: InvitationPorts, token: string
  * volver a hashear un token en claro que ese GET ya no conserva (INV-CM-08 reforzado: el GET de
  * canje deja de leer la BD, consent-flow.handler.ts handleRedeemInvitationLink). Mismo
  * predicado que resolveInvitationForRedeem (GRD-IV-07: expiración), sin efectos. */
-export function resolveInvitationForRedeemByHash(ports: InvitationPorts, tokenHash: string): InvitationRecord | null {
-  const found = ports.invitationRepo.findByTokenHash(tokenHash);
+export async function resolveInvitationForRedeemByHash(ports: InvitationPorts, tokenHash: string): Promise<InvitationRecord | null> {
+  const found = await ports.invitationRepo.findByTokenHash(tokenHash);
   if (!found) return null;
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) return null;
   return found;
 }
 
 /** I5 (interno, disparado por otp-challenge V3): OPENED -> VERIFIED. */
-export function markInvitationVerified(
+export async function markInvitationVerified(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
   decisionMakerRef: string,
   verificationRef: string,
-): InvitationRecord {
-  const found = requireInvitation(ports, tenantId, invitationRef);
+): Promise<InvitationRecord> {
+  const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "OPENED") {
     throw new DomainError("ERR-CM-06");
   }
   const verified: InvitationRecord = { ...found, state: "VERIFIED", boundDecisionMakerRef: decisionMakerRef };
-  ports.invitationRepo.save(verified);
-  ports.ledger.append({
+  await ports.invitationRepo.save(verified);
+  await ports.ledger.append({
     eventType: "INVITATION_VERIFIED",
     tenantId,
     aggregateType: "Invitation",
@@ -329,19 +329,19 @@ export function markInvitationVerified(
 }
 
 /** I6 (interno, disparado por consent-decision C3): VERIFIED -> COMPLETED. */
-export function markInvitationCompleted(
+export async function markInvitationCompleted(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
   consentId: string,
-): InvitationRecord {
-  const found = requireInvitation(ports, tenantId, invitationRef);
+): Promise<InvitationRecord> {
+  const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
   const completed: InvitationRecord = { ...found, state: "COMPLETED" };
-  ports.invitationRepo.save(completed);
-  ports.ledger.append({
+  await ports.invitationRepo.save(completed);
+  await ports.ledger.append({
     eventType: "INVITATION_COMPLETED",
     tenantId,
     aggregateType: "Invitation",
@@ -355,19 +355,19 @@ export function markInvitationCompleted(
 }
 
 /** I7 (interno, disparado por consent-decision C5): VERIFIED -> DECLINED. */
-export function markInvitationDeclined(
+export async function markInvitationDeclined(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
   consentId: string,
-): InvitationRecord {
-  const found = requireInvitation(ports, tenantId, invitationRef);
+): Promise<InvitationRecord> {
+  const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
   const declined: InvitationRecord = { ...found, state: "DECLINED" };
-  ports.invitationRepo.save(declined);
-  ports.ledger.append({
+  await ports.invitationRepo.save(declined);
+  await ports.ledger.append({
     eventType: "INVITATION_DECLINED",
     tenantId,
     aggregateType: "Invitation",

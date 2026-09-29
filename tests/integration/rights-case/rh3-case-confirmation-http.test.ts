@@ -89,7 +89,7 @@ async function setUp(
 ): Promise<Fixture> {
   const consentId = `consent-${opts.chainRef}`;
   const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
-  ports.decision.repo.save({
+  await ports.decision.repo.save({
     consentId,
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -109,7 +109,7 @@ async function setUp(
   const revocationPorts = createDefaultRevocationFlowPorts(LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY, ports.decision.ledger, ports.decision.repo);
 
   // RC1 (rights-case.ts openRightsCase, sin HTTP en este slice: el caso ya OPEN de partida).
-  revocationPorts.rightsCase.rightsCaseRepo.save({
+  await revocationPorts.rightsCase.rightsCaseRepo.save({
     caseRef: opts.caseRef,
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
@@ -118,18 +118,18 @@ async function setUp(
   });
 
   // Revocation REQUESTED -> RH2 (attestHumanAssistedVerification, VERIFIED + attestedVerification).
-  revocationPorts.revocation.revocationRepo.save({
+  await revocationPorts.revocation.revocationRepo.save({
     revocationRef: opts.revocationRef,
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
     caseRef: opts.caseRef,
     status: "REQUESTED",
   });
-  attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, opts.revocationRef, opts.caseRef);
+  await attestHumanAssistedVerification(revocationPorts.revocation, TENANT_ID, opts.revocationRef, opts.caseRef);
 
   // RC3 (liga la Revocation al caso, mismo efecto que expressRevocationIntentInCase sin repetir
   // el handle HTTP en este slice): el handler resuelve el revocationRef desde el caso.
-  revocationPorts.rightsCase.rightsCaseRepo.save({
+  await revocationPorts.rightsCase.rightsCaseRepo.save({
     caseRef: opts.caseRef,
     tenantId: TENANT_ID,
     chainRef: opts.chainRef,
@@ -267,7 +267,7 @@ test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de
     assertRightsProblem(problemBody);
 
     // Sin efecto: RH3 paso 1 sigue sin registrar nada (ni el de la sesión ni el del body).
-    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     assert.equal(stored?.recordedByRef, undefined);
   } finally {
     await fx.close();
@@ -287,7 +287,7 @@ test("TEST-CNS-645: body limpio (sin recordedByRef) -> recordedByRef persistido 
       body: { confirmationGivenOnCasePage: true },
     });
     assert.equal(res.status, 200);
-    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     // La sesión de staff-login fue staff-synthetic-01: el registro persistido usa ese principal,
     // derivado exclusivamente de handleRecordCaseConfirmation -> session.principalRef
     // (case-confirmation.handler.ts) -> recordCaseConfirmationPendingCosign ctx.recordedByPrincipalRef
@@ -330,12 +330,12 @@ test("TEST-CNS-646: repetir la misma confirmación (mismo operador, mismo caso) 
     // RevocationRecord, no crea uno paralelo (revocation.ts recordCaseConfirmationPendingCosign:
     // `{...found, recordedByRef: ctx.recordedByPrincipalRef}` + `revocationRepo.save`, upsert
     // por (tenantId, revocationRef)).
-    const allEvents = fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef);
+    const allEvents = await fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef);
     assert.equal(allEvents.length, 1);
     assert.equal(allEvents[0]?.eventType, "REVOCATION_VERIFIED");
     const confirmedEvents = allEvents.filter((e) => e.eventType === "REVOCATION_CONFIRMED");
     assert.equal(confirmedEvents.length, 0);
-    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     assert.equal(stored?.status, "VERIFIED");
     assert.equal(stored?.recordedByRef, "staff-synthetic-01");
   } finally {
@@ -422,7 +422,7 @@ test("TEST-CNS-644: camino feliz — RC1 abierto -> RH2 atestado -> RH3 paso 1 r
     assertValid(validateApiPayload("CaseConfirmationAck", body));
 
     // Sin efecto sobre la Revocation (RH3 paso 1: effect none) — el caso "sigue abierto".
-    const stored = fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     assert.equal(stored?.status, "VERIFIED");
     assert.equal(stored?.recordedByRef, "staff-synthetic-02");
     assert.equal(stored?.cosignedByRef, undefined);

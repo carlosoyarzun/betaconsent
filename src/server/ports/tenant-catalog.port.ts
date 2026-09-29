@@ -19,7 +19,7 @@ export interface SchoolParticipationView {
 
 export interface TenantCatalogPort {
   /** GRD-IV-02/GRD-TC-03: el sujeto existe en el catálogo de ESTE tenant (lectura bajo RLS). */
-  subjectBelongsToTenant(tenantId: TenantId, subjectRef: string): boolean;
+  subjectBelongsToTenant(tenantId: TenantId, subjectRef: string): Promise<boolean>;
   /** Devuelve null si la participación no existe en este tenant (desconocido = fail-closed). */
-  findParticipation(tenantId: TenantId, participationRef: string): SchoolParticipationView | null;
+  findParticipation(tenantId: TenantId, participationRef: string): Promise<SchoolParticipationView | null>;
 }

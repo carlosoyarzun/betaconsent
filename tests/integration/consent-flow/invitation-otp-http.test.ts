@@ -55,19 +55,19 @@ function startServer(): Promise<Harness> {
   });
 }
 
-function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): string {
-  createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): Promise<string> {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: "BETA_2026_01",
     productRef: "LECTORPRO",
     subjectRef,
   });
-  markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
   return token;
 }
 
@@ -136,13 +136,13 @@ async function redeem(baseUrl: string, token: string): Promise<string | undefine
 test("TEST-CNS-498: POST /invitation/open sin CSRF (Origin ausente) -> ERR-CM-09 (403), sin transición", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-498", "subject-498@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-498", "subject-498@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const res = await post(harness.baseUrl, { path: "/invitation/open", sessionCookie: landingSession });
     assert.equal(res.status, 403);
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "CSRF_REJECTED");
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-498")?.state, "SENT");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-498"))?.state, "SENT");
   } finally {
     await harness.close();
   }
@@ -161,13 +161,13 @@ test("TEST-CNS-499: POST /invitation/open sin sesión LANDING previa (sin canjea
 test("TEST-CNS-500: I4 vía HTTP transiciona SENT -> OPENED y fija la cookie de sesión (D5)", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-500", "subject-500@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-500", "subject-500@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     assert.equal(res.status, 200);
     const cookies = parseSetCookie(res);
     assert.ok(cookies[SESSION_COOKIE_NAME], "debe fijar __Host-cns-session");
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-500")?.state, "OPENED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-500"))?.state, "OPENED");
   } finally {
     await harness.close();
   }
@@ -186,7 +186,7 @@ test("TEST-CNS-501: GET /invitation/open no existe (404); el único GET de este 
 test("TEST-CNS-502: V1/V3 vía HTTP — /otp/request emite el código al sink y /otp/submit con el código correcto verifica (crea la sesión con decisionMakerRef derivado del canal, nunca del body)", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-502", "subject-502@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-502", "subject-502@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -214,7 +214,7 @@ test("TEST-CNS-502: V1/V3 vía HTTP — /otp/request emite el código al sink y 
     const body = (await submitted.json()) as { result: string };
     assert.equal(body.result, "VERIFIED");
 
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-502")?.state, "VERIFIED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-502"))?.state, "VERIFIED");
   } finally {
     await harness.close();
   }
@@ -223,7 +223,7 @@ test("TEST-CNS-502: V1/V3 vía HTTP — /otp/request emite el código al sink y 
 test("TEST-CNS-503: código incorrecto en /otp/submit -> 422 uniforme, sin filtrar intentos restantes", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-503", "subject-503@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-503", "subject-503@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -242,7 +242,7 @@ test("TEST-CNS-503: código incorrecto en /otp/submit -> 422 uniforme, sin filtr
     // (OTP_CODE_REJECTED), no el ID interno ni el literal "OTP_REJECTED" (P1, ver
     // tests/contract/http/consent-flow-http-contract.test.ts TEST-CNS-519).
     assert.equal(body.code, "OTP_CODE_REJECTED");
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-503")?.state, "OPENED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-503"))?.state, "OPENED");
   } finally {
     await harness.close();
   }
@@ -251,7 +251,7 @@ test("TEST-CNS-503: código incorrecto en /otp/submit -> 422 uniforme, sin filtr
 test("TEST-CNS-548: V2r vía HTTP — POST /otp/resend responde 202 UniformAccepted y reemplaza el código en el sink; el nuevo código verifica", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-548", "subject-548@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-548", "subject-548@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -283,7 +283,7 @@ test("TEST-CNS-548: V2r vía HTTP — POST /otp/resend responde 202 UniformAccep
 test("TEST-CNS-549: POST /otp/resend sin CSRF -> 403 CSRF_REJECTED, sin reemplazar el código (GRD-CM-10)", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-549", "subject-549@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-549", "subject-549@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -306,7 +306,7 @@ test("TEST-CNS-549: POST /otp/resend sin CSRF -> 403 CSRF_REJECTED, sin reemplaz
 test("TEST-CNS-550: POST /otp/resend agota el límite (P-06) -> 409 OTP_RESEND_LIMIT (ERR-OT-09)", async () => {
   const harness = await startServer();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-550", "subject-550@example.invalid");
+    const token = await seedSentInvitation(harness.ports, "inv-550", "subject-550@example.invalid");
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];

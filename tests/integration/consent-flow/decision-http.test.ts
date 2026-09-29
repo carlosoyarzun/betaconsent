@@ -105,18 +105,18 @@ const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", 
 /** Recorre invitación -> OTP hasta dejar una sesión verificada (post-V3), lista para
  * /decision/submit. Devuelve la cookie de sesión verificada. */
 async function bringToVerifiedSession(harness: Harness, invitationRef: string, subjectRef: string): Promise<string> {
-  createInvitation(harness.ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(harness.ports.invitation, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef,
   });
-  markInvitationReady(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = sendInvitation(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef);
 
   const redeemed = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
   const handleCookie = parseSetCookie(redeemed)[INVITATION_HANDLE_COOKIE_NAME];
@@ -233,10 +233,10 @@ test("TEST-CNS-505: /decision/submit ignora decisionMakerRef del body; el actor 
     const body = (await res.json()) as { consentId: string; state: string };
     assert.equal(body.state, "GRANTED");
 
-    const decision = harness.ports.decision.repo.findByConsentId(TENANT_ID, body.consentId);
+    const decision = await harness.ports.decision.repo.findByConsentId(TENANT_ID, body.consentId);
     // El decisionMakerRef persistido nunca es el valor "attacker-supplied-dm" del body.
     assert.notEqual(decision?.decisionMakerRef, "attacker-supplied-dm");
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-505")?.state, "COMPLETED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-505"))?.state, "COMPLETED");
   } finally {
     await harness.close();
   }
@@ -261,7 +261,7 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string };
     assert.equal(body.state, "DECLINED");
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-506")?.state, "DECLINED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-506"))?.state, "DECLINED");
   } finally {
     await harness.close();
   }

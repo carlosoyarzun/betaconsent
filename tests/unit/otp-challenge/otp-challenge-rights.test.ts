@@ -23,46 +23,46 @@ function makePorts() {
   };
 }
 
-test("TEST-CNS-571: requestRightsOtp scope MANAGE emite OTP_ISSUED y el código nunca sale en claro del sink más allá del code (INV-OT-02)", () => {
+test("TEST-CNS-571: requestRightsOtp scope MANAGE emite OTP_ISSUED y el código nunca sale en claro del sink más allá del code (INV-OT-02)", async () => {
   const ports = makePorts();
-  const record = requestRightsOtp(ports, "tenant-1", "ver-manage-1", "MANAGE", "chain-1", "mgmt:chain-1");
+  const record = await requestRightsOtp(ports, "tenant-1", "ver-manage-1", "MANAGE", "chain-1", "mgmt:chain-1");
   assert.equal(record.scope, "MANAGE");
   assert.equal(record.state, "CODE_SENT");
   assert.equal(record.parentRef, "chain-1");
   assert.ok(!("code" in record));
-  const events = ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", "ver-manage-1");
+  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", "ver-manage-1");
   assert.equal(events[0]?.eventType, "OTP_ISSUED");
 });
 
-test("TEST-CNS-572: submitRightsOtp con el código correcto (scope REVOCATION) -> VERIFIED, emite DECISION_MAKER_CHANNEL_VERIFIED", () => {
+test("TEST-CNS-572: submitRightsOtp con el código correcto (scope REVOCATION) -> VERIFIED, emite DECISION_MAKER_CHANNEL_VERIFIED", async () => {
   const ports = makePorts();
-  requestRightsOtp(ports, "tenant-1", "ver-rev-1", "REVOCATION", "chain-1", "mgmt:chain-1");
+  await requestRightsOtp(ports, "tenant-1", "ver-rev-1", "REVOCATION", "chain-1", "mgmt:chain-1");
   const code = ports.channel.sent[0]?.code ?? "";
   assert.ok(code.length > 0);
-  const verified = submitRightsOtp(ports, "tenant-1", "ver-rev-1", "REVOCATION", code);
+  const verified = await submitRightsOtp(ports, "tenant-1", "ver-rev-1", "REVOCATION", code);
   assert.equal(verified.state, "VERIFIED");
-  const events = ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", "ver-rev-1");
+  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", "ver-rev-1");
   assert.ok(events.some((e) => e.eventType === "DECISION_MAKER_CHANNEL_VERIFIED"));
 });
 
-test("TEST-CNS-573: submitRightsOtp agota los intentos (maxAttempts) -> LOCKED (V4), nunca FAILED de la Revocation (INV-OT-05)", () => {
+test("TEST-CNS-573: submitRightsOtp agota los intentos (maxAttempts) -> LOCKED (V4), nunca FAILED de la Revocation (INV-OT-05)", async () => {
   const ports = makePorts();
-  requestRightsOtp(ports, "tenant-1", "ver-rev-2", "REVOCATION", "chain-1", "mgmt:chain-1");
+  await requestRightsOtp(ports, "tenant-1", "ver-rev-2", "REVOCATION", "chain-1", "mgmt:chain-1");
   for (let i = 0; i < 3; i += 1) {
-    assert.throws(
+    await assert.rejects(
       () => submitRightsOtp(ports, "tenant-1", "ver-rev-2", "REVOCATION", "000000"),
       (err: unknown) => err instanceof DomainError,
     );
   }
-  const record = ports.otpRepo.findByRef("tenant-1", "ver-rev-2");
+  const record = await ports.otpRepo.findByRef("tenant-1", "ver-rev-2");
   assert.equal(record?.state, "LOCKED");
 });
 
-test("TEST-CNS-574: submitRightsOtp con el scope equivocado (VERIFIED MANAGE no sirve para REVOCATION) -> rechazo determinista (ERR-OT-05/scope misuse)", () => {
+test("TEST-CNS-574: submitRightsOtp con el scope equivocado (VERIFIED MANAGE no sirve para REVOCATION) -> rechazo determinista (ERR-OT-05/scope misuse)", async () => {
   const ports = makePorts();
-  requestRightsOtp(ports, "tenant-1", "ver-manage-2", "MANAGE", "chain-1", "mgmt:chain-1");
+  await requestRightsOtp(ports, "tenant-1", "ver-manage-2", "MANAGE", "chain-1", "mgmt:chain-1");
   const code = ports.channel.sent[0]?.code ?? "";
-  assert.throws(
+  await assert.rejects(
     () => submitRightsOtp(ports, "tenant-1", "ver-manage-2", "REVOCATION", code),
     (err: unknown) => err instanceof DomainError,
   );

@@ -61,19 +61,19 @@ function startHarness(): Promise<Harness> {
   });
 }
 
-function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, expiresAt?: Date): string {
-  createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, expiresAt?: Date): Promise<string> {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef: `subject-${invitationRef}@example.invalid`,
   });
-  markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: expiresAt ?? new Date(Date.now() + 60_000),
     recipientChannelRef: `channel-${invitationRef}@example.invalid`,
   });
-  const { token } = sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
   return token;
 }
 
@@ -104,10 +104,10 @@ async function redeemHeaders(baseUrl: string, path: string): Promise<RedeemHeade
 test("TEST-CNS-610: GET /i/{token} responde idéntico (status, headers, Location, atributos y largo del Set-Cookie) para un token válido, inexistente, ya abierto (I4 ya corrida) y expirado", async () => {
   const harness = await startHarness();
   try {
-    const validToken = seedSentInvitation(harness.ports, "inv-610-valid");
-    const expiredToken = seedSentInvitation(harness.ports, "inv-610-expired", new Date(Date.now() - 1000));
+    const validToken = await seedSentInvitation(harness.ports, "inv-610-valid");
+    const expiredToken = await seedSentInvitation(harness.ports, "inv-610-expired", new Date(Date.now() - 1000));
     // "usado": I4 ya corrió (INVITATION_OPENED); el canje uniforme no distingue este estado tampoco.
-    const usedToken = seedSentInvitation(harness.ports, "inv-610-used");
+    const usedToken = await seedSentInvitation(harness.ports, "inv-610-used");
 
     const candidates = [validToken, "token-inexistente-610", expiredToken, usedToken];
     const responses: RedeemHeaders[] = [];
@@ -156,7 +156,7 @@ test("TEST-CNS-611: GET /m/{token} responde idéntico (status, headers, Location
 test("TEST-CNS-612: GET /i/{token} nunca llama invitationRepo.findByTokenHash ni findByRef (hashea sin leer la BD, SEC-CNS-014)", async () => {
   const harness = await startHarness();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-612");
+    const token = await seedSentInvitation(harness.ports, "inv-612");
     let findByTokenHashCalls = 0;
     let findByRefCalls = 0;
     const realRepo: InvitationRepositoryPort = harness.ports.invitation.invitationRepo;
@@ -221,7 +221,7 @@ test("TEST-CNS-613: GET /m/{token} nunca llama tenantHandle.resolve ni resolveBy
 test("TEST-CNS-614: GET /welcome responde 404 byte-idéntico (9:12) para un handle inexistente, uno de una invitación expirada y uno con token demasiado largo; ningún GET emite INVITATION_OPENED", async () => {
   const harness = await startHarness();
   try {
-    const expiredToken = seedSentInvitation(harness.ports, "inv-614-expired", new Date(Date.now() - 1000));
+    const expiredToken = await seedSentInvitation(harness.ports, "inv-614-expired", new Date(Date.now() - 1000));
     const tooLongToken = "x".repeat(5_000);
 
     const htmls: string[] = [];
@@ -235,7 +235,7 @@ test("TEST-CNS-614: GET /welcome responde 404 byte-idéntico (9:12) para un hand
     assert.equal(htmls[0], htmls[1]);
     assert.equal(htmls[1], htmls[2]);
 
-    const events = harness.ports.invitation.ledger.listByAggregate(TENANT_ID, "Invitation", "inv-614-expired");
+    const events = await harness.ports.invitation.ledger.listByAggregate(TENANT_ID, "Invitation", "inv-614-expired");
     assert.equal(events.some((e) => e.eventType === "INVITATION_OPENED"), false);
   } finally {
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
@@ -261,7 +261,7 @@ test("TEST-CNS-615: GET /manage responde 404 byte-idéntico (59:3) para un handl
     }
     assert.equal(htmls[0], htmls[1]);
 
-    const events = harness.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", "chain-615");
+    const events = await harness.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", "chain-615");
     assert.equal(events.length, 0);
   } finally {
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
@@ -275,7 +275,7 @@ test("TEST-CNS-615: GET /manage responde 404 byte-idéntico (59:3) para un handl
 test("TEST-CNS-616: el handle __Host-cns-i-handle no sirve como sesión en /welcome vía sessionCookieName, ni el handle __Host-cns-m-handle en /manage; solo bajo su propio nombre de cookie funcionan", async () => {
   const harness = await startHarness();
   try {
-    const token = seedSentInvitation(harness.ports, "inv-616");
+    const token = await seedSentInvitation(harness.ports, "inv-616");
     const redeemedI = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
     const iHandle = parseSetCookie(redeemedI)[INVITATION_HANDLE_COOKIE_NAME]!;
 
@@ -352,7 +352,7 @@ async function redeemInvitationFull(baseUrl: string, token: string): Promise<{ s
 test("TEST-CNS-618: /welcome — sesión A vigente + handle inválido -> error uniforme y la sesión A queda borrada; sesión A + handle válido de un enlace B distinto -> contexto de B, nunca el de A", async () => {
   const harness = await startHarness();
   try {
-    const tokenA = seedSentInvitation(harness.ports, "inv-618-a");
+    const tokenA = await seedSentInvitation(harness.ports, "inv-618-a");
     const { sessionCookie: sessionA } = await redeemInvitationFull(harness.baseUrl, tokenA);
     assert.ok(sessionA);
 
@@ -371,7 +371,7 @@ test("TEST-CNS-618: /welcome — sesión A vigente + handle inválido -> error u
 
     // Sesión A vigente + handle válido de un enlace B distinto (segundo hijo, p. ej.): el
     // contexto pasa a ser el de B, nunca el de A ("el último enlace abierto manda").
-    const tokenB = seedSentInvitation(harness.ports, "inv-618-b");
+    const tokenB = await seedSentInvitation(harness.ports, "inv-618-b");
     const redeemedB = await fetch(`${harness.baseUrl}/i/${tokenB}`, { redirect: "manual" });
     const handleB = parseSetCookie(redeemedB)[INVITATION_HANDLE_COOKIE_NAME]!;
     const welcomeB = await fetch(`${harness.baseUrl}/welcome`, {
@@ -392,8 +392,8 @@ test("TEST-CNS-618: /welcome — sesión A vigente + handle inválido -> error u
       body: "{}",
     });
     assert.equal(opened.status, 200);
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-618-b")?.state, "OPENED");
-    assert.equal(harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-618-a")?.state, "SENT");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-618-b"))?.state, "OPENED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-618-a"))?.state, "SENT");
   } finally {
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
   }
@@ -447,7 +447,7 @@ test("TEST-CNS-619: /manage — sesión A vigente + handle inválido -> error un
     // Sin sesión MANAGE verificada (V3) todavía: 404 uniforme, pero la aserción que importa aquí
     // es que R1 nunca alcanza a operar sobre chain-619-a (nunca se creó ninguna Revocation ahí).
     assert.equal(r1.status, 404);
-    assert.equal(harness.revocationPorts.revocation.revocationRepo.findOpenByChain(TENANT_ID, "chain-619-a"), null);
+    assert.equal(await harness.revocationPorts.revocation.revocationRepo.findOpenByChain(TENANT_ID, "chain-619-a"), null);
   } finally {
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
   }

@@ -57,5 +57,5 @@ export interface OutboxPort {
    * Encola el evento. Si (tenantId, dedupeKey) ya existe devuelve el registro original (mismo
    * eventId) sin duplicar. En el consumidor el dedupe es por eventId (at-least-once).
    */
-  enqueue(input: OutboxEnqueueInput): OutboxRecord;
+  enqueue(input: OutboxEnqueueInput): Promise<OutboxRecord>;
 }

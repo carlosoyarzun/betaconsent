@@ -152,17 +152,17 @@ function sameManageIdentity(session: ConsentSessionPayload, tenantId: string, ch
   return session.tenantId === tenantId && session.chainRef === chainRef && session.revokedDecisionRef === revokedDecisionRef;
 }
 
-export function resolveManageLandingSession(
+export async function resolveManageLandingSession(
   ports: Pick<RevocationFlowPorts, "tenantHandle">,
   sessionSecret: Buffer,
   existingSession: ConsentSessionPayload | null,
   manageHandleKey: Buffer,
   cookies: Readonly<Record<string, string>>,
   manageEntryHandleCookieName: string,
-): ManageLandingView {
+): Promise<ManageLandingView> {
   const handle = decodeLinkHandle(manageHandleKey, MANAGE_ENTRY_HANDLE_TYPE, cookies[manageEntryHandleCookieName]);
   if (handle) {
-    const resolved = ports.tenantHandle.resolveByHash(handle.h);
+    const resolved = await ports.tenantHandle.resolveByHash(handle.h);
     if (!resolved) {
       // Handle inválido: nunca reutiliza una sesión previa, la que sea.
       return { session: null, clearSessionCookie: Boolean(existingSession) };
@@ -187,12 +187,12 @@ export function resolveManageLandingSession(
 // POST /manage/revocation (R1). API-CNS-130. Requiere sesión MANAGE verificada (V3 MANAGE);
 // chainRef/revokedDecisionRef SIEMPRE de la sesión, nunca del body.
 // ---------------------------------------------------------------------------
-export function handleRequestRevocation(
+export async function handleRequestRevocation(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -202,7 +202,7 @@ export function handleRequestRevocation(
   const revocationRef = session.revocationRef ?? randomUUID();
   let revocation;
   try {
-    revocation = requestRevocation(ports.revocation, session.tenantId, {
+    revocation = await requestRevocation(ports.revocation, session.tenantId, {
       revocationRef,
       chainRef: session.chainRef,
       revokedDecisionRef: session.revokedDecisionRef,
@@ -224,12 +224,12 @@ export function handleRequestRevocation(
 // POST /manage/revocation/verify (R2). API-CNS-131. Requiere V3 scope REVOCATION ya correcto
 // en esta sesión (session.revocationOtpVerified), posterior a R1 (GRD-RV-05).
 // ---------------------------------------------------------------------------
-export function handleVerifyRevocation(
+export async function handleVerifyRevocation(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -237,7 +237,7 @@ export function handleVerifyRevocation(
   if (!session || !session.revocationRef || !session.revocationOtpVerified || !session.revocationVerificationRef) return uniformNotFound();
 
   try {
-    const verified = verifyRevocationOtp(ports.revocation, session.tenantId, session.revocationRef, session.revocationVerificationRef);
+    const verified = await verifyRevocationOtp(ports.revocation, session.tenantId, session.revocationRef, session.revocationVerificationRef);
     return { status: 200, body: { revocationRef: verified.revocationRef, status: verified.status } };
   } catch (err) {
     if (err instanceof DomainError) {
@@ -252,12 +252,12 @@ export function handleVerifyRevocation(
 // POST /manage/revocation/confirm (R3). API-CNS-132. Confirmación explícita de retiro total;
 // en la misma llamada aplica R4 (ver nota en confirmRevocation).
 // ---------------------------------------------------------------------------
-export function handleConfirmRevocation(
+export async function handleConfirmRevocation(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -265,7 +265,7 @@ export function handleConfirmRevocation(
   if (!session || !session.revocationRef || !session.manageDecisionMakerRef) return uniformNotFound();
 
   try {
-    const applied = confirmRevocation(ports.revocation, session.tenantId, session.revocationRef);
+    const applied = await confirmRevocation(ports.revocation, session.tenantId, session.revocationRef);
     return { status: 200, body: { revocationRef: applied.revocationRef, status: applied.status } };
   } catch (err) {
     if (err instanceof DomainError) {
@@ -280,12 +280,12 @@ export function handleConfirmRevocation(
 // POST /manage/revocation/withdraw (R8). API-CNS-133. Retiro explícito de la solicitud;
 // independiente del authPath proyectado (basta la sesión MANAGE vigente de la cadena).
 // ---------------------------------------------------------------------------
-export function handleWithdrawRevocation(
+export async function handleWithdrawRevocation(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -293,7 +293,7 @@ export function handleWithdrawRevocation(
   if (!session || !session.revocationRef || !session.manageDecisionMakerRef) return uniformNotFound();
 
   try {
-    const withdrawn = withdrawRevocation(ports.revocation, session.tenantId, session.revocationRef);
+    const withdrawn = await withdrawRevocation(ports.revocation, session.tenantId, session.revocationRef);
     return { status: 200, body: { revocationRef: withdrawn.revocationRef, status: withdrawn.status } };
   } catch (err) {
     if (err instanceof DomainError) {
@@ -310,19 +310,19 @@ export function handleWithdrawRevocation(
 // pantalla bloqueada, antes de poder verificar). Ver nota de alcance en
 // revocation.ts issueRecoveryLinkBearer (la PR 2 crea el token real de /r/{token}).
 // ---------------------------------------------------------------------------
-export function handleIssueRecoveryLink(
+export async function handleIssueRecoveryLink(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.chainRef || !session.revokedDecisionRef) return uniformNotFound();
 
-  issueRecoveryLinkBearer(ports.revocation, session.tenantId, session.chainRef, session.revokedDecisionRef, "LIMIT_REACHED");
+  await issueRecoveryLinkBearer(ports.revocation, session.tenantId, session.chainRef, session.revokedDecisionRef, "LIMIT_REACHED");
   // UniformAccepted (contracts/openapi API-CNS-134): nunca revela si el canal existe.
   return { status: 202, body: { result: "RECEIVED" } };
 }
@@ -330,19 +330,19 @@ export function handleIssueRecoveryLink(
 // ---------------------------------------------------------------------------
 // POST /rights-case/open (RC1 fuente BEARER). Mismo alcance: solo exige el handle MANAGE_ENTRY.
 // ---------------------------------------------------------------------------
-export function handleOpenRightsCase(
+export async function handleOpenRightsCase(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "rightsCase">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.chainRef || !session.revokedDecisionRef) return uniformNotFound();
 
-  const rightsCase = openRightsCase(ports.rightsCase, session.tenantId, {
+  const rightsCase = await openRightsCase(ports.rightsCase, session.tenantId, {
     caseRef: `case-${session.chainRef}`,
     chainRef: session.chainRef,
     revokedDecisionRef: session.revokedDecisionRef,
@@ -387,16 +387,16 @@ export interface RecoveryConfirmView {
   readonly tokenHash?: string;
 }
 
-export function resolveRecoveryConfirmView(
+export async function resolveRecoveryConfirmView(
   ports: Pick<RevocationFlowPorts, "revocation">,
   recoveryHandleKey: Buffer,
   cookieHeader: string | undefined,
   recoveryHandleCookieName: string,
-): RecoveryConfirmView {
+): Promise<RecoveryConfirmView> {
   const cookies = parseCookies(cookieHeader);
   const handle = decodeRecoveryHandle(recoveryHandleKey, cookies[recoveryHandleCookieName]);
   if (!handle) return { eligible: false };
-  const eligibility = evaluateRecoveryTokenEligibilityByHash(ports.revocation, handle.h);
+  const eligibility = await evaluateRecoveryTokenEligibilityByHash(ports.revocation, handle.h);
   if (!eligibility) return { eligible: false };
   return { eligible: true, tokenHash: handle.h };
 }
@@ -410,13 +410,13 @@ export function resolveRecoveryConfirmView(
 // (P2, fijación de cookie de recuperación): si `__Host-cns-recovery` cambió entre el render de
 // 33:87 y este POST, la recomputación con el hash ACTUAL no coincide y el POST se rechaza.
 // ---------------------------------------------------------------------------
-export function handleRecoveryRevoke(
+export async function handleRecoveryRevoke(
   request: RawConsentRequest,
   ports: Pick<RevocationFlowPorts, "revocation">,
   config: RightsCaseHttpConfig,
   recoveryHandleKey: Buffer,
   recoveryCsrfKey: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   const csrfFailure = checkCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
@@ -437,7 +437,7 @@ export function handleRecoveryRevoke(
     return problem(422, "ERR-CM-06");
   }
 
-  const outcome = revokeWithRecoveryLinkByHash(ports.revocation, handle.h);
+  const outcome = await revokeWithRecoveryLinkByHash(ports.revocation, handle.h);
   if (outcome.kind === "CONFIRMED") {
     return { status: 200, body: { revocationRef: outcome.revocationRef, state: "CONFIRMED", receiptDelivery: "BOUND_CHANNEL" } };
   }

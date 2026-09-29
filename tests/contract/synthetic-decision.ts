@@ -31,6 +31,6 @@ export function syntheticDecision(tenantId: string, consentId: string): ConsentD
 export function withSyntheticFallback(repo: ConsentDecisionRepositoryPort): ConsentDecisionRepositoryPort {
   return {
     ...repo,
-    findByConsentId: (tenantId, consentId) => repo.findByConsentId(tenantId, consentId) ?? syntheticDecision(tenantId, consentId),
+    findByConsentId: async (tenantId, consentId) => await repo.findByConsentId(tenantId, consentId) ?? syntheticDecision(tenantId, consentId),
   };
 }

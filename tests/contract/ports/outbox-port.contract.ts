@@ -25,8 +25,8 @@ export function runOutboxPortContract(adapterName: string, makeAdapter: () => Ou
   const TB = fixtureUuid("tenant-694-b");
   const R = fixtureUuid("rev-694");
 
-  test(`TEST-CNS-694 OutboxPort contract (${adapterName}): enqueue devuelve un sobre válido, PENDING, con eventId UUIDv4 asignado por el adaptador`, () => {
-    const record: OutboxRecord = makeAdapter().enqueue(input(TA, R));
+  test(`TEST-CNS-694 OutboxPort contract (${adapterName}): enqueue devuelve un sobre válido, PENDING, con eventId UUIDv4 asignado por el adaptador`, async () => {
+    const record: OutboxRecord = await makeAdapter().enqueue(input(TA, R));
     assert.equal(record.status, "PENDING");
     assert.equal(record.tenantId, TA);
     assert.ok(validateOutboxEvent(record.envelope).ok);
@@ -34,20 +34,20 @@ export function runOutboxPortContract(adapterName: string, makeAdapter: () => Ou
     assert.equal(record.envelope.dataClass, "SYNTHETIC");
   });
 
-  test(`TEST-CNS-694 OutboxPort contract (${adapterName}): dedupe por (tenant, key): repetir devuelve el mismo registro (mismo eventId)`, () => {
+  test(`TEST-CNS-694 OutboxPort contract (${adapterName}): dedupe por (tenant, key): repetir devuelve el mismo registro (mismo eventId)`, async () => {
     const outbox = makeAdapter();
-    const first = outbox.enqueue(input(TA, R));
-    const second = outbox.enqueue(input(TA, R));
+    const first = await outbox.enqueue(input(TA, R));
+    const second = await outbox.enqueue(input(TA, R));
     assert.equal(second.envelope.eventId, first.envelope.eventId);
     // Otra key en el mismo tenant sí crea un registro nuevo.
-    const other = outbox.enqueue(input(TA, R, `${R}:otra`));
+    const other = await outbox.enqueue(input(TA, R, `${R}:otra`));
     assert.notEqual(other.envelope.eventId, first.envelope.eventId);
   });
 
-  test(`TEST-CNS-694 OutboxPort contract (${adapterName}): la misma key en otro tenant da 2 registros distintos (tenant_id es la clave de aislamiento)`, () => {
+  test(`TEST-CNS-694 OutboxPort contract (${adapterName}): la misma key en otro tenant da 2 registros distintos (tenant_id es la clave de aislamiento)`, async () => {
     const outbox = makeAdapter();
-    const a = outbox.enqueue(input(TA, R));
-    const b = outbox.enqueue(input(TB, R));
+    const a = await outbox.enqueue(input(TA, R));
+    const b = await outbox.enqueue(input(TB, R));
     assert.notEqual(a.envelope.eventId, b.envelope.eventId);
     assert.equal(a.envelope.tenantRef, TA);
     assert.equal(b.envelope.tenantRef, TB);

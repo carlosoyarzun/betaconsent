@@ -60,55 +60,55 @@ function makeAllPorts() {
 /** Recorre C2 completo (los 3 pasos exigidos por GRD-CD-05: CONSENT_VERSION_VIEWED,
  * DECISION_MAKER_AUTHORITY_DECLARED, SUBJECT_CONFIRMED); CONTEXT_INFORMATION_VIEWED no es
  * requerido y se omite aquí a propósito (ver REQUIRED_STEP_KINDS en consent-decision.ts). */
-function recordRequiredSteps(
+async function recordRequiredSteps(
   consentPorts: ConsentDecisionPorts,
   tenantId: string,
   consentId: string,
   decisionMakerRef = "dm-1",
-): void {
-  recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
-  recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, {
+): Promise<void> {
+  await recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, { stepKind: "CONSENT_VERSION_VIEWED" });
+  await recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, {
     stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
     relationshipRef: "SYNTHETIC_GUARDIAN",
     authorityDeclared: true,
   });
-  recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, {
+  await recordDecisionStep(consentPorts, tenantId, "DECISION_MAKER", decisionMakerRef, consentId, {
     stepKind: "SUBJECT_CONFIRMED",
     subjectConfirmed: true,
   });
 }
 
 /** Recorre invitación -> OTP hasta dejar la Invitation VERIFIED con un decisionMakerRef. */
-function verifiedInvitation(
+async function verifiedInvitation(
   ports: ReturnType<typeof makeAllPorts>,
   decisionMakerRef = "dm-1",
   invitationRef = "inv-1",
   verificationRef = "ver-1",
   subjectRef = "test+subject-1@example.invalid",
 ) {
-  createInvitation(ports.invitationPorts, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitationPorts, TENANT_ID, "INVITER", {
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef,
   });
-  markInvitationReady(ports.invitationPorts, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(ports.invitationPorts, TENANT_ID, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = sendInvitation(ports.invitationPorts, TENANT_ID, "INVITER", invitationRef);
-  openInvitation(ports.invitationPorts, TENANT_ID, token);
-  requestOtp(ports.otpPorts, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
+  const { token } = await sendInvitation(ports.invitationPorts, TENANT_ID, "INVITER", invitationRef);
+  await openInvitation(ports.invitationPorts, TENANT_ID, token);
+  await requestOtp(ports.otpPorts, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
   const sink = ports.otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
   const code = sink.sent[sink.sent.length - 1]?.code ?? "";
-  submitOtp(ports.otpPorts, TENANT_ID, verificationRef, code, decisionMakerRef);
+  await submitOtp(ports.otpPorts, TENANT_ID, verificationRef, code, decisionMakerRef);
 }
 
-test("TEST-CNS-490: C1 crea PENDING solo si la Invitation está VERIFIED con este decisionMakerRef (GRD-CD-01/02)", () => {
+test("TEST-CNS-490: C1 crea PENDING solo si la Invitation está VERIFIED con este decisionMakerRef (GRD-CD-01/02)", async () => {
   const ports = makeAllPorts();
-  verifiedInvitation(ports);
-  const decision = startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports);
+  const decision = await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
@@ -116,7 +116,7 @@ test("TEST-CNS-490: C1 crea PENDING solo si la Invitation está VERIFIED con est
   });
   assert.equal(decision.state, "PENDING");
 
-  assert.throws(
+  await assert.rejects(
     () =>
       startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
         consentId: "consent-2",
@@ -128,130 +128,130 @@ test("TEST-CNS-490: C1 crea PENDING solo si la Invitation está VERIFIED con est
   );
 });
 
-test("TEST-CNS-491: C3 sin los pasos previos de C2 -> ERR-CD-04 (GRD-CD-05, INV-2)", () => {
+test("TEST-CNS-491: C3 sin los pasos previos de C2 -> ERR-CD-04 (GRD-CD-05, INV-2)", async () => {
   const ports = makeAllPorts();
-  verifiedInvitation(ports);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
     decisionMakerRef: "dm-1",
   });
-  assert.throws(
+  await assert.rejects(
     () => submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", GRANT_ALL),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CD-04",
   );
 });
 
-test("TEST-CNS-492: C3 con GRANT explícito en las 4 finalidades requeridas -> GRANTED, dispara I6 y emite el receipt", () => {
+test("TEST-CNS-492: C3 con GRANT explícito en las 4 finalidades requeridas -> GRANTED, dispara I6 y emite el receipt", async () => {
   const ports = makeAllPorts();
-  verifiedInvitation(ports);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
     decisionMakerRef: "dm-1",
   });
-  recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
+  await recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
 
-  const granted = submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", GRANT_ALL);
+  const granted = await submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", GRANT_ALL);
   assert.equal(granted.state, "GRANTED");
 
-  const invitation = ports.invitationPorts.invitationRepo.findByRef(TENANT_ID, "inv-1");
+  const invitation = await ports.invitationPorts.invitationRepo.findByRef(TENANT_ID, "inv-1");
   assert.equal(invitation?.state, "COMPLETED");
 
-  const events = ports.consentPorts.ledger.listByAggregate(TENANT_ID, "ConsentDecision", "consent-1").map((e) => e.eventType);
+  const events = (await ports.consentPorts.ledger.listByAggregate(TENANT_ID, "ConsentDecision", "consent-1")).map((e) => e.eventType);
   assert.ok(events.includes("CONSENT_GRANTED"));
   assert.ok(events.includes("RECEIPT_CREATED"));
   assert.equal(events.filter((e) => e === "PURPOSE_DECISION_RECORDED").length, GRANT_ALL.length);
 });
 
-test("TEST-CNS-493: C5 con >=1 finalidad requerida en DECLINE -> DECLINED y dispara I7 (invitation DECLINED)", () => {
+test("TEST-CNS-493: C5 con >=1 finalidad requerida en DECLINE -> DECLINED y dispara I7 (invitation DECLINED)", async () => {
   const ports = makeAllPorts();
-  verifiedInvitation(ports);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
     decisionMakerRef: "dm-1",
   });
-  recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
+  await recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
 
-  const declined = submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", DECLINE_ONE);
+  const declined = await submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", DECLINE_ONE);
   assert.equal(declined.state, "DECLINED");
 
-  const invitation = ports.invitationPorts.invitationRepo.findByRef(TENANT_ID, "inv-1");
+  const invitation = await ports.invitationPorts.invitationRepo.findByRef(TENANT_ID, "inv-1");
   assert.equal(invitation?.state, "DECLINED");
 });
 
-test("TEST-CNS-494: C3 con una finalidad requerida faltante o una prohibida -> ERR-CD-02 (GRD-CD-06/07)", () => {
+test("TEST-CNS-494: C3 con una finalidad requerida faltante o una prohibida -> ERR-CD-02 (GRD-CD-06/07)", async () => {
   const ports = makeAllPorts();
-  verifiedInvitation(ports);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
     decisionMakerRef: "dm-1",
   });
-  recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
+  await recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
 
   const missingOne = GRANT_ALL.slice(1);
-  assert.throws(
+  await assert.rejects(
     () => submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", missingOne),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CD-02",
   );
 
   const withProhibited = [...GRANT_ALL, { purpose: "AI_TRAINING", choice: "GRANT" as const }];
-  assert.throws(
+  await assert.rejects(
     () => submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", withProhibited),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CD-02",
   );
 });
 
-test("TEST-CNS-495: C3/C5 solo por el DecisionMaker de la cadena; otro actor -> ERR-CM-10 (GRD-CD-11)", () => {
+test("TEST-CNS-495: C3/C5 solo por el DecisionMaker de la cadena; otro actor -> ERR-CM-10 (GRD-CD-11)", async () => {
   const ports = makeAllPorts();
-  verifiedInvitation(ports);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
     decisionMakerRef: "dm-1",
   });
-  recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
+  await recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
 
-  assert.throws(
+  await assert.rejects(
     () => submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "otro-decisor", "consent-1", GRANT_ALL),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-10",
   );
 });
 
-test("TEST-CNS-496: como máximo una decisión GRANTED activa por decisionChainKey (GRD-CD-08, INV-1)", () => {
+test("TEST-CNS-496: como máximo una decisión GRANTED activa por decisionChainKey (GRD-CD-08, INV-1)", async () => {
   const ports = makeAllPorts();
   const subjectRef = "test+subject-1@example.invalid";
 
   // Primer ciclo de la misma cadena (tenant, contexto, sujeto, decisionMaker) -> GRANTED.
-  verifiedInvitation(ports, "dm-1", "inv-1", "ver-1", subjectRef);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports, "dm-1", "inv-1", "ver-1", subjectRef);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-1",
     invitationRef: "inv-1",
     verificationRef: "ver-1",
     decisionMakerRef: "dm-1",
   });
-  recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
-  const granted = submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", GRANT_ALL);
+  await recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-1");
+  const granted = await submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", GRANT_ALL);
   assert.equal(granted.state, "GRANTED");
 
   // Segundo ciclo: invitación nueva del mismo sujeto (la primera ya es terminal, GRD-IV-01 lo permite),
   // misma decisionChainKey -> el segundo GRANT choca con GRD-CD-08 (INV-1: como máximo uno activo).
-  verifiedInvitation(ports, "dm-1", "inv-2", "ver-2", subjectRef);
-  startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
+  await verifiedInvitation(ports, "dm-1", "inv-2", "ver-2", subjectRef);
+  await startDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", {
     consentId: "consent-2",
     invitationRef: "inv-2",
     verificationRef: "ver-2",
     decisionMakerRef: "dm-1",
   });
-  recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-2");
-  assert.throws(
+  await recordRequiredSteps(ports.consentPorts, TENANT_ID, "consent-2");
+  await assert.rejects(
     () => submitDecision(ports.consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-2", GRANT_ALL),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CD-01",
   );

@@ -15,10 +15,10 @@ export function createInMemoryTenantCatalogAdapter(): FixtureTenantCatalogPort {
   const key = (tenantId: string, ref: string): string => `${tenantId}\u0000${ref}`;
 
   return {
-    subjectBelongsToTenant(tenantId, subjectRef) {
+    async subjectBelongsToTenant(tenantId, subjectRef) {
       return subjects.has(key(tenantId, subjectRef));
     },
-    findParticipation(tenantId, participationRef) {
+    async findParticipation(tenantId, participationRef) {
       return participations.get(key(tenantId, participationRef)) ?? null;
     },
     seedSubject(tenantId, subjectRef) {

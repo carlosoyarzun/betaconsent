@@ -13,7 +13,7 @@ export function createInMemoryRightsCaseRepository(): RightsCaseRepositoryPort {
   }
 
   return {
-    findOpenByChain(tenantId, chainRef, revokedDecisionRef) {
+    async findOpenByChain(tenantId, chainRef, revokedDecisionRef) {
       for (const record of byKey.values()) {
         if (
           record.tenantId === tenantId &&
@@ -27,11 +27,11 @@ export function createInMemoryRightsCaseRepository(): RightsCaseRepositoryPort {
       }
       return null;
     },
-    findByRef(tenantId, caseRef) {
+    async findByRef(tenantId, caseRef) {
       const record = byKey.get(key(tenantId, caseRef));
       return record ?? null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.caseRef), { ...record });
     },
   };

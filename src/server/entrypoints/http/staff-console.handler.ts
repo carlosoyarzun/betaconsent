@@ -104,12 +104,12 @@ interface AuthenticatedStaff {
 }
 
 /** GRD-CM-10 + GRD-CM-01 + GRD-CM-07 para todas las rutas /staff/*. */
-function authenticate(
+async function authenticate(
   request: RawConsentRequest,
   ports: StaffConsolePorts,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): { readonly ok: true; readonly staff: AuthenticatedStaff } | { readonly ok: false; readonly result: HttpResult } {
+): Promise<{ readonly ok: true; readonly staff: AuthenticatedStaff } | { readonly ok: false; readonly result: HttpResult }> {
   const cookies = parseCookies(request.cookieHeader);
   try {
     assertCsrfAndOrigin({
@@ -127,7 +127,7 @@ function authenticate(
   if (!session) return { ok: false, result: uniformNotFound() }; // GRD-CM-01
   // Membership vigente: el principal debe seguir en el roster atestado con el mismo rol y el
   // mismo tenant que la sesión. Cualquier discrepancia = sin sesión (404 uniforme).
-  const principal = ports.staffIdentity.findByPrincipalRef(session.principalRef);
+  const principal = await ports.staffIdentity.findByPrincipalRef(session.principalRef);
   if (!principal || principal.role !== session.role || principal.tenantId === undefined || principal.tenantId !== session.tenantId) {
     return { ok: false, result: uniformNotFound() };
   }
@@ -162,31 +162,31 @@ function sha256(value: string): string {
  * hash. Misma key + mismo payloadHash -> misma respuesta almacenada; misma key + otro payloadHash
  * -> ERR-CM-07 (422). Solo se almacenan respuestas 2xx (un fallo no se congela).
  */
-function withIdempotency(
+async function withIdempotency(
   ports: StaffConsolePorts,
   request: RawConsentRequest,
   staff: AuthenticatedStaff,
   operation: string,
   payload: unknown,
   required: boolean,
-  execute: () => HttpResult,
-): HttpResult {
+  execute: () => Promise<HttpResult>,
+): Promise<HttpResult> {
   const key = request.idempotencyKeyHeader;
   if (key === undefined) {
-    return required ? invalidRequest() : execute();
+    return required ? invalidRequest() : await execute();
   }
   if (!IDEMPOTENCY_KEY_PATTERN.test(key)) return invalidRequest();
 
   const scopeKeyHash = sha256(`${staff.tenantId}\u0000${staff.principalRef}\u0000${operation}\u0000${key}`);
   const payloadHash = sha256(JSON.stringify(payload));
-  const stored = ports.idempotency.find(scopeKeyHash);
+  const stored = await ports.idempotency.find(scopeKeyHash);
   if (stored) {
     if (stored.payloadHash !== payloadHash) return problem(422, "ERR-CM-07");
     return { status: stored.status as HttpResult["status"], body: stored.body };
   }
-  const result = execute();
+  const result = await execute();
   if (result.status >= 200 && result.status < 300) {
-    ports.idempotency.store(scopeKeyHash, { payloadHash, status: result.status, body: result.body });
+    await ports.idempotency.store(scopeKeyHash, { payloadHash, status: result.status, body: result.body });
   }
   return result;
 }
@@ -194,13 +194,13 @@ function withIdempotency(
 // ---------------------------------------------------------------------------
 // POST /staff/enrollments (API-CNS-105, EN0). OpenEnrollmentRequest: {subjectRef, participationRef}.
 // ---------------------------------------------------------------------------
-export function handleOpenEnrollment(
+export async function handleOpenEnrollment(
   request: RawConsentRequest,
   ports: StaffConsolePorts,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): HttpResult {
-  const auth = authenticate(request, ports, config, staffSessionKey);
+): Promise<HttpResult> {
+  const auth = await authenticate(request, ports, config, staffSessionKey);
   if (!auth.ok) return auth.result;
 
   const body = strictObject(request.body, ["subjectRef", "participationRef"]);
@@ -210,9 +210,9 @@ export function handleOpenEnrollment(
   const subjectRef = body.subjectRef;
   const participationRef = body.participationRef;
 
-  return withIdempotency(ports, request, auth.staff, "EN0", { subjectRef, participationRef }, false, () => {
+  return withIdempotency(ports, request, auth.staff, "EN0", { subjectRef, participationRef }, false, async () => {
     try {
-      const { record, sequence } = openEnrollment(ports.enrollment, auth.staff.tenantId, "INVITER", { subjectRef, participationRef });
+      const { record, sequence } = await openEnrollment(ports.enrollment, auth.staff.tenantId, "INVITER", { subjectRef, participationRef });
       return { status: 201, body: { enrollmentRef: record.enrollmentRef, state: "ACTIVE", sequence } };
     } catch (err) {
       return domainFailure(err);
@@ -224,13 +224,13 @@ export function handleOpenEnrollment(
 // POST /staff/invitations (API-CNS-110, I1). Idempotency-Key obligatoria (clientRequestId).
 // CreateInvitationRequest: sin tenantRef ni organizationRef (additionalProperties: false).
 // ---------------------------------------------------------------------------
-export function handleCreateInvitation(
+export async function handleCreateInvitation(
   request: RawConsentRequest,
   ports: StaffConsolePorts,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): HttpResult {
-  const auth = authenticate(request, ports, config, staffSessionKey);
+): Promise<HttpResult> {
+  const auth = await authenticate(request, ports, config, staffSessionKey);
   if (!auth.ok) return auth.result;
 
   const body = strictObject(request.body, ["subjectRef", "enrollmentRef", "participationRef", "contextRef", "reissueOfRef"]);
@@ -252,9 +252,9 @@ export function handleCreateInvitation(
     ...(body.reissueOfRef !== undefined ? { reissueOfRef: body.reissueOfRef as string } : {}),
   };
 
-  return withIdempotency(ports, request, auth.staff, "I1", input, true, () => {
+  return withIdempotency(ports, request, auth.staff, "I1", input, true, async () => {
     try {
-      const { record, sequence } = staffCreateInvitation(ports.issuance, auth.staff.tenantId, "INVITER", input);
+      const { record, sequence } = await staffCreateInvitation(ports.issuance, auth.staff.tenantId, "INVITER", input);
       return { status: 201, body: { invitationRef: record.invitationRef, state: "DRAFT", sequence } };
     } catch (err) {
       return domainFailure(err);
@@ -266,14 +266,14 @@ export function handleCreateInvitation(
 // POST /staff/invitations/{invitationRef}/ready (API-CNS-111, I2). MarkInvitationReadyRequest:
 // {consentVersion, recipientBinding, recipientChannelRef?}; expiresAt NUNCA del cliente (P-10).
 // ---------------------------------------------------------------------------
-export function handleMarkInvitationReady(
+export async function handleMarkInvitationReady(
   request: RawConsentRequest,
   invitationRef: string,
   ports: StaffConsolePorts,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): HttpResult {
-  const auth = authenticate(request, ports, config, staffSessionKey);
+): Promise<HttpResult> {
+  const auth = await authenticate(request, ports, config, staffSessionKey);
   if (!auth.ok) return auth.result;
   if (!REF_PATTERN.test(invitationRef)) return uniformNotFound();
 
@@ -290,9 +290,9 @@ export function handleMarkInvitationReady(
     ...(body.recipientChannelRef !== undefined ? { recipientChannelRef: body.recipientChannelRef as string } : {}),
   };
 
-  return withIdempotency(ports, request, auth.staff, `I2:${invitationRef}`, input, false, () => {
+  return withIdempotency(ports, request, auth.staff, `I2:${invitationRef}`, input, false, async () => {
     try {
-      const { record, sequence } = staffMarkInvitationReady(ports.issuance, auth.staff.tenantId, "INVITER", invitationRef, input);
+      const { record, sequence } = await staffMarkInvitationReady(ports.issuance, auth.staff.tenantId, "INVITER", invitationRef, input);
       return {
         status: 200,
         body: { state: "READY", sequence, ...(record.expiresAt ? { expiresAt: record.expiresAt.toISOString() } : {}) },
@@ -307,22 +307,22 @@ export function handleMarkInvitationReady(
 // POST /staff/invitations/{invitationRef}/send (API-CNS-112, I3). EmptyCommand. El token NUNCA
 // vuelve en la respuesta: solo va al puerto de canal (sink IT0, sin SMTP).
 // ---------------------------------------------------------------------------
-export function handleSendInvitation(
+export async function handleSendInvitation(
   request: RawConsentRequest,
   invitationRef: string,
   ports: StaffConsolePorts,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): HttpResult {
-  const auth = authenticate(request, ports, config, staffSessionKey);
+): Promise<HttpResult> {
+  const auth = await authenticate(request, ports, config, staffSessionKey);
   if (!auth.ok) return auth.result;
   if (!REF_PATTERN.test(invitationRef)) return uniformNotFound();
 
   if (!strictObject(request.body, [])) return invalidRequest();
 
-  return withIdempotency(ports, request, auth.staff, `I3:${invitationRef}`, {}, false, () => {
+  return withIdempotency(ports, request, auth.staff, `I3:${invitationRef}`, {}, false, async () => {
     try {
-      const { record, sequence } = staffSendInvitation(ports.issuance, auth.staff.tenantId, "INVITER", invitationRef);
+      const { record, sequence } = await staffSendInvitation(ports.issuance, auth.staff.tenantId, "INVITER", invitationRef);
       return {
         status: 200,
         // expiresAt es obligatorio en InvitationSent; sendInvitation siempre lo fija (GRD-IV-12).
@@ -341,18 +341,18 @@ export function handleSendInvitation(
 // que ya existe en el StaffIdentityPort inyectado. El tenant sale del roster, NUNCA del body:
 // un body con `tenantId` (o cualquier otra clave) se rechaza. No decide LD-03 ni APR-IDP.
 // ---------------------------------------------------------------------------
-export function handleDevStaffConsoleLogin(
+export async function handleDevStaffConsoleLogin(
   request: RawConsentRequest,
   environment: Environment,
   staffIdentity: StaffIdentityPort,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): HttpResult {
+): Promise<HttpResult> {
   if (environment !== "LOCAL") return uniformNotFound(); // fail-closed (GRD-CM-13): la ruta no existe fuera de LOCAL
 
   const body = strictObject(request.body, ["principalRef"]);
   if (!body || typeof body.principalRef !== "string") return { status: 422, body: { status: 422 } };
-  const principal = staffIdentity.findByPrincipalRef(body.principalRef);
+  const principal = await staffIdentity.findByPrincipalRef(body.principalRef);
   if (!principal || principal.role !== "TENANT_ADMIN" || principal.tenantId === undefined) {
     return { status: 422, body: { status: 422 } };
   }

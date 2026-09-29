@@ -40,10 +40,10 @@ export function createInMemoryTenantHandleAdapter(seeds: readonly SeedHandle[] =
   }
 
   return {
-    resolve(handle: string): ResolvedHandle | null {
+    async resolve(handle: string): Promise<ResolvedHandle | null> {
       return byHandle.get(handle) ?? null;
     },
-    resolveByHash(handleHash: string): ResolvedHandle | null {
+    async resolveByHash(handleHash: string): Promise<ResolvedHandle | null> {
       return byHandleHash.get(handleHash) ?? null;
     },
     issue(seed: SeedHandle): void {

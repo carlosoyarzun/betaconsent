@@ -18,6 +18,26 @@ export interface LedgerEventInput {
   readonly payload: Readonly<Record<string, unknown>>;
   /** Clave de idempotencia declarada por la transición (SM-CNS-001 §7 / GRD-CM-08). */
   readonly idempotencyKey?: string;
+  /**
+   * Control optimista de concurrencia (diseño CA-124 §3 "P2 del ledger", revocation.spec R4):
+   * si se declara, el append solo procede si la última `sequence` del agregado es exactamente
+   * `expectedSequence` (0 = agregado vacío); si no, lanza `LedgerSequenceConflictError` sin
+   * escribir. Un append deduplicado por `idempotencyKey` devuelve el registro existente antes
+   * de evaluar este control.
+   */
+  readonly expectedSequence?: number;
+}
+
+/** El agregado avanzó desde `expectedSequence` (UNIQUE(tenant_id, aggregate_id, sequence)). */
+export class LedgerSequenceConflictError extends Error {
+  readonly expectedSequence: number;
+  readonly actualSequence: number;
+  constructor(expectedSequence: number, actualSequence: number) {
+    super(`ledger sequence conflict: expected ${expectedSequence}, actual ${actualSequence}`);
+    this.name = "LedgerSequenceConflictError";
+    this.expectedSequence = expectedSequence;
+    this.actualSequence = actualSequence;
+  }
 }
 
 export interface LedgerRecord extends LedgerEventInput {
@@ -34,6 +54,6 @@ export interface LedgerPort {
    * Append-only (INV-CM-01). Si `idempotencyKey` coincide con un evento ya registrado del
    * mismo agregado, devuelve el registro existente sin duplicar (GRD-CM-08).
    */
-  append(event: LedgerEventInput): LedgerRecord;
-  listByAggregate(tenantId: TenantId, aggregateType: string, aggregateId: string): readonly LedgerRecord[];
+  append(event: LedgerEventInput): Promise<LedgerRecord>;
+  listByAggregate(tenantId: TenantId, aggregateType: string, aggregateId: string): Promise<readonly LedgerRecord[]>;
 }

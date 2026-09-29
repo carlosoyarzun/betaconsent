@@ -4,25 +4,31 @@ import type {
   RevocationRecord,
   RevocationRepositoryPort,
 } from "../../server/ports/revocation-repository.port.ts";
+import { JournaledMap, TX_JOURNAL, type TxParticipant } from "./in-memory-tx.ts";
 
-export function createInMemoryRevocationRepository(): RevocationRepositoryPort {
-  const byKey = new Map<string, RevocationRecord>();
+export type InMemoryRevocationRepository = RevocationRepositoryPort & TxParticipant;
+
+export function createInMemoryRevocationRepository(): InMemoryRevocationRepository {
+  const byKey = new JournaledMap<string, RevocationRecord>();
 
   function key(tenantId: string, revocationRef: string): string {
     return `${tenantId}\u0000${revocationRef}`;
   }
 
   return {
-    findByRef(tenantId, revocationRef) {
+    [TX_JOURNAL](journal) {
+      byKey.journal = journal;
+    },
+    async findByRef(tenantId, revocationRef) {
       return byKey.get(key(tenantId, revocationRef)) ?? null;
     },
-    findByCase(tenantId, caseRef) {
+    async findByCase(tenantId, caseRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.caseRef === caseRef) return record;
       }
       return null;
     },
-    findOpenByChain(tenantId, chainRef) {
+    async findOpenByChain(tenantId, chainRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.chainRef === chainRef && record.status !== "FAILED") {
           return record;
@@ -30,7 +36,7 @@ export function createInMemoryRevocationRepository(): RevocationRepositoryPort {
       }
       return null;
     },
-    save(record) {
+    async save(record) {
       byKey.set(key(record.tenantId, record.revocationRef), { ...record });
     },
   };

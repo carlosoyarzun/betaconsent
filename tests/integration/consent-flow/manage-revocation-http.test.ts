@@ -104,7 +104,7 @@ interface Fixture {
 
 async function setUp(chainRef: string, consentId: string, mgmtToken: string): Promise<Fixture> {
   const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
-  ports.decision.repo.save({
+  await ports.decision.repo.save({
     consentId,
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -200,7 +200,7 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
     const r3Body = (await r3.json()) as { revocationRef: string; status: string };
     assert.equal(r3Body.status, "APPLIED");
 
-    const events = ports.decision.ledger.listByAggregate(TENANT_ID, "Revocation", r3Body.revocationRef);
+    const events = await ports.decision.ledger.listByAggregate(TENANT_ID, "Revocation", r3Body.revocationRef);
     assert.deepEqual(
       events.map((e) => e.eventType),
       ["REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"],
@@ -268,7 +268,7 @@ test("TEST-CNS-583: bloqueo por intentos incorrectos en scope REVOCATION (V4, LO
 
     // INV-OT-06: la Revocation sigue REQUESTED (nunca FAILED por el bloqueo del OTP).
     const r1Body = (await r1.json()) as { revocationRef: string };
-    const revocation = revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, r1Body.revocationRef);
+    const revocation = await revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, r1Body.revocationRef);
     assert.equal(revocation?.status, "REQUESTED");
 
     // Las dos vías reales del estado bloqueado (INV-OT-06) siguen disponibles con solo el
@@ -426,7 +426,7 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
     await post(baseUrl, { path: "/manage/revocation/verify", ...VALID_CSRF, sessionCookie });
     const r3 = await post(baseUrl, { path: "/manage/revocation/confirm", ...VALID_CSRF, sessionCookie });
     assert.equal(((await r3.json()) as { status: string }).status, "APPLIED");
-    assert.equal(ports.decision.repo.findByConsentId(TENANT_ID, "consent-703")?.state, "REVOKED");
+    assert.equal((await ports.decision.repo.findByConsentId(TENANT_ID, "consent-703"))?.state, "REVOKED");
 
     // Reproducción del FINDING: volver a /m/<token>, verificar con OTP y abrir /manage.
     const again = await verifyManage();
@@ -451,9 +451,9 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
 test("TEST-CNS-706: /manage con la decisión REVOKED pero sin sesión MANAGE verificada muestra la entrada, no el estado ya-retirado", async () => {
   const { ports, server, baseUrl } = await setUp("chain-706", "consent-706", "mgmt-token-706");
   try {
-    const seeded = ports.decision.repo.findByConsentId(TENANT_ID, "consent-706");
+    const seeded = await ports.decision.repo.findByConsentId(TENANT_ID, "consent-706");
     assert.ok(seeded);
-    ports.decision.repo.save({ ...seeded, state: "REVOKED" });
+    await ports.decision.repo.save({ ...seeded, state: "REVOKED" });
     const sessionCookie = await redeemManage(baseUrl, "mgmt-token-706");
     const html = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).text();
     assert.match(html, /start-verify-btn/);

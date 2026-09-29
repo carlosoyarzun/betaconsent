@@ -33,12 +33,13 @@ import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import { validateApiPayload, validateLedgerEventPayload } from "../../contract/schema-lite.ts";
+import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 const T = "tenant-1";
 const D1 = "680a3c52-8d4e-4a7b-9c21-0e5a7d3b9f01"; // revokedDecisionRef sintético (UUIDv4)
 
 function makePorts(revocationRepo: RevocationRepositoryPort = createInMemoryRevocationRepository()) {
-  const ports = {
+  const ports = withInMemoryTenancy({
     revocationRepo,
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),
@@ -46,7 +47,7 @@ function makePorts(revocationRepo: RevocationRepositoryPort = createInMemoryRevo
     recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
     recoveryTokenPolicy: { ttlMs: 60_000 },
     consentDecisionRepo: withSyntheticFallback(createInMemoryConsentDecisionRepository()),
-  };
+  });
   return ports;
 }
 
@@ -57,26 +58,26 @@ const staff = createInMemoryStaffIdentityAdapter([
   { principalRef: "staff-synthetic-04", role: "APPROVER" },
 ]);
 
-function selfService(ref: string) {
+async function selfService(ref: string) {
   const ports = makePorts();
-  requestRevocation(ports, T, { revocationRef: ref, chainRef: `chain-${ref}`, revokedDecisionRef: D1 });
-  verifyRevocationOtp(ports, T, ref, "ver-680");
+  await requestRevocation(ports, T, { revocationRef: ref, chainRef: `chain-${ref}`, revokedDecisionRef: D1 });
+  await verifyRevocationOtp(ports, T, ref, "ver-680");
   return ports;
 }
 
-function rh3(ref: string, ports: RevocationPorts = makePorts()) {
-  ports.revocationRepo.save({ revocationRef: ref, tenantId: T, chainRef: `chain-${ref}`, caseRef: `case-${ref}`, revokedDecisionRef: D1, status: "REQUESTED" });
-  attestHumanAssistedVerification(ports, T, ref, `case-${ref}`);
-  recordCaseConfirmationPendingCosign(ports, staff, T, ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
+async function rh3(ref: string, ports: RevocationPorts = makePorts()) {
+  await ports.revocationRepo.save({ revocationRef: ref, tenantId: T, chainRef: `chain-${ref}`, caseRef: `case-${ref}`, revokedDecisionRef: D1, status: "REQUESTED" });
+  await attestHumanAssistedVerification(ports, T, ref, `case-${ref}`);
+  await recordCaseConfirmationPendingCosign(ports, staff, T, ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
   return ports;
 }
 
-test("TEST-CNS-680: CONSENT_REVOKED de autoservicio valida contra el schema con authPath OTP, sin recoveryMethod, effectiveAt de servidor", () => {
+test("TEST-CNS-680: CONSENT_REVOKED de autoservicio valida contra el schema con authPath OTP, sin recoveryMethod, effectiveAt de servidor", async () => {
   const REV = "680b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
-  const ports = selfService(REV);
+  const ports = await selfService(REV);
   const before = Date.now();
-  confirmRevocation(ports, T, REV);
-  const event = ports.ledger.listByAggregate(T, "Revocation", REV).find((e) => e.eventType === "CONSENT_REVOKED");
+  await confirmRevocation(ports, T, REV);
+  const event = (await ports.ledger.listByAggregate(T, "Revocation", REV)).find((e) => e.eventType === "CONSENT_REVOKED");
   assert.ok(event);
   const result = validateLedgerEventPayload("CONSENT_REVOKED", event.payload);
   assert.ok(result.ok, result.errors.join("\n"));
@@ -88,55 +89,55 @@ test("TEST-CNS-680: CONSENT_REVOKED de autoservicio valida contra el schema con 
   assert.ok(Date.parse(payload.effectiveAt as string) >= before - 1000);
 });
 
-test("TEST-CNS-681: CONSENT_REVOKED por enlace de recuperación valida contra el schema con authPath RECOVERY y recoveryMethod CHANNEL_LINK", () => {
+test("TEST-CNS-681: CONSENT_REVOKED por enlace de recuperación valida contra el schema con authPath RECOVERY y recoveryMethod CHANNEL_LINK", async () => {
   const ports = makePorts();
-  ports.consentDecisionRepo.save({
+  await ports.consentDecisionRepo.save({
     consentId: D1, tenantId: T, contextRef: "ctx-test", productRef: "prod-test", subjectRef: "subject-test@example.invalid", decisionMakerRef: "dm-test",
     invitationRef: "inv-test", verificationRef: "ver-test", chainRef: "chain-681", state: "GRANTED", purposes: [], priorStepsComplete: true, stepsRecorded: [],
   });
-  issueRecoveryLinkBearer(ports, T, "chain-681", D1, "REQUESTER_ASKED");
+  await issueRecoveryLinkBearer(ports, T, "chain-681", D1, "REQUESTER_ASKED");
   const token = ports.recoveryLinkChannel.sent[ports.recoveryLinkChannel.sent.length - 1]!.recoveryPath.replace("/r/", "");
-  const resolved = resolveRecoveryTokenForRedeem(ports, token);
+  const resolved = await resolveRecoveryTokenForRedeem(ports, token);
   assert.ok(resolved);
-  const outcome = revokeWithRecoveryLink(ports, T, "chain-681", D1, resolved.tokenHash);
+  const outcome = await revokeWithRecoveryLink(ports, T, "chain-681", D1, resolved.tokenHash);
   assert.equal(outcome.kind, "CONFIRMED");
   const ref = (outcome as { revocationRef: string }).revocationRef;
-  assertRevocationEvidence(ports.ledger.listByAggregate(T, "Revocation", ref), { revocationRef: ref, authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", revokedDecisionRef: D1 });
+  assertRevocationEvidence(await ports.ledger.listByAggregate(T, "Revocation", ref), { revocationRef: ref, authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", revokedDecisionRef: D1 });
 });
 
-test("TEST-CNS-682: CONSENT_REVOKED por co-firma RH3 valida contra el schema con authPath RECOVERY y recoveryMethod HUMAN_ASSISTED (caso humano)", () => {
+test("TEST-CNS-682: CONSENT_REVOKED por co-firma RH3 valida contra el schema con authPath RECOVERY y recoveryMethod HUMAN_ASSISTED (caso humano)", async () => {
   const REV = "682b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
-  const ports = rh3(REV);
-  cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
-  assertRevocationEvidence(ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED", revokedDecisionRef: D1 });
+  const ports = await rh3(REV);
+  await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assertRevocationEvidence(await ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED", revokedDecisionRef: D1 });
 });
 
-test("TEST-CNS-683: RECEIPT_CREATED de la revocación valida contra el schema y su receiptRef coincide con el revocationRef mostrado como comprobante", () => {
+test("TEST-CNS-683: RECEIPT_CREATED de la revocación valida contra el schema y su receiptRef coincide con el revocationRef mostrado como comprobante", async () => {
   const REV = "683b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
-  const ports = selfService(REV);
-  const shown = confirmRevocation(ports, T, REV).revocationRef; // el "Comprobante" de la UI es revocationRef
-  const receipt = ports.ledger.listByAggregate(T, "Revocation", REV).find((e) => e.eventType === "RECEIPT_CREATED");
+  const ports = await selfService(REV);
+  const shown = (await confirmRevocation(ports, T, REV)).revocationRef; // el "Comprobante" de la UI es revocationRef
+  const receipt = (await ports.ledger.listByAggregate(T, "Revocation", REV)).find((e) => e.eventType === "RECEIPT_CREATED");
   assert.ok(receipt);
   const result = validateLedgerEventPayload("RECEIPT_CREATED", receipt.payload);
   assert.ok(result.ok, result.errors.join("\n"));
   assert.deepEqual(receipt.payload, { receiptRef: shown, managementLinkIssued: false });
 });
 
-test("TEST-CNS-684: aplicar dos veces (autoservicio y RH3) no duplica CONSENT_REVOKED ni RECEIPT_CREATED", () => {
+test("TEST-CNS-684: aplicar dos veces (autoservicio y RH3) no duplica CONSENT_REVOKED ni RECEIPT_CREATED", async () => {
   const REV = "684b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
-  const ports = selfService(REV);
-  confirmRevocation(ports, T, REV);
-  confirmRevocation(ports, T, REV);
-  assertRevocationEvidence(ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "OTP" });
+  const ports = await selfService(REV);
+  await confirmRevocation(ports, T, REV);
+  await confirmRevocation(ports, T, REV);
+  assertRevocationEvidence(await ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "OTP" });
 
   const REV2 = "684c3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
-  const p2 = rh3(REV2);
-  cosignCaseConfirmation(p2, staff, T, REV2, `case-${REV2}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
-  cosignCaseConfirmation(p2, staff, T, REV2, `case-${REV2}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
-  assertRevocationEvidence(p2.ledger.listByAggregate(T, "Revocation", REV2), { revocationRef: REV2, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
+  const p2 = await rh3(REV2);
+  await cosignCaseConfirmation(p2, staff, T, REV2, `case-${REV2}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  await cosignCaseConfirmation(p2, staff, T, REV2, `case-${REV2}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  assertRevocationEvidence(await p2.ledger.listByAggregate(T, "Revocation", REV2), { revocationRef: REV2, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
 });
 
-test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfirmationAck); si R4 falla el error se propaga y la Revocation queda CONFIRMED", () => {
+test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfirmationAck); si R4 falla el error se propaga y la Revocation queda como antes del cosign (VERIFIED, todo-o-nada)", async () => {
   assert.ok(validateApiPayload("CaseConfirmationAck", { cosign: "COSIGNED", revocationState: "APPLIED" }).ok);
 
   const REV = "685b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
@@ -145,29 +146,29 @@ test("TEST-CNS-685: la ack de co-firma devuelve APPLIED (valida contra CaseConfi
   const flaky: RevocationRepositoryPort = {
     ...inner,
     findByRef: (t, r) => inner.findByRef(t, r),
-    save(record) {
+    async save(record) {
       if (record.status === "APPLIED" && failApply) throw new Error("R4 falló (simulado)");
-      inner.save(record);
+      await inner.save(record);
     },
   };
-  const ports = rh3(REV, makePorts(flaky));
-  assert.throws(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" }), /R4 falló/);
-  assert.equal(inner.findByRef(T, REV)?.status, "CONFIRMED");
-  // CA-127: la proyección se guarda al final, así que el ledger ya tiene el CONSENT_REVOKED
-  // (idempotente por revocationRef) aunque el save haya fallado; el reintento converge sin duplicar.
-  assert.equal(ports.ledger.listByAggregate(T, "Revocation", REV).filter((e) => e.eventType === "CONSENT_REVOKED").length, 1);
+  const ports = await rh3(REV, makePorts(flaky));
+  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" }), /R4 falló/);
+  // CA-124 (P2 de lampone-security): cosign + R4 son UNA unidad de trabajo; si R4 falla no queda
+  // ninguna escritura (la Revocation sigue VERIFIED, sin REVOCATION_CONFIRMED ni CONSENT_REVOKED).
+  assert.equal((await inner.findByRef(T, REV))?.status, "VERIFIED");
+  assert.equal((await ports.ledger.listByAggregate(T, "Revocation", REV)).filter((e) => e.eventType === "CONSENT_REVOKED" || e.eventType === "REVOCATION_CONFIRMED").length, 0);
 
-  failApply = false; // reintento: reaplica R4 sin duplicar REVOCATION_CONFIRMED
-  const retried = cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  failApply = false; // reintento: repite cosign + R4 completos y converge sin duplicar eventos
+  const retried = await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
   assert.equal(retried.status, "APPLIED");
-  assertRevocationEvidence(ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
+  assertRevocationEvidence(await ports.ledger.listByAggregate(T, "Revocation", REV), { revocationRef: REV, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
 });
 
-test("TEST-CNS-686: R4 sin authPath/revokedDecisionRef en el registro falla cerrado (ERR-CM-06), sin CONSENT_REVOKED ni valores inventados", () => {
+test("TEST-CNS-686: R4 sin authPath/revokedDecisionRef en el registro falla cerrado (ERR-CM-06), sin CONSENT_REVOKED ni valores inventados", async () => {
   const REV = "686b3c52-8d4e-4a7b-9c21-0e5a7d3b9f01";
   const ports = makePorts();
-  ports.revocationRepo.save({ revocationRef: REV, tenantId: T, chainRef: "chain-686", status: "CONFIRMED" });
-  assert.throws(() => applyRevocation(ports, T, REV), (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-06");
-  assert.equal(ports.ledger.listByAggregate(T, "Revocation", REV).length, 0);
-  assert.equal(ports.revocationRepo.findByRef(T, REV)?.status, "CONFIRMED");
+  await ports.revocationRepo.save({ revocationRef: REV, tenantId: T, chainRef: "chain-686", status: "CONFIRMED" });
+  await assert.rejects(() => applyRevocation(ports, T, REV), (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-06");
+  assert.equal((await ports.ledger.listByAggregate(T, "Revocation", REV)).length, 0);
+  assert.equal((await ports.revocationRepo.findByRef(T, REV))?.status, "CONFIRMED");
 });

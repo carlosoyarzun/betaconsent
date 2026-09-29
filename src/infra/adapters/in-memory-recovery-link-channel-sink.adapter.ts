@@ -11,7 +11,7 @@ export interface InMemoryRecoveryLinkChannelSink extends RecoveryLinkChannelPort
 export function createInMemoryRecoveryLinkChannelSink(): InMemoryRecoveryLinkChannelSink {
   const sent: RecoveryLinkMessage[] = [];
   return {
-    send(message) {
+    async send(message) {
       sent.push(message);
     },
     sent,
