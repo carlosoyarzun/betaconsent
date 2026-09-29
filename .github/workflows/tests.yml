@@ -5,13 +5,18 @@
 #
 # Cuatro jobs con nombres estables (unit, integration, contract,
 # dependency-allowlist) para que el Supervisor los agregue como checks requeridos.
-# Ninguno usa GitHub Secrets ni credenciales de deploy; el job "integration" genera su
-# propia credencial efímera de PostgreSQL por corrida (no persiste, no es secreto de
-# producto, solo sirve para el service container desechable de este job).
+# Ninguno usa GitHub Secrets ni credenciales de deploy; el job "integration" genera sus
+# propias credenciales efímeras de PostgreSQL por corrida (no persisten, no son secretos
+# de producto, solo sirven para el service container desechable de este job): el
+# superusuario del contenedor (solo crea los roles del cluster, db/migrations/0000), la
+# contraseña de app_rw/worker/platform_rw y la del migrador consent_migrator (CA-124, D9:
+# credencial del migrador efímera por corrida; nunca en el proceso web).
 #
 # Alcance IT0 (DEC-BR-014 §4): LOCAL + CI, solo datos sintéticos. El service container
-# de PostgreSQL no contiene ni recibe ningún dato de dominio: solo corre
-# tests/integration/postgres-smoke.test.ts (SELECT 1).
+# de PostgreSQL no contiene ni recibe ningún dato de dominio: corre el smoke
+# (tests/integration/postgres-smoke.test.ts) y los tests de infraestructura de CA-124
+# (tests/integration/postgres/**: roles, esquemas, catálogo inmutable, RLS/tenant, runner de
+# migraciones) sobre bases desechables creadas desde una plantilla migrada.
 
 name: tests
 
@@ -70,7 +75,7 @@ jobs:
   integration:
     name: integration
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
         # ADR-002 fija solo "PostgreSQL (versión mayor vigente)", no versión exacta ni
@@ -111,7 +116,11 @@ jobs:
 
       - name: Integration tests (PostgreSQL service container, solo sintético)
         env:
+          # Superusuario del service container: solo para crear roles y bases desechables.
           TEST_DATABASE_URL: postgresql://test_ci_unit:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/test_smoke
+          # Credenciales efímeras derivadas de run_id/run_attempt (sin GitHub Secrets, ADR-003 C14).
+          TEST_APP_DB_PASSWORD: app-${{ github.run_id }}-${{ github.run_attempt }}
+          TEST_MIGRATOR_DB_PASSWORD: migrator-${{ github.run_id }}-${{ github.run_attempt }}
         run: npm run test:integration
 
       - name: Subir evidencia de la corrida (artefacto, no se commitea; evidence/README.md)

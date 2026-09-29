@@ -17,6 +17,7 @@
     "types": ["node"]
   },
   "include": [
+    "src/**/*.ts",
     "tools/guardrails/ports-adapters/**/*.ts",
     "tools/guardrails/dependency-allowlist-check.ts",
     "tools/guardrails/dependency-allowlist.ts",

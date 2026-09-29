@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { runGuardrail } from "../../../tools/guardrails/ports-adapters/guardrail.ts";
+import { findDenyListMatch } from "../../../tools/guardrails/ports-adapters/deny-list-matcher.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "fixtures");
@@ -219,4 +220,43 @@ test("corpus de evasión 2 SEC-CNS-010: el CLI termina con código distinto de 0
   assert.throws(() => {
     execFileSync(process.execPath, [cliPath, fixture(EVASION2_CORPUS_ROOT)], { encoding: "utf-8" });
   });
+});
+
+// CA-124 (H09), D1/D2 de Carlos (2026-09-29), diseño de CA-124 §2/§8 y P1 de lampone-security:
+// driver de BD `pg` solo en adaptadores, `pg-*` por prefijo, `pg-native`/segundo driver/ORM
+// forbidden, `node:sqlite` vetado y excepción de lockfile para `pg-cloudflare`.
+// TEST-CNS-748 (propuesto TEST-CNS-725 en el diseño de CA-124).
+const pgCases: Case[] = [
+  { fixture: "pg-adapter-allowed", expectFail: false },
+  { fixture: "pg-import-outside-adapters", expectFail: true, expectedKinds: ["DENY_LIST_OUTSIDE_ADAPTERS"] },
+  { fixture: "pg-prefix-import-outside-adapters", expectFail: true, expectedKinds: ["DENY_LIST_OUTSIDE_ADAPTERS"] },
+  { fixture: "pg-native-forbidden", expectFail: true, expectedKinds: ["DENY_LIST_FORBIDDEN", "MANIFEST_FORBIDDEN_SDK"] },
+  { fixture: "pg-cloudflare-import-forbidden", expectFail: true, expectedKinds: ["DENY_LIST_FORBIDDEN"] },
+  { fixture: "second-db-driver-forbidden", expectFail: true, expectedKinds: ["DENY_LIST_FORBIDDEN", "MANIFEST_FORBIDDEN_SDK"] },
+  { fixture: "node-sqlite-forbidden", expectFail: true, expectedKinds: ["DENY_LIST_FORBIDDEN"] },
+  { fixture: "pg-native-transitive", expectFail: true, expectedKinds: ["MANIFEST_FORBIDDEN_SDK_TRANSITIVE"] },
+];
+
+for (const c of pgCases) {
+  test(`TEST-CNS-748 guardrail pg: fixture ${c.fixture} ${c.expectFail ? "falla" : "pasa"}`, () => {
+    const { violations } = runGuardrail(fixture(c.fixture));
+    if (c.expectFail) {
+      const kinds = new Set(violations.map((v) => v.kind));
+      for (const expectedKind of c.expectedKinds ?? []) {
+        assert.ok(kinds.has(expectedKind as never), `se esperaba ${expectedKind} en ${c.fixture}, se obtuvo: ${[...kinds].join(", ")}`);
+      }
+    } else {
+      assert.deepEqual(violations, []);
+    }
+  });
+}
+
+test("TEST-CNS-748 guardrail pg: el comodín pg-* coincide por prefijo y no con pgpass", () => {
+  const denyList = { version: 2, status: "t", governedBy: [], entries: [{ package: "pg-*", mode: "adapters-only" as const }] };
+  assert.equal(findDenyListMatch("pg-pool", denyList)?.package, "pg-*");
+  assert.equal(findDenyListMatch("pg-pool/lib/x", denyList)?.package, "pg-*");
+  assert.equal(findDenyListMatch("PG-Types", denyList)?.package, "pg-*");
+  assert.equal(findDenyListMatch("pg", denyList), null);
+  assert.equal(findDenyListMatch("pgpass", denyList), null);
+  assert.equal(findDenyListMatch("pg-", denyList), null);
 });
