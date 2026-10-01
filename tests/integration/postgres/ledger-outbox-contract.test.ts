@@ -4,8 +4,6 @@
 
 import { runLedgerOutboxContract } from "../../contract/ports/ledger-outbox-tx.contract.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
-import { createPgLedgerAdapter } from "../../../src/infra/adapters/postgres/ledger.adapter.ts";
-import { createPgOutboxAdapter } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { pgTest } from "./harness.ts";
 
@@ -16,7 +14,7 @@ runLedgerOutboxContract("postgres", (name, body) => {
       const uow = new PgUnitOfWork(pool);
       await body({
         inTenant: (tenantId, work) =>
-          uow.inTenant(tenantId, (tx) => work({ ledger: createPgLedgerAdapter(tx), outbox: createPgOutboxAdapter(tx) })),
+          uow.inTenant(tenantId, (tx) => work({ ledger: tx.ledger, outbox: tx.outbox })),
       });
     } finally {
       await pool.end();

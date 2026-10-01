@@ -22,6 +22,9 @@ export function createInMemoryConsentDecisionRepository(): InMemoryConsentDecisi
     async findByConsentId(tenantId, consentId) {
       return byKey.get(key(tenantId, consentId)) ?? null;
     },
+    async findByConsentIdForUpdate(tenantId, consentId) {
+      return byKey.get(key(tenantId, consentId)) ?? null; // la UoW in-memory ya serializa
+    },
     async findActiveGrantByChain(tenantId, chainRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.chainRef === chainRef && record.state === "GRANTED") {

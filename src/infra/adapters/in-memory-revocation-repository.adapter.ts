@@ -22,6 +22,9 @@ export function createInMemoryRevocationRepository(): InMemoryRevocationReposito
     async findByRef(tenantId, revocationRef) {
       return byKey.get(key(tenantId, revocationRef)) ?? null;
     },
+    async findByRefForUpdate(tenantId, revocationRef) {
+      return byKey.get(key(tenantId, revocationRef)) ?? null; // la UoW in-memory ya serializa
+    },
     async findByCase(tenantId, caseRef) {
       for (const record of byKey.values()) {
         if (record.tenantId === tenantId && record.caseRef === caseRef) return record;

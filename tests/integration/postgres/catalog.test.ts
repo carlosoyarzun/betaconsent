@@ -64,7 +64,7 @@ pgTest("TEST-CNS-744 pg: las conexiones de runtime no pueden crear objetos ni ca
   }
 });
 
-pgTest("TEST-CNS-743 pg: EXECUTE por defecto no llega a PUBLIC y tenant_resolve queda cerrado (P1-2, parte de infraestructura)", async (ctx) => {
+pgTest("TEST-CNS-743 pg: EXECUTE por defecto no llega a PUBLIC (consent_owner, tenant_resolve_owner y outbox_claimer) y tenant_resolve queda cerrado (P1-2, P2-7)", async (ctx) => {
   const migrator = await ctx.connectAs("consent_migrator");
   await migrator.query("BEGIN");
   try {
@@ -72,9 +72,14 @@ pgTest("TEST-CNS-743 pg: EXECUTE por defecto no llega a PUBLIC y tenant_resolve 
     await migrator.query("CREATE FUNCTION app.probe_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");
     await migrator.query("SET LOCAL ROLE tenant_resolve_owner");
     await migrator.query("CREATE FUNCTION tenant_resolve.probe_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");
+    // P2-7 (0008): outbox_claimer (dueno de app.outbox_claim) tambien revoca EXECUTE de PUBLIC por defecto.
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query("GRANT CREATE ON SCHEMA app TO outbox_claimer");
+    await migrator.query("SET LOCAL ROLE outbox_claimer");
+    await migrator.query("CREATE FUNCTION app.probe_claimer_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");
     // Sin USAGE sobre tenant_resolve el migrador ya no puede castear a regprocedure (P2-5): se busca por oid.
     await migrator.query("RESET ROLE");
-    for (const fn of ["app.probe_fn()", "tenant_resolve.probe_fn()"]) {
+    for (const fn of ["app.probe_fn()", "tenant_resolve.probe_fn()", "app.probe_claimer_fn()"]) {
       for (const role of [...RUNTIME_ROLES, "public"]) {
         const row = (await migrator.query<{ p: boolean }>(
           role === "public"

@@ -32,6 +32,7 @@ function event(tenantId: string, aggregateId: string, extra: Partial<LedgerEvent
     aggregateId,
     actorType: "HUMAN",
     payload: { reasonCode: "SYNTHETIC" },
+    expectedSequence: 0,
     ...extra,
   };
 }
@@ -58,7 +59,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       const a = await ledger.append(
         event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: { n: 1, nested: { ok: true } } }),
       );
-      const b = await ledger.append(event(t, agg, { eventType: "REVOCATION_CONFIRMED" }));
+      const b = await ledger.append(event(t, agg, { eventType: "REVOCATION_CONFIRMED", expectedSequence: 1 }));
       return [a, b];
     });
     assert.deepEqual(records.map((r) => r.sequence), [1, 2]);
@@ -83,10 +84,14 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     const agg2 = fixtureUuid("agg781-2");
     await h.inTenant(ta, async ({ ledger }) => {
       assert.equal((await ledger.append(event(ta, agg1))).sequence, 1);
-      assert.equal((await ledger.append(event(ta, agg1))).sequence, 2);
+      assert.equal((await ledger.append(event(ta, agg1, { expectedSequence: 1 }))).sequence, 2);
       assert.equal((await ledger.append(event(ta, agg2))).sequence, 1);
       // Mismo aggregateId con otro aggregateType comparte numeracion (UNIQUE tenant_id, aggregate_id, sequence).
-      assert.equal((await ledger.append(event(ta, agg1, { aggregateType: "Other" }))).sequence, 3);
+      assert.equal((await ledger.append(event(ta, agg1, { aggregateType: "Other", expectedSequence: 2 }))).sequence, 3);
+      // SEC-CNS-015 P2-C: currentSequence usa el mismo criterio que el UNIQUE y expectedSequence (por aggregateId).
+      assert.equal(await ledger.currentSequence(ta, agg1), 3);
+      assert.equal(await ledger.currentSequence(ta, agg2), 1);
+      assert.equal(await ledger.currentSequence(ta, fixtureUuid("agg781-vacio")), 0);
     });
     await h.inTenant(tb, async ({ ledger }) => {
       assert.equal((await ledger.append(event(tb, agg1))).sequence, 1);
@@ -106,6 +111,11 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       // Reintento con la misma clave: devuelve el existente aunque expectedSequence ya no coincida.
       const again = await ledger.append(event(t, agg, { expectedSequence: 1, idempotencyKey: "k-782" }));
       assert.equal(again.sequence, 2);
+      // sequence = expectedSequence + 1 sin huecos: una expectedSequence en el futuro tambien es conflicto.
+      await assert.rejects(
+        () => ledger.append(event(t, agg, { expectedSequence: 5 })),
+        (e: unknown) => e instanceof LedgerSequenceConflictError && e.expectedSequence === 5 && e.actualSequence === 2,
+      );
       assert.equal((await ledger.listByAggregate(t, "Revocation", agg)).length, 2, "ni el conflicto ni el replay escribieron");
     });
   });

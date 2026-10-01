@@ -37,7 +37,7 @@ test("TEST-CNS-740 acquireCleanClient destruye la conexión si la verificación 
 test("TEST-CNS-742 inTenant: BEGIN, set_config local como primer statement, trabajo, COMMIT, release(false)", async () => {
   const client = new FakeClient();
   const uow = new PgUnitOfWork(fakePool([client]));
-  const result = await uow.inTenant(TENANT, async (tx) => {
+  const result = await uow.withTenantTx(TENANT, async (tx) => {
     await tx.query("SELECT 1");
     return "ok";
   });
@@ -53,7 +53,7 @@ test("TEST-CNS-742 inTenant: error del trabajo hace ROLLBACK, propaga y devuelve
   const client = new FakeClient();
   const uow = new PgUnitOfWork(fakePool([client]));
   await assert.rejects(
-    () => uow.inTenant(TENANT, () => Promise.reject(new Error("boom"))),
+    () => uow.withTenantTx(TENANT, () => Promise.reject(new Error("boom"))),
     /boom/,
   );
   assert.equal(client.queries.at(-1)?.text, "ROLLBACK");
@@ -64,7 +64,7 @@ test("TEST-CNS-742 inTenant: si el ROLLBACK falla la conexión se destruye (rele
   const client = new FakeClient((text) => (text === "ROLLBACK" ? new Error("conexión perdida") : undefined));
   const uow = new PgUnitOfWork(fakePool([client]));
   await assert.rejects(
-    () => uow.inTenant(TENANT, () => Promise.reject(new Error("boom"))),
+    () => uow.withTenantTx(TENANT, () => Promise.reject(new Error("boom"))),
     /boom/,
   );
   assert.deepEqual(client.releases, [true]);
@@ -73,7 +73,7 @@ test("TEST-CNS-742 inTenant: si el ROLLBACK falla la conexión se destruye (rele
 test("TEST-CNS-742 inTenant: si el COMMIT falla se hace ROLLBACK y, si también falla, release(true)", async () => {
   const client = new FakeClient((text) => (text === "COMMIT" || text === "ROLLBACK" ? new Error("caída") : undefined));
   const uow = new PgUnitOfWork(fakePool([client]));
-  await assert.rejects(() => uow.inTenant(TENANT, async () => 1), /caída/);
+  await assert.rejects(() => uow.withTenantTx(TENANT, async () => 1), /caída/);
   assert.deepEqual(client.releases, [true]);
 });
 
@@ -82,7 +82,7 @@ test("TEST-CNS-742 inTenant reintenta 40001/40P01 hasta 3 intentos y luego propa
   const pool = fakePool(clients);
   let calls = 0;
   const uow = new PgUnitOfWork(pool);
-  const result = await uow.inTenant(TENANT, async () => {
+  const result = await uow.withTenantTx(TENANT, async () => {
     calls += 1;
     if (calls === 1) throw sqlError("40001");
     if (calls === 2) throw sqlError("40P01");
@@ -95,7 +95,7 @@ test("TEST-CNS-742 inTenant reintenta 40001/40P01 hasta 3 intentos y luego propa
   const failing = new PgUnitOfWork(fakePool([new FakeClient()]));
   await assert.rejects(
     () =>
-      failing.inTenant(TENANT, async () => {
+      failing.withTenantTx(TENANT, async () => {
         calls += 1;
         throw sqlError("40001");
       }),
@@ -108,7 +108,7 @@ test("TEST-CNS-742 inTenant no reintenta errores no serializables", async () => 
   let calls = 0;
   const uow = new PgUnitOfWork(fakePool([new FakeClient()]));
   await assert.rejects(() =>
-    uow.inTenant(TENANT, async () => {
+    uow.withTenantTx(TENANT, async () => {
       calls += 1;
       throw sqlError("23505");
     }),
@@ -119,12 +119,12 @@ test("TEST-CNS-742 inTenant no reintenta errores no serializables", async () => 
 test("TEST-CNS-742 inTenant rechaza un tenantId que no es UUID sin tocar la conexión", async () => {
   const pool = fakePool([new FakeClient()]);
   const uow = new PgUnitOfWork(pool);
-  await assert.rejects(() => uow.inTenant("no-es-uuid'; DROP", async () => 1), TypeError);
+  await assert.rejects(() => uow.withTenantTx("no-es-uuid'; DROP", async () => 1), TypeError);
   assert.equal(pool.connects, 0);
 });
 
 test("TEST-CNS-742 la tx entregada al trabajo deja de funcionar al terminar", async () => {
   const uow = new PgUnitOfWork(fakePool([new FakeClient()]));
-  const leaked = await uow.inTenant(TENANT, async (tx) => tx);
+  const leaked = await uow.withTenantTx(TENANT, async (tx) => tx);
   await assert.rejects(() => leaked.query("SELECT 1"), /ya terminó/);
 });

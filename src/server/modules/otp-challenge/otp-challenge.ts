@@ -26,6 +26,7 @@ import type { OtpVerificationRecord, OtpVerificationRepositoryPort } from "../..
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { markInvitationVerified } from "../invitation/invitation.ts";
+import { appendNext } from "../common/ledger-append.ts";
 
 export interface OtpPolicy {
   /** P-01 (no fijado aquí): dígitos del código. */
@@ -118,7 +119,7 @@ export async function requestOtp(
   };
   await ports.otpRepo.save(record);
   await ports.channel.send({ channelRef, verificationRef, code }); // INV-OT-02: el código en claro no sale de aquí.
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "OTP_ISSUED",
     tenantId,
     aggregateType: "DecisionMakerVerification",
@@ -163,7 +164,7 @@ export async function submitOtp(
   if (isCorrect) {
     const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
     await ports.otpRepo.save(verified);
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
@@ -180,7 +181,7 @@ export async function submitOtp(
   if (attempts >= ports.policy.maxAttempts) {
     const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
     await ports.otpRepo.save(locked);
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "OTP_LOCKED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
@@ -194,7 +195,7 @@ export async function submitOtp(
 
   const failed: OtpVerificationRecord = { ...found, attempts, state: "CODE_SENT" };
   await ports.otpRepo.save(failed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "OTP_FAILED",
     tenantId,
     aggregateType: "DecisionMakerVerification",
@@ -252,7 +253,7 @@ export async function requestRightsOtp(
   };
   await ports.otpRepo.save(record);
   await ports.channel.send({ channelRef, verificationRef, code }); // INV-OT-02.
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "OTP_ISSUED",
     tenantId,
     aggregateType: "DecisionMakerVerification",
@@ -303,7 +304,7 @@ export async function submitRightsOtp(
   if (isCorrect) {
     const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
     await ports.otpRepo.save(verified);
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
@@ -319,7 +320,7 @@ export async function submitRightsOtp(
   if (attempts >= ports.policy.maxAttempts) {
     const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
     await ports.otpRepo.save(locked);
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "OTP_LOCKED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
@@ -333,7 +334,7 @@ export async function submitRightsOtp(
 
   const failed: OtpVerificationRecord = { ...found, attempts, state: "CODE_SENT" };
   await ports.otpRepo.save(failed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "OTP_FAILED",
     tenantId,
     aggregateType: "DecisionMakerVerification",
@@ -376,7 +377,7 @@ export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, ve
   const resent: OtpVerificationRecord = { ...found, codeHash, resendCount: found.resendCount + 1 };
   await ports.otpRepo.save(resent);
   await ports.channel.send({ channelRef: found.channelRef, verificationRef, code }); // INV-OT-02: nunca en claro fuera de aquí.
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "OTP_ISSUED",
     tenantId,
     aggregateType: "DecisionMakerVerification",

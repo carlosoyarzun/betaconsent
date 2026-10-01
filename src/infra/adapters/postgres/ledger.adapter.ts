@@ -82,10 +82,10 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
       }
 
       const current = await currentSequence(event.tenantId, event.aggregateId);
-      if (event.expectedSequence !== undefined && event.expectedSequence !== current) {
+      if (event.expectedSequence !== current) {
         throw new LedgerSequenceConflictError(event.expectedSequence, current);
       }
-      const next = current + 1;
+      const next = event.expectedSequence + 1; // SEC-CNS-013 P2-3: sequence = expectedSequence + 1
 
       // ON CONFLICT (secuencia) DO NOTHING (sin error) para no abortar la transaccion y poder releer
       // la secuencia real: una unidad concurrente que confirmo antes gana. El UNIQUE de idempotencia
@@ -131,10 +131,12 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
       await tx.query("RELEASE SAVEPOINT ledger_append");
       const row = inserted.rows[0];
       if (!row) {
-        throw new LedgerSequenceConflictError(event.expectedSequence ?? current, await currentSequence(event.tenantId, event.aggregateId));
+        throw new LedgerSequenceConflictError(event.expectedSequence, await currentSequence(event.tenantId, event.aggregateId));
       }
       return toRecord(row);
     },
+
+    currentSequence: (tenantId, aggregateId) => currentSequence(tenantId, aggregateId),
 
     async listByAggregate(tenantId, aggregateType, aggregateId) {
       const r = await tx.query<AuditEventRow>(

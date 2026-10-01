@@ -35,6 +35,12 @@ export interface RevocationRecord {
 
 export interface RevocationRepositoryPort {
   findByRef(tenantId: TenantId, revocationRef: string): Promise<RevocationRecord | null>;
+  /** Igual que `findByRef` pero toma el lock de la fila hasta el fin de la unidad de trabajo
+   * (SELECT ... FOR UPDATE en Postgres; revocation.spec R4 "una tx con lock", SEC-CNS-015 P1-1).
+   * Solo dentro de `UnitOfWorkPort.inTenant`: serializa R2/R3/R4/R8/RH* sobre la misma Revocation
+   * y relee el estado vigente tras esperar al ganador. In-memory: equivalente a `findByRef` (la
+   * unidad de trabajo ya serializa). */
+  findByRefForUpdate(tenantId: TenantId, revocationRef: string): Promise<RevocationRecord | null>;
   findByCase(tenantId: TenantId, caseRef: string): Promise<RevocationRecord | null>;
   /** GRD-RV-04/R14-C: la Revocation no terminal (status != FAILED, incluida APPLIED: el UNIQUE
    * parcial de GRD-RV-04 es WHERE state NOT IN ('COMPLETED','FAILED')) de esta cadena, si

@@ -17,6 +17,7 @@ import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EligibilityPort } from "../../ports/eligibility.port.ts";
 import type { InvitationRecord, InvitationRepositoryPort } from "../../ports/invitation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import { appendNext } from "../common/ledger-append.ts";
 
 export interface InvitationPorts {
   readonly invitationRepo: InvitationRepositoryPort;
@@ -76,7 +77,7 @@ export async function createInvitation(
     ...(input.reissueOfRef !== undefined ? { reissueOfRef: input.reissueOfRef } : {}),
   };
   await ports.invitationRepo.save(record);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_CREATED",
     tenantId,
     aggregateType: "Invitation",
@@ -143,7 +144,7 @@ export async function markInvitationReady(
     ...(input.recipientChannelRef !== undefined ? { recipientChannelRef: input.recipientChannelRef } : {}),
   };
   await ports.invitationRepo.save(ready);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_READY",
     tenantId,
     aggregateType: "Invitation",
@@ -211,7 +212,7 @@ export async function sendInvitation(
   const expiresAt = options.expiresAt ?? found.expiresAt;
   const sent: InvitationRecord = { ...found, state: "SENT", tokenHash, ...(expiresAt !== undefined ? { expiresAt } : {}) };
   await ports.invitationRepo.save(sent);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_SENT",
     tenantId,
     aggregateType: "Invitation",
@@ -245,7 +246,7 @@ async function transitionInvitationToOpened(ports: InvitationPorts, tenantId: Te
 
   const opened: InvitationRecord = { ...found, state: "OPENED" };
   await ports.invitationRepo.save(opened);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_OPENED",
     tenantId,
     aggregateType: "Invitation",
@@ -315,7 +316,7 @@ export async function markInvitationVerified(
   }
   const verified: InvitationRecord = { ...found, state: "VERIFIED", boundDecisionMakerRef: decisionMakerRef };
   await ports.invitationRepo.save(verified);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_VERIFIED",
     tenantId,
     aggregateType: "Invitation",
@@ -341,7 +342,7 @@ export async function markInvitationCompleted(
   }
   const completed: InvitationRecord = { ...found, state: "COMPLETED" };
   await ports.invitationRepo.save(completed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_COMPLETED",
     tenantId,
     aggregateType: "Invitation",
@@ -367,7 +368,7 @@ export async function markInvitationDeclined(
   }
   const declined: InvitationRecord = { ...found, state: "DECLINED" };
   await ports.invitationRepo.save(declined);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "INVITATION_DECLINED",
     tenantId,
     aggregateType: "Invitation",

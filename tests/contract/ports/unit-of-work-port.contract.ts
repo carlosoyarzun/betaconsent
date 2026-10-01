@@ -37,6 +37,7 @@ export function runUnitOfWorkPortContract(adapterName: string, makeAdapter: () =
     aggregateId,
     actorType: "HUMAN" as const,
     payload: {},
+    expectedSequence: 0,
   });
   const outboxInput = (tenantId: string) => ({
     tenantId,

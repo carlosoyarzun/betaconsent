@@ -25,6 +25,7 @@ import type { InvitationPorts } from "../invitation/invitation.ts";
 import { markInvitationCompleted, markInvitationDeclined } from "../invitation/invitation.ts";
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "./decision-relationship.config.ts";
+import { appendNext } from "../common/ledger-append.ts";
 
 export interface ConsentDecisionPorts {
   readonly repo: ConsentDecisionRepositoryPort;
@@ -169,7 +170,7 @@ export async function recordDecisionStep(
     payload.subjectRef = found.subjectRef;
   }
 
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: step.stepKind,
     tenantId,
     aggregateType: "ConsentDecision",
@@ -271,7 +272,7 @@ export async function submitDecision(
   await ports.repo.save(decided);
 
   for (const p of purposes) {
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "PURPOSE_DECISION_RECORDED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -284,7 +285,7 @@ export async function submitDecision(
   }
 
   if (allGranted) {
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "CONSENT_GRANTED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -294,7 +295,7 @@ export async function submitDecision(
       payload: { consentId, chainRef: found.chainRef },
       idempotencyKey: `${consentId}:granted`,
     });
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "RECEIPT_CREATED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -308,7 +309,7 @@ export async function submitDecision(
     });
     await markInvitationCompleted(ports.invitation, tenantId, found.invitationRef, consentId); // I6
   } else {
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "CONSENT_DECLINED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -318,7 +319,7 @@ export async function submitDecision(
       payload: { consentId, chainRef: found.chainRef },
       idempotencyKey: `${consentId}:declined`,
     });
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "RECEIPT_CREATED",
       tenantId,
       aggregateType: "ConsentDecision",
