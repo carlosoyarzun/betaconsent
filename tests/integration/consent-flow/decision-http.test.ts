@@ -9,11 +9,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { createHash } from "node:crypto";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow.handler.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
+import { deriveDecisionMakerRef } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
@@ -237,6 +239,27 @@ test("TEST-CNS-505: /decision/submit ignora decisionMakerRef del body; el actor 
     // El decisionMakerRef persistido nunca es el valor "attacker-supplied-dm" del body.
     assert.notEqual(decision?.decisionMakerRef, "attacker-supplied-dm");
     assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-505"))?.state, "COMPLETED");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-933: el decisionMakerRef persistido es dm:v1: + HMAC con clave (no sha256 del canal), determinista y cumple los CHECK de BD (CA-128, LEGAL DECISION Carlos 2026-10-01)", async () => {
+  const harness = await startServer();
+  try {
+    const verifiedSession = await bringToVerifiedSession(harness, "inv-933", "subject-933@example.invalid");
+    const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
+    const res = await post(harness.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: sessionAfterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(res.status, 200);
+    const { consentId } = (await res.json()) as { consentId: string };
+    const record = await harness.ports.decision.repo.findByConsentId(TENANT_ID, consentId);
+    const dm = record?.decisionMakerRef ?? "";
+    assert.match(dm, /^dm:v1:[0-9a-f]{64}$/);
+    assert.ok(dm.length >= 1 && dm.length <= 100 && !dm.includes("@"));
+    assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, CHANNEL_REF), "determinista: mismo canal -> mismo ref");
+    const sha = createHash("sha256").update(CHANNEL_REF).digest("hex");
+    assert.ok(!dm.includes(sha) && !dm.includes(sha.slice(0, 32)), "no recuperable por SHA-256 simple");
+    assert.ok((record?.chainRef ?? "").length > 0 && (record?.chainRef ?? "").length <= 100);
   } finally {
     await harness.close();
   }
