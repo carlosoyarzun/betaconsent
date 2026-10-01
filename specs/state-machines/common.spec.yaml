@@ -377,7 +377,7 @@ invariants:
     governedBy: ["SM-CNS-001 §2.2", "ADR-001 §2", "SEC-CNS-005 T-01, T-20"]
     testIds: [TEST-CNS-109]
   - id: INV-CM-09
-    statement: "Todas las refs (subjectRef, decisionMakerRef, invitationRef, chainRef, revocationRef, caseRef, channelRef, ...) son UUIDv4 aleatorios; channelHmac = HMAC(K, tenant_id ‖ email normalizado) vive solo en pii.channel, de modo que la misma dirección en dos tenants no coincide; integrity no tiene FKs a pii/app."
+    statement: "Todas las refs (subjectRef, decisionMakerRef, invitationRef, chainRef, revocationRef, caseRef, channelRef, ...) son UUIDv4 aleatorios; channelHmac = HMAC(K, tenant_id ‖ email normalizado) vive solo en pii.channel, de modo que la misma dirección en dos tenants no coincide; decisionMakerRef (excepción: derivado, no aleatorio) = UUIDv4 de HMAC(K_dmref, dominio ‖ len(tenant_id) ‖ tenant_id ‖ canal normalizado), KEY_VERSION 2 (LEGAL DECISION, Carlos 2026-10-01, (a) por tenant: refs distintos y no correlacionables entre colegios, mismo ref dentro del mismo colegio; resuelto); integrity no tiene FKs a pii/app."
     governedBy: ["SM-CNS-001 §1", "ADR-002 §3", "DEC-BR-016 §2", "DR2 D8", "REQ-CNS-TBD-02 AC-02.2"]
     testIds: [TEST-CNS-110, TEST-CNS-314]
   - id: INV-CM-10

@@ -257,7 +257,7 @@ test("TEST-CNS-933: el decisionMakerRef persistido es UUIDv4 desde HMAC con clav
     const dm = record?.decisionMakerRef ?? "";
     assert.match(dm, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.ok(dm.length >= 1 && dm.length <= 100 && !dm.includes("@"));
-    assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, CHANNEL_REF), "determinista: mismo canal -> mismo ref");
+    assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, TENANT_ID, CHANNEL_REF), "determinista: mismo canal -> mismo ref");
     const sha = createHash("sha256").update(CHANNEL_REF).digest("hex");
     assert.ok(!dm.replaceAll("-", "").includes(sha.slice(0, 16)), "no recuperable por SHA-256 simple");
     assert.ok((record?.chainRef ?? "").length > 0 && (record?.chainRef ?? "").length <= 100);
