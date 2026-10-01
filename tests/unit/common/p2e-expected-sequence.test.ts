@@ -51,7 +51,7 @@ async function advanceAggregate(ledger: LedgerPort, aggregateId: string, aggrega
   const current = await ledger.currentSequence(T, aggregateId);
   await ledger.append({
     expectedSequence: current,
-    eventType: "DECISION_CONTESTED",
+    eventType: "TENANT_STATUS_CHANGED",
     tenantId: T,
     aggregateType,
     aggregateId,

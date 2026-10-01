@@ -13,7 +13,7 @@ import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
 /** Refs opacas UUIDv4 (common.schema.json Ref) para que los eventos del ledger validen. */
 export const RH3_DEV_CHAIN_REF = "chain-dev-rh3";
 export const RH3_DEV_CONSENT_ID = "3d9b7c1e-2a4f-4b6d-8e10-5f7a9c3b1d20";
-export const RH3_DEV_CASE_REF = "case-dev-rh3-001";
+export const RH3_DEV_CASE_REF = "4b1d7e9a-2c3f-4a68-8d5e-6f0a1b2c3d4e";
 export const RH3_DEV_REVOCATION_REF = "8e2c4a6b-1d3f-4a5c-9b7e-0f2d4c6a8b10";
 
 /** Siembra atomica (UNA tx del tenant, SEC-CNS-017 F4): o queda todo el caso o nada. Idempotente por consulta, no por
