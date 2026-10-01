@@ -38,7 +38,7 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { applyLocalFixtures, loadLocalFixtures } from "../../../src/infra/adapters/postgres/local-fixtures.ts";
 import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, LOCAL_ONLY_DEV_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { listOutboxEnvelopes } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
-import { isSyntheticRecipient } from "../../../src/server/modules/common/synthetic-recipient.ts";
+import { isReservedEmail } from "../../../src/server/modules/common/synthetic-recipient.ts";
 import { RESERVED_BAD, RESERVED_OK } from "../../unit/common/synthetic-recipient-vectors.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
@@ -464,7 +464,7 @@ pgTest("TEST-CNS-886 e2e pg: recorrido de TODAS las rutas HTTP (GET y POST, sin 
   }
 });
 
-pgTest("TEST-CNS-973 e2e pg EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANNEL (email reservado) -> /send -> participante /i -> OTP al sink del email reservado -> decision -> recibo; la BD persiste el canal", async (ctx) => {
+pgTest("TEST-CNS-978 e2e pg EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANNEL (email reservado) -> /send -> participante /i -> OTP al sink del email reservado -> decision -> recibo; la BD persiste el canal", async (ctx) => {
   const migrator = await ctx.connectAs("consent_migrator");
   await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
   const env = await boot(ctx);
@@ -530,10 +530,10 @@ pgTest("TEST-CNS-973 e2e pg EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANN
   }
 });
 
-pgTest("TEST-CNS-974 pg: paridad entre isSyntheticRecipient (TS) y app.is_reserved_email (SQL) sobre los vectores compartidos", async (ctx) => {
+pgTest("TEST-CNS-979 pg: paridad entre isReservedEmail (TS) y app.is_reserved_email (SQL) sobre los vectores compartidos", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   for (const value of [...RESERVED_OK, ...RESERVED_BAD]) {
     const sql = (await admin.query<{ ok: boolean }>("SELECT app.is_reserved_email($1) AS ok", [value])).rows[0]?.ok;
-    assert.equal(isSyntheticRecipient(value), sql, `paridad TS/SQL: ${value}`);
+    assert.equal(isReservedEmail(value), sql, `paridad TS/SQL: ${value}`);
   }
 });

@@ -627,7 +627,7 @@ test("TEST-CNS-725: el login CASE (CA-128) sigue sin admitir TENANT_ADMIN y el l
 // ---------------------------------------------------------------------------
 // CA-128, EXT-B (i) (Carlos, 2026-10-01): recipientChannelRef = email sintetico de dominio reservado.
 // ---------------------------------------------------------------------------
-test("TEST-CNS-971: /ready con RECIPIENT_CHANNEL rechaza con 422 uniforme todo recipientChannelRef que no sea email reservado (UUID, dominio real, tipo erroneo) sin reflejar el valor; la invitacion sigue DRAFT", async () => {
+test("TEST-CNS-976: /ready con RECIPIENT_CHANNEL rechaza con 422 uniforme todo recipientChannelRef que no sea email reservado (UUID, dominio real, tipo erroneo) sin reflejar el valor; la invitacion sigue DRAFT", async () => {
   const h = await startServer();
   try {
     const admin = await login(h.baseUrl, ADMIN_A);
@@ -649,7 +649,7 @@ test("TEST-CNS-971: /ready con RECIPIENT_CHANNEL rechaza con 422 uniforme todo r
   }
 });
 
-test("TEST-CNS-972: E2E memoria EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANNEL (email reservado) -> /send -> participante /i -> OTP al sink del email reservado -> decision -> recibo; UNBOUND sigue 404 uniforme en /otp/request", async () => {
+test("TEST-CNS-977: E2E memoria EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANNEL (email reservado) -> /send -> participante /i -> OTP al sink del email reservado -> decision -> recibo; UNBOUND sigue 404 uniforme en /otp/request", async () => {
   const h = await startServer();
   try {
     const admin = await login(h.baseUrl, ADMIN_A);
