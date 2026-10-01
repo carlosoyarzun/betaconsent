@@ -86,7 +86,11 @@
           ]
         },
         "recipientChannelRef": {
-          "$ref": "common.schema.json#/$defs/Ref"
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "pattern": "^[^@\\s]+@(([a-zA-Z0-9-]+\\.)*[a-zA-Z0-9-]+\\.(test|invalid)|example\\.(com|org|net))$",
+          "description": "Email sintético de dominio reservado (.test, .invalid, example.com|org|net). IT0: solo dominios reservados; LD-21 pendiente para entrega real. Decisión EXT-B (i) (Carlos, 2026-10-01). Otro valor -> 422 uniforme sin reflejarlo."
         }
       },
       "required": [

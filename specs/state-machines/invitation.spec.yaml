@@ -46,7 +46,7 @@ attributes:
   - tokenHash # SHA-256 del token; el token nunca persiste
   - expiresAt
   - recipientBinding # enum RECIPIENT_CHANNEL | UNBOUND
-  - recipientChannelRef
+  - recipientChannelRef # IT0: email sintético de dominio reservado (EXT-B (i), Carlos, 2026-10-01); LD-21 pendiente para entrega real
   - boundDecisionMakerRef
   - reissueOfRef
   - issuerActor # enum INSTITUTION_OPERATOR | PLATFORM_ON_BEHALF (EXT-B, sin fijar)
@@ -552,6 +552,7 @@ openItems:
   - {id: OPEN-IV-01, item: "Q-15: habilitar o no I7u (OPENED → DECLINED sin verificar).", owner: Carlos, status: OPEN}
   - {id: OPEN-IV-02, item: "Q-18: DECIDIDO R14-E (opción A): I9 PARTICIPATION_CLOSED / ENROLLMENT_CLOSED en la misma transacción que SP4/EN1; eligibility.changed sigue PROPOSED (E-10).", owner: Carlos, status: DECIDED}
   - {id: OPEN-IV-03, item: "EXT-B / F-014: issuerActor y deliveryChannel (no se fijan; DEC-BR-014 §7).", owner: Carlos, status: OPEN}
+  - {id: EXT-B-IT0-RECIPIENT, item: "Decisión EXT-B (i) (Carlos, 2026-10-01): en IT0 recipientChannelRef es un email sintético de dominio reservado (sin tabla de canales); fuera de dominios reservados -> 422 uniforme. LD-21 (binding M2 por el participante) queda para entrega real. UNBOUND sigue permitido en emisión, pero un participante solo completa OTP con RECIPIENT_CHANNEL.", owner: Carlos, status: DECIDED}
   - {id: OPEN-IV-04, item: "EXT-C / DEC-BR-004: datos mínimos del sujeto para SUBJECT_MISMATCH_REPORTED.", owner: Carlos, status: OPEN}
   - {id: OPEN-IV-05, item: "P-10 marcado [VERIFICAR contra el cronograma del Protocolo] en SEC-CNS-006; si choca, FINDING.", owner: "lampone-security / Carlos", status: OPEN}
   - {id: OPEN-IV-06, item: "actorRole del portador en I4: DECIDIDO R13-5 (UNVERIFIED_BEARER; OPEN-CM-05).", owner: Carlos, status: DECIDED}

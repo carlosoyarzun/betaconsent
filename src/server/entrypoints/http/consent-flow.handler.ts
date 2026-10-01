@@ -376,6 +376,8 @@ export async function handleRequestOtp(
   // SEC-CNS-016: la lectura corre BAJO el tenant de la sesión (inTenant), nunca fuera de una tx.
   const invitationRef = session.invitationRef;
   const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  // EXT-B (i) (Carlos, 2026-10-01): en IT0 un participante solo completa OTP con invitacion RECIPIENT_CHANNEL;
+  // UNBOUND (sin canal) sigue siendo 404 uniforme. LD-21 (binding M2) pendiente para entrega real.
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   let verificationRef = session.verificationRef ?? randomUUID();
@@ -473,6 +475,8 @@ export async function handleSubmitOtp(
   // SEC-CNS-016: la lectura corre BAJO el tenant de la sesión (inTenant), nunca fuera de una tx.
   const invitationRef = session.invitationRef;
   const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  // EXT-B (i) (Carlos, 2026-10-01): en IT0 un participante solo completa OTP con invitacion RECIPIENT_CHANNEL;
+  // UNBOUND (sin canal) sigue siendo 404 uniforme. LD-21 (binding M2) pendiente para entrega real.
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   const decisionMakerRef = deriveDecisionMakerRef(ports.decisionMakerRefKey, invitation.recipientChannelRef);
