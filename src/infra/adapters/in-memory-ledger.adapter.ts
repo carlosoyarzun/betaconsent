@@ -48,7 +48,7 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
       chainTail.journal = journal;
     },
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
-      assertLedgerEventType(event.eventType); // X6: lista blanca (ERR-RV-13), antes de cualquier efecto
+      assertLedgerEventType(event.eventType);
       if (event.idempotencyKey) {
         const key = idempotencyStoreKey(event.tenantId, event.aggregateType, event.aggregateId, event.idempotencyKey);
         const existing = byIdempotencyKey.get(key);
