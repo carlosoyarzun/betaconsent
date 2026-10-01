@@ -31,7 +31,8 @@ test("TEST-CNS-990 asignacion por condicion: token X3/X5/X6 exacto (no X30) y so
   assert.deepEqual(x6?.tests.map((t) => [t.id, t.status]), [["TEST-CNS-2", "fail"]]);
   assert.deepEqual(x6?.summary, { pass: 0, fail: 1, skip: 0 });
   assert.equal(statusOf(row("TEST-CNS-9", "z.ts", "X3"), records), "skip"); // sin registros
-  assert.equal(manifestPath("out", x3 as Manifest), "out/X3/2026-10-01-5a0e4ec.json");
+  assert.equal(manifestPath("out", x3 as Manifest), "out/X3/2026-10-01-5a0e4ec-nopg.json");
+  assert.equal(manifestPath("out", { ...(x3 as Manifest), postgres: { imageDigest: `sha256:${"a1".repeat(32)}` } }), "out/X3/2026-10-01-5a0e4ec.json");
 });
 
 test("TEST-CNS-990 el manifiesto limpio pasa; un email plantado, un token, un JWT o un secreto lo rechazan sin eco del valor", () => {

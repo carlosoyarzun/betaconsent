@@ -5,7 +5,7 @@
 //
 // Entrada: los JSONL `test-evidence/v1` de tools/testing/run-tests.ts (evidence/test-runs/, gitignored) y
 // traceability/test-matrix.csv (asignacion test -> condicion por token X3/X5/X6 en governed_by/test_name).
-// Salida: evidence/it0/<condicion>/<YYYY-MM-DD>-<commit corto>.json. Solo IDs, titulos, rutas y estados.
+// Salida: evidence/it0/<condicion>/<YYYY-MM-DD>-<commit corto>[-nopg].json. Solo IDs, titulos, rutas y estados.
 // Se niega a escribir un manifiesto que contenga emails, tokens u otros secretos (fail-closed).
 //
 // Uso: node scripts/evidence/manifest.ts [--runs evidence/test-runs] [--environment LOCAL|CI]
@@ -183,7 +183,9 @@ export function assertCleanManifest(m: Manifest): void {
 }
 
 export function manifestPath(outDir: string, m: Manifest): string {
-  return join(outDir, m.condition, `${m.runAt.slice(0, 10)}-${m.commit.slice(0, 7)}.json`);
+  // Sufijo -nopg: corrida sin Postgres (los tests pg figuran skip); no pisa la corrida completa del mismo commit.
+  const suffix = m.postgres.imageDigest === null ? "-nopg" : "";
+  return join(outDir, m.condition, `${m.runAt.slice(0, 10)}-${m.commit.slice(0, 7)}${suffix}.json`);
 }
 
 function git(...a: string[]): string {
