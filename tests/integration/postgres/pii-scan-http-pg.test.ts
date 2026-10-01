@@ -39,6 +39,7 @@ import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revoc
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { SCAN_ORIGIN, assertNonVacuous, describeStats, newCorpus, runAllFlows, scanForLeaks, startCapture } from "../consent-flow/pii-scan-driver.ts";
 import type { ScanEnv } from "../consent-flow/pii-scan-driver.ts";
+import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import { pgTest } from "./harness.ts";
 
 const T = LOCAL_ONLY_DEV_TENANT_ID;
@@ -65,6 +66,7 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
     recoveryTokenPolicy: loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY),
     staffIdentity,
     chainRefKey: deriveChainRefKey(chainSecret),
+    decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
   const { ports, revocationPorts, staffConsole } = bundle;

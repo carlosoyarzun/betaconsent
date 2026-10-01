@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 
 import { RH3_DEV_CASE_REF } from "../../../src/server/entrypoints/dev-rh3-seed.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
-import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
+import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
 
 export const SCAN_ORIGIN = "http://consola-consent.test.localhost";
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
@@ -287,7 +287,7 @@ async function flowStaff(env: ScanEnv, corpus: Corpus): Promise<void> {
   );
   assert.equal(invited.status, 201, await invited.clone().text());
   const { invitationRef } = (await invited.json()) as { invitationRef: string };
-  assert.equal((await post(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "UNBOUND" })).status, 200);
+  assert.equal((await post(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: LOCAL_ONLY_DEV_STAFF_CHANNEL_REF })).status, 200);
   assert.equal((await post(`/staff/invitations/${invitationRef}/send`, {})).status, 200);
   const path = env.invitationSink.sent[env.invitationSink.sent.length - 1]?.invitationPath ?? "";
   assert.match(path, /^\/i\/[^/]+$/);
