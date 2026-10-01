@@ -370,3 +370,4 @@ TEST-CNS-866,integration,tests/integration/postgres/idempotency-schema.test.ts,"
 TEST-CNS-867,integration,tests/integration/postgres/idempotency-schema.test.ts,"pg: dos requests concurrentes con la misma Idempotency-Key se serializan (una ejecuta, el resto reproduce)","CA-124;PR-E;GRD-CM-08",ACTIVE
 TEST-CNS-868,unit,tests/unit/common/idempotency-policy.test.ts,"loadIdempotencyPolicyConfig: sin override ni env lanza (fail-closed, sin default de produccion); valor LOCAL-only valido","CA-124;PR-E;GRD-CM-08;P-33",ACTIVE
 TEST-CNS-869,unit,tests/unit/common/idempotency-policy.test.ts,"IdempotencyPort in-memory equivalente: TTL, aislamiento por tenant, primera gana y deshacer del journal en la UoW","CA-124;PR-E;GRD-CM-08",ACTIVE
+TEST-CNS-870,unit,tests/unit/postgres/handlers-in-tx-scan.test.ts,"chequeo estatico: handlers HTTP sin repos/ledger/outbox/catalogo/idempotencia fuera de uow.inTenant (y el detector atrapa un uso fuera)","CA-124;PR-E;SEC-CNS-016",ACTIVE
