@@ -81,7 +81,7 @@ pgTest("TEST-CNS-917 pg: ops.access_log con FORCE RLS por app.current_tenant_id(
     return admin.query(`INSERT INTO ops.access_log (${Object.keys(cols).join(",")}) VALUES (${Object.values(cols).join(",")})`);
   };
   const badRows: Array<Record<string, string>> = [
-    { actor_ref: "'op@example.invalid'" }, { actor_ref: "'Nombre Apellido'" }, { resource_ref: "'caso de Pedro'" }, { resource_ref: `'${"x".repeat(101)}'` },
+    { actor_ref: "'op@example.invalid'" }, { actor_ref: "'Nombre Apellido'" }, { actor_ref: "'12.345.678-5'" }, { resource_ref: "'12345678-5'" }, { resource_ref: "'case-1'" }, { resource_ref: "'caso de Pedro'" }, { resource_ref: `'${"x".repeat(101)}'` },
     { actor_role: "'ADMIN'" }, { action: "'RIGHTS_CASE_EXPORT'" }, { resource_type: "'PERSON'" }, { data_class: "'REAL'" }, { environment: "'MARS'" },
   ];
   for (const over of badRows) {

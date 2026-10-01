@@ -5,8 +5,9 @@
 -- (append-only), INV-CM-02 (tenant_id unica clave de aislamiento), DEC-BR-014 §4 (solo sinteticos).
 --
 -- ops.access_log registra QUE principal de staff leyo QUE recurso (refs opacas), no el contenido:
---   * sin PII por construccion: actor_ref y resource_ref son refs opacas con CHECK de forma
---     (sin '@', espacios ni texto libre); action/resource_type/actor_role son enums;
+--   * sin PII por construccion: resource_ref es una Ref UUIDv4 (common.schema.json#/$defs/Ref) y actor_ref el
+--     principalRef canonico (`staff-synthetic-NN` del roster IT0 o Ref UUIDv4); un RUT, un nombre o
+--     un email no cumplen el CHECK; action/resource_type/actor_role son enums;
 --   * append-only: sin UPDATE/DELETE/TRUNCATE para runtime y triggers ENABLE ALWAYS que bloquean
 --     tambien al dueno / consent_migrator y a superusuario (incluso con session_replication_role=replica);
 --   * RLS ENABLE + FORCE por app.current_tenant_id(); app_rw solo SELECT e INSERT por columnas;
@@ -19,11 +20,11 @@ CREATE TABLE ops.access_log (
   -- Orden de insercion estable (accessed_at = now() es igual dentro de una tx). La identidad no requiere grant de secuencia.
   access_seq    bigint      GENERATED ALWAYS AS IDENTITY NOT NULL,
   tenant_id     uuid        NOT NULL,
-  actor_ref     text        NOT NULL CONSTRAINT access_log_actor_ref_shape CHECK (actor_ref ~ '^[A-Za-z0-9._:-]{1,100}$'),
+  actor_ref     text        NOT NULL CONSTRAINT access_log_actor_ref_shape CHECK (actor_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$'),
   actor_role    text        NOT NULL CONSTRAINT access_log_actor_role_enum CHECK (actor_role IN ('RIGHTS_OPERATOR', 'APPROVER', 'TENANT_ADMIN', 'PLATFORM_ADMIN')),
   action        text        NOT NULL CONSTRAINT access_log_action_enum CHECK (action IN ('RIGHTS_CASE_READ')),
   resource_type text        NOT NULL CONSTRAINT access_log_resource_type_enum CHECK (resource_type IN ('RIGHTS_CASE')),
-  resource_ref  text        NOT NULL CONSTRAINT access_log_resource_ref_shape CHECK (resource_ref ~ '^[A-Za-z0-9._:-]{1,100}$'),
+  resource_ref  text        NOT NULL CONSTRAINT access_log_resource_ref_shape CHECK (resource_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
   accessed_at   timestamptz NOT NULL DEFAULT pg_catalog.now(),
   environment   text        NOT NULL DEFAULT ops.catalog_environment() CONSTRAINT access_log_environment_enum CHECK (environment IN ('LOCAL', 'DEV', 'STAGING', 'PRODUCTION')),
   data_class    text        NOT NULL DEFAULT 'SYNTHETIC' CONSTRAINT access_log_data_class_synthetic CHECK (data_class = 'SYNTHETIC')

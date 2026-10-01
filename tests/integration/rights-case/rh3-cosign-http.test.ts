@@ -247,7 +247,7 @@ async function confirmedEvents(fx: Fixture) {
 }
 
 test("TEST-CNS-667: cosign con sesión APPROVER (rol no permitido) -> 403 ACTOR_NOT_ALLOWED (GRD-CM-07, LD-03), sin efecto", async () => {
-  const fx = await setUp({ chainRef: "chain-667", caseRef: "case-667", revocationRef: fixtureUuid("rv-667") });
+  const fx = await setUp({ chainRef: "chain-667", caseRef: fixtureUuid("case-667"), revocationRef: fixtureUuid("rv-667") });
   try {
     await record(fx, "staff-synthetic-01");
     const approver = await login(fx, "staff-synthetic-03");
@@ -264,7 +264,7 @@ test("TEST-CNS-667: cosign con sesión APPROVER (rol no permitido) -> 403 ACTOR_
 });
 
 test("TEST-CNS-668: cosignedByRef en el body viola additionalProperties:false de CosignCaseConfirmationRequest -> 422, sin efecto (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-668", caseRef: "case-668", revocationRef: fixtureUuid("rv-668") });
+  const fx = await setUp({ chainRef: "chain-668", caseRef: fixtureUuid("case-668"), revocationRef: fixtureUuid("rv-668") });
   try {
     await record(fx, "staff-synthetic-01");
     const op2 = await login(fx, "staff-synthetic-02");
@@ -283,7 +283,7 @@ test("TEST-CNS-668: cosignedByRef en el body viola additionalProperties:false de
 });
 
 test("TEST-CNS-669: cosign por la misma persona que registró -> 409 RH3_FOUR_EYES_REQUIRED (ERR-RV-18), sin efecto", async () => {
-  const fx = await setUp({ chainRef: "chain-669", caseRef: "case-669", revocationRef: fixtureUuid("rv-669") });
+  const fx = await setUp({ chainRef: "chain-669", caseRef: fixtureUuid("case-669"), revocationRef: fixtureUuid("rv-669") });
   try {
     const op1 = await record(fx, "staff-synthetic-01");
     const res = await postCosign(fx.baseUrl, authed(fx, op1));
@@ -299,7 +299,7 @@ test("TEST-CNS-669: cosign por la misma persona que registró -> 409 RH3_FOUR_EY
 });
 
 test("TEST-CNS-670: cosign sin confirmación previa (sin AWAITING_COSIGN) -> 409 RH3_FOUR_EYES_REQUIRED, sin efecto", async () => {
-  const fx = await setUp({ chainRef: "chain-670", caseRef: "case-670", revocationRef: fixtureUuid("rv-670") });
+  const fx = await setUp({ chainRef: "chain-670", caseRef: fixtureUuid("case-670"), revocationRef: fixtureUuid("rv-670") });
   try {
     const op2 = await login(fx, "staff-synthetic-02");
     const res = await postCosign(fx.baseUrl, authed(fx, op2));
@@ -315,7 +315,7 @@ test("TEST-CNS-670: cosign sin confirmación previa (sin AWAITING_COSIGN) -> 409
 });
 
 test("TEST-CNS-671: sesión de otro caso (path distinto) o sin sesión -> 404 uniforme (GRD-CM-01)", async () => {
-  const fx = await setUp({ chainRef: "chain-671", caseRef: "case-671", revocationRef: fixtureUuid("rv-671") });
+  const fx = await setUp({ chainRef: "chain-671", caseRef: fixtureUuid("case-671"), revocationRef: fixtureUuid("rv-671") });
   try {
     await record(fx, "staff-synthetic-01");
     const op2 = await login(fx, "staff-synthetic-02");
@@ -331,7 +331,7 @@ test("TEST-CNS-671: sesión de otro caso (path distinto) o sin sesión -> 404 un
 });
 
 test("TEST-CNS-672: CSRF/Origin incorrecto en cosign -> 403 CSRF_REJECTED (GRD-CM-10)", async () => {
-  const fx = await setUp({ chainRef: "chain-672", caseRef: "case-672", revocationRef: fixtureUuid("rv-672") });
+  const fx = await setUp({ chainRef: "chain-672", caseRef: fixtureUuid("case-672"), revocationRef: fixtureUuid("rv-672") });
   try {
     await record(fx, "staff-synthetic-01");
     const op2 = await login(fx, "staff-synthetic-02");
@@ -350,7 +350,7 @@ test("TEST-CNS-673: dotación insuficiente en cosign -> 409 ROSTER_INSUFFICIENT 
     { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
     { principalRef: "staff-synthetic-03", role: "APPROVER" },
   ];
-  const fx = await setUp({ chainRef: "chain-673", caseRef: "case-673", revocationRef: fixtureUuid("rv-673"), roster: shortRoster });
+  const fx = await setUp({ chainRef: "chain-673", caseRef: fixtureUuid("case-673"), revocationRef: fixtureUuid("rv-673"), roster: shortRoster });
   try {
     const op2 = await login(fx, "staff-synthetic-02");
     const res = await postCosign(fx.baseUrl, authed(fx, op2));
@@ -378,7 +378,7 @@ test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> 
     { principalRef: "d4e5f6a7-b8c9-4d0e-9f2a-3b4c5d6e7f80", role: "APPROVER" },
   ];
   const revocationRef = "6f1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f10";
-  const fx = await setUp({ chainRef: "chain-674", caseRef: "case-674", revocationRef, consentId: CONSENT_674, roster: uuidRoster });
+  const fx = await setUp({ chainRef: "chain-674", caseRef: fixtureUuid("case-674"), revocationRef, consentId: CONSENT_674, roster: uuidRoster });
   try {
     await record(fx, opA);
     const op2 = await login(fx, opB);
@@ -405,7 +405,7 @@ test("TEST-CNS-674: camino feliz HTTP completo — login 01 -> confirmación -> 
 });
 
 test("TEST-CNS-675: cosign repetido es idempotente — 200 con el mismo ack y un único REVOCATION_CONFIRMED", async () => {
-  const fx = await setUp({ chainRef: "chain-675", caseRef: "case-675", revocationRef: REVOCATION_675, consentId: CONSENT_675 });
+  const fx = await setUp({ chainRef: "chain-675", caseRef: fixtureUuid("case-675"), revocationRef: REVOCATION_675, consentId: CONSENT_675 });
   try {
     await record(fx, "staff-synthetic-01");
     const op2 = await login(fx, "staff-synthetic-02");
