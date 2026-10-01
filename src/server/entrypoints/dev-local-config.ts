@@ -64,6 +64,8 @@ export const LOCAL_ONLY_DEV_OTHER_TENANT_ID = "5d2e8a1c-6b3f-4d97-9c04-7e1a3b5d9
  * tiene todavía un flujo de alta de sujetos ni participaciones: FINDING P1). Cero PII. */
 export const LOCAL_ONLY_DEV_STAFF_SUBJECT_REF = "b7c3d1e5-2a48-4f96-8d10-6e9f0a2c4b73";
 export const LOCAL_ONLY_DEV_PARTICIPATION_REF = "d4f8a2c6-7b13-4e59-a8c2-0f3d5b7e9a14";
+/** TENANT_ADMIN sintético del colegio de dev (mismo valor que su entrada en LOCAL_ONLY_DEV_STAFF_ROSTER); lo usa la consola dev. */
+export const LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF = "18c54cb1-9df4-4d4d-b371-b606e4c3b8e6";
 export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "staff-recipient@example.invalid";
 
 /** CA-125: P-10 (vigencia de la invitación = 7 días, APROBADO, Carlos 2026-10-01) y deliveryChannel
@@ -90,6 +92,6 @@ export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
   // CA-125 (contracts/openapi /staff/*, staffSession): miembros TENANT_ADMIN de la consola STAFF,
   // cada uno con su membership de tenant (GRD-CM-01) y sin reutilizar personas entre roles
   // (GRD-RC-15). 05 = colegio de dev; 06 = OTRO colegio, para probar el aislamiento por tenant.
-  { principalRef: "18c54cb1-9df4-4d4d-b371-b606e4c3b8e6", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
+  { principalRef: LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF, role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
   { principalRef: "905ea2ae-b8ed-4681-a1ae-36767a4b0f0e", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_OTHER_TENANT_ID },
 ];
