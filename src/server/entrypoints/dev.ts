@@ -45,6 +45,7 @@ import {
   LOCAL_ONLY_DEV_SUBJECT_REF,
 } from "./dev-local-config.ts";
 import { openPostgresStore, type PostgresStore } from "../../infra/adapters/postgres/store.ts";
+import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
 import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
 import type { StaffConsolePorts } from "./http/staff-console.handler.ts";
@@ -240,6 +241,8 @@ const server = createConsentFlowHttpServer({
   environment: "LOCAL",
   staffIdentity,
   staffConsole,
+  storeMode,
+  ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
 });
 
 server.listen(port, "127.0.0.1", () => {

@@ -109,3 +109,9 @@ export async function readOutboxEnvelope(tx: TenantTx, eventId: string): Promise
   const row = r.rows[0];
   return row ? toEnvelope(row) : null;
 }
+
+/** LOCAL dev-sink (GET /__dev/outbox-sink): sobres del tenant de la tx (RLS), mas antiguos primero, tope acotado. */
+export async function listOutboxEnvelopes(tx: TenantTx, limit = 100): Promise<OutboxEnvelope[]> {
+  const r = await tx.query<OutboxRow>(`SELECT ${SELECT_COLUMNS} FROM app.outbox ORDER BY created_at, event_id LIMIT $1`, [Math.min(Math.max(1, limit), 500)]);
+  return r.rows.map(toEnvelope);
+}

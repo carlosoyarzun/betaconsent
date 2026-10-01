@@ -36,6 +36,7 @@ import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { applyLocalFixtures, loadLocalFixtures } from "../../../src/infra/adapters/postgres/local-fixtures.ts";
 import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
+import { listOutboxEnvelopes } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 
@@ -77,6 +78,8 @@ async function boot(ctx: PgTestContext) {
     environment: "LOCAL",
     staffIdentity,
     staffConsole: bundle.staffConsole,
+    storeMode: "postgres",
+    devOutboxSink: () => store.uow.withTenantTx(T, (tx) => listOutboxEnvelopes(tx)),
   });
   const baseUrl = await new Promise<string>((resolve) =>
     server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)),
@@ -226,6 +229,13 @@ pgTest("TEST-CNS-873 e2e pg: /m -> verificacion MANAGE -> retiro R1..R4 -> recib
 
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2 AND state = 'REVOKED'", [T, consentId]), 1);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1 AND dedupe_key = $2", [T, `${revocationRef}:consent.revoked`]), 1);
+    // SEC-CNS-017 F3 (TEST-CNS-881): /__dev/outbox-sink en pg lee el outbox dentro de withTenantTx del tenant dev (sin TypeError del Proxy).
+    const sink = await fetch(`${env.baseUrl}/__dev/outbox-sink`);
+    assert.equal(sink.status, 200);
+    const sunk = ((await sink.json()) as { enqueued: { eventType: string; tenantRef: string }[] }).enqueued;
+    assert.equal(sunk.length, 1);
+    assert.equal(sunk[0]?.eventType, "consent.revoked");
+    assert.equal(sunk[0]?.tenantRef, T);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type IN ('CONSENT_REVOKED','RECEIPT_CREATED')", [T, revocationRef]), 2);
     assert.ok(chain.length > 0);
     // /manage ya-retirado (C6): sin CTA de retirar.

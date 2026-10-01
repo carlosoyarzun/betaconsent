@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { deriveChainRefKey } from "../../modules/consent-decision/chain-ref.ts";
+import type { OutboxEnvelope } from "../../ports/outbox.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryInvitationRepository } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
@@ -154,6 +155,11 @@ export interface ConsentFlowHttpServerOptions {
    * I2/I3 ERR-CM-12). dev.ts y los tests inyectan catálogo y política LOCAL-only.
    */
   readonly staffConsole?: StaffConsolePorts;
+  /** SEC-CNS-017 F3: modo de almacenamiento, explicito (no se infiere del Proxy de puertos). `memory` por defecto. */
+  readonly storeMode?: "memory" | "postgres";
+  /** Solo storeMode=postgres + LOCAL: lector del outbox del tenant de dev (dentro de inTenant/withTenantTx de ese
+   * tenant, RLS). Sin el, GET /__dev/outbox-sink responde 404 en postgres. */
+  readonly devOutboxSink?: () => Promise<readonly OutboxEnvelope[]>;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -817,10 +823,21 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         res.end(JSON.stringify({ status: 404 }));
         return;
       }
+      if (options.storeMode === "postgres") {
+        // El outbox vive en la base: el bolso fuera de tx es un Proxy que rechaza, no un InMemoryOutbox.
+        if (!options.devOutboxSink) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ status: 404 }));
+          return;
+        }
+        const envelopes = await options.devOutboxSink();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ enqueued: envelopes }));
+        return;
+      }
       const outbox = revocationPorts.revocation.outbox as InMemoryOutbox;
       res.writeHead(200, { "content-type": "application/json" });
-      // CONSENT_STORE=postgres: el outbox vive en la base (sin sink en memoria); se responde vacío.
-      res.end(JSON.stringify({ enqueued: outbox.enqueued ? outbox.enqueued.map((r) => r.envelope) : [] }));
+      res.end(JSON.stringify({ enqueued: outbox.enqueued.map((r) => r.envelope) }));
       return;
     }
 
