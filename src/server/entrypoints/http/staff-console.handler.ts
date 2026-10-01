@@ -30,7 +30,7 @@ import {
   staffSendInvitationTx,
   type StaffIssuancePorts,
 } from "../../modules/invitation/staff-issuance.ts";
-import { isSyntheticRecipient } from "../../modules/common/synthetic-recipient.ts";
+import { isReservedEmail } from "../../modules/common/synthetic-recipient.ts";
 import { InvalidRecipientChannelRefError } from "../../ports/invitation-repository.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
@@ -305,7 +305,7 @@ export async function handleMarkInvitationReady(
   // recipientChannelRef si y solo si RECIPIENT_CHANNEL (GRD-IV-03; if/then/else del schema).
   // EXT-B (i) (Carlos, 2026-10-01): en IT0 recipientChannelRef es un email sintetico de dominio reservado
   // (no UUID); cualquier otro valor -> 422 uniforme sin reflejarlo. LD-21 pendiente para entrega real.
-  if (recipientBinding === "RECIPIENT_CHANNEL" && !isSyntheticRecipient(body.recipientChannelRef)) return invalidRequest();
+  if (recipientBinding === "RECIPIENT_CHANNEL" && !(typeof body.recipientChannelRef === "string" && body.recipientChannelRef.length <= 254 && isReservedEmail(body.recipientChannelRef))) return invalidRequest();
   if (recipientBinding === "UNBOUND" && body.recipientChannelRef !== undefined) return invalidRequest();
   const input = {
     consentVersion: body.consentVersion,
