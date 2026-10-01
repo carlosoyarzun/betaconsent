@@ -2,6 +2,11 @@
 // common.spec.yaml ledgerEnvelope (UNIQUE tenant_id, aggregate_id, sequence; concurrency
 // expectedSequence), INV-CM-01, INV-CM-02. ADR-001 §11: solo este adaptador conoce el SQL.
 //
+// P2-4 (X6): el primer `append` de una tx toma el advisory lock del tenant (`ledger-chain:<tenantId>`) y lo
+// retiene HASTA COMMIT/ROLLBACK. Por eso, tras el primer append NO debe hacerse I/O externo (red, sinks de canal,
+// esperas de terceros) dentro de la misma unidad de trabajo: bloquearia el ledger de TODO el tenant. Hacer la
+// entrega/I/O fuera de la tx (o antes del primer append). El lock_timeout de la tx acota la espera (55P03).
+//
 // Opera DENTRO de la transaccion de PgUnitOfWork.inTenant (tenant fijado con set_config local):
 // RLS filtra por app.current_tenant_id(); aqui tenant_id solo se pasa para WITH CHECK y filtros.
 
