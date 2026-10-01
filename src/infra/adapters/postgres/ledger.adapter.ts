@@ -88,7 +88,7 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
 
   return {
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
-      assertLedgerEventType(event.eventType); // X6: lista blanca (ERR-RV-13); la BD la repite como CHECK
+      assertLedgerEventType(event.eventType);
       const keyHash = event.idempotencyKey !== undefined ? hashKey(event.idempotencyKey) : null;
       if (keyHash !== null) {
         const existing = await tx.query<AuditEventRow>(
