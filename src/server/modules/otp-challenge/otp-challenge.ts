@@ -18,16 +18,16 @@
 
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 
-import { DomainError } from "../common/errors.ts";
+import { DomainError, type DomainErrorCode } from "../common/errors.ts";
 import { assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
 import type { TenantId } from "../common/types.ts";
 import type { OtpChannelPort } from "../../ports/otp-channel.port.ts";
-import type { OtpVerificationRecord, OtpVerificationRepositoryPort } from "../../ports/otp-verification-repository.port.ts";
+import type { OtpScope, OtpVerificationRecord, OtpVerificationRepositoryPort } from "../../ports/otp-verification-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
-import { markInvitationVerified } from "../invitation/invitation.ts";
-import { appendNext } from "../common/ledger-append.ts";
+import { invitationPortsInTx, markInvitationVerifiedTx } from "../invitation/invitation.ts";
+import { lastLedgerSequence } from "../common/ledger-append.ts";
 
 export interface OtpPolicy {
   /** P-01 (no fijado aquí): dígitos del código. */
@@ -67,8 +67,34 @@ function generateCode(length: number): string {
   return code;
 }
 
-async function requireVerification(ports: Omit<OtpChallengePorts, "invitation">, tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord> {
-  const found = await ports.otpRepo.findByRef(tenantId, verificationRef);
+type RightsOtpPorts = Omit<OtpChallengePorts, "invitation">;
+
+/** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, `otpRepo`, `ledger` (y la Invitation, si el
+ * bag la trae) son los de la tx. Las funciones de este modulo no anidan `inTenant`. Si la unidad se
+ * reintenta (carrera de secuencia/UNIQUE), `fn` se reejecuta entera: no debe tener efectos fuera de la tx
+ * (el envio del codigo va DESPUES del commit). */
+function inTx<P extends RightsOtpPorts & { readonly invitation?: InvitationPorts }, T>(
+  ports: P,
+  tenantId: TenantId,
+  fn: (txPorts: P) => Promise<T>,
+): Promise<T> {
+  return ports.uow.inTenant(tenantId, (tx) =>
+    fn({
+      ...ports,
+      otpRepo: tx.otpRepo,
+      ledger: tx.ledger,
+      ...(ports.invitation ? { invitation: invitationPortsInTx(ports.invitation, tx) } : {}),
+    }),
+  );
+}
+
+/** Secuencia vigente del challenge: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P2-E). */
+const verificationSequence = (ports: RightsOtpPorts, tenantId: TenantId, verificationRef: string): Promise<number> =>
+  lastLedgerSequence(ports.ledger, tenantId, verificationRef);
+
+/** Relee el challenge CON lock de fila (SEC-CNS-015 P2-E): solo dentro de la unidad de trabajo. */
+async function requireVerification(ports: RightsOtpPorts, tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord> {
+  const found = await ports.otpRepo.findByRefForUpdate(tenantId, verificationRef);
   if (!found) {
     throw new DomainError("ERR-CM-01");
   }
@@ -76,88 +102,53 @@ async function requireVerification(ports: Omit<OtpChallengePorts, "invitation">,
   return found;
 }
 
-/** V1: NOT_STARTED -> CODE_SENT (scope DECISION). Guards: GRD-CM-02, GRD-CM-05, GRD-OT-01, GRD-OT-02, GRD-OT-08 (subconjunto). */
-export async function requestOtp(
-  ports: OtpChallengePorts,
-  tenantId: TenantId,
-  verificationRef: string,
-  invitationRef: string,
-  channelRef: string,
-): Promise<OtpVerificationRecord> {
-  const invitation = await ports.invitation.invitationRepo.findByRef(tenantId, invitationRef);
-  if (!invitation) {
-    throw new DomainError("ERR-CM-01");
-  }
-  assertTenantConsistency(invitation.tenantId, tenantId); // GRD-CM-02
+/** Resultado de una unidad de V2/V3/V4: los fallos que DEBEN dejar efecto (intento reservado, LOCKED,
+ * EXPIRED + su evento) se confirman y el error se lanza DESPUES del commit; un throw dentro revertiria
+ * la reserva del intento (GRD-OT-04, SEC F02). */
+type SubmitOutcome = { readonly ok: OtpVerificationRecord } | { readonly fail: DomainErrorCode };
 
-  if (invitation.state !== "OPENED" && invitation.state !== "VERIFIED") {
-    // GRD-OT-01 (valid_parent_by_scope), byScope DECISION: Invitation OPENED | VERIFIED (M4).
-    throw new DomainError("ERR-OT-01");
+function settle(outcome: SubmitOutcome): OtpVerificationRecord {
+  if ("fail" in outcome) {
+    throw new DomainError(outcome.fail);
   }
-  if (!invitation.recipientChannelRef || invitation.recipientChannelRef !== channelRef) {
-    // GRD-OT-02 (bound_channel_only): solo al canal ligado, nunca uno aportado por el cliente.
-    throw new DomainError("ERR-OT-08");
-  }
-  assertRouteEligible(
-    await ports.invitation.eligibility.isEligibleForIssuance(tenantId, invitation.contextRef, invitation.productRef),
-  ); // GRD-CM-05 (guardsByScope.DECISION)
-
-  const active = await ports.otpRepo.findActiveByParent(tenantId, invitationRef, "DECISION");
-  if (active) {
-    // GRD-OT-08 (subconjunto): V1 repetido sobre el mismo padre es idempotente (mismo challenge activo).
-    return active;
-  }
-
-  const code = generateCode(ports.policy.codeLength);
-  const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
-  const record: OtpVerificationRecord = {
-    verificationRef,
-    tenantId,
-    scope: "DECISION",
-    parentRef: invitationRef,
-    channelRef,
-    codeHash,
-    attempts: 0,
-    expiresAt: new Date(Date.now() + ports.policy.ttlMs),
-    state: "CODE_SENT",
-    resendCount: 0,
-  };
-  await ports.otpRepo.save(record);
-  await ports.channel.send({ channelRef, verificationRef, code }); // INV-OT-02: el código en claro no sale de aquí.
-  await appendNext(ports.ledger, {
-    eventType: "OTP_ISSUED",
-    tenantId,
-    aggregateType: "DecisionMakerVerification",
-    aggregateId: verificationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope: "DECISION" },
-    idempotencyKey: `${verificationRef}:issued`,
-  });
-  return record;
+  return outcome.ok;
 }
 
-/** V3/V2/V4: intenta verificar el código. Correcto -> VERIFIED (dispara I5). Incorrecto -> V2/V4. */
-export async function submitOtp(
-  ports: OtpChallengePorts,
+interface SubmitSpec {
+  /** Si no es null, el challenge debe ser de ese scope (ERR-OT-01 si no). */
+  readonly expectScope: OtpScope | null;
+  /** Scope que declaran los eventos OTP_LOCKED/OTP_FAILED. */
+  readonly eventScope: OtpScope;
+  readonly verifiedPayload: (found: OtpVerificationRecord) => Record<string, unknown>;
+  /** Efecto de la verificacion en la misma tx (I5 para scope DECISION). */
+  readonly onVerified?: (found: OtpVerificationRecord) => Promise<void>;
+}
+
+/** Nucleo de V3/V2/V4 en UNA tx con lock de fila y base previa (SEC-CNS-015 P2-E). */
+async function submitCore(
+  ports: RightsOtpPorts,
   tenantId: TenantId,
   verificationRef: string,
   code: string,
-  decisionMakerRef: string,
-): Promise<OtpVerificationRecord> {
+  spec: SubmitSpec,
+): Promise<SubmitOutcome> {
+  const base = await verificationSequence(ports, tenantId, verificationRef);
   const found = await requireVerification(ports, tenantId, verificationRef);
-
+  if (spec.expectScope !== null && found.scope !== spec.expectScope) {
+    // ERR-OT-05 (OTP_SCOPE_MISUSE): VERIFIED de un scope no sirve para otro.
+    throw new DomainError("ERR-OT-01");
+  }
   if (found.state === "LOCKED") {
-    throw new DomainError("ERR-OT-04");
+    return { fail: "ERR-OT-04" };
   }
   if (found.state === "VERIFIED" || found.consumedAt) {
     // Replay de un challenge ya consumido (INV-OT-07).
-    throw new DomainError("ERR-OT-03");
+    return { fail: "ERR-OT-03" };
   }
   if (found.expiresAt.getTime() <= Date.now()) {
-    // V5 (expiración perezosa) + GRD-OT-05.
+    // V5 (expiracion perezosa) + GRD-OT-05.
     await ports.otpRepo.save({ ...found, state: "EXPIRED" });
-    throw new DomainError("ERR-OT-03");
+    return { fail: "ERR-OT-03" };
   }
 
   // GRD-OT-04 (attempts_below_N_atomic): reserva el intento ANTES de comparar (SEC F02).
@@ -169,48 +160,163 @@ export async function submitOtp(
   if (isCorrect) {
     const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
     await ports.otpRepo.save(verified);
-    await appendNext(ports.ledger, {
+    await ports.ledger.append({
+      expectedSequence: base,
       eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
       aggregateId: verificationRef,
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
-      payload: { verificationRef, parentRef: found.parentRef, decisionMakerRef, scope: "DECISION", method: "EMAIL_OTP" },
+      payload: spec.verifiedPayload(found),
       idempotencyKey: `${verificationRef}:verified`,
     });
-    await markInvitationVerified(ports.invitation, tenantId, found.parentRef, decisionMakerRef, verificationRef); // I5
-    return verified;
+    if (spec.onVerified) {
+      await spec.onVerified(found); // I5 en la misma tx: si falla, el challenge no queda VERIFIED.
+    }
+    return { ok: verified };
   }
 
   if (attempts >= ports.policy.maxAttempts) {
     const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
     await ports.otpRepo.save(locked);
-    await appendNext(ports.ledger, {
+    await ports.ledger.append({
+      expectedSequence: base,
       eventType: "OTP_LOCKED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
       aggregateId: verificationRef,
       actorType: "SYSTEM_GUARD",
-      payload: { verificationRef, scope: "DECISION" },
+      payload: { verificationRef, scope: spec.eventScope },
       idempotencyKey: `${verificationRef}:locked`,
     });
-    throw new DomainError("ERR-OT-04");
+    return { fail: "ERR-OT-04" };
   }
 
   const failed: OtpVerificationRecord = { ...found, attempts, state: "CODE_SENT" };
   await ports.otpRepo.save(failed);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "OTP_FAILED",
     tenantId,
     aggregateType: "DecisionMakerVerification",
     aggregateId: verificationRef,
     actorType: "HUMAN",
     actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope: "DECISION" },
+    payload: { verificationRef, scope: spec.eventScope },
     idempotencyKey: `${verificationRef}:failed:${attempts}`,
   });
-  throw new DomainError("ERR-OT-02");
+  return { fail: "ERR-OT-02" };
+}
+
+interface Issued {
+  readonly record: OtpVerificationRecord;
+  /** Codigo en claro a enviar DESPUES del commit; ausente si se devolvio el challenge activo. */
+  readonly code?: string;
+}
+
+/** Crea el challenge (agregado nuevo: expectedSequence 0) dentro de la tx; el envio va fuera. */
+async function issueChallengeTx(
+  ports: RightsOtpPorts,
+  tenantId: TenantId,
+  verificationRef: string,
+  scope: OtpScope,
+  parentRef: string,
+  channelRef: string,
+): Promise<Issued> {
+  const code = generateCode(ports.policy.codeLength);
+  const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
+  const record: OtpVerificationRecord = {
+    verificationRef,
+    tenantId,
+    scope,
+    parentRef,
+    channelRef,
+    codeHash,
+    attempts: 0,
+    expiresAt: new Date(Date.now() + ports.policy.ttlMs),
+    state: "CODE_SENT",
+    resendCount: 0,
+  };
+  await ports.otpRepo.save(record);
+  await ports.ledger.append({
+    expectedSequence: 0, // agregado nuevo; la carrera por el padre la resuelve el UNIQUE parcial GRD-OT-08
+    eventType: "OTP_ISSUED",
+    tenantId,
+    aggregateType: "DecisionMakerVerification",
+    aggregateId: verificationRef,
+    actorType: "HUMAN",
+    actorRole: "UNVERIFIED_BEARER",
+    payload: { verificationRef, scope },
+    idempotencyKey: `${verificationRef}:issued`,
+  });
+  return { record, code };
+}
+
+/** Envia el codigo tras el commit (INV-OT-02: el codigo en claro no sale de aqui). */
+async function deliver(ports: RightsOtpPorts, issued: Issued, verificationRef: string, channelRef: string): Promise<OtpVerificationRecord> {
+  if (issued.code !== undefined) {
+    await ports.channel.send({ channelRef, verificationRef, code: issued.code });
+  }
+  return issued.record;
+}
+
+/** V1: NOT_STARTED -> CODE_SENT (scope DECISION). Guards: GRD-CM-02, GRD-CM-05, GRD-OT-01, GRD-OT-02, GRD-OT-08 (subconjunto). */
+export async function requestOtp(
+  ports: OtpChallengePorts,
+  tenantId: TenantId,
+  verificationRef: string,
+  invitationRef: string,
+  channelRef: string,
+): Promise<OtpVerificationRecord> {
+  const issued = await inTx(ports, tenantId, async (p): Promise<Issued> => {
+    const invitation = await p.invitation.invitationRepo.findByRef(tenantId, invitationRef);
+    if (!invitation) {
+      throw new DomainError("ERR-CM-01");
+    }
+    assertTenantConsistency(invitation.tenantId, tenantId); // GRD-CM-02
+
+    if (invitation.state !== "OPENED" && invitation.state !== "VERIFIED") {
+      // GRD-OT-01 (valid_parent_by_scope), byScope DECISION: Invitation OPENED | VERIFIED (M4).
+      throw new DomainError("ERR-OT-01");
+    }
+    if (!invitation.recipientChannelRef || invitation.recipientChannelRef !== channelRef) {
+      // GRD-OT-02 (bound_channel_only): solo al canal ligado, nunca uno aportado por el cliente.
+      throw new DomainError("ERR-OT-08");
+    }
+    assertRouteEligible(
+      await p.invitation.eligibility.isEligibleForIssuance(tenantId, invitation.contextRef, invitation.productRef),
+    ); // GRD-CM-05 (guardsByScope.DECISION)
+
+    const active = await p.otpRepo.findActiveByParent(tenantId, invitationRef, "DECISION");
+    if (active) {
+      // GRD-OT-08 (subconjunto): V1 repetido sobre el mismo padre es idempotente (mismo challenge activo).
+      return { record: active };
+    }
+    return issueChallengeTx(p, tenantId, verificationRef, "DECISION", invitationRef, channelRef);
+  });
+  return deliver(ports, issued, verificationRef, channelRef);
+}
+
+/** V3/V2/V4: intenta verificar el código. Correcto -> VERIFIED (dispara I5 en la misma tx). Incorrecto -> V2/V4. */
+export async function submitOtp(
+  ports: OtpChallengePorts,
+  tenantId: TenantId,
+  verificationRef: string,
+  code: string,
+  decisionMakerRef: string,
+): Promise<OtpVerificationRecord> {
+  const outcome = await inTx(ports, tenantId, (p) =>
+    submitCore(p, tenantId, verificationRef, code, {
+      expectScope: null,
+      eventScope: "DECISION",
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, scope: "DECISION", method: "EMAIL_OTP" }),
+      onVerified: async (found) => {
+        await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, verificationRef); // I5
+      },
+    }),
+  );
+  return settle(outcome);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,46 +335,22 @@ export async function submitOtp(
 
 /** V1 byScope REVOCATION/MANAGE: NOT_STARTED -> CODE_SENT. */
 export async function requestRightsOtp(
-  ports: Omit<OtpChallengePorts, "invitation">,
+  ports: RightsOtpPorts,
   tenantId: TenantId,
   verificationRef: string,
   scope: "REVOCATION" | "MANAGE",
   chainRef: string,
   channelRef: string,
 ): Promise<OtpVerificationRecord> {
-  const active = await ports.otpRepo.findActiveByParent(tenantId, chainRef, scope);
-  if (active) {
-    // GRD-OT-08 (subconjunto): idempotente, mismo challenge activo.
-    return active;
-  }
-
-  const code = generateCode(ports.policy.codeLength);
-  const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
-  const record: OtpVerificationRecord = {
-    verificationRef,
-    tenantId,
-    scope,
-    parentRef: chainRef,
-    channelRef,
-    codeHash,
-    attempts: 0,
-    expiresAt: new Date(Date.now() + ports.policy.ttlMs),
-    state: "CODE_SENT",
-    resendCount: 0,
-  };
-  await ports.otpRepo.save(record);
-  await ports.channel.send({ channelRef, verificationRef, code }); // INV-OT-02.
-  await appendNext(ports.ledger, {
-    eventType: "OTP_ISSUED",
-    tenantId,
-    aggregateType: "DecisionMakerVerification",
-    aggregateId: verificationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope },
-    idempotencyKey: `${verificationRef}:issued`,
+  const issued = await inTx(ports, tenantId, async (p): Promise<Issued> => {
+    const active = await p.otpRepo.findActiveByParent(tenantId, chainRef, scope);
+    if (active) {
+      // GRD-OT-08 (subconjunto): idempotente, mismo challenge activo.
+      return { record: active };
+    }
+    return issueChallengeTx(p, tenantId, verificationRef, scope, chainRef, channelRef);
   });
-  return record;
+  return deliver(ports, issued, verificationRef, channelRef);
 }
 
 /**
@@ -278,119 +360,71 @@ export async function requestRightsOtp(
  * `OtpVerificationRecord` devuelto.
  */
 export async function submitRightsOtp(
-  ports: Omit<OtpChallengePorts, "invitation">,
+  ports: RightsOtpPorts,
   tenantId: TenantId,
   verificationRef: string,
   scope: "REVOCATION" | "MANAGE",
   code: string,
 ): Promise<OtpVerificationRecord> {
-  const found = await requireVerification(ports, tenantId, verificationRef);
-  if (found.scope !== scope) {
-    // ERR-OT-05 (OTP_SCOPE_MISUSE): VERIFIED de un scope no sirve para otro.
-    throw new DomainError("ERR-OT-01");
-  }
-
-  if (found.state === "LOCKED") {
-    throw new DomainError("ERR-OT-04");
-  }
-  if (found.state === "VERIFIED" || found.consumedAt) {
-    throw new DomainError("ERR-OT-03");
-  }
-  if (found.expiresAt.getTime() <= Date.now()) {
-    await ports.otpRepo.save({ ...found, state: "EXPIRED" });
-    throw new DomainError("ERR-OT-03");
-  }
-
-  const attempts = found.attempts + 1;
-  const candidateHash = hashCode(ports.secret, verificationRef, code);
-  const storedHash = Buffer.from(found.codeHash, "hex");
-  const isCorrect = candidateHash.length === storedHash.length && timingSafeEqual(candidateHash, storedHash);
-
-  if (isCorrect) {
-    const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
-    await ports.otpRepo.save(verified);
-    await appendNext(ports.ledger, {
-      eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
-      tenantId,
-      aggregateType: "DecisionMakerVerification",
-      aggregateId: verificationRef,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      payload: { verificationRef, parentRef: found.parentRef, scope, method: "EMAIL_OTP" },
-      idempotencyKey: `${verificationRef}:verified`,
-    });
-    return verified;
-  }
-
-  if (attempts >= ports.policy.maxAttempts) {
-    const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
-    await ports.otpRepo.save(locked);
-    await appendNext(ports.ledger, {
-      eventType: "OTP_LOCKED",
-      tenantId,
-      aggregateType: "DecisionMakerVerification",
-      aggregateId: verificationRef,
-      actorType: "SYSTEM_GUARD",
-      payload: { verificationRef, scope },
-      idempotencyKey: `${verificationRef}:locked`,
-    });
-    throw new DomainError("ERR-OT-04");
-  }
-
-  const failed: OtpVerificationRecord = { ...found, attempts, state: "CODE_SENT" };
-  await ports.otpRepo.save(failed);
-  await appendNext(ports.ledger, {
-    eventType: "OTP_FAILED",
-    tenantId,
-    aggregateType: "DecisionMakerVerification",
-    aggregateId: verificationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope },
-    idempotencyKey: `${verificationRef}:failed:${attempts}`,
-  });
-  throw new DomainError("ERR-OT-02");
+  const outcome = await inTx(ports, tenantId, (p) =>
+    submitCore(p, tenantId, verificationRef, code, {
+      expectScope: scope,
+      eventScope: scope,
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, scope, method: "EMAIL_OTP" }),
+    }),
+  );
+  return settle(outcome);
 }
 
 /**
  * V2r: CODE_SENT -> CODE_SENT (ResendOtp). Reemplaza codeHash sin reiniciar `attempts` ni el
  * presupuesto (GRD-OT-06); mismo canal ligado (GRD-OT-02, ya validado al emitir el challenge
  * original). No implementa GRD-OT-13 (bound_to_request_handle): ver nota de alcance arriba.
+ * Lock de fila + base previa (SEC-CNS-015 P2-E); el envio va tras el commit.
  */
 export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord> {
-  const found = await requireVerification(ports, tenantId, verificationRef);
+  type ResendOutcome = { readonly ok: { readonly record: OtpVerificationRecord; readonly code: string } } | { readonly fail: DomainErrorCode };
+  const outcome = await inTx(ports, tenantId, async (p): Promise<ResendOutcome> => {
+    const base = await verificationSequence(p, tenantId, verificationRef);
+    const found = await requireVerification(p, tenantId, verificationRef);
 
-  if (found.state === "LOCKED") {
-    throw new DomainError("ERR-OT-04");
-  }
-  if (found.state !== "CODE_SENT" || found.consumedAt) {
-    // VERIFIED (ya consumido) o EXPIRED: replay de un challenge terminal (INV-OT-07 análogo).
-    throw new DomainError("ERR-OT-03");
-  }
-  if (found.expiresAt.getTime() <= Date.now()) {
-    await ports.otpRepo.save({ ...found, state: "EXPIRED" });
-    throw new DomainError("ERR-OT-03");
-  }
+    if (found.state === "LOCKED") {
+      return { fail: "ERR-OT-04" };
+    }
+    if (found.state !== "CODE_SENT" || found.consumedAt) {
+      // VERIFIED (ya consumido) o EXPIRED: replay de un challenge terminal (INV-OT-07 análogo).
+      return { fail: "ERR-OT-03" };
+    }
+    if (found.expiresAt.getTime() <= Date.now()) {
+      await p.otpRepo.save({ ...found, state: "EXPIRED" });
+      return { fail: "ERR-OT-03" };
+    }
+    if (found.resendCount >= p.policy.maxResends) {
+      // GRD-OT-06 (resend_limits, P-06): límite alcanzado, el challenge no cambia.
+      return { fail: "ERR-OT-09" };
+    }
 
-  if (found.resendCount >= ports.policy.maxResends) {
-    // GRD-OT-06 (resend_limits, P-06): límite alcanzado, el challenge no cambia.
-    throw new DomainError("ERR-OT-09");
-  }
-
-  const code = generateCode(ports.policy.codeLength);
-  const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
-  const resent: OtpVerificationRecord = { ...found, codeHash, resendCount: found.resendCount + 1 };
-  await ports.otpRepo.save(resent);
-  await ports.channel.send({ channelRef: found.channelRef, verificationRef, code }); // INV-OT-02: nunca en claro fuera de aquí.
-  await appendNext(ports.ledger, {
-    eventType: "OTP_ISSUED",
-    tenantId,
-    aggregateType: "DecisionMakerVerification",
-    aggregateId: verificationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope: "DECISION" },
-    idempotencyKey: `${verificationRef}:resend:${resent.resendCount}`,
+    const code = generateCode(p.policy.codeLength);
+    const codeHash = hashCode(p.secret, verificationRef, code).toString("hex");
+    const resent: OtpVerificationRecord = { ...found, codeHash, resendCount: found.resendCount + 1 };
+    await p.otpRepo.save(resent);
+    await p.ledger.append({
+      expectedSequence: base,
+      eventType: "OTP_ISSUED",
+      tenantId,
+      aggregateType: "DecisionMakerVerification",
+      aggregateId: verificationRef,
+      actorType: "HUMAN",
+      actorRole: "UNVERIFIED_BEARER",
+      payload: { verificationRef, scope: "DECISION" },
+      idempotencyKey: `${verificationRef}:resend:${resent.resendCount}`,
+    });
+    return { ok: { record: resent, code } };
   });
-  return resent;
+  if ("fail" in outcome) {
+    throw new DomainError(outcome.fail);
+  }
+  // INV-OT-02: el código en claro nunca sale de aquí, y solo tras confirmar.
+  await ports.channel.send({ channelRef: outcome.ok.record.channelRef, verificationRef, code: outcome.ok.code });
+  return outcome.ok.record;
 }
