@@ -393,3 +393,4 @@ TEST-CNS-881,integration,tests/integration/postgres/e2e-http-pg.test.ts,"F3: GET
 TEST-CNS-882,integration,tests/integration/postgres/e2e-http-pg.test.ts,"F4: seed RH3 de dev atomico (una tx, rollback total) e idempotente por consulta sin capturar errores","CA-124;PR-E;SEC-CNS-017 F4",ACTIVE
 TEST-CNS-883,unit,tests/unit/common/idempotency-policy.test.ts,"F7: idempotencia in-memory sin politica TTL no se crea; CONSENT_STORE=memory fuera de LOCAL aborta (ver TEST-CNS-871)","CA-124;PR-E;SEC-CNS-017 F7",ACTIVE
 TEST-CNS-884,integration,tests/integration/postgres/catalog.test.ts,"F6: runStartupChecks con expectedRole app_rw rechaza worker/platform_rw; openPostgresStore lo exige","CA-124;PR-E;SEC-CNS-017 F6",ACTIVE
+TEST-CNS-885,integration,tests/integration/postgres/lock-timeout.test.ts,"F8: SET LOCAL lock_timeout/statement_timeout en runOnce; el advisory lock de idempotencia falla 55P03 en vez de esperar indefinidamente","CA-124;PR-E;SEC-CNS-017 F8",ACTIVE

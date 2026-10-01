@@ -52,7 +52,14 @@ export interface UnitOfWorkOptions {
   random?: () => number;
   /** P-33 (TTL de la Idempotency-Key). Sin valor aprobado: ausente = `tx.idempotency` falla cerrado. */
   idempotencyPolicy?: IdempotencyPolicy;
+  /** SEC-CNS-017 F8: topes por tx (SET LOCAL). Sin parametro aprobado: valores conservadores LOCAL-only
+   * (2 s / 5 s); fuera de LOCAL el llamador debe pasarlos explicitos. Un lock que no se obtiene falla (55P03). */
+  lockTimeoutMs?: number;
+  statementTimeoutMs?: number;
 }
+
+export const DEFAULT_LOCK_TIMEOUT_MS = 2000;
+export const DEFAULT_STATEMENT_TIMEOUT_MS = 5000;
 
 export const DEFAULT_UOW_MAX_ATTEMPTS = 8;
 const DEFAULT_BACKOFF_BASE_MS = 20;
@@ -119,6 +126,8 @@ export class PgUnitOfWork implements UnitOfWorkPort {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
   private readonly idempotencyPolicy: IdempotencyPolicy | undefined;
+  private readonly lockTimeoutMs: number;
+  private readonly statementTimeoutMs: number;
 
   constructor(pool: PoolLike, options: UnitOfWorkOptions = {}) {
     this.pool = pool;
@@ -128,6 +137,11 @@ export class PgUnitOfWork implements UnitOfWorkPort {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.random = options.random ?? Math.random;
     this.idempotencyPolicy = options.idempotencyPolicy;
+    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+    this.statementTimeoutMs = options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
+    for (const v of [this.lockTimeoutMs, this.statementTimeoutMs]) {
+      if (!Number.isInteger(v) || v <= 0) throw new TypeError("lockTimeoutMs y statementTimeoutMs deben ser enteros > 0 (fail-closed).");
+    }
   }
 
   /** SEC-CNS-016 P2: espera acotada con jitter completo antes de reintentar; evita que N unidades
@@ -184,6 +198,9 @@ export class PgUnitOfWork implements UnitOfWorkPort {
     try {
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+      // Enteros validados en el constructor (no hay entrada externa): SET LOCAL no admite parametros.
+      await client.query(`SET LOCAL lock_timeout = ${this.lockTimeoutMs}`);
+      await client.query(`SET LOCAL statement_timeout = ${this.statementTimeoutMs}`);
       const result = await work(tx);
       await client.query("COMMIT");
       return result;

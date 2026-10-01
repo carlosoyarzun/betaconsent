@@ -44,7 +44,7 @@ test("TEST-CNS-742 inTenant: BEGIN, set_config local como primer statement, trab
   assert.equal(result, "ok");
   const texts = client.queries.map((q) => q.text);
   assert.equal(texts[0]?.includes("current_setting('app.tenant_id'"), true);
-  assert.deepEqual(texts.slice(1), ["BEGIN", "SELECT set_config('app.tenant_id', $1, true)", "SELECT 1", "COMMIT"]);
+  assert.deepEqual(texts.slice(1), ["BEGIN", "SELECT set_config('app.tenant_id', $1, true)", "SET LOCAL lock_timeout = 2000", "SET LOCAL statement_timeout = 5000", "SELECT 1", "COMMIT"]);
   assert.deepEqual(client.queries[2]?.values, [TENANT]);
   assert.deepEqual(client.releases, [false]);
 });
