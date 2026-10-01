@@ -107,16 +107,28 @@ export function conditionsOf(row: MatrixRow): Condition[] {
 function aggregate(results: readonly string[]): Status {
   if (results.length === 0) return "skip";
   if (results.includes("fail")) return "fail";
-  if (results.every((r) => r === "skip" || r === "todo")) return "skip";
-  return "pass";
+  // Conservador: "pass" solo si TODOS pasaron; cualquier skip/todo (p. ej. casos pg sin Postgres) => "skip".
+  return results.every((r) => r === "pass") ? "pass" : "skip";
 }
 
-/** Estado de una fila de la matriz: registros del mismo archivo cuyo nombre lleva el ID; si ninguno lo lleva,
- * agregado del archivo; sin registros (p. ej. pg sin Postgres, o rama no corrida) => skip. */
+/** Estado de una fila de la matriz. Los casos pg de los contratos compartidos se reportan con el archivo del
+ * harness (no el de la matriz), asi que el ID del test es la llave primaria: (1) registros cuyo nombre EMPIEZA
+ * por el ID; (2) registros del mismo archivo cuyo nombre lo contiene; (3) filas paraguas: IDs citados en el
+ * titulo; (4) agregado del archivo. Sin registros
+ * (p. ej. pg sin Postgres, o rama no corrida) => skip. */
 export function statusOf(row: MatrixRow, records: readonly RunRecord[]): Status {
+  const idRe = new RegExp(`${row.id}(?![0-9])`);
+  const lead = records.filter((r) => r.testName.startsWith(row.id) && idRe.test(r.testName));
+  if (lead.length > 0) return aggregate(lead.map((r) => r.result));
   const inFile = records.filter((r) => r.file === row.file);
-  const byId = inFile.filter((r) => r.testName.includes(row.id));
-  return aggregate((byId.length > 0 ? byId : inFile).map((r) => r.result));
+  const byId = inFile.filter((r) => idRe.test(r.testName));
+  if (byId.length > 0) return aggregate(byId.map((r) => r.result));
+  // Fila "paraguas" (p. ej. TEST-CNS-100/101/102): ningun test lleva su ID; el titulo cita los casos que la
+  // componen ("TEST-CNS-771", "(788)", "807/808"). Se agregan los registros de los IDs citados que existan.
+  const cited = new Set((row.title.match(/\b(?:TEST-CNS-)?\d{3,4}\b/g) ?? []).map((n) => `TEST-CNS-${n.replace("TEST-CNS-", "")}`));
+  const viaCited = records.filter((r) => [...cited].some((id) => id !== row.id && new RegExp(`^${id}(?![0-9])`).test(r.testName)));
+  if (viaCited.length > 0) return aggregate(viaCited.map((r) => r.result));
+  return aggregate(inFile.map((r) => r.result));
 }
 
 export function buildManifests(args: {

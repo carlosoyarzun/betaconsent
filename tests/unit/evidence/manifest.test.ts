@@ -31,6 +31,15 @@ test("TEST-CNS-990 asignacion por condicion: token X3/X5/X6 exacto (no X30) y so
   assert.deepEqual(x6?.tests.map((t) => [t.id, t.status]), [["TEST-CNS-2", "fail"]]);
   assert.deepEqual(x6?.summary, { pass: 0, fail: 1, skip: 0 });
   assert.equal(statusOf(row("TEST-CNS-9", "z.ts", "X3"), records), "skip"); // sin registros
+  const rec = (testName: string, result: string, file = "h.ts") => ({ file, testName, result });
+  // el caso pg se reporta con el archivo del harness: el ID del nombre manda sobre el archivo de la matriz
+  assert.equal(statusOf(row("TEST-CNS-7", "m.ts", "X5"), [rec("TEST-CNS-7 pg", "pass")]), "pass");
+  assert.equal(statusOf(row("TEST-CNS-7", "m.ts", "X5"), [rec("TEST-CNS-7 mem", "pass"), rec("TEST-CNS-7 pg", "skip")]), "skip"); // parcial no es pass
+  assert.equal(statusOf(row("TEST-CNS-7", "m.ts", "X5"), [rec("TEST-CNS-7 a", "pass"), rec("TEST-CNS-7 b", "fail")]), "fail");
+  assert.equal(statusOf(row("TEST-CNS-70", "m.ts", "X5"), [rec("TEST-CNS-701 otro", "fail")]), "skip"); // 70 != 701
+  // fila paraguas: agrega los IDs citados en el titulo
+  assert.equal(statusOf(row("TEST-CNS-100", "m.ts", "X6", "paraguas (788) y TEST-CNS-789"), [rec("TEST-CNS-788 a", "pass"), rec("TEST-CNS-789 b", "pass")]), "pass");
+  assert.equal(statusOf(row("TEST-CNS-100", "m.ts", "X6", "paraguas (788)"), [rec("TEST-CNS-788 a", "fail")]), "fail");
   assert.equal(manifestPath("out", x3 as Manifest), "out/X3/2026-10-01-5a0e4ec-nopg.json");
   assert.equal(manifestPath("out", { ...(x3 as Manifest), postgres: { imageDigest: `sha256:${"a1".repeat(32)}` } }), "out/X3/2026-10-01-5a0e4ec.json");
 });
