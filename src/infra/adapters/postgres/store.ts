@@ -13,7 +13,7 @@ import type { IdempotencyPolicy } from "../../../server/modules/common/idempoten
 import type { TenantHandlePort } from "../../../server/ports/tenant-handle.port.ts";
 import type { TenantResolverPort } from "../../../server/ports/tenant-resolver.port.ts";
 import type { TenantTxPorts } from "../../../server/ports/unit-of-work.port.ts";
-import { createPool } from "./pool.ts";
+import { createPool, guardBorrowedClient } from "./pool.ts";
 import { assertStartupChecks } from "./startup-checks.ts";
 import { createPgTenantHandleAdapter } from "./tenant-handle.adapter.ts";
 import { createPgTenantResolver } from "./tenant-resolver.adapter.ts";
@@ -96,7 +96,7 @@ export async function openPostgresStore(options: OpenPostgresStoreOptions): Prom
   const url = readRuntimeDatabaseUrl(options.env ?? process.env);
   const pool = createPool({ connectionString: url, max: 10 });
   try {
-    const client = await pool.connect();
+    const client = guardBorrowedClient(await pool.connect());
     try {
       await assertStartupChecks(client, { expectedEnvironment: options.environment, expectedRole: "app_rw" });
     } finally {
