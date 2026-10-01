@@ -1106,6 +1106,38 @@ paths:
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
         4XX: {$ref: '#/components/responses/RightsProblem'}
+  /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal:
+    post:
+      operationId: withdrawCaseVerificationProposal
+      x-api-id: API-CNS-140
+      tags: [platform]
+      summary: RH2 retiro — withdraw_case_verification_proposal (solo el RIGHTS_OPERATOR proponente, solo propuesta PENDING)
+      description: La propuesta queda WITHDRAWN (terminal, no aprobable) y se registra REVOCATION_PROPOSAL_WITHDRAWN (solo refs). NO cambia el estado de la Revocation ni produce FAILED (INV-6); queda disponible para una nueva propuesta. Cualquier otro principal, o una propuesta ya no PENDING, falla cerrado (ERR-RV-07 / ERR-CM-06).
+      x-governed-by: ["revocation.spec RH2", "GRD-RV-09", "CA-128 X6 P2 (Carlos, 2026-10-01)", "SEC-CNS-013"]
+      x-state-transition: {machine: Revocation, id: RH2, step: withdraw, effect: none}
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
+      x-actor: {recordedActor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}, withdrawer: "RIGHTS_OPERATOR con sesión CASE del caso, igual a proposedByRef (withdrawnByRef)", note: "withdrawnByRef se deriva de la sesión CASE y principal_kind HUMAN, nunca del body (GRD-CM-07)"}
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19]
+      x-errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13]
+      x-idempotency: "(revocationRef, proposal_ref)"
+      security: [{caseSession: []}]
+      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/ProposalRef'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/WithdrawCaseVerificationProposalRequest'}
+      responses:
+        '200':
+          description: Propuesta retirada (WITHDRAWN); la Revocation sigue REQUESTED.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ProposalWithdrawalAck'}
+        '403': {$ref: '#/components/responses/RightsProblem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '409': {$ref: '#/components/responses/RightsProblem', description: "Propuesta ya no PENDING o proposalRef retirada (ERR-CM-06); sin efecto."}
+        4XX: {$ref: '#/components/responses/RightsProblem'}
   /platform/rights-cases/{caseRef}/confirmation:
     post:
       operationId: recordCaseConfirmation

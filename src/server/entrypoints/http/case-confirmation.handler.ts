@@ -27,6 +27,7 @@ import {
   cosignCaseConfirmation,
   proposeCaseVerification,
   recordCaseConfirmationPendingCosign,
+  withdrawCaseVerificationProposal,
   type RevocationPorts,
 } from "../../modules/revocation/revocation.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
@@ -327,6 +328,49 @@ export async function handleApproveCaseVerification(
       environment === "LOCAL", // X6 P2-1: ATTESTED solo en LOCAL (stub, APR-IDP PENDING); fuera de LOCAL queda PENDING, nunca atestado
     );
     return { status: 200, body: { attestation: result.attestation, revocationState: result.record.status === "VERIFIED" ? "VERIFIED" : "REQUESTED" } };
+  } catch (err) {
+    if (err instanceof DomainError) {
+      if (err.code === "ERR-CM-01") return uniformNotFound();
+      return problem(err.code === "ERR-RV-07" ? 403 : 409, err.code);
+    }
+    throw err;
+  }
+}
+
+/**
+ * POST /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal (API-CNS-140,
+ * withdraw_case_verification_proposal; CA-128 X6 P2). Solo el RIGHTS_OPERATOR proponente, desde su sesion CASE, mientras la
+ * propuesta esta PENDING. Cuerpo vacio (WithdrawCaseVerificationProposalRequest). Principal SIEMPRE de la sesion (GRD-CM-07).
+ * Lectura del caso por el operador queda en ops.access_log (misma tx, INV-RC-04), igual que API-CNS-136/137.
+ */
+export async function handleWithdrawCaseVerificationProposal(
+  request: RawConsentRequest,
+  caseRefFromPath: string,
+  proposalRefFromPath: string,
+  ports: CaseConfirmationPorts,
+  config: RightsCaseHttpConfig,
+  caseSessionKey: Buffer,
+): Promise<HttpResult> {
+  const csrfFailure = checkCaseCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+  const cookies = parseCookies(request.cookieHeader);
+  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
+  if (!session || session.caseRef !== caseRefFromPath) return uniformNotFound();
+  if (!UUID_V4_PATTERN.test(proposalRefFromPath)) return uniformNotFound();
+  if (session.role !== "RIGHTS_OPERATOR") return actorNotAllowed(); // solo el proponente (RIGHTS_OPERATOR) retira
+
+  const body = request.body;
+  const isEmptyObject = body === undefined || (typeof body === "object" && body !== null && !Array.isArray(body) && Object.keys(body).length === 0);
+  if (!isEmptyObject) return problem(422, "ERR-CM-06");
+
+  const rightsCase = await readCaseAsOperator(ports, session);
+  if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) return uniformNotFound();
+  try {
+    const record = await withdrawCaseVerificationProposal(
+      ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, proposalRefFromPath,
+      { principalRef: session.principalRef },
+    );
+    return { status: 200, body: { proposalState: "WITHDRAWN", revocationState: record.status === "REQUESTED" ? "REQUESTED" : "VERIFIED" } };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();
