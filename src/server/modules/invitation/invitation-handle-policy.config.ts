@@ -6,6 +6,11 @@
 // sobrevivir el 303 inmediato a GET /welcome, no la vigencia real de la invitación (esa la exige
 // GRD-IV-07 contra la BD, en GET /welcome mismo).
 
+import { APPROVED_LINK_HANDLE_TTL_MS } from "../common/approved-parameters.ts";
+
+// ACTUALIZADO (Carlos, 2026-10-01, CA-128): TTL del handle /i = 10 min APROBADO; default en cualquier
+// entorno (override o CNS_INVITATION_HANDLE_TTL_MS siguen mandando).
+
 export interface InvitationHandlePolicy {
   readonly ttlMs: number;
 }
@@ -25,18 +30,10 @@ function readIntEnv(name: string): number | undefined {
 }
 
 /**
- * Construye la política del handle INVITATION_LANDING. Sin default de producción: si ninguna
- * fuente (override explícito o variable de entorno) provee un valor, lanza (fail-closed).
- * `overrides` es la única vía LOCAL-only para tests/dev.ts.
+ * Construye la política del handle INVITATION_LANDING. Precedencia: override > env > valor aprobado
+ * (10 min, Carlos 2026-10-01).
  */
 export function loadInvitationHandlePolicyConfig(overrides: InvitationHandlePolicyOverrides = {}): InvitationHandlePolicy {
-  const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_INVITATION_HANDLE_TTL_MS");
-  if (ttlMs === undefined) {
-    throw new Error(
-      "Política del handle de invitación incompleta: CNS_INVITATION_HANDLE_TTL_MS no tiene un " +
-        "valor fijado en este entorno. No hay default de producción; dev.ts y los tests pueden " +
-        "pasar un override explícito marcado LOCAL-only.",
-    );
-  }
+  const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_INVITATION_HANDLE_TTL_MS") ?? APPROVED_LINK_HANDLE_TTL_MS;
   return { ttlMs };
 }

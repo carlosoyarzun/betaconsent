@@ -2,10 +2,15 @@
 // SEC-CNS-006 P-33 (TTL de la Idempotency-Key). P-33 NO tiene valor aprobado en specs/contracts
 // (grep de "P-33" en el repo, 2026-10-01: solo se cita por nombre).
 //
-// Mismo patrón D4 que otp-policy.config.ts y recovery-token-policy.config.ts (P-15/P-18): esta
+// ACTUALIZADO (Carlos, 2026-10-01, CA-128): P-33 = 24 h APROBADO (approved-parameters.ts); es el valor
+// por defecto en cualquier entorno. Override explícito o CNS_IDEMPOTENCY_TTL_MS siguen mandando.
+//
+// (Histórico) Mismo patrón D4 que otp-policy.config.ts y recovery-token-policy.config.ts (P-15/P-18): esta
 // config NO fija un default de producción. Quien construye el adaptador exige el valor explícito
 // (env CNS_IDEMPOTENCY_TTL_MS o override); si falta, lanza (fail-closed). El único valor
 // sintético permitido vive en dev-local-config.ts (LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY) y en tests.
+
+import { APPROVED_P33_IDEMPOTENCY_TTL_MS } from "./approved-parameters.ts";
 
 export interface IdempotencyPolicy {
   readonly ttlMs: number;
@@ -26,19 +31,11 @@ function readIntEnv(name: string): number | undefined {
 }
 
 /**
- * Construye la política de idempotencia (P-33 TTL). Sin default de producción: si ninguna fuente
- * (override explícito o variable de entorno) provee un valor, lanza (fail-closed).
+ * Construye la política de idempotencia (P-33 TTL). Precedencia: override explícito > variable de
+ * entorno > valor aprobado P-33 = 24 h (Carlos, 2026-10-01). Un valor inválido sigue lanzando.
  */
 export function loadIdempotencyPolicyConfig(overrides: IdempotencyPolicyOverrides = {}): IdempotencyPolicy {
-  const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_IDEMPOTENCY_TTL_MS");
-  if (ttlMs === undefined) {
-    throw new Error(
-      "Política de idempotencia incompleta: P-33 (CNS_IDEMPOTENCY_TTL_MS) no tiene un valor aprobado " +
-        "en specs/contracts (ver cabecera de este archivo). No hay default de producción: PENDING — " +
-        "Carlos debe fijar P-33 en SEC-CNS-006 antes de un entrypoint real. dev.ts y los tests pueden " +
-        "pasar un override explícito marcado LOCAL-only.",
-    );
-  }
+  const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_IDEMPOTENCY_TTL_MS") ?? APPROVED_P33_IDEMPOTENCY_TTL_MS;
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error("P-33 (ttlMs) debe ser un entero positivo.");
   return { ttlMs };
 }

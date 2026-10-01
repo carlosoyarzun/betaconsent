@@ -6,6 +6,7 @@
 // final se verifica en la base. SYNTHETIC DATA ONLY. Requiere Postgres real (harness.ts).
 
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
+import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
@@ -78,6 +79,7 @@ async function boot(ctx: PgTestContext) {
     recoveryTokenPolicy: loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY),
     staffIdentity,
     chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
+    decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
   const server = createConsentFlowHttpServer({

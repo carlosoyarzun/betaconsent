@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { deriveChainRefKey } from "../../modules/consent-decision/chain-ref.ts";
+import { deriveDecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
 import type { OutboxEnvelope } from "../../ports/outbox.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
@@ -193,6 +194,7 @@ export function createDefaultConsentFlowPorts(
   otpPolicy: OtpPolicy,
   relationshipConfig: DecisionRelationshipConfig,
   chainRefKey: Buffer = deriveChainRefKey(randomBytes(32)),
+  decisionMakerRefKey: Buffer = deriveDecisionMakerRefKey(randomBytes(32)),
 ): ConsentFlowPorts {
   const ledger = createInMemoryLedgerAdapter();
   const invitationRepo = createInMemoryInvitationRepository();
@@ -224,7 +226,7 @@ export function createDefaultConsentFlowPorts(
     relationships: relationshipConfig,
     chainRefKey,
   };
-  return { invitation, otp, decision };
+  return { invitation, otp, decision, decisionMakerRefKey };
 }
 
 /** Convenience LOCAL/test-only (nunca de producción real: esta función entera solo construye
@@ -320,6 +322,8 @@ export interface PostgresFlowConfig {
   readonly staffIdentity: StaffIdentityPort;
   /** SEC-CNS-017 F2: clave HMAC del chainRef (chain-ref.ts), derivada de CNS_CHAIN_REF_SECRET. */
   readonly chainRefKey: Buffer;
+  /** CA-128: clave HMAC del decisionMakerRef (decision-maker-ref.ts), de CNS_DECISION_MAKER_REF_SECRET. */
+  readonly decisionMakerRefKey: Buffer;
   readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
 }
 
@@ -389,7 +393,7 @@ export function createPostgresFlowPorts(
     staffIdentity: cfg.staffIdentity,
     invitationLinkSink,
   };
-  return { ports: { invitation, otp, decision }, revocationPorts, staffConsole };
+  return { ports: { invitation, otp, decision, decisionMakerRefKey: cfg.decisionMakerRefKey }, revocationPorts, staffConsole };
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
