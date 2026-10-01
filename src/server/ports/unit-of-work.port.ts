@@ -10,6 +10,7 @@
 import type { TenantId } from "../modules/common/types.ts";
 import type { ConsentDecisionRepositoryPort } from "./consent-decision-repository.port.ts";
 import type { EnrollmentRepositoryPort } from "./enrollment-repository.port.ts";
+import type { IdempotencyPort } from "./idempotency.port.ts";
 import type { InvitationRepositoryPort } from "./invitation-repository.port.ts";
 import type { LedgerPort } from "./ledger.port.ts";
 import type { OtpVerificationRepositoryPort } from "./otp-verification-repository.port.ts";
@@ -17,6 +18,7 @@ import type { OutboxPort } from "./outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "./recovery-token.port.ts";
 import type { RevocationRepositoryPort } from "./revocation-repository.port.ts";
 import type { RightsCaseRepositoryPort } from "./rights-case-repository.port.ts";
+import type { TenantCatalogPort } from "./tenant-catalog.port.ts";
 
 /**
  * Puertos ligados a UN tenant y a UNA unidad de trabajo. Todo lo que se escribe a través de
@@ -33,6 +35,10 @@ export interface TenantTxPorts {
   readonly enrollmentRepo: EnrollmentRepositoryPort;
   readonly ledger: LedgerPort;
   readonly outbox: OutboxPort;
+  /** CA-124 PR-E: catálogo del tenant (solo lectura) leído BAJO RLS, dentro de la misma tx (SEC-CNS-016). */
+  readonly tenantCatalog: TenantCatalogPort;
+  /** CA-124 PR-E (GRD-CM-08): find + ejecutar + store de una Idempotency-Key en la misma tx. */
+  readonly idempotency: IdempotencyPort;
 }
 
 export interface UnitOfWorkPort {

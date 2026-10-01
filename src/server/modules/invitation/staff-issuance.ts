@@ -14,7 +14,14 @@ import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EnrollmentRepositoryPort } from "../../ports/enrollment-repository.port.ts";
 import type { InvitationLinkChannelPort } from "../../ports/invitation-link-channel.port.ts";
 import type { TenantCatalogPort } from "../../ports/tenant-catalog.port.ts";
-import { createInvitation, markInvitationReady, sendInvitation, type InvitationPorts } from "./invitation.ts";
+import type { TenantTxPorts } from "../../ports/unit-of-work.port.ts";
+import {
+  createInvitationTx,
+  invitationPortsInTx,
+  markInvitationReadyTx,
+  sendInvitationTx,
+  type InvitationPorts,
+} from "./invitation.ts";
 import type { InvitationIssuancePolicy } from "./invitation-issuance-policy.config.ts";
 import type { InvitationRecord } from "../../ports/invitation-repository.port.ts";
 
@@ -25,6 +32,12 @@ export interface StaffIssuancePorts {
   readonly invitationLinkChannel: InvitationLinkChannelPort;
   /** P-10 y deliveryChannel (EXT-B). Ausente = fail-closed en I2/I3 (ERR-CM-12). */
   readonly policy?: InvitationIssuancePolicy;
+}
+
+/** CA-124 PR-E (SEC-CNS-016): puertos de la consola STAFF ligados a UNA tx abierta del tenant. `invitation`,
+ * `enrollmentRepo` y `tenantCatalog` son los de la tx (lecturas bajo RLS, nunca fuera de `inTenant`). */
+export function staffIssuanceInTx(ports: StaffIssuancePorts, tx: TenantTxPorts): StaffIssuancePorts {
+  return { ...ports, invitation: invitationPortsInTx(ports.invitation, tx), enrollmentRepo: tx.enrollmentRepo, tenantCatalog: tx.tenantCatalog };
 }
 
 export interface StaffCreateInvitationInput {
@@ -53,7 +66,17 @@ async function lastSequence(ports: InvitationPorts, tenantId: TenantId, invitati
  * y los de invitation.createInvitation (GRD-CM-05, GRD-CM-07, GRD-IV-01).
  * El productRef sale de la SchoolParticipation del tenant, nunca del body.
  */
-export async function staffCreateInvitation(
+export function staffCreateInvitation(
+  ports: StaffIssuancePorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  input: StaffCreateInvitationInput,
+): Promise<StaffInvitationStepResult> {
+  return ports.invitation.uow.inTenant(tenantId, (tx) => staffCreateInvitationTx(staffIssuanceInTx(ports, tx), tenantId, actorRole, input));
+}
+
+/** I1 dentro de una tx ya abierta (puertos de `staffIssuanceInTx`): no abre `inTenant`. */
+export async function staffCreateInvitationTx(
   ports: StaffIssuancePorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -83,7 +106,7 @@ export async function staffCreateInvitation(
   }
 
   const invitationRef = randomUUID(); // INV-CM-09
-  const record = await createInvitation(ports.invitation, tenantId, actorRole, {
+  const record = await createInvitationTx(ports.invitation, tenantId, actorRole, {
     invitationRef,
     contextRef: input.contextRef,
     productRef: participation.productRef,
@@ -101,7 +124,20 @@ export interface StaffMarkReadyInput {
 }
 
 /** I2: DRAFT -> READY. expiresAt lo fija el servidor (P-10; nunca del cliente, GRD-IV-12). */
-export async function staffMarkInvitationReady(
+export function staffMarkInvitationReady(
+  ports: StaffIssuancePorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  invitationRef: string,
+  input: StaffMarkReadyInput,
+): Promise<StaffInvitationStepResult> {
+  return ports.invitation.uow.inTenant(tenantId, (tx) =>
+    staffMarkInvitationReadyTx(staffIssuanceInTx(ports, tx), tenantId, actorRole, invitationRef, input),
+  );
+}
+
+/** I2 dentro de una tx ya abierta (puertos de `staffIssuanceInTx`). */
+export async function staffMarkInvitationReadyTx(
   ports: StaffIssuancePorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -112,7 +148,7 @@ export async function staffMarkInvitationReady(
   const existing = await ports.invitation.invitationRepo.findByRef(tenantId, invitationRef);
   if (!existing) throw new DomainError("ERR-CM-01");
   assertRouteEligible(await ports.invitation.eligibility.isEligibleForIssuance(tenantId, existing.contextRef, existing.productRef)); // GRD-CM-05
-  const record = await markInvitationReady(ports.invitation, tenantId, actorRole, invitationRef, {
+  const record = await markInvitationReadyTx(ports.invitation, tenantId, actorRole, invitationRef, {
     consentVersion: input.consentVersion,
     expiresAt: new Date(Date.now() + ports.policy.expiresInMs),
     recipientBinding: input.recipientBinding,
@@ -133,6 +169,26 @@ export async function staffSendInvitation(
   actorRole: ActorRole,
   invitationRef: string,
 ): Promise<StaffInvitationStepResult> {
+  const { deliver, ...result } = await ports.invitation.uow.inTenant(tenantId, (tx) =>
+    staffSendInvitationTx(staffIssuanceInTx(ports, tx), tenantId, actorRole, invitationRef),
+  );
+  await deliver(); // efecto externo DESPUÉS de confirmar: si la tx falla no sale ningún enlace
+  return result;
+}
+
+export interface StaffSendInvitationTxResult extends StaffInvitationStepResult {
+  /** Entrega el enlace por el puerto de canal. El llamador la ejecuta SOLO tras el COMMIT de la tx
+   * (la tx puede reejecutarse; el efecto externo no es transaccional). El token solo vive en este cierre. */
+  readonly deliver: () => Promise<void>;
+}
+
+/** I3 dentro de una tx ya abierta (puertos de `staffIssuanceInTx`); no entrega el enlace (ver `deliver`). */
+export async function staffSendInvitationTx(
+  ports: StaffIssuancePorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  invitationRef: string,
+): Promise<StaffSendInvitationTxResult> {
   if (!ports.policy) throw new DomainError("ERR-CM-12");
   const found = await ports.invitation.invitationRepo.findByRef(tenantId, invitationRef);
   if (!found) throw new DomainError("ERR-CM-01");
@@ -145,15 +201,21 @@ export async function staffSendInvitation(
     if (!enrollment || enrollment.state !== "ACTIVE") throw new DomainError("ERR-CM-04"); // GRD-CM-04
   }
 
-  const { record, token } = await sendInvitation(ports.invitation, tenantId, actorRole, invitationRef, {
-    deliveryChannel: ports.policy.deliveryChannel,
-    expiresAt: new Date(Date.now() + ports.policy.expiresInMs), // GRD-IV-12: SENT + P-10
+  const policy = ports.policy;
+  const { record, token } = await sendInvitationTx(ports.invitation, tenantId, actorRole, invitationRef, {
+    deliveryChannel: policy.deliveryChannel,
+    expiresAt: new Date(Date.now() + policy.expiresInMs), // GRD-IV-12: SENT + P-10
   });
-  await ports.invitationLinkChannel.send({
-    invitationRef,
-    invitationPath: `/i/${token}`,
-    deliveryChannel: ports.policy.deliveryChannel,
-    ...(record.recipientChannelRef !== undefined ? { recipientChannelRef: record.recipientChannelRef } : {}),
-  });
-  return { record, sequence: await lastSequence(ports.invitation, tenantId, invitationRef) };
+  const sequence = await lastSequence(ports.invitation, tenantId, invitationRef);
+  return {
+    record,
+    sequence,
+    deliver: () =>
+      ports.invitationLinkChannel.send({
+        invitationRef,
+        invitationPath: `/i/${token}`,
+        deliveryChannel: policy.deliveryChannel,
+        ...(record.recipientChannelRef !== undefined ? { recipientChannelRef: record.recipientChannelRef } : {}),
+      }),
+  };
 }

@@ -29,6 +29,7 @@ import {
   type InMemoryInvitationLinkChannelSink,
 } from "../../../infra/adapters/in-memory-invitation-link-channel-sink.adapter.ts";
 import { createInMemoryTenantCatalogAdapter, type FixtureTenantCatalogPort } from "../../../infra/adapters/in-memory-tenant-catalog.adapter.ts";
+import type { IdempotencyPolicy } from "../../modules/common/idempotency-policy.config.ts";
 import type { InvitationIssuancePolicy } from "../../modules/invitation/invitation-issuance-policy.config.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
@@ -159,16 +160,18 @@ export function createDefaultStaffConsolePorts(
   invitation: InvitationPorts,
   staffIdentity: StaffIdentityPort,
   policy?: InvitationIssuancePolicy,
+  idempotencyPolicy?: IdempotencyPolicy,
 ): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink; readonly catalog: FixtureTenantCatalogPort } {
   const enrollmentRepo = createInMemoryEnrollmentRepository();
   // CA-124: UoW de EN0 sobre el MISMO enrollmentRepo (y el ledger/invitationRepo compartidos).
-  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo });
   const tenantCatalog = createInMemoryTenantCatalogAdapter();
+  const idempotency = createInMemoryIdempotencyAdapter(idempotencyPolicy ? { ttlMs: idempotencyPolicy.ttlMs } : {});
+  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo, tenantCatalog, idempotency });
   const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
   return {
     issuance: { invitation, enrollmentRepo, tenantCatalog, invitationLinkChannel: invitationLinkSink, ...(policy ? { policy } : {}) },
     enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger, uow: tenancy.uow },
-    idempotency: createInMemoryIdempotencyAdapter(),
+    uow: tenancy.uow,
     staffIdentity,
     invitationLinkSink,
     catalog: tenantCatalog,

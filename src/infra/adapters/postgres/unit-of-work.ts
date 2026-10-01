@@ -17,6 +17,9 @@
 import type { QueryResult } from "pg";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../../server/ports/unit-of-work.port.ts";
 import { createPgConsentDecisionRepository } from "./consent-decision.adapter.ts";
+import { createPgIdempotencyAdapter } from "./idempotency.adapter.ts";
+import { createPgTenantCatalogAdapter } from "./tenant-catalog.adapter.ts";
+import type { IdempotencyPolicy } from "../../../server/modules/common/idempotency-policy.config.ts";
 import { createPgEnrollmentRepository, ENROLLMENT_SINGLE_ACTIVE_UNIQUE } from "./enrollment.adapter.ts";
 import { createPgInvitationRepository, INVITATION_SINGLE_NON_TERMINAL_UNIQUE } from "./invitation.adapter.ts";
 import { createPgLedgerAdapter } from "./ledger.adapter.ts";
@@ -47,6 +50,8 @@ export interface UnitOfWorkOptions {
   /** Inyectables para tests (sin timers reales ni azar real). */
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
+  /** P-33 (TTL de la Idempotency-Key). Sin valor aprobado: ausente = `tx.idempotency` falla cerrado. */
+  idempotencyPolicy?: IdempotencyPolicy;
 }
 
 export const DEFAULT_UOW_MAX_ATTEMPTS = 8;
@@ -90,7 +95,7 @@ function sqlState(error: unknown): string | undefined {
 }
 
 /** Puertos del tenant ligados a UNA transacción abierta (todos escriben en la misma tx). */
-export function createPgTenantTxPorts(tx: TenantTx): TenantTxPorts {
+export function createPgTenantTxPorts(tx: TenantTx, idempotencyPolicy?: IdempotencyPolicy): TenantTxPorts {
   return {
     revocationRepo: createPgRevocationRepository(tx),
     consentDecisionRepo: createPgConsentDecisionRepository(tx),
@@ -101,6 +106,8 @@ export function createPgTenantTxPorts(tx: TenantTx): TenantTxPorts {
     enrollmentRepo: createPgEnrollmentRepository(tx),
     ledger: createPgLedgerAdapter(tx),
     outbox: createPgOutboxAdapter(tx),
+    tenantCatalog: createPgTenantCatalogAdapter(tx),
+    idempotency: createPgIdempotencyAdapter(tx, idempotencyPolicy),
   };
 }
 
@@ -111,6 +118,7 @@ export class PgUnitOfWork implements UnitOfWorkPort {
   private readonly backoffCapMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
+  private readonly idempotencyPolicy: IdempotencyPolicy | undefined;
 
   constructor(pool: PoolLike, options: UnitOfWorkOptions = {}) {
     this.pool = pool;
@@ -119,6 +127,7 @@ export class PgUnitOfWork implements UnitOfWorkPort {
     this.backoffCapMs = options.backoffCapMs ?? DEFAULT_BACKOFF_CAP_MS;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.random = options.random ?? Math.random;
+    this.idempotencyPolicy = options.idempotencyPolicy;
   }
 
   /** SEC-CNS-016 P2: espera acotada con jitter completo antes de reintentar; evita que N unidades
@@ -130,7 +139,7 @@ export class PgUnitOfWork implements UnitOfWorkPort {
   }
 
   inTenant<T>(tenantId: string, work: (tx: TenantTxPorts) => Promise<T>): Promise<T> {
-    return this.withTenantTx(tenantId, (tx) => work(createPgTenantTxPorts(tx))).catch((error: unknown) => {
+    return this.withTenantTx(tenantId, (tx) => work(createPgTenantTxPorts(tx, this.idempotencyPolicy))).catch((error: unknown) => {
       // Reintentos agotados sobre una carrera de UNIQUE parcial: el error de dominio del guard
       // (revocacion abierta -> transicion invalida, invitacion activa, enrollment activo), sin
       // codigos nuevos. withTenantTx (infraestructura) propaga el 23505 crudo.

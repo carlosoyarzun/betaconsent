@@ -13,6 +13,11 @@
 /** P-01/P-02/P-03 (otp-policy.config.ts): sin valor aprobado en SEC-CNS-006, LOCAL-only. */
 export const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: 6, ttlMs: 5 * 60_000, maxAttempts: 3, maxResends: 3 };
 
+/** P-33 (idempotency-policy.config.ts, GRD-CM-08): TTL de la Idempotency-Key de la consola STAFF; sin
+ * valor aprobado en SEC-CNS-006, LOCAL-only (24 h es un valor sintético de conveniencia, no una
+ * recomendación de producto). Nunca un default de producción. */
+export const LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY = { ttlMs: 24 * 60 * 60_000 };
+
 /** GRD-CD-04: enum legal real PENDING DEC-BR-003 / EXT-A / LD-01; debe cumplir el patrón del
  * contrato `^[A-Z_]{1,40}$` (solo A-Z y "_", sin dígitos). */
 export const LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };

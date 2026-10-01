@@ -22,14 +22,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import type { Environment } from "../../modules/common/types.ts";
-import { openEnrollment, type EnrollmentPorts } from "../../modules/tenant-context/enrollment.ts";
+import { enrollmentPortsInTx, openEnrollmentTx, type EnrollmentPorts } from "../../modules/tenant-context/enrollment.ts";
 import {
-  staffCreateInvitation,
-  staffMarkInvitationReady,
-  staffSendInvitation,
+  staffCreateInvitationTx,
+  staffIssuanceInTx,
+  staffMarkInvitationReadyTx,
+  staffSendInvitationTx,
   type StaffIssuancePorts,
 } from "../../modules/invitation/staff-issuance.ts";
-import type { IdempotencyPort } from "../../ports/idempotency.port.ts";
+import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
@@ -40,8 +41,17 @@ import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 export interface StaffConsolePorts {
   readonly issuance: StaffIssuancePorts;
   readonly enrollment: EnrollmentPorts;
-  readonly idempotency: IdempotencyPort;
+  /** CA-124 PR-E: TODA lectura/escritura de repos, catálogo e idempotencia de la consola corre dentro de
+   * `uow.inTenant` (find + ejecutar + store de la Idempotency-Key en la MISMA tx; GRD-CM-08). */
+  readonly uow: UnitOfWorkPort;
   readonly staffIdentity: StaffIdentityPort;
+}
+
+/** Resultado de un paso de la consola dentro de la tx: la respuesta y, opcionalmente, un efecto externo
+ * (entrega del enlace) que se ejecuta SOLO tras el COMMIT y solo en la ejecución real (no en un replay). */
+interface StepOutcome {
+  readonly result: HttpResult;
+  readonly afterCommit?: () => Promise<void>;
 }
 
 /** Patrones de contracts/schemas/common.schema.json (Ref, ContextRef, Version, IdempotencyKey). */
@@ -161,6 +171,9 @@ function sha256(value: string): string {
  * GRD-CM-08: Idempotency-Key ligada a (tenantRef, principal, operación), almacenada solo como
  * hash. Misma key + mismo payloadHash -> misma respuesta almacenada; misma key + otro payloadHash
  * -> ERR-CM-07 (422). Solo se almacenan respuestas 2xx (un fallo no se congela).
+ * CA-124 PR-E: find + ejecutar + store corren en UNA unidad de trabajo del tenant (atómico): si el paso
+ * falla (DomainError) nada queda escrito, ni la transición ni la clave; el efecto externo (`afterCommit`)
+ * va después del COMMIT. Los DomainError se traducen a HTTP fuera de la tx (tras el ROLLBACK).
  */
 async function withIdempotency(
   ports: StaffConsolePorts,
@@ -169,25 +182,37 @@ async function withIdempotency(
   operation: string,
   payload: unknown,
   required: boolean,
-  execute: () => Promise<HttpResult>,
+  execute: (tx: TenantTxPorts) => Promise<StepOutcome>,
 ): Promise<HttpResult> {
   const key = request.idempotencyKeyHeader;
-  if (key === undefined) {
-    return required ? invalidRequest() : await execute();
-  }
-  if (!IDEMPOTENCY_KEY_PATTERN.test(key)) return invalidRequest();
+  if (key === undefined && required) return invalidRequest();
+  if (key !== undefined && !IDEMPOTENCY_KEY_PATTERN.test(key)) return invalidRequest();
 
-  const scopeKeyHash = sha256(`${staff.tenantId}\u0000${staff.principalRef}\u0000${operation}\u0000${key}`);
+  const scopeKeyHash = key === undefined ? undefined : sha256(`${staff.tenantId}\u0000${staff.principalRef}\u0000${operation}\u0000${key}`);
   const payloadHash = sha256(JSON.stringify(payload));
-  const stored = await ports.idempotency.find(scopeKeyHash);
-  if (stored) {
-    if (stored.payloadHash !== payloadHash) return problem(422, "ERR-CM-07");
-    return { status: stored.status as HttpResult["status"], body: stored.body };
+  let afterCommit: (() => Promise<void>) | undefined;
+  let result: HttpResult;
+  try {
+    result = await ports.uow.inTenant(staff.tenantId, async (tx) => {
+      afterCommit = undefined; // la tx puede reejecutarse: solo vale el efecto del último intento
+      if (scopeKeyHash !== undefined) {
+        const stored = await tx.idempotency.find(staff.tenantId, scopeKeyHash);
+        if (stored) {
+          if (stored.payloadHash !== payloadHash) return problem(422, "ERR-CM-07");
+          return { status: stored.status as HttpResult["status"], body: stored.body };
+        }
+      }
+      const outcome = await execute(tx);
+      if (scopeKeyHash !== undefined && outcome.result.status >= 200 && outcome.result.status < 300) {
+        await tx.idempotency.store(staff.tenantId, scopeKeyHash, { payloadHash, status: outcome.result.status, body: outcome.result.body });
+      }
+      afterCommit = outcome.afterCommit;
+      return outcome.result;
+    });
+  } catch (err) {
+    return domainFailure(err);
   }
-  const result = await execute();
-  if (result.status >= 200 && result.status < 300) {
-    await ports.idempotency.store(scopeKeyHash, { payloadHash, status: result.status, body: result.body });
-  }
+  if (afterCommit !== undefined) await afterCommit();
   return result;
 }
 
@@ -210,13 +235,9 @@ export async function handleOpenEnrollment(
   const subjectRef = body.subjectRef;
   const participationRef = body.participationRef;
 
-  return withIdempotency(ports, request, auth.staff, "EN0", { subjectRef, participationRef }, false, async () => {
-    try {
-      const { record, sequence } = await openEnrollment(ports.enrollment, auth.staff.tenantId, "INVITER", { subjectRef, participationRef });
-      return { status: 201, body: { enrollmentRef: record.enrollmentRef, state: "ACTIVE", sequence } };
-    } catch (err) {
-      return domainFailure(err);
-    }
+  return withIdempotency(ports, request, auth.staff, "EN0", { subjectRef, participationRef }, false, async (tx) => {
+    const { record, sequence } = await openEnrollmentTx(enrollmentPortsInTx(ports.enrollment, tx), auth.staff.tenantId, "INVITER", { subjectRef, participationRef });
+    return { result: { status: 201, body: { enrollmentRef: record.enrollmentRef, state: "ACTIVE", sequence } } };
   });
 }
 
@@ -252,13 +273,9 @@ export async function handleCreateInvitation(
     ...(body.reissueOfRef !== undefined ? { reissueOfRef: body.reissueOfRef as string } : {}),
   };
 
-  return withIdempotency(ports, request, auth.staff, "I1", input, true, async () => {
-    try {
-      const { record, sequence } = await staffCreateInvitation(ports.issuance, auth.staff.tenantId, "INVITER", input);
-      return { status: 201, body: { invitationRef: record.invitationRef, state: "DRAFT", sequence } };
-    } catch (err) {
-      return domainFailure(err);
-    }
+  return withIdempotency(ports, request, auth.staff, "I1", input, true, async (tx) => {
+    const { record, sequence } = await staffCreateInvitationTx(staffIssuanceInTx(ports.issuance, tx), auth.staff.tenantId, "INVITER", input);
+    return { result: { status: 201, body: { invitationRef: record.invitationRef, state: "DRAFT", sequence } } };
   });
 }
 
@@ -290,16 +307,14 @@ export async function handleMarkInvitationReady(
     ...(body.recipientChannelRef !== undefined ? { recipientChannelRef: body.recipientChannelRef as string } : {}),
   };
 
-  return withIdempotency(ports, request, auth.staff, `I2:${invitationRef}`, input, false, async () => {
-    try {
-      const { record, sequence } = await staffMarkInvitationReady(ports.issuance, auth.staff.tenantId, "INVITER", invitationRef, input);
-      return {
+  return withIdempotency(ports, request, auth.staff, `I2:${invitationRef}`, input, false, async (tx) => {
+    const { record, sequence } = await staffMarkInvitationReadyTx(staffIssuanceInTx(ports.issuance, tx), auth.staff.tenantId, "INVITER", invitationRef, input);
+    return {
+      result: {
         status: 200,
         body: { state: "READY", sequence, ...(record.expiresAt ? { expiresAt: record.expiresAt.toISOString() } : {}) },
-      };
-    } catch (err) {
-      return domainFailure(err);
-    }
+      },
+    };
   });
 }
 
@@ -320,17 +335,16 @@ export async function handleSendInvitation(
 
   if (!strictObject(request.body, [])) return invalidRequest();
 
-  return withIdempotency(ports, request, auth.staff, `I3:${invitationRef}`, {}, false, async () => {
-    try {
-      const { record, sequence } = await staffSendInvitation(ports.issuance, auth.staff.tenantId, "INVITER", invitationRef);
-      return {
+  return withIdempotency(ports, request, auth.staff, `I3:${invitationRef}`, {}, false, async (tx) => {
+    const { record, sequence, deliver } = await staffSendInvitationTx(staffIssuanceInTx(ports.issuance, tx), auth.staff.tenantId, "INVITER", invitationRef);
+    return {
+      result: {
         status: 200,
         // expiresAt es obligatorio en InvitationSent; sendInvitation siempre lo fija (GRD-IV-12).
         body: { state: "SENT", sequence, expiresAt: (record.expiresAt as Date).toISOString() },
-      };
-    } catch (err) {
-      return domainFailure(err);
-    }
+      },
+      afterCommit: deliver, // el enlace sale por el canal DESPUÉS del COMMIT (nunca en un replay)
+    };
   });
 }
 

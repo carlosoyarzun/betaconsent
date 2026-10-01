@@ -85,7 +85,7 @@ export function createInvitation(
   return inTx(ports, tenantId, (p) => createInvitationTx(p, tenantId, actorRole, input));
 }
 
-async function createInvitationTx(
+export async function createInvitationTx(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -160,7 +160,7 @@ export function markInvitationReady(
   return inTx(ports, tenantId, (p) => markInvitationReadyTx(p, tenantId, actorRole, invitationRef, input));
 }
 
-async function markInvitationReadyTx(
+export async function markInvitationReadyTx(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -247,7 +247,7 @@ export function sendInvitation(
   return inTx(ports, tenantId, (p) => sendInvitationTx(p, tenantId, actorRole, invitationRef, options));
 }
 
-async function sendInvitationTx(
+export async function sendInvitationTx(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
