@@ -27,6 +27,7 @@ import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { TenantResolverPort } from "../../ports/tenant-resolver.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
+import { appendNext, lastLedgerSequence } from "../common/ledger-append.ts";
 
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
@@ -97,7 +98,7 @@ async function attestHumanAssistedVerificationTx(
     verifiedRecoveryMethod: "HUMAN_ASSISTED",
   };
   await ports.revocationRepo.save(verified);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -270,7 +271,7 @@ async function cosignCaseConfirmationTx(
 
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
   await ports.revocationRepo.save(confirmed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_CONFIRMED",
     tenantId,
     aggregateType: "Revocation",
@@ -345,7 +346,7 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
     status: "REQUESTED",
   };
   await ports.revocationRepo.save(record);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_REQUESTED",
     tenantId,
     aggregateType: "Revocation",
@@ -388,7 +389,7 @@ async function verifyRevocationOtpTx(
   }
   const verified: RevocationRecord = { ...found, status: "VERIFIED", verifiedAuthPath: "OTP", verifiedRecoveryMethod: undefined };
   await ports.revocationRepo.save(verified);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -419,7 +420,7 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
   }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED" };
   await ports.revocationRepo.save(confirmed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_CONFIRMED",
     tenantId,
     aggregateType: "Revocation",
@@ -455,7 +456,7 @@ async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, re
   }
   const failed: RevocationRecord = { ...found, status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" };
   await ports.revocationRepo.save(failed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_FAILED",
     tenantId,
     aggregateType: "Revocation",
@@ -496,7 +497,11 @@ async function applyRevocationTx(ports: RevocationPorts, tenantId: string, revoc
   if (!decision || (decision.state !== "GRANTED" && decision.state !== "REVOKED")) {
     throw new DomainError("ERR-CM-06");
   }
+  // SEC-CNS-013 P2-3 / R4 (una tx con lock y expectedSequence): la secuencia esperada se lee del
+  // agregado dentro de la misma unidad de trabajo y se pasa explícita al ledger.
+  const lastSequence = await lastLedgerSequence(ports.ledger, tenantId, "Revocation", revocationRef);
   const rev = await ports.ledger.append({
+    expectedSequence: lastSequence,
     eventType: "CONSENT_REVOKED",
     tenantId,
     aggregateType: "Revocation",
@@ -517,6 +522,9 @@ async function applyRevocationTx(ports: RevocationPorts, tenantId: string, revoc
   // Recibo de la revocación: receiptRef = revocationRef, el mismo "Comprobante" que muestra la
   // UI de autoservicio/recuperación. managementLinkIssued=false (IT0: sin management_token).
   await ports.ledger.append({
+    // Tras un append nuevo el agregado quedó en rev.sequence; ante dedupe de CONSENT_REVOKED no se
+    // escribió nada y sigue en lastSequence.
+    expectedSequence: Math.max(lastSequence, rev.sequence),
     eventType: "RECEIPT_CREATED",
     tenantId,
     aggregateType: "Revocation",
@@ -596,7 +604,7 @@ export async function issueRecoveryLinkBearer(
   // externo, no transaccional) va DESPUÉS de confirmar: si la escritura falla no sale ningún enlace.
   await inTx(ports, tenantId, async (p) => {
     await p.recoveryTokenRepo.save({ tokenHash, recoveryRef, tenantId, chainRef, revokedDecisionRef, expiresAt });
-    await p.ledger.append({
+    await appendNext(p.ledger, {
       eventType: "RECOVERY_TOKEN_ISSUED",
       tenantId,
       aggregateType: "Revocation",
@@ -666,7 +674,7 @@ async function requestRevocationRecovery(
   const revocationRef = randomUUID();
   const record: RevocationRecord = { revocationRef, tenantId, chainRef, revokedDecisionRef, status: "REQUESTED" };
   await ports.revocationRepo.save(record);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_REQUESTED",
     tenantId,
     aggregateType: "Revocation",
@@ -692,7 +700,7 @@ async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string
     verifiedRecoveryMethod: "CHANNEL_LINK",
   };
   await ports.revocationRepo.save(verified);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",

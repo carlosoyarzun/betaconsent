@@ -45,10 +45,10 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
 
       const aggKey = aggregateKey(event.tenantId, event.aggregateId);
       const currentSequence = sequenceByAggregate.get(aggKey) ?? 0;
-      if (event.expectedSequence !== undefined && event.expectedSequence !== currentSequence) {
+      if (event.expectedSequence !== currentSequence) {
         throw new LedgerSequenceConflictError(event.expectedSequence, currentSequence);
       }
-      const nextSequence = currentSequence + 1;
+      const nextSequence = event.expectedSequence + 1; // SEC-CNS-013 P2-3: sequence = expectedSequence + 1
       sequenceByAggregate.set(aggKey, nextSequence);
 
       const { expectedSequence: _expectedSequence, ...eventFields } = event;

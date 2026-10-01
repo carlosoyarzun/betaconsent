@@ -32,6 +32,7 @@ function event(tenantId: string, aggregateId: string, extra: Partial<LedgerEvent
     aggregateId,
     actorType: "HUMAN",
     payload: { reasonCode: "SYNTHETIC" },
+    expectedSequence: 0,
     ...extra,
   };
 }
@@ -58,7 +59,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       const a = await ledger.append(
         event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: { n: 1, nested: { ok: true } } }),
       );
-      const b = await ledger.append(event(t, agg, { eventType: "REVOCATION_CONFIRMED" }));
+      const b = await ledger.append(event(t, agg, { eventType: "REVOCATION_CONFIRMED", expectedSequence: 1 }));
       return [a, b];
     });
     assert.deepEqual(records.map((r) => r.sequence), [1, 2]);
@@ -83,10 +84,10 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     const agg2 = fixtureUuid("agg781-2");
     await h.inTenant(ta, async ({ ledger }) => {
       assert.equal((await ledger.append(event(ta, agg1))).sequence, 1);
-      assert.equal((await ledger.append(event(ta, agg1))).sequence, 2);
+      assert.equal((await ledger.append(event(ta, agg1, { expectedSequence: 1 }))).sequence, 2);
       assert.equal((await ledger.append(event(ta, agg2))).sequence, 1);
       // Mismo aggregateId con otro aggregateType comparte numeracion (UNIQUE tenant_id, aggregate_id, sequence).
-      assert.equal((await ledger.append(event(ta, agg1, { aggregateType: "Other" }))).sequence, 3);
+      assert.equal((await ledger.append(event(ta, agg1, { aggregateType: "Other", expectedSequence: 2 }))).sequence, 3);
     });
     await h.inTenant(tb, async ({ ledger }) => {
       assert.equal((await ledger.append(event(tb, agg1))).sequence, 1);

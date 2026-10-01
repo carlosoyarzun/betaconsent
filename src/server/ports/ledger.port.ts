@@ -19,13 +19,15 @@ export interface LedgerEventInput {
   /** Clave de idempotencia declarada por la transición (SM-CNS-001 §7 / GRD-CM-08). */
   readonly idempotencyKey?: string;
   /**
-   * Control optimista de concurrencia (diseño CA-124 §3 "P2 del ledger", revocation.spec R4):
-   * si se declara, el append solo procede si la última `sequence` del agregado es exactamente
-   * `expectedSequence` (0 = agregado vacío); si no, lanza `LedgerSequenceConflictError` sin
-   * escribir. Un append deduplicado por `idempotencyKey` devuelve el registro existente antes
-   * de evaluar este control.
+   * Control optimista de concurrencia (diseño CA-124 §3 "P2 del ledger", SEC-CNS-013 P2-3,
+   * revocation.spec R4). OBLIGATORIO: el append solo procede si la última `sequence` del
+   * agregado es exactamente `expectedSequence` (0 = agregado vacío) y registra el evento con
+   * `sequence = expectedSequence + 1`; si no, lanza `LedgerSequenceConflictError` sin escribir.
+   * Un append deduplicado por `idempotencyKey` devuelve el registro existente antes de evaluar
+   * este control. Los flujos que no necesitan decidir sobre la secuencia usan `appendNext`
+   * (src/server/modules/common/ledger-append.ts), que la lee dentro de la misma unidad de trabajo.
    */
-  readonly expectedSequence?: number;
+  readonly expectedSequence: number;
 }
 
 /** El agregado avanzó desde `expectedSequence` (UNIQUE(tenant_id, aggregate_id, sequence)). */
@@ -40,7 +42,7 @@ export class LedgerSequenceConflictError extends Error {
   }
 }
 
-export interface LedgerRecord extends LedgerEventInput {
+export interface LedgerRecord extends Omit<LedgerEventInput, "expectedSequence"> {
   readonly sequence: number;
   readonly occurredAt: Date;
   /** ADR-002 §2, §8: en IT0 siempre LOCAL/DEV/STAGING, evidentiary=false, dataClass=SYNTHETIC. */

@@ -15,6 +15,7 @@ import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EnrollmentRecord, EnrollmentRepositoryPort } from "../../ports/enrollment-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { TenantCatalogPort } from "../../ports/tenant-catalog.port.ts";
+import { appendNext } from "../common/ledger-append.ts";
 
 export interface EnrollmentPorts {
   readonly enrollmentRepo: EnrollmentRepositoryPort;
@@ -69,7 +70,7 @@ export async function openEnrollment(
     state: "ACTIVE",
   };
   await ports.enrollmentRepo.save(record);
-  const event = await ports.ledger.append({
+  const event = await appendNext(ports.ledger, {
     eventType: "ENROLLMENT_STATUS_CHANGED",
     tenantId,
     aggregateType: "Enrollment",

@@ -7,6 +7,7 @@
 import { assertExecutionSourceIsSeed, assertFixtureEnvironment } from "../common/guards.ts";
 import type { ExecutionContext } from "../common/types.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import { appendNext } from "../common/ledger-append.ts";
 
 export interface SeedTenantPorts {
   readonly ledger: LedgerPort;
@@ -22,7 +23,7 @@ export interface SeedTenantPorts {
 export async function seedTenant(ctx: ExecutionContext, ports: SeedTenantPorts, tenantId: string): Promise<void> {
   assertExecutionSourceIsSeed(ctx);
   assertFixtureEnvironment("FIXTURE", ctx.environment);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "TENANT_SEEDED",
     tenantId,
     aggregateType: "Tenant",
@@ -44,7 +45,7 @@ export async function seedSchoolParticipation(
 ): Promise<void> {
   assertExecutionSourceIsSeed(ctx);
   assertFixtureEnvironment("FIXTURE", ctx.environment);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "SCHOOL_PARTICIPATION_SEEDED",
     tenantId,
     aggregateType: "SchoolParticipation",

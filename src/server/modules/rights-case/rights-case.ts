@@ -18,6 +18,7 @@ import type { TenantHandlePort } from "../../ports/tenant-handle.port.ts";
 import type { RightsCaseRecord, RightsCaseRepositoryPort } from "../../ports/rights-case-repository.port.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import { appendNext } from "../common/ledger-append.ts";
 
 export interface RightsCasePorts {
   readonly tenantHandle: TenantHandlePort;
@@ -89,7 +90,7 @@ export async function expressRevocationIntentInCase(
       status: "IN_VERIFICATION",
     };
     await ports.rightsCaseRepo.save(updatedCase);
-    await ports.ledger.append({
+    await appendNext(ports.ledger, {
       eventType: "REVOCATION_REQUESTED",
       tenantId: rightsCase.tenantId,
       aggregateType: "Revocation",
@@ -111,7 +112,7 @@ export async function expressRevocationIntentInCase(
   if (!existing) {
     throw new DomainError("ERR-CM-01");
   }
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "REVOCATION_REQUESTED",
     tenantId: rightsCase.tenantId,
     aggregateType: "Revocation",
@@ -157,7 +158,7 @@ export async function confirmCaseReturnViaHandle(
 
   const updated: RightsCaseRecord = { ...rightsCase, status: "CONTACTING" };
   await ports.rightsCaseRepo.save(updated);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "RIGHTS_CASE_CONTACTING",
     tenantId: rightsCase.tenantId,
     aggregateType: "RightsCase",
@@ -204,7 +205,7 @@ export async function openRightsCase(
     origin: input.origin,
   };
   await ports.rightsCaseRepo.save(record);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "RIGHTS_CASE_OPENED",
     tenantId,
     aggregateType: "RightsCase",
@@ -241,7 +242,7 @@ export async function closeCase(
   }
   const closed: RightsCaseRecord = { ...found, status: outcome };
   await ports.rightsCaseRepo.save(closed);
-  await ports.ledger.append({
+  await appendNext(ports.ledger, {
     eventType: "RIGHTS_CASE_CLOSED",
     tenantId,
     aggregateType: "RightsCase",
