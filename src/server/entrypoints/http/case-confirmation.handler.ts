@@ -340,7 +340,7 @@ export async function handleApproveCaseVerification(
 /**
  * POST /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal (API-CNS-140,
  * withdraw_case_verification_proposal; CA-128 X6 P2). Solo el RIGHTS_OPERATOR proponente, desde su sesion CASE, mientras la
- * propuesta esta PENDING. Cuerpo vacio (WithdrawCaseVerificationProposalRequest). Principal SIEMPRE de la sesion (GRD-CM-07).
+ * propuesta esta PENDING. Cuerpo con stepUpAssertion obligatorio (WithdrawCaseVerificationProposalRequest), igual que 136/137. Principal SIEMPRE de la sesion (GRD-CM-07).
  * Lectura del caso por el operador queda en ops.access_log (misma tx, INV-RC-04), igual que API-CNS-136/137.
  */
 export async function handleWithdrawCaseVerificationProposal(
@@ -359,9 +359,9 @@ export async function handleWithdrawCaseVerificationProposal(
   if (!UUID_V4_PATTERN.test(proposalRefFromPath)) return uniformNotFound();
   if (session.role !== "RIGHTS_OPERATOR") return actorNotAllowed(); // solo el proponente (RIGHTS_OPERATOR) retira
 
-  const body = request.body;
-  const isEmptyObject = body === undefined || (typeof body === "object" && body !== null && !Array.isArray(body) && Object.keys(body).length === 0);
-  if (!isEmptyObject) return problem(422, "ERR-CM-06");
+  // OPEN-RV-14 (a) (Carlos 2026-10-01): mismo step-up interino que API-CNS-136/137; tambien en el reintento idempotente.
+  const body = strictBody(request.body, ["stepUpAssertion"]);
+  if (!body || !isStepUpAssertion(body.stepUpAssertion)) return problem(422, "ERR-CM-06");
 
   const rightsCase = await readCaseAsOperator(ports, session);
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) return uniformNotFound();

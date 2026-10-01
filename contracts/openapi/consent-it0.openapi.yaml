@@ -1118,8 +1118,8 @@ paths:
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
       x-actor: {recordedActor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}, withdrawer: "RIGHTS_OPERATOR con sesión CASE del caso, igual a proposedByRef (withdrawnByRef)", note: "withdrawnByRef se deriva de la sesión CASE y principal_kind HUMAN, nunca del body (GRD-CM-07)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-28]
-      x-errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13]
+      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-28, GRD-RC-12]
+      x-errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13, ERR-RC-05]
       x-idempotency: "(revocationRef, proposal_ref)"
       security: [{caseSession: []}]
       parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/ProposalRef'}, {$ref: '#/components/parameters/CsrfToken'}]

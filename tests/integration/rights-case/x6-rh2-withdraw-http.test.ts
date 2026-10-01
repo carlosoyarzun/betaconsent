@@ -197,16 +197,16 @@ test("TEST-CNS-1018: retiro RH2 HTTP: el proponente retira (200 WITHDRAWN, Revoc
     const { proposalRef } = (await proposed.json()) as { proposalRef: string };
     const withdraw = `${base}/${proposalRef}/withdrawal`;
 
-    assert.equal((await post(fx.baseUrl, withdraw, undefined, {})).status, 404, "sin sesion CASE");
-    const other = await post(fx.baseUrl, withdraw, op2, {});
+    assert.equal((await post(fx.baseUrl, withdraw, undefined, STEP_UP)).status, 404, "sin sesion CASE");
+    const other = await post(fx.baseUrl, withdraw, op2, STEP_UP);
     assert.equal(other.status, 403, "otro RIGHTS_OPERATOR no retira");
     assert.equal(((await other.json()) as { code: string }).code, "RH2_SEPARATION_OF_DUTIES_VIOLATION");
-    assert.equal((await post(fx.baseUrl, withdraw, approver, {})).status, 403, "un APPROVER no retira");
-    assert.equal((await post(fx.baseUrl, withdraw, op1, { withdrawnByRef: fixtureUuid("suplanta") })).status, 422, "actor nunca del body");
-    assert.equal((await post(fx.baseUrl, `${base}/${fixtureUuid("inexistente")}/withdrawal`, op1, {})).status, 404, "propuesta inexistente");
+    assert.equal((await post(fx.baseUrl, withdraw, approver, STEP_UP)).status, 403, "un APPROVER no retira");
+    assert.equal((await post(fx.baseUrl, withdraw, op1, { ...STEP_UP, withdrawnByRef: fixtureUuid("suplanta") })).status, 422, "actor nunca del body");
+    assert.equal((await post(fx.baseUrl, `${base}/${fixtureUuid("inexistente")}/withdrawal`, op1, STEP_UP)).status, 404, "propuesta inexistente");
     assert.equal((await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef))?.proposal?.proposalRef, proposalRef, "sin efecto de los rechazos");
 
-    const ok = await post(fx.baseUrl, withdraw, op1, {});
+    const ok = await post(fx.baseUrl, withdraw, op1, STEP_UP);
     assert.equal(ok.status, 200, JSON.stringify(await ok.clone().json()));
     const ack = await ok.json();
     assertValid(validateApiPayload("ProposalWithdrawalAck", ack));
@@ -215,11 +215,11 @@ test("TEST-CNS-1018: retiro RH2 HTTP: el proponente retira (200 WITHDRAWN, Revoc
     assert.deepEqual(events.map((e) => e.eventType), ["REVOCATION_PROPOSAL_WITHDRAWN"]);
     assert.equal((events[0]!.payload as Record<string, unknown>).withdrawnByRef, OP1, "withdrawnByRef = principal de la sesion CASE");
 
-    const replay = await post(fx.baseUrl, withdraw, op1, {});
+    const replay = await post(fx.baseUrl, withdraw, op1, STEP_UP);
     assert.equal(replay.status, 200, "idempotente: mismo proponente");
     assert.deepEqual(await replay.json(), ack);
     assert.equal((await fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef)).length, 1, "sin evento nuevo");
-    assert.equal((await post(fx.baseUrl, withdraw, op2, {})).status, 404, "ya retirada: otro operador");
+    assert.equal((await post(fx.baseUrl, withdraw, op2, STEP_UP)).status, 404, "ya retirada: otro operador");
     assert.equal((await post(fx.baseUrl, `${base}/${proposalRef}/approval`, approver, STEP_UP)).status, 404, "aprobar tras retiro");
     assert.equal((await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef))?.status, "REQUESTED");
 
@@ -229,6 +229,51 @@ test("TEST-CNS-1018: retiro RH2 HTTP: el proponente retira (200 WITHDRAWN, Revoc
     assert.notEqual(next, proposalRef);
     const approved = await post(fx.baseUrl, `${base}/${next}/approval`, approver, STEP_UP);
     assert.deepEqual(await approved.json(), { attestation: "ATTESTED", revocationState: "VERIFIED" });
+  } finally {
+    await fx.close();
+  }
+});
+
+test("TEST-CNS-1023: retiro RH2 HTTP sin stepUpAssertion o con stepUp invalido (vacio, no string, >8192, campo extra) -> 422 INVALID_TRANSITION (ERR-CM-06) sin evento ni cambio de fila", async () => {
+  const fx = await setUp({ chainRef: fixtureUuid("chain-1023"), caseRef: fixtureUuid("case-1023"), revocationRef: fixtureUuid("rv-1023") });
+  try {
+    const base = `/platform/rights-cases/${fx.caseRef}/verification-proposals`;
+    const op1 = await login(fx.baseUrl, fx.caseRef, OP1);
+    const proposed = await post(fx.baseUrl, base, op1, { verificationScriptVersion: "guion-1", ...STEP_UP });
+    const { proposalRef } = (await proposed.json()) as { proposalRef: string };
+    const withdraw = `${base}/${proposalRef}/withdrawal`;
+    const before = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
+    const bad: unknown[] = [{}, undefined, { stepUpAssertion: "" }, { stepUpAssertion: 123 }, { stepUpAssertion: null }, { stepUpAssertion: "x".repeat(8193) }, { ...STEP_UP, extra: 1 }];
+    for (const body of bad) {
+      const res = await post(fx.baseUrl, withdraw, op1, body);
+      assert.equal(res.status, 422, JSON.stringify(body)?.slice(0, 60));
+      assert.equal(((await res.json()) as { code: string }).code, "INVALID_TRANSITION");
+    }
+    assert.deepEqual(await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef), before, "fila intacta");
+    assert.equal((await fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef)).length, 0, "sin evento");
+    assert.equal((await post(fx.baseUrl, withdraw, op1, STEP_UP)).status, 200, "con stepUp valido retira");
+  } finally {
+    await fx.close();
+  }
+});
+
+test("TEST-CNS-1024: retiro RH2 HTTP idempotente: el reintento del proponente sin stepUp se rechaza 422 (sin evento nuevo); con stepUp devuelve el mismo ack", async () => {
+  const fx = await setUp({ chainRef: fixtureUuid("chain-1024"), caseRef: fixtureUuid("case-1024"), revocationRef: fixtureUuid("rv-1024") });
+  try {
+    const base = `/platform/rights-cases/${fx.caseRef}/verification-proposals`;
+    const op1 = await login(fx.baseUrl, fx.caseRef, OP1);
+    const { proposalRef } = (await (await post(fx.baseUrl, base, op1, { verificationScriptVersion: "guion-1", ...STEP_UP })).json()) as { proposalRef: string };
+    const withdraw = `${base}/${proposalRef}/withdrawal`;
+    const first = await post(fx.baseUrl, withdraw, op1, STEP_UP);
+    assert.equal(first.status, 200);
+    const ack = await first.json();
+    const replayNoStepUp = await post(fx.baseUrl, withdraw, op1, {});
+    assert.equal(replayNoStepUp.status, 422, "reintento sin stepUp");
+    assert.equal(((await replayNoStepUp.json()) as { code: string }).code, "INVALID_TRANSITION");
+    assert.equal((await fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef)).length, 1, "sin evento nuevo");
+    const replay = await post(fx.baseUrl, withdraw, op1, STEP_UP);
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), ack);
   } finally {
     await fx.close();
   }
