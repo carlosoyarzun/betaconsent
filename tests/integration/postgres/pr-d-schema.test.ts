@@ -140,6 +140,9 @@ pgTest("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, enum
     await expectFail(otpIns("DECISION", "mgmt:chain-1"), [t], "otp_channel_reserved");
     await expectFail(otpIns("REVOCATION", "chain-1"), [t], "otp_channel_reserved");
     await expectFail(otpIns("MANAGE", "persona@gmail.com"), [t], "otp_channel_reserved");
+    // SEC-CNS-016 C1: un email real no entra disfrazado de ref opaca 'mgmt:'.
+    await expectFail(otpIns("MANAGE", "mgmt:persona@gmail.com"), [t], "otp_channel_reserved");
+    await expectFail(otpIns("REVOCATION", "mgmt:chain:x@y.cl"), [t], "otp_channel_reserved");
 
     // Filas validas SI entran (los CHECK no son vacuos): data_class queda SYNTHETIC por defecto.
     await admin.query(inv(", recipient_channel_ref", ", 'padre@colegio.test'"), [t]);

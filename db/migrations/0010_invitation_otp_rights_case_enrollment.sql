@@ -56,7 +56,7 @@ CREATE TABLE app.otp_verification (
   parent_ref       text        NOT NULL CONSTRAINT otp_parent_len CHECK (pg_catalog.length(parent_ref) BETWEEN 1 AND 255),
   -- Destino del OTP (contacto): email de dominio reservado, o ref opaca 'mgmt:' en scope de derechos.
   channel_ref      text        NOT NULL CONSTRAINT otp_channel_reserved CHECK (
-                     app.is_reserved_email(channel_ref) OR (scope IN ('REVOCATION', 'MANAGE') AND channel_ref ~ '^mgmt:[^[:space:]]+$')),
+                     app.is_reserved_email(channel_ref) OR (scope IN ('REVOCATION', 'MANAGE') AND channel_ref ~ '^mgmt:[^@[:space:]]+$')),
   -- HMAC-SHA256 hex del codigo (P-08); el codigo en claro nunca persiste (INV-OT-02).
   code_hash        text        NOT NULL CONSTRAINT otp_code_hash_shape CHECK (code_hash ~ '^[0-9a-f]{64}$'),
   attempts         integer     NOT NULL CONSTRAINT otp_attempts_nonneg CHECK (attempts >= 0),
