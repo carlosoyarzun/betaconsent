@@ -152,7 +152,7 @@ pgTest("TEST-CNS-745 pg: ops.db_catalog es de fila única, SYNTHETIC/LOCAL, inmu
   await admin.query("ROLLBACK");
 });
 
-pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app", async (ctx) => {
+pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app e integrity (tablas reales)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const bypass = (await admin.query<{ rolname: string }>(
     "SELECT rolname FROM pg_roles WHERE rolbypassrls AND rolname = ANY($1)",
@@ -167,12 +167,19 @@ pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con 
   )).rows;
   assert.deepEqual(policies, []);
 
-  // Toda tabla del esquema app (agregados, PR-C/D) exige ENABLE + FORCE ROW LEVEL SECURITY.
-  const unforced = (await admin.query<{ relname: string }>(
-    `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'app' AND c.relkind IN ('r', 'p') AND NOT (c.relrowsecurity AND c.relforcerowsecurity)`,
+  // Toda tabla de los esquemas app e integrity exige ENABLE + FORCE ROW LEVEL SECURITY. Desde PR-B
+  // existen tablas reales (integrity.audit_event, app.outbox): el chequeo ya no es vacuo.
+  const tables = (await admin.query<{ qname: string; forced: boolean }>(
+    `SELECT n.nspname || '.' || c.relname AS qname, (c.relrowsecurity AND c.relforcerowsecurity) AS forced
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname IN ('app', 'integrity') AND c.relkind IN ('r', 'p')`,
   )).rows;
-  assert.deepEqual(unforced, []);
+  assert.ok(tables.some((t) => t.qname === "integrity.audit_event") && tables.some((t) => t.qname === "app.outbox"));
+  assert.deepEqual(tables.filter((t) => !t.forced), []);
+
+  // Las policies existen (no vacuo) y ninguna usa current_user/session_user (ya verificado arriba).
+  const policyCount = (await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_policies WHERE schemaname IN ('app', 'integrity')")).rows[0]?.n ?? 0;
+  assert.ok(policyCount >= 4, "hay policies reales por revisar");
 });
 
 pgTest("TEST-CNS-747 pg: los chequeos de arranque aceptan app_rw/worker/platform_rw y rechazan migrador y superusuario", async (ctx) => {
