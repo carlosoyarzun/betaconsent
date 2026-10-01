@@ -455,7 +455,7 @@ guards:
     testIds: [TEST-CNS-413]
   - id: GRD-RC-12
     name: step_up_and_assertion
-    rule: "request_grant, approve_grant, propose_case_verification y approve_case_verification exigen step-up auth_time dentro de P-36, nonce por acción y aserción del IdP; sin ATTESTED por integrity_verifier no hay efecto."
+    rule: "request_grant, approve_grant, propose_case_verification, approve_case_verification y withdraw_case_verification_proposal (OPEN-RV-14 (a), Carlos 2026-10-01) exigen step-up auth_time dentro de P-36, nonce por acción y aserción del IdP; sin ATTESTED por integrity_verifier no hay efecto."
     onFail: ERR-RC-05
     governedBy: ["SEC-CNS-006 P-36", "ADR-006 §6.3", "CARLOS r3 R6-4", "INV-13"]
     testIds: [TEST-CNS-309]

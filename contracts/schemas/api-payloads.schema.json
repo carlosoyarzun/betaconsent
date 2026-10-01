@@ -914,8 +914,15 @@
     "WithdrawCaseVerificationProposalRequest": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {},
-      "description": "RH2 retiro (withdraw_case_verification_proposal, API-CNS-140). Sin campos: el retirante (withdrawnByRef) se deriva de la sesión CASE del RIGHTS_OPERATOR y debe ser el proponente; nunca viene del body (GRD-CM-07)."
+      "properties": {
+        "stepUpAssertion": {
+          "$ref": "#/$defs/StepUpAssertion"
+        }
+      },
+      "required": [
+        "stepUpAssertion"
+      ],
+      "description": "RH2 retiro (withdraw_case_verification_proposal, API-CNS-140). Exige stepUpAssertion igual que API-CNS-136/137 (Carlos, 2026-10-01, OPEN-RV-14 (a)). El retirante (withdrawnByRef) se deriva de la sesión CASE del RIGHTS_OPERATOR y debe ser el proponente; nunca viene del body (GRD-CM-07)."
     },
     "ProposalWithdrawalAck": {
       "type": "object",

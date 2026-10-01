@@ -1,11 +1,12 @@
 # Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 4 (SM-CNS-001 v7 + R14).
+# rev. 4h (2026-10-01, CA-128, Carlos OPEN-RV-14 (a), revisión de seguridad): RH2w (API-CNS-140) exige stepUpAssertion igual que RH2 (guards += GRD-RC-12, errors += ERR-RC-05, testIds += TEST-CNS-1023/1024); OPEN-RV-14 RESUELTO; OPEN-RV-15 registra la divergencia ERR-RC-05 vs ERR-CM-06 (422) de los handlers 136/137/140. Sin cambio de semántica de consentimiento/revocación/elegibilidad.
 # rev. 4g (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra OPEN-RV-12 en los 15 huecos que la nota de rev. 4d daba por "corregidos puntualmente" sin estarlo — RC3 (GRD-RV-19/23/25), RH2 (GRD-RV-23), RH2v (GRD-RV-23), RH3 (GRD-RV-23, GRD-RV-28), R12 (GRD-RV-19/23/25/28, GRD-RC-08, GRD-RC-14): errors += ERR-RV-13, ERR-RV-15, ERR-RV-04, ERR-RC-09 según corresponda a cada guard (onFail exacto de esta spec/rights-case.spec.yaml). OPEN-RV-12 se corrige para reflejar el estado real. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 # rev. 4f (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en R1/R2/R3/R8 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica.
 # rev. 4e (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — OPEN-RV-11 pasa a DECIDED (A-57, A-58, cosignedByRef); P-02 (A-50) en REVOCATION_REQUESTED. Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # rev. 4d (2026-09-27): SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c) — RC3
 # (lado Revocation), R12, RH2, RH2v y RH3 suman GRD-CM-01/06/07 según corresponda, con sus errors;
 # RV0 pasa de guardsByTrigger a guardsBySource (BEARER/SYSTEM, N-4c-01), alineado con la convención
-# de common.spec.yaml (guardsBySource). ERR-RC-05 huérfano en RH2/RH2v/RH3: se anota, no se borra
+# de common.spec.yaml (guardsBySource). ERR-RC-05 huérfano solo en RH3 (su GRD-RC-12 se quitó, OPEN-RV-10); RH2/RH2v/RH2w conservan GRD-RC-12 y ERR-RC-05: se anota, no se borra
 # (OPEN-RV-10). Sin cambio de semántica de consentimiento/revocación/elegibilidad.
 # rev. 4c (2026-09-27): F-R14-04 (co-firmante de RH3 en el ledger: cosignedByRef en REVOCATION_CONFIRMED, INV-RV-11; derivado pendiente OPEN-RV-11).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (lado R9), N2-02 (GRD-RV-29 en R4), N2-04 (recovery token ligado a la decisión); AUDIT-H01-rev4 M-04.
@@ -306,17 +307,18 @@ transitions:
       withdrawer: "RIGHTS_OPERATOR con sesión CASE del caso, igual a proposedByRef (withdrawnByRef)"
     routeClass: RIGHTS
     httpPost: true # consola CASE
-    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-28]
-    stepUp: "OPEN-RV-14: alcance de P-36 sobre RH2w pendiente de Carlos; withdraw_case_verification_proposal no exige step-up/aserción del IdP hasta que lo decida (el body no lleva stepUpAssertion)"
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-28, GRD-RC-12]
+    stepUp: "P-36 / GRD-RC-12, igual que RH2 (propose/approve, API-CNS-136/137): el body exige stepUpAssertion (Carlos, 2026-10-01, cierre de OPEN-RV-14 opción (a)); ausente o inválido falla cerrado 422 ERR-CM-06 (igual que 136/137) sin evento ni cambio de fila; el reintento idempotente también la exige. Interino IT0 LOCAL-only: validación de forma, sin verificación criptográfica hasta APR-IDP"
     effects:
       - "CA-128 X6 P2 (Carlos, 2026-10-01): solo el proponente retira, solo mientras la propuesta está PENDING (Revocation REQUESTED); la propuesta queda WITHDRAWN (terminal: no aprobable ni reutilizable por proposalRef)."
       - "No cambia el estado de la Revocation (REQUESTED -> REQUESTED) y nunca produce FAILED (INV-6: FAILED solo por R8); la Revocation queda disponible para una nueva propuesta RH2."
     emits: [REVOCATION_PROPOSAL_WITHDRAWN]
     payloadValues: {revocationRef: required, caseRef: required, proposalRef: required, verificationScriptVersion: required, withdrawnByRef: proposer}
     idempotencyKey: "(revocationRef, proposal_ref)"
-    errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13]
+    errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13, ERR-RC-05]
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09", "SEC-CNS-013"]
-    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020, TEST-CNS-1021, TEST-CNS-1022]
+    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020, TEST-CNS-1021, TEST-CNS-1022, TEST-CNS-1023, TEST-CNS-1024]
+    changeNote: "CA-128 X6 P2 (2026-10-01): transición nueva, sin cambiar RH2; tests propios TEST-CNS-1013..1022. CA-128 (2026-10-01, Carlos, OPEN-RV-14 (a)): RH2w exige stepUpAssertion igual que RH2 (guards += GRD-RC-12, errors += ERR-RC-05, stepUp reemplazado); tests propios += TEST-CNS-1023, TEST-CNS-1024. Divergencia de código de error registrada en OPEN-RV-15."
   - id: R3
     from: VERIFIED
     to: CONFIRMED
@@ -1128,6 +1130,13 @@ openItems:
   - id: OPEN-RV-14
     item: "CA-128 X6 P2 (revisión de seguridad de P2-hardening): alcance de P-36 (step-up e IdP, GRD-RC-12) sobre RH2w (withdraw_case_verification_proposal, API-CNS-140): hoy el retiro no exige step-up ni stepUpAssertion en el body (a diferencia de RH2 propose/approve). Pendiente de Carlos."
     owner: "Carlos"
-    status: OPEN
+    status: RESOLVED
+    resolution: "Carlos, 2026-10-01: (a) exige stepUpAssertion"
     refs: ["P-36", "OPEN-RV-10", "API-CNS-140"]
+    blocksDataReal: false
+  - id: OPEN-RV-15
+    item: "CA-128 X6 P2 (revisión de seguridad P2-1): GRD-RC-12 declara onFail ERR-RC-05, pero los handlers de API-CNS-136, 137 y 140 devuelven ERR-CM-06 (422, INVALID_TRANSITION) cuando stepUpAssertion falta o es inválida. Divergencia contract↔implementation interina (APR-IDP PENDING); se resuelve con APR-IDP, p. ej. un código dedicado STEP_UP_OR_ASSERTION_INVALID."
+    owner: "Carlos"
+    status: OPEN
+    refs: ["GRD-RC-12", "ERR-RC-05", "ERR-CM-06", "API-CNS-136", "API-CNS-137", "API-CNS-140", "OPEN-RV-14"]
     blocksDataReal: false
