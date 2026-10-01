@@ -10,7 +10,7 @@
   "tests": [
     {
       "id": "TEST-CNS-100",
-      "title": "X6 SOLO PARTE BD: ledger append-only con triggers ENABLE ALWAYS (788), UNIQUE(tenant,aggregate,sequence) (789), append+proyeccion+outbox en una tx (786, 773). Cierre de X6 pendiente de D6 (Carlos): INV-6 y ops.access_log",
+      "title": "X6 SOLO PARTE BD: ledger append-only con triggers ENABLE ALWAYS (788), UNIQUE(tenant,aggregate,sequence) (789), append+proyeccion+outbox en una tx (786, 773). Resto en rama feat/CA-128-x6-revocation: D6 segun DEC-BR-014 §3, Carlos 2026-10-01",
       "file": "tests/integration/postgres/ledger-outbox-schema.test.ts",
       "status": "pass"
     }

@@ -184,6 +184,10 @@ evidenceFormat:
     disco (gitignorado) para depuración y se puede borrar en cualquier momento. Si
     Carlos prefiere evidencia commiteada (p. ej. para una auditoría externa de G-IT0-EXIT),
     es un cambio de un renglón en .gitignore y en este documento, no de código.
+    ENMIENDA (Carlos, 2026-10-01, evidencia (a)): los JSONL crudos siguen sin commitearse
+    (evidence/test-runs/ ignorado por .gitignore); los manifiestos resumidos por corrida y
+    condición (X3/X5/X6, solo IDs, títulos, rutas y estados) sí se commitean en evidence/it0/
+    (scripts/evidence/manifest.ts, TEST-CNS-990; ver evidence/README.md).
 
 integrationHarness:
   postgres:

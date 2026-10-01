@@ -10,7 +10,7 @@
   "tests": [
     {
       "id": "TEST-CNS-101",
-      "title": "X3 SOLO PARTE BD: CHECK data_class SYNTHETIC en todas las tablas (807/808/838/839/865) y email reservado (812/839). Cierre de X3 pendiente de D8 (Carlos): allowlist de email del sink y DLP_SCAN (CA-137, DEFERRED)",
+      "title": "X3 SOLO PARTE BD: CHECK data_class SYNTHETIC en todas las tablas (807/808/838/839/865) y email reservado (812/839). Cierre pendiente de CA-137 (DLP_SCAN, DEFERRED) mas allowlist de email: D8 (a), Carlos 2026-10-01",
       "file": "tests/integration/postgres/idempotency-schema.test.ts",
       "status": "skip"
     },
