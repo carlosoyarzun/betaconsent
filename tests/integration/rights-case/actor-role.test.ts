@@ -9,6 +9,7 @@ import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/i
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 async function buildPorts() {
   const tenantHandle = createInMemoryTenantHandleAdapter([
@@ -24,7 +25,7 @@ async function buildPorts() {
   });
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  return { tenantHandle, rightsCaseRepo, revocationRepo, ledger };
+  return { tenantHandle, rightsCaseRepo, revocationRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo, revocationRepo }).uow };
 }
 
 test("TEST-CNS-460: RC3 (primera Revocation del caso) registra actorRole=UNVERIFIED_BEARER en el ledger, nunca SYSTEM_GUARD ni otro actorRole", async () => {

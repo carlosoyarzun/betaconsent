@@ -47,7 +47,7 @@ import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 export interface RevocationFlowPorts {
   readonly tenantHandle: TenantHandlePort;
   readonly revocation: RevocationPorts;
-  readonly rightsCase: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger">;
+  readonly rightsCase: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger" | "uow">;
 }
 
 const MANAGE_LANDING_ROUTE = "/manage";
@@ -153,7 +153,7 @@ function sameManageIdentity(session: ConsentSessionPayload, tenantId: string, ch
 }
 
 export async function resolveManageLandingSession(
-  ports: Pick<RevocationFlowPorts, "tenantHandle">,
+  ports: Pick<RevocationFlowPorts, "revocation">,
   sessionSecret: Buffer,
   existingSession: ConsentSessionPayload | null,
   manageHandleKey: Buffer,
@@ -162,7 +162,9 @@ export async function resolveManageLandingSession(
 ): Promise<ManageLandingView> {
   const handle = decodeLinkHandle(manageHandleKey, MANAGE_ENTRY_HANDLE_TYPE, cookies[manageEntryHandleCookieName]);
   if (handle) {
-    const resolved = await ports.tenantHandle.resolveByHash(handle.h);
+    // CA-124 §5: el handle (hash) se resuelve a (tenant, cadena, decisión) por el TenantResolverPort
+    // (tx corta y sin tenant); GRD-CM-01: nunca desde la cookie ni el body.
+    const resolved = await ports.revocation.tenantResolver.byHandleHash(handle.h);
     if (!resolved) {
       // Handle inválido: nunca reutiliza una sesión previa, la que sea.
       return { session: null, clearSessionCookie: Boolean(existingSession) };

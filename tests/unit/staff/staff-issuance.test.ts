@@ -13,6 +13,7 @@ import { createInMemoryInvitationLinkChannelSink } from "../../../src/infra/adap
 import { createInMemoryInvitationRepository } from "../../../src/infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryTenantCatalogAdapter } from "../../../src/infra/adapters/in-memory-tenant-catalog.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { openEnrollment } from "../../../src/server/modules/tenant-context/enrollment.ts";
@@ -40,14 +41,16 @@ function build(withPolicy = true) {
   const sink = createInMemoryInvitationLinkChannelSink();
   catalog.seedSubject(TENANT_A, SUBJECT);
   catalog.seedParticipation(TENANT_A, { participationRef: PARTICIPATION, contextRef: CONTEXT, productRef: "LECTORPRO", status: "ACTIVE" });
+  const invitationRepo = createInMemoryInvitationRepository();
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, enrollmentRepo });
   const issuance: StaffIssuancePorts = {
-    invitation: { invitationRepo: createInMemoryInvitationRepository(), eligibility: createInMemoryEligibilityAdapter(), ledger },
+    invitation: { invitationRepo, eligibility: createInMemoryEligibilityAdapter(), ledger, ...tenancy },
     enrollmentRepo,
     tenantCatalog: catalog,
     invitationLinkChannel: sink,
     ...(withPolicy ? { policy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY) } : {}),
   };
-  return { ledger, catalog, enrollmentRepo, sink, issuance, enrollment: { enrollmentRepo, tenantCatalog: catalog, ledger } };
+  return { ledger, catalog, enrollmentRepo, sink, issuance, enrollment: { enrollmentRepo, tenantCatalog: catalog, ledger, uow: tenancy.uow } };
 }
 
 async function expectCode(fn: () => unknown, code: string): Promise<void> {

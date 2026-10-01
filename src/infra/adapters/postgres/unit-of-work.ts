@@ -17,13 +17,19 @@
 import type { QueryResult } from "pg";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../../server/ports/unit-of-work.port.ts";
 import { createPgConsentDecisionRepository } from "./consent-decision.adapter.ts";
+import { createPgEnrollmentRepository, ENROLLMENT_SINGLE_ACTIVE_UNIQUE } from "./enrollment.adapter.ts";
+import { createPgInvitationRepository, INVITATION_SINGLE_NON_TERMINAL_UNIQUE } from "./invitation.adapter.ts";
 import { createPgLedgerAdapter } from "./ledger.adapter.ts";
+import { createPgOtpVerificationRepository, OTP_SINGLE_ACTIVE_UNIQUE } from "./otp-verification.adapter.ts";
 import { createPgOutboxAdapter } from "./outbox.adapter.ts";
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
 import { createPgRecoveryTokenRepository } from "./recovery-token.adapter.ts";
 import { createPgRevocationRepository, OPEN_REVOCATION_UNIQUE } from "./revocation.adapter.ts";
+import { createPgRightsCaseRepository, RIGHTS_CASE_SINGLE_OPEN_UNIQUE } from "./rights-case.adapter.ts";
 import { DomainError } from "../../../server/modules/common/errors.ts";
+import type { DomainErrorCode } from "../../../server/modules/common/errors.ts";
+import { LedgerSequenceConflictError } from "../../../server/ports/ledger.port.ts";
 
 export interface TenantTx {
   query<R = Record<string, unknown>>(text: string, values?: readonly unknown[]): Promise<QueryResult<R>>;
@@ -36,12 +42,32 @@ export interface UnitOfWorkOptions {
   maxAttempts?: number;
 }
 
-/** GRD-RV-04: "una sola crea, las demas se adjuntan". El perdedor de la carrera por la revocacion
- * abierta de una decision reejecuta `work`: ahora ve la ganadora (la adjunta, o ve la decision ya
- * REVOKED y falla con ERR-RV-02). Es un reintento de dominio, no un error. */
-function isOpenRevocationRace(error: unknown): boolean {
+/**
+ * Carreras de "una sola crea, las demas se adjuntan" que la base resuelve con un UNIQUE parcial
+ * (GRD-RV-04, GRD-IV-01, GRD-OT-08, GRD-RC-02, GRD-TC-03). El perdedor reejecuta `work` en una tx
+ * nueva: ahora ve a la ganadora (la adjunta, devuelve el challenge/caso activo, o falla con el
+ * error de dominio del guard). Es un reintento de dominio, no un error. Si los reintentos se
+ * agotan, el valor es el DomainError con que se rinde (null = se relanza el 23505 crudo).
+ */
+const RACE_CONSTRAINTS: ReadonlyMap<string, DomainErrorCode | null> = new Map([
+  [OPEN_REVOCATION_UNIQUE, "ERR-CM-06"],
+  [INVITATION_SINGLE_NON_TERMINAL_UNIQUE, "ERR-IV-02"],
+  [ENROLLMENT_SINGLE_ACTIVE_UNIQUE, "ERR-TC-03"],
+  [OTP_SINGLE_ACTIVE_UNIQUE, null],
+  [RIGHTS_CASE_SINGLE_OPEN_UNIQUE, null],
+]);
+
+function raceConstraint(error: unknown): string | undefined {
   const e = error as { code?: unknown; constraint?: unknown };
-  return e?.code === "23505" && e?.constraint === OPEN_REVOCATION_UNIQUE;
+  return e?.code === "23505" && typeof e.constraint === "string" && RACE_CONSTRAINTS.has(e.constraint) ? e.constraint : undefined;
+}
+
+/** SEC-CNS-015 P2-E: la secuencia base se captura ANTES del lock; si otra unidad avanzo el agregado
+ * entre la captura y el append, el ledger lanza LedgerSequenceConflictError con la tx entera sin
+ * confirmar. Reejecutar la unidad (relee base y estado) es seguro y es lo que evita perder el
+ * intento (p.ej. un intento OTP erroneo concurrente). */
+function isSequenceConflict(error: unknown): boolean {
+  return error instanceof LedgerSequenceConflictError;
 }
 
 function sqlState(error: unknown): string | undefined {
@@ -58,6 +84,10 @@ export function createPgTenantTxPorts(tx: TenantTx): TenantTxPorts {
     revocationRepo: createPgRevocationRepository(tx),
     consentDecisionRepo: createPgConsentDecisionRepository(tx),
     recoveryTokenRepo: createPgRecoveryTokenRepository(tx),
+    invitationRepo: createPgInvitationRepository(tx),
+    otpRepo: createPgOtpVerificationRepository(tx),
+    rightsCaseRepo: createPgRightsCaseRepository(tx),
+    enrollmentRepo: createPgEnrollmentRepository(tx),
     ledger: createPgLedgerAdapter(tx),
     outbox: createPgOutboxAdapter(tx),
   };
@@ -74,9 +104,12 @@ export class PgUnitOfWork implements UnitOfWorkPort {
 
   inTenant<T>(tenantId: string, work: (tx: TenantTxPorts) => Promise<T>): Promise<T> {
     return this.withTenantTx(tenantId, (tx) => work(createPgTenantTxPorts(tx))).catch((error: unknown) => {
-      // Reintentos agotados sobre la carrera de revocacion abierta (GRD-RV-04): transicion invalida,
-      // sin codigo nuevo. withTenantTx (infraestructura) propaga el 23505 crudo.
-      if (isOpenRevocationRace(error)) throw new DomainError("ERR-CM-06");
+      // Reintentos agotados sobre una carrera de UNIQUE parcial: el error de dominio del guard
+      // (revocacion abierta -> transicion invalida, invitacion activa, enrollment activo), sin
+      // codigos nuevos. withTenantTx (infraestructura) propaga el 23505 crudo.
+      const constraint = raceConstraint(error);
+      const code = constraint === undefined ? null : (RACE_CONSTRAINTS.get(constraint) ?? null);
+      if (code !== null) throw new DomainError(code);
       throw error;
     });
   }
@@ -91,7 +124,8 @@ export class PgUnitOfWork implements UnitOfWorkPort {
         return await this.runOnce(tenantId, work);
       } catch (error) {
         const state = sqlState(error);
-        const retryable = (state !== undefined && RETRYABLE_SQLSTATES.has(state)) || isOpenRevocationRace(error);
+        const retryable =
+          (state !== undefined && RETRYABLE_SQLSTATES.has(state)) || raceConstraint(error) !== undefined || isSequenceConflict(error);
         if (retryable && attempt < this.maxAttempts) continue;
         throw error;
       }

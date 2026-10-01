@@ -14,6 +14,7 @@ import { assertActorRoleIn } from "../common/guards.ts";
 import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EnrollmentRecord, EnrollmentRepositoryPort } from "../../ports/enrollment-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { TenantCatalogPort } from "../../ports/tenant-catalog.port.ts";
 import { appendNext } from "../common/ledger-append.ts";
 
@@ -21,6 +22,9 @@ export interface EnrollmentPorts {
   readonly enrollmentRepo: EnrollmentRepositoryPort;
   readonly tenantCatalog: TenantCatalogPort;
   readonly ledger: LedgerPort;
+  /** CA-124 (diseño §5): EN0 (verificación + Enrollment + ledger) corre en UNA unidad de trabajo del
+   * tenant. Su tenancy comparte `enrollmentRepo`. */
+  readonly uow: UnitOfWorkPort;
 }
 
 /** EN0: TENANT_ADMIN en la consola STAFF registra actorRole INVITER (x-actor del contrato). */

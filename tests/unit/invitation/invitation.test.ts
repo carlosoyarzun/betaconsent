@@ -16,13 +16,17 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryInvitationRepository } from "../../../src/infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../src/infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
 
 function makePorts(): InvitationPorts {
+  const invitationRepo = createInMemoryInvitationRepository();
+  const ledger = createInMemoryLedgerAdapter();
   return {
-    invitationRepo: createInMemoryInvitationRepository(),
+    invitationRepo,
     eligibility: createInMemoryEligibilityAdapter(),
-    ledger: createInMemoryLedgerAdapter(),
+    ledger,
+    ...createInMemoryTenancy({ ledger, invitationRepo }),
   };
 }
 

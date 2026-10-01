@@ -126,7 +126,7 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
     assert.equal((await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, granted.consentId)))?.state, "REVOKED");
   });
 
-  register(name("TEST-CNS-802", "RecoveryTokenRepository: round-trip, consume deja el token consumido (idempotente), consume de otro tenant o de ref inexistente es no-op"), async (h) => {
+  register(name("TEST-CNS-802", "RecoveryTokenRepository: round-trip, consume atomico: true solo al primero, false si ya consumido, de otro tenant o inexistente"), async (h) => {
     const ta = fixtureUuid("t802-a");
     const tb = fixtureUuid("t802-b");
     const rec = token(ta, "802");
@@ -134,20 +134,19 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
     assert.deepEqual(await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.findByRef(ta, rec.recoveryRef)), rec);
     assert.equal(await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.findByRef(ta, "rec-nope")), null);
 
-    await h.uow.inTenant(tb, (tx) => tx.recoveryTokenRepo.consume(tb, rec.recoveryRef)); // ref de A bajo B: no-op
+    // SEC-CNS-015 P2-D: consume es atomico y devuelve true SOLO al llamador que lo consumio.
+    assert.equal(await h.uow.inTenant(tb, (tx) => tx.recoveryTokenRepo.consume(tb, rec.recoveryRef)), false, "ref de A bajo B: nadie lo consumio");
     assert.equal((await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.findByRef(ta, rec.recoveryRef)))?.consumedAt, undefined);
 
-    await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.consume(ta, rec.recoveryRef));
+    assert.equal(await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.consume(ta, rec.recoveryRef)), true, "el primero lo consume");
     const first = (await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.findByRef(ta, rec.recoveryRef)))?.consumedAt;
     assert.ok(first instanceof Date);
     await new Promise((resolve) => setTimeout(resolve, 15));
-    await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.consume(ta, rec.recoveryRef));
+    assert.equal(await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.consume(ta, rec.recoveryRef)), false, "el segundo ya no lo consume");
     const second = (await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.findByRef(ta, rec.recoveryRef)))?.consumedAt;
     assert.ok(second instanceof Date);
-    // Un solo uso: el segundo consume no mueve la marca de consumo (memoria la reescribe; ambas la
-    // mantienen consumida). Solo se exige que siga consumido.
-    assert.ok(second.getTime() >= first.getTime());
-    await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.consume(ta, "rec-inexistente")); // no-op
+    assert.equal(second.getTime(), first.getTime(), "un solo uso: el segundo consume no mueve la marca de consumo");
+    assert.equal(await h.uow.inTenant(ta, (tx) => tx.recoveryTokenRepo.consume(ta, "rec-inexistente")), false);
   });
 
   register(name("TEST-CNS-803", "TenantResolver.byRecoveryTokenHash: resuelve (tenant, ref) sin tenant previo, desconocido = null, no evalua consumo ni expiracion"), async (h) => {

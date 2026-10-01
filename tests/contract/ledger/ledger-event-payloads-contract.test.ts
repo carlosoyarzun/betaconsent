@@ -38,6 +38,7 @@ import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decis
 import { createInMemoryInvitationRepository } from "../../../src/infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../src/infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../src/infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import { createInMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
@@ -70,22 +71,29 @@ interface Ports {
 
 function buildPorts(): Ports {
   const ledger = createInMemoryLedgerAdapter();
+  const invitationRepo = createInMemoryInvitationRepository();
+  const otpRepo = createInMemoryOtpVerificationRepository();
+  const decisionRepo = createInMemoryConsentDecisionRepository();
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo, consentDecisionRepo: decisionRepo });
   const invitation: InvitationPorts = {
-    invitationRepo: createInMemoryInvitationRepository(),
+    invitationRepo,
     eligibility: createInMemoryEligibilityAdapter(),
     ledger,
+    ...tenancy,
   };
   const otp: OtpChallengePorts = {
-    otpRepo: createInMemoryOtpVerificationRepository(),
+    otpRepo,
     channel: createInMemoryOtpChannelSink(),
     ledger,
+    uow: tenancy.uow,
     invitation,
     policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),
   };
   const decision: ConsentDecisionPorts = {
-    repo: createInMemoryConsentDecisionRepository(),
+    repo: decisionRepo,
     ledger,
+    uow: tenancy.uow,
     invitation,
     config: LECTORPRO_BETA_CONFIG,
     // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
@@ -254,11 +262,15 @@ interface RightsCaseTestPorts extends RightsCasePorts {
 }
 
 function buildRightsCasePorts(): RightsCaseTestPorts {
+  const rightsCaseRepo = createInMemoryRightsCaseRepository();
+  const revocationRepo = createInMemoryRevocationRepository();
+  const ledger = createInMemoryLedgerAdapter();
   return {
     tenantHandle: createInMemoryTenantHandleAdapter(),
-    rightsCaseRepo: createInMemoryRightsCaseRepository(),
-    revocationRepo: createInMemoryRevocationRepository(),
-    ledger: createInMemoryLedgerAdapter(),
+    rightsCaseRepo,
+    revocationRepo,
+    ledger,
+    uow: createInMemoryTenancy({ ledger, rightsCaseRepo, revocationRepo }).uow,
   };
 }
 

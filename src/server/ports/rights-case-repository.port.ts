@@ -1,7 +1,6 @@
 // Gobierna: specs/state-machines/rights-case.spec.yaml (aggregateType RightsCase).
 // Puerto (ADR-001 §11): proyección del ledger para el agregado RightsCase. En IT0 el
-// adaptador es in-memory (src/infra/adapters/**); el adaptador de Postgres (app.rights_case)
-// llega con la historia de infraestructura correspondiente.
+// adaptadores son in-memory y Postgres (app.rights_case, CA-124 PR-D) en src/infra/adapters/**.
 
 import type { ChainRef, TenantId } from "../modules/common/types.ts";
 
@@ -30,5 +29,8 @@ export interface RightsCaseRepositoryPort {
   /** GRD-RC-02: ≤1 caso no terminal por (tenantId, chainRef, revokedDecisionRef). */
   findOpenByChain(tenantId: TenantId, chainRef: ChainRef, revokedDecisionRef: string): Promise<RightsCaseRecord | null>;
   findByRef(tenantId: TenantId, caseRef: string): Promise<RightsCaseRecord | null>;
+  /** Como `findByRef` con lock de fila hasta el fin de la unidad de trabajo (FOR UPDATE; SEC-CNS-015
+   * P2-E): RC2u/RC3/RC4-6 deciden sobre el estado bloqueado. In-memory: equivalente a `findByRef`. */
+  findByRefForUpdate(tenantId: TenantId, caseRef: string): Promise<RightsCaseRecord | null>;
   save(record: RightsCaseRecord): Promise<void>;
 }

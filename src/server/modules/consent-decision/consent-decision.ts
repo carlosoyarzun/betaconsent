@@ -21,6 +21,7 @@ import type {
   PurposeDecision,
 } from "../../ports/consent-decision-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { markInvitationCompleted, markInvitationDeclined } from "../invitation/invitation.ts";
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
@@ -31,6 +32,10 @@ export interface ConsentDecisionPorts {
   readonly repo: ConsentDecisionRepositoryPort;
   readonly ledger: LedgerPort;
   readonly invitation: InvitationPorts;
+  /** CA-124 (diseño §5, SEC-CNS-015 P2-E): cada transición corre en UNA unidad de trabajo del tenant
+   * (decisión + ledger + Invitation I6/I7 en la misma tx). Su tenancy comparte `repo` e
+   * `invitation.invitationRepo` con este bag. */
+  readonly uow: UnitOfWorkPort;
   readonly config: LectorProBetaConfig;
   /** GRD-CD-04: relationshipRef, opción (b) de Carlos (decision-relationship.config.ts). */
   readonly relationships: DecisionRelationshipConfig;

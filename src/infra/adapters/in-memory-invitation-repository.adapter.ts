@@ -1,30 +1,37 @@
 // Gobierna: src/server/ports/invitation-repository.port.ts. Adaptador in-memory IT0.
+// CA-124: participante del UnitOfWork in-memory (journal) y, ademas del puerto, expone el lookup
+// por tokenHash SIN tenant (UNSCOPED_LOOKUP) solo para el TenantResolverPort in-memory (GRD-IV-07,
+// diseno §5: el lookup sin tenant sale del puerto de repo).
 
 import type { InvitationRecord, InvitationRepositoryPort } from "../../server/ports/invitation-repository.port.ts";
-import { UNSCOPED_LOOKUP, type UnscopedTokenLookup } from "./in-memory-tx.ts";
+import { JournaledMap, TX_JOURNAL, UNSCOPED_LOOKUP, type TxParticipant, type UnscopedTokenLookup } from "./in-memory-tx.ts";
 
-export type InMemoryInvitationRepository = InvitationRepositoryPort & UnscopedTokenLookup<InvitationRecord>;
+export type InMemoryInvitationRepository = InvitationRepositoryPort & TxParticipant & UnscopedTokenLookup<InvitationRecord>;
 
 export function createInMemoryInvitationRepository(): InMemoryInvitationRepository {
-  const byKey = new Map<string, InvitationRecord>();
+  const byKey = new JournaledMap<string, InvitationRecord>();
   const nonTerminalStates = new Set(["DRAFT", "READY", "SENT", "OPENED", "VERIFIED"]);
 
   function key(tenantId: string, invitationRef: string): string {
     return `${tenantId}\u0000${invitationRef}`;
   }
 
-  function lookupByTokenHash(tokenHash: string): InvitationRecord | null {
-    for (const record of byKey.values()) {
-      if (record.tokenHash === tokenHash) return record;
-    }
-    return null;
-  }
-
   return {
+    [TX_JOURNAL](journal) {
+      byKey.journal = journal;
+    },
     // Lookup sin tenant solo para el TenantResolverPort in-memory (CA-124 §5).
-    [UNSCOPED_LOOKUP]: lookupByTokenHash,
+    [UNSCOPED_LOOKUP](tokenHash) {
+      for (const record of byKey.values()) {
+        if (record.tokenHash === tokenHash) return record;
+      }
+      return null;
+    },
     async findByRef(tenantId, invitationRef) {
       return byKey.get(key(tenantId, invitationRef)) ?? null;
+    },
+    async findByRefForUpdate(tenantId, invitationRef) {
+      return byKey.get(key(tenantId, invitationRef)) ?? null; // la UoW in-memory ya serializa
     },
     async findActiveBySubject(tenantId, contextRef, subjectRef) {
       for (const record of byKey.values()) {
@@ -34,14 +41,6 @@ export function createInMemoryInvitationRepository(): InMemoryInvitationReposito
           record.subjectRef === subjectRef &&
           nonTerminalStates.has(record.state)
         ) {
-          return record;
-        }
-      }
-      return null;
-    },
-    async findByTokenHash(tokenHash) {
-      for (const record of byKey.values()) {
-        if (record.tokenHash === tokenHash) {
           return record;
         }
       }

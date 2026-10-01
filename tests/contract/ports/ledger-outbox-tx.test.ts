@@ -8,12 +8,12 @@ import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
-import { createInMemoryUnitOfWork } from "../../../src/infra/adapters/in-memory-unit-of-work.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 import { runLedgerOutboxContract } from "./ledger-outbox-tx.contract.ts";
 import type { LedgerOutboxHarness } from "./ledger-outbox-tx.contract.ts";
 
 function makeInMemoryHarness(): LedgerOutboxHarness {
-  const uow = createInMemoryUnitOfWork({
+  const { uow } = createInMemoryTenancy({
     revocationRepo: createInMemoryRevocationRepository(),
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),

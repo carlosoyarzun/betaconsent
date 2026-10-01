@@ -236,7 +236,11 @@ pgTest("TEST-CNS-810 pg: tenant_resolve cerrado para runtime; funciones SECURITY
        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'tenant_resolve' ORDER BY p.proname`,
   )).rows;
-  assert.deepEqual(fns.map((f) => f.name), ["by_recovery_token_hash", "register_recovery_token"]);
+  // 0007 (recovery) + 0011 (invitacion y handle, PR-D): todas cumplen las mismas invariantes.
+  assert.deepEqual(fns.map((f) => f.name), [
+    "by_handle_hash", "by_invitation_token_hash", "by_recovery_token_hash",
+    "register_handle", "register_invitation_token", "register_recovery_token", "rotate_handle",
+  ]);
   for (const f of fns) {
     assert.equal(f.owner, "tenant_resolve_owner", f.name);
     assert.equal(f.secdef, true, `${f.name} SECURITY DEFINER`);
@@ -300,7 +304,9 @@ pgTest("TEST-CNS-811 pg: register_recovery_token toma el tenant de app.current_t
   }
 });
 
-/** Columnas de email (por nombre) de los esquemas del producto SIN un CHECK que use app.is_reserved_email. */
+/** Columnas de email, contacto o destino (por nombre: email/correo/channel/recipient/destin/contact/phone/
+ * telefono; recipient_binding es un enum, no un contacto; SEC-CNS-015 P2-B: no basta el nombre "email") de los esquemas del producto SIN un CHECK que use
+ * app.is_reserved_email. PR-D las usa en app.invitation.recipient_channel_ref y app.otp_verification.channel_ref. */
 async function unguardedEmailColumns(db: Client): Promise<string[]> {
   const r = await db.query<{ col: string }>(
     `SELECT n.nspname || '.' || c.relname || '.' || a.attname AS col
@@ -309,7 +315,7 @@ async function unguardedEmailColumns(db: Client): Promise<string[]> {
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'integrity', 'ops', 'tenant_resolve')
         AND a.attnum > 0 AND NOT a.attisdropped
-        AND a.attname ~* '(e_?mail|correo)'
+        AND a.attname ~* '(e_?mail|correo|channel|recipient(?!_binding)|destin|contact|phone|tel[eé]fono)'
         AND NOT EXISTS (
           SELECT 1 FROM pg_constraint k
            WHERE k.conrelid = c.oid AND k.contype = 'c' AND a.attnum = ANY (k.conkey)

@@ -50,7 +50,7 @@ function uniformNotFound(): HttpResult {
  */
 export async function handleConfirmCaseReturnViaHandle(
   request: RawRequestInfo,
-  ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger">,
+  ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger" | "uow">,
   config: RightsCaseHttpConfig,
 ): Promise<HttpResult> {
   const cookies = parseCookies(request.cookieHeader);

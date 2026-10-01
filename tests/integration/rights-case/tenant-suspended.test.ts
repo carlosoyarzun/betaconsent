@@ -24,7 +24,7 @@ import { assertConsentRevokedOutbox } from "../../contract/outbox-evidence.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
-import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
+import { createInMemoryTenancy, withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 /** Registro de tenants "vivo" fuera de las máquinas RIGHTS, solo para el fixture del test. */
 const suspendedTenants = new Map<string, { active: boolean }>([["tenant-suspended", { active: false }]]);
@@ -42,7 +42,7 @@ test("TEST-CNS-461: RC4/RC5/RC6 (cierre de RightsCase) se ejecutan con tenant SU
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  const closed = await closeCase({ rightsCaseRepo, ledger }, "tenant-suspended", "case-suspended", "RESOLVED");
+  const closed = await closeCase({ rightsCaseRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo }).uow }, "tenant-suspended", "case-suspended", "RESOLVED");
 
   assert.equal(closed.status, "RESOLVED");
 });

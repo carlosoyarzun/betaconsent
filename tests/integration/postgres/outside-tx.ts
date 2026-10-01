@@ -26,6 +26,29 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.recoveryTokenRepo.save(record)),
       consume: (t, ref) => uow.inTenant(t, (tx) => tx.recoveryTokenRepo.consume(t, ref)),
     },
+    invitationRepo: {
+      findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.invitationRepo.findByRef(t, ref)),
+      findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.invitationRepo.findByRefForUpdate(t, ref)),
+      findActiveBySubject: (t, ctx, subject) => uow.inTenant(t, (tx) => tx.invitationRepo.findActiveBySubject(t, ctx, subject)),
+      save: (record) => uow.inTenant(record.tenantId, (tx) => tx.invitationRepo.save(record)),
+    },
+    otpRepo: {
+      findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.otpRepo.findByRef(t, ref)),
+      findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.otpRepo.findByRefForUpdate(t, ref)),
+      findActiveByParent: (t, parent, scope) => uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, parent, scope)),
+      save: (record) => uow.inTenant(record.tenantId, (tx) => tx.otpRepo.save(record)),
+    },
+    rightsCaseRepo: {
+      findOpenByChain: (t, chain, decision) => uow.inTenant(t, (tx) => tx.rightsCaseRepo.findOpenByChain(t, chain, decision)),
+      findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.rightsCaseRepo.findByRef(t, ref)),
+      findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.rightsCaseRepo.findByRefForUpdate(t, ref)),
+      save: (record) => uow.inTenant(record.tenantId, (tx) => tx.rightsCaseRepo.save(record)),
+    },
+    enrollmentRepo: {
+      findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.enrollmentRepo.findByRef(t, ref)),
+      findActive: (t, subject, participation) => uow.inTenant(t, (tx) => tx.enrollmentRepo.findActive(t, subject, participation)),
+      save: (record) => uow.inTenant(record.tenantId, (tx) => tx.enrollmentRepo.save(record)),
+    },
     ledger: {
       append: (event) => uow.inTenant(event.tenantId, (tx) => tx.ledger.append(event)),
       currentSequence: (t, id) => uow.inTenant(t, (tx) => tx.ledger.currentSequence(t, id)),

@@ -24,6 +24,7 @@ import type { TenantId } from "../common/types.ts";
 import type { OtpChannelPort } from "../../ports/otp-channel.port.ts";
 import type { OtpVerificationRecord, OtpVerificationRepositoryPort } from "../../ports/otp-verification-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { markInvitationVerified } from "../invitation/invitation.ts";
 import { appendNext } from "../common/ledger-append.ts";
@@ -45,6 +46,10 @@ export interface OtpChallengePorts {
   readonly channel: OtpChannelPort;
   readonly ledger: LedgerPort;
   readonly invitation: InvitationPorts;
+  /** CA-124 (diseño §5, SEC-CNS-015 P2-E): cada transición corre en UNA unidad de trabajo del tenant
+   * (estado + ledger + Invitation I5 en la misma tx); dentro, los repos/ledger del bag son los de la tx.
+   * Su tenancy debe compartir `otpRepo` e `invitation.invitationRepo` con este bag. */
+  readonly uow: UnitOfWorkPort;
   readonly policy: OtpPolicy;
   /** Análogo de K_otp_env (P-08); IT0 in-memory, inyectado por el llamador. */
   readonly secret: Buffer;

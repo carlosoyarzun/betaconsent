@@ -18,6 +18,7 @@ import type { TenantHandlePort } from "../../ports/tenant-handle.port.ts";
 import type { RightsCaseRecord, RightsCaseRepositoryPort } from "../../ports/rights-case-repository.port.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import { appendNext } from "../common/ledger-append.ts";
 
 export interface RightsCasePorts {
@@ -25,6 +26,9 @@ export interface RightsCasePorts {
   readonly rightsCaseRepo: RightsCaseRepositoryPort;
   readonly revocationRepo: RevocationRepositoryPort;
   readonly ledger: LedgerPort;
+  /** CA-124 (diseño §5, SEC-CNS-015 P2-E): RC2u/RC3/RC4-6 y la apertura del caso corren en UNA unidad de
+   * trabajo del tenant (caso + Revocation + ledger). Su tenancy comparte `rightsCaseRepo` y `revocationRepo`. */
+  readonly uow: UnitOfWorkPort;
 }
 
 /**
@@ -136,7 +140,7 @@ export async function expressRevocationIntentInCase(
  * consumir el handle (TEST-CNS-470); el handle de /m/ nunca se rota ni invalida aquí.
  */
 export async function confirmCaseReturnViaHandle(
-  ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger">,
+  ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger" | "uow">,
   handle: string,
 ): Promise<RightsCaseRecord> {
   const rightsCase = await resolveCaseForHandle(ports, handle);
@@ -189,7 +193,7 @@ export interface OpenRightsCaseInput {
  * Revocation ya abierta (eso pertenece a R12/RC3a, fuera de alcance de este slice).
  */
 export async function openRightsCase(
-  ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger">,
+  ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger" | "uow">,
   tenantId: string,
   input: OpenRightsCaseInput,
 ): Promise<RightsCaseRecord> {
@@ -228,7 +232,7 @@ export type CaseCloseOutcome = "RESOLVED" | "WITHDRAWN";
  * registro aparte no puede afectarla (TEST-CNS-461).
  */
 export async function closeCase(
-  ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger">,
+  ports: Pick<RightsCasePorts, "rightsCaseRepo" | "ledger" | "uow">,
   tenantId: string,
   caseRef: string,
   outcome: CaseCloseOutcome,

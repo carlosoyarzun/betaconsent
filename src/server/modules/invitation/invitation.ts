@@ -17,18 +17,44 @@ import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EligibilityPort } from "../../ports/eligibility.port.ts";
 import type { InvitationRecord, InvitationRepositoryPort } from "../../ports/invitation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
-import { appendNext } from "../common/ledger-append.ts";
+import type { TenantResolverPort } from "../../ports/tenant-resolver.port.ts";
+import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
+import { lastLedgerSequence } from "../common/ledger-append.ts";
 
 export interface InvitationPorts {
   readonly invitationRepo: InvitationRepositoryPort;
   readonly eligibility: EligibilityPort;
   readonly ledger: LedgerPort;
+  /** CA-124 (diseño postgres-design.md §5): toda transición corre en UNA unidad de trabajo del
+   * tenant (estado + ledger en la misma tx); dentro, `invitationRepo`/`ledger` son los de la tx. */
+  readonly uow: UnitOfWorkPort;
+  /** CA-124 §3/§5: lookup SIN tenant por hash del token de invitación (GRD-IV-07, GRD-CM-01). */
+  readonly tenantResolver: TenantResolverPort;
 }
 
 const INVITER_ROLES: readonly ActorRole[] = ["INVITER"];
 
+/** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, `invitationRepo` y `ledger` del bag se
+ * sustituyen por los puertos de la tx. Las funciones `...Tx` solo llaman a otras `...Tx`
+ * (inTenant no se anida). */
+function inTx<T>(ports: InvitationPorts, tenantId: TenantId, fn: (txPorts: InvitationPorts) => Promise<T>): Promise<T> {
+  return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, invitationRepo: tx.invitationRepo, ledger: tx.ledger }));
+}
+
+/** Ejecuta `fn` con los puertos de una tx ya abierta por OTRO módulo (otp-challenge, consent-decision):
+ * sustituye repo y ledger del bag por los de esa tx, sin abrir una unidad nueva. */
+export function invitationPortsInTx(ports: InvitationPorts, tx: Pick<TenantTxPorts, "invitationRepo" | "ledger">): InvitationPorts {
+  return { ...ports, invitationRepo: tx.invitationRepo, ledger: tx.ledger };
+}
+
+/** Secuencia vigente de la Invitation: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P2-E). */
+const invitationSequence = (ports: InvitationPorts, tenantId: TenantId, invitationRef: string): Promise<number> =>
+  lastLedgerSequence(ports.ledger, tenantId, invitationRef);
+
+/** Relee la Invitation CON lock de fila (SEC-CNS-015 P2-E): solo dentro de la unidad de trabajo; la
+ * decisión de transición se toma sobre el estado bloqueado. */
 async function requireInvitation(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): Promise<InvitationRecord> {
-  const found = await ports.invitationRepo.findByRef(tenantId, invitationRef);
+  const found = await ports.invitationRepo.findByRefForUpdate(tenantId, invitationRef);
   if (!found) {
     // GRD-CM-01: invitationRef inexistente o de otro tenant -> 404 uniforme.
     throw new DomainError("ERR-CM-01");
@@ -50,7 +76,16 @@ export interface CreateInvitationInput {
 }
 
 /** I1: DRAFT. Guards cubiertos: GRD-CM-05, GRD-CM-07, GRD-IV-01. */
-export async function createInvitation(
+export function createInvitation(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  input: CreateInvitationInput,
+): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => createInvitationTx(p, tenantId, actorRole, input));
+}
+
+async function createInvitationTx(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -77,7 +112,8 @@ export async function createInvitation(
     ...(input.reissueOfRef !== undefined ? { reissueOfRef: input.reissueOfRef } : {}),
   };
   await ports.invitationRepo.save(record);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: 0, // agregado nuevo (la carrera por el sujeto la resuelve el UNIQUE parcial GRD-IV-01)
     eventType: "INVITATION_CREATED",
     tenantId,
     aggregateType: "Invitation",
@@ -114,13 +150,24 @@ export interface MarkInvitationReadyInput {
 }
 
 /** I2: DRAFT -> READY. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-03. */
-export async function markInvitationReady(
+export function markInvitationReady(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   invitationRef: string,
   input: MarkInvitationReadyInput,
 ): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => markInvitationReadyTx(p, tenantId, actorRole, invitationRef, input));
+}
+
+async function markInvitationReadyTx(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  invitationRef: string,
+  input: MarkInvitationReadyInput,
+): Promise<InvitationRecord> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
 
@@ -144,7 +191,8 @@ export async function markInvitationReady(
     ...(input.recipientChannelRef !== undefined ? { recipientChannelRef: input.recipientChannelRef } : {}),
   };
   await ports.invitationRepo.save(ready);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "INVITATION_READY",
     tenantId,
     aggregateType: "Invitation",
@@ -189,13 +237,24 @@ export interface SendInvitationOptions {
 }
 
 /** I3: READY -> SENT. Guards cubiertos: GRD-CM-02, GRD-CM-07, GRD-IV-04 (parcial), GRD-IV-05. */
-export async function sendInvitation(
+export function sendInvitation(
   ports: InvitationPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
   invitationRef: string,
   options: SendInvitationOptions = {},
 ): Promise<SendInvitationResult> {
+  return inTx(ports, tenantId, (p) => sendInvitationTx(p, tenantId, actorRole, invitationRef, options));
+}
+
+async function sendInvitationTx(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  invitationRef: string,
+  options: SendInvitationOptions,
+): Promise<SendInvitationResult> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
 
@@ -212,7 +271,8 @@ export async function sendInvitation(
   const expiresAt = options.expiresAt ?? found.expiresAt;
   const sent: InvitationRecord = { ...found, state: "SENT", tokenHash, ...(expiresAt !== undefined ? { expiresAt } : {}) };
   await ports.invitationRepo.save(sent);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "INVITATION_SENT",
     tenantId,
     aggregateType: "Invitation",
@@ -232,7 +292,13 @@ export async function sendInvitation(
 /** Efecto compartido de I4 (SENT -> OPENED), sin resolver el token: ambas vías de entrada
  * (openInvitation por token, openInvitationByRef por sesión ya resuelta en el GET de canje)
  * terminan aquí. Guards: GRD-IV-07 (expiración), GRD-IV-08 (first_post_only, idempotente). */
-async function transitionInvitationToOpened(ports: InvitationPorts, tenantId: TenantId, found: InvitationRecord): Promise<InvitationRecord> {
+async function transitionInvitationToOpened(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  invitationRef: string,
+): Promise<InvitationRecord> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
+  const found = await requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) {
     throw new DomainError("ERR-IV-01");
   }
@@ -246,7 +312,8 @@ async function transitionInvitationToOpened(ports: InvitationPorts, tenantId: Te
 
   const opened: InvitationRecord = { ...found, state: "OPENED" };
   await ports.invitationRepo.save(opened);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "INVITATION_OPENED",
     tenantId,
     aggregateType: "Invitation",
@@ -264,21 +331,21 @@ async function transitionInvitationToOpened(ports: InvitationPorts, tenantId: Te
  * (P-12, GET /i/{token} + POST /invitation/open) usa `openInvitationByRef` en su lugar, porque
  * el POST del contrato (EmptyCommand) nunca vuelve a recibir el token. */
 export async function openInvitation(ports: InvitationPorts, tenantId: TenantId, token: string): Promise<InvitationRecord> {
-  const tokenHash = hashToken(token);
-  const found = await ports.invitationRepo.findByTokenHash(tokenHash);
-  if (!found || found.tenantId !== tenantId) {
+  // CA-124 §5: hash -> (tenant, invitationRef) por el TenantResolverPort (sin tenant); la transición
+  // corre luego bajo ese tenant, nunca sobre un registro leído sin tenant.
+  const resolved = await ports.tenantResolver.byInvitationTokenHash(hashToken(token));
+  if (!resolved || resolved.tenantId !== tenantId) {
     // GRD-IV-07: token inexistente, o de otro tenant -> 404 uniforme (ERR-IV-01).
     throw new DomainError("ERR-IV-01");
   }
-  return transitionInvitationToOpened(ports, tenantId, found);
+  return inTx(ports, tenantId, (p) => transitionInvitationToOpened(p, tenantId, resolved.invitationRef));
 }
 
 /** I4 vía sesión (P-12): el GET /i/{token} ya resolvió el token (GRD-IV-07), creó la sesión
  * LANDING con (tenantId, invitationRef) y descartó el token. Este POST transiciona por esa
  * referencia; nunca recibe ni vuelve a resolver el token (contracts/openapi EmptyCommand). */
-export async function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): Promise<InvitationRecord> {
-  const found = await requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
-  return transitionInvitationToOpened(ports, tenantId, found);
+export function openInvitationByRef(ports: InvitationPorts, tenantId: TenantId, invitationRef: string): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => transitionInvitationToOpened(p, tenantId, invitationRef));
 }
 
 /** GET /i/{token} (P-12, API-CNS-101): resuelve el token por su hash sin transicionar
@@ -296,27 +363,45 @@ export async function resolveInvitationForRedeem(ports: InvitationPorts, token: 
  * canje deja de leer la BD, consent-flow.handler.ts handleRedeemInvitationLink). Mismo
  * predicado que resolveInvitationForRedeem (GRD-IV-07: expiración), sin efectos. */
 export async function resolveInvitationForRedeemByHash(ports: InvitationPorts, tokenHash: string): Promise<InvitationRecord | null> {
-  const found = await ports.invitationRepo.findByTokenHash(tokenHash);
-  if (!found) return null;
+  const resolved = await ports.tenantResolver.byInvitationTokenHash(tokenHash);
+  if (!resolved) return null;
+  const found = await ports.uow.inTenant(resolved.tenantId, (tx) =>
+    tx.invitationRepo.findByRef(resolved.tenantId, resolved.invitationRef),
+  );
+  // Defensa en profundidad (SEC-CNS-015 P2-A): la ref resuelta debe corresponder al hash pedido.
+  if (!found || found.tokenHash !== tokenHash) return null;
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) return null;
   return found;
 }
 
 /** I5 (interno, disparado por otp-challenge V3): OPENED -> VERIFIED. */
-export async function markInvitationVerified(
+export function markInvitationVerified(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
   decisionMakerRef: string,
   verificationRef: string,
 ): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => markInvitationVerifiedTx(p, tenantId, invitationRef, decisionMakerRef, verificationRef));
+}
+
+/** Variante para una unidad de trabajo ya abierta (la dispara otp-challenge / consent-decision en su tx). */
+export async function markInvitationVerifiedTx(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  invitationRef: string,
+  decisionMakerRef: string,
+  verificationRef: string,
+): Promise<InvitationRecord> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "OPENED") {
     throw new DomainError("ERR-CM-06");
   }
   const verified: InvitationRecord = { ...found, state: "VERIFIED", boundDecisionMakerRef: decisionMakerRef };
   await ports.invitationRepo.save(verified);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "INVITATION_VERIFIED",
     tenantId,
     aggregateType: "Invitation",
@@ -330,19 +415,31 @@ export async function markInvitationVerified(
 }
 
 /** I6 (interno, disparado por consent-decision C3): VERIFIED -> COMPLETED. */
-export async function markInvitationCompleted(
+export function markInvitationCompleted(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
   consentId: string,
 ): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => markInvitationCompletedTx(p, tenantId, invitationRef, consentId));
+}
+
+/** Variante para una unidad de trabajo ya abierta (la dispara otp-challenge / consent-decision en su tx). */
+export async function markInvitationCompletedTx(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  invitationRef: string,
+  consentId: string,
+): Promise<InvitationRecord> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
   const completed: InvitationRecord = { ...found, state: "COMPLETED" };
   await ports.invitationRepo.save(completed);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "INVITATION_COMPLETED",
     tenantId,
     aggregateType: "Invitation",
@@ -356,19 +453,31 @@ export async function markInvitationCompleted(
 }
 
 /** I7 (interno, disparado por consent-decision C5): VERIFIED -> DECLINED. */
-export async function markInvitationDeclined(
+export function markInvitationDeclined(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
   consentId: string,
 ): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => markInvitationDeclinedTx(p, tenantId, invitationRef, consentId));
+}
+
+/** Variante para una unidad de trabajo ya abierta (la dispara otp-challenge / consent-decision en su tx). */
+export async function markInvitationDeclinedTx(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  invitationRef: string,
+  consentId: string,
+): Promise<InvitationRecord> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
   const declined: InvitationRecord = { ...found, state: "DECLINED" };
   await ports.invitationRepo.save(declined);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "INVITATION_DECLINED",
     tenantId,
     aggregateType: "Invitation",

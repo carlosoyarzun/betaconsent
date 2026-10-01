@@ -915,8 +915,13 @@ async function revokeWithRecoveryLinkTx(
     return { kind: "UNIFORM" };
   }
 
-  // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto.
-  await ports.recoveryTokenRepo.consume(tenantId, tokenRecord.recoveryRef);
+  // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto. El consumo es
+  // atómico (SEC-CNS-015 P2-D): solo UN llamador lo consume; si `consume` devuelve false otro POST
+  // concurrente (o uno previo) ya lo usó entre la lectura de elegibilidad y este punto, y la
+  // respuesta es UNIFORM (ERR-RV-05) sin ningún efecto ni evento (nada se escribió antes).
+  if (!(await ports.recoveryTokenRepo.consume(tenantId, tokenRecord.recoveryRef))) {
+    return { kind: "UNIFORM" };
+  }
 
   let record: RevocationRecord;
   if (!existing) {
