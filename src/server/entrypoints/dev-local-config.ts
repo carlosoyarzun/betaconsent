@@ -58,7 +58,7 @@ export const LOCAL_ONLY_DEV_OTHER_TENANT_ID = "5d2e8a1c-6b3f-4d97-9c04-7e1a3b5d9
  * tiene todavía un flujo de alta de sujetos ni participaciones: FINDING P1). Cero PII. */
 export const LOCAL_ONLY_DEV_STAFF_SUBJECT_REF = "b7c3d1e5-2a48-4f96-8d10-6e9f0a2c4b73";
 export const LOCAL_ONLY_DEV_PARTICIPATION_REF = "d4f8a2c6-7b13-4e59-a8c2-0f3d5b7e9a14";
-export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "f1a5c9e3-4d27-4b68-9e30-2c4e6a8b0d51";
+export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "staff-recipient@example.invalid";
 
 /** CA-125: P-10 (vigencia de la invitación; sin valor aprobado en el repo) y deliveryChannel
  * (EXT-B / F-014, DEC-BR-014 §7: decisión de Carlos pendiente). Valores LOCAL-only de
