@@ -51,7 +51,7 @@ export interface UnitOfWorkOptions {
   /** Inyectables para tests (sin timers reales ni azar real). */
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
-  /** P-33 (TTL de la Idempotency-Key). Sin valor aprobado: ausente = `tx.idempotency` falla cerrado. */
+  /** P-33 (TTL de la Idempotency-Key). P-33 = 24 h aprobado (Carlos, 2026-10-01); el UoW exige la politica cargada: ausente = `tx.idempotency` falla cerrado. */
   idempotencyPolicy?: IdempotencyPolicy;
   /** SEC-CNS-017 F8: topes por tx (SET LOCAL). Sin parametro aprobado: valores conservadores LOCAL-only
    * (2 s / 5 s); fuera de LOCAL el llamador debe pasarlos explicitos. Un lock que no se obtiene falla (55P03). */

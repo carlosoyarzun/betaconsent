@@ -7,6 +7,7 @@
 // src/README.md.
 
 import { deriveChainRefKey, loadChainRefSecret } from "../modules/consent-decision/chain-ref.ts";
+import { deriveDecisionMakerRefKey, loadDecisionMakerRefSecret } from "../modules/consent-decision/decision-maker-ref.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
@@ -107,6 +108,8 @@ const staffIssuancePolicy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_IN
 
 // SEC-CNS-017 F2: clave HMAC del chainRef opaco (CNS_CHAIN_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
 const chainRefKey = deriveChainRefKey(loadChainRefSecret(process.env, environment));
+// CA-128 (Carlos, 2026-10-01): clave HMAC del decisionMakerRef (CNS_DECISION_MAKER_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
+const decisionMakerRefKey = deriveDecisionMakerRefKey(loadDecisionMakerRefSecret(process.env, environment));
 let ports: ConsentFlowPorts;
 let pgBundle: ReturnType<typeof createPostgresFlowPorts> | undefined;
 if (pgStore) {
@@ -116,11 +119,12 @@ if (pgStore) {
     recoveryTokenPolicy,
     staffIdentity,
     chainRefKey,
+    decisionMakerRefKey,
     invitationIssuancePolicy: staffIssuancePolicy,
   });
   ports = pgBundle.ports;
 } else {
-  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig, chainRefKey);
+  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig, chainRefKey, decisionMakerRefKey);
 }
 const sessionSecret = randomBytes(32);
 

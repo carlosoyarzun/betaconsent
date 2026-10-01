@@ -6,9 +6,10 @@
 // sobrevivir el 303 inmediato a GET /manage, no la vigencia real del handle MANAGE_ENTRY (esa la
 // resuelve TenantHandlePort.resolveByHash, en GET /manage mismo).
 
-/** TTL de los handles /i y /m = 10 min (Carlos, 2026-10-01). TODO(unificar al mergear PR #39, rama
- * feat/CA-128-it0-decisions): reemplazar por APPROVED_LINK_HANDLE_TTL_MS de common/approved-parameters.ts. */
-export const DEFAULT_MANAGE_HANDLE_TTL_MS = 10 * 60_000;
+import { APPROVED_LINK_HANDLE_TTL_MS } from "../common/approved-parameters.ts";
+
+/** TTL de los handles /i y /m = 10 min (Carlos, 2026-10-01): valor aprobado de approved-parameters.ts. */
+export const DEFAULT_MANAGE_HANDLE_TTL_MS = APPROVED_LINK_HANDLE_TTL_MS;
 
 export interface ManageHandlePolicy {
   readonly ttlMs: number;

@@ -446,7 +446,7 @@ paths:
       x-actor: {actorType: HUMAN, actorRole: INVITER}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CM-10, GRD-IV-03]
       x-idempotency: "(invitationRef, sequence)"
-      x-pending: ["EXT-B / DEC-BR-002 / LD-21 / F-014 (canal esperado del colegio y recipientChannelRef)", "F-CT-05 (expiresAt en I2 vs SENT + P-10)"]
+      x-pending: ["EXT-B (i) (Carlos, 2026-10-01): IT0 recipientChannelRef = email sintético de dominio reservado; LD-21 / DEC-BR-002 / F-014 pendientes para entrega real", "F-CT-05 (expiresAt en I2 vs SENT + P-10)"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/InvitationRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
       requestBody:

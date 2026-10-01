@@ -30,6 +30,8 @@ import {
   staffSendInvitationTx,
   type StaffIssuancePorts,
 } from "../../modules/invitation/staff-issuance.ts";
+import { isReservedEmail } from "../../modules/common/synthetic-recipient.ts";
+import { InvalidRecipientChannelRefError } from "../../ports/invitation-repository.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
@@ -99,6 +101,8 @@ function csrfRejected(): HttpResult {
 
 /** DomainError -> HttpResult de la consola STAFF (403/404/409/422 del contrato). */
 function domainFailure(err: unknown): HttpResult {
+  // La persistencia no admite ese recipientChannelRef (EXT-B/LD-21 pendiente): 422 uniforme, no 500.
+  if (err instanceof InvalidRecipientChannelRefError) return invalidRequest();
   if (err instanceof DomainError) {
     if (err.code === "ERR-CM-01" || err.code === "ERR-CM-02") return uniformNotFound();
     if (err.code === "ERR-CM-10") return problem(403, err.code);
@@ -299,7 +303,9 @@ export async function handleMarkInvitationReady(
   if (body.recipientBinding !== "RECIPIENT_CHANNEL" && body.recipientBinding !== "UNBOUND") return invalidRequest();
   const recipientBinding: "RECIPIENT_CHANNEL" | "UNBOUND" = body.recipientBinding;
   // recipientChannelRef si y solo si RECIPIENT_CHANNEL (GRD-IV-03; if/then/else del schema).
-  if (recipientBinding === "RECIPIENT_CHANNEL" && !isString(body.recipientChannelRef, REF_PATTERN)) return invalidRequest();
+  // EXT-B (i) (Carlos, 2026-10-01): en IT0 recipientChannelRef es un email sintetico de dominio reservado
+  // (no UUID); cualquier otro valor -> 422 uniforme sin reflejarlo. LD-21 pendiente para entrega real.
+  if (recipientBinding === "RECIPIENT_CHANNEL" && !(typeof body.recipientChannelRef === "string" && body.recipientChannelRef.length <= 254 && isReservedEmail(body.recipientChannelRef))) return invalidRequest();
   if (recipientBinding === "UNBOUND" && body.recipientChannelRef !== undefined) return invalidRequest();
   const input = {
     consentVersion: body.consentVersion,

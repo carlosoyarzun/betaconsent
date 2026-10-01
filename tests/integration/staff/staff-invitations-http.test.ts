@@ -29,6 +29,7 @@ import {
   LOCAL_ONLY_DEV_STAFF_ROSTER,
   LOCAL_ONLY_DEV_TENANT_ID,
 } from "../../../src/server/entrypoints/dev-local-config.ts";
+import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
@@ -48,7 +49,8 @@ const SUBJECT = fixtureUuid("subject-714");
 const SUBJECT_B = fixtureUuid("subject-b-714");
 const PARTICIPATION = fixtureUuid("participation-714");
 const PARTICIPATION_B = fixtureUuid("participation-b-714");
-const CHANNEL = fixtureUuid("channel-714");
+// EXT-B (i) (Carlos, 2026-10-01): recipientChannelRef = email sintetico de dominio reservado.
+const CHANNEL = "staff-714@example.invalid";
 const CONTEXT = "BETA_2026_01";
 
 /** Principal de prueba con rol distinto de TENANT_ADMIN pero con tenant: solo existe para alcanzar
@@ -617,6 +619,97 @@ test("TEST-CNS-725: el login CASE (CA-128) sigue sin admitir TENANT_ADMIN y el l
     assert.equal(caseRes.status, 404);
     const op = await login(h.baseUrl, fixtureUuid("staff-synthetic-01"), { tenantId: TENANT_A, caseRef: fixtureUuid("case-725") }).catch(() => null);
     assert.equal(op, null, "un RIGHTS_OPERATOR sin caso existente no obtiene sesión (login CASE intacto)");
+  } finally {
+    await h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CA-128, EXT-B (i) (Carlos, 2026-10-01): recipientChannelRef = email sintetico de dominio reservado.
+// ---------------------------------------------------------------------------
+test("TEST-CNS-976: /ready con RECIPIENT_CHANNEL rechaza con 422 uniforme todo recipientChannelRef que no sea email reservado (UUID, dominio real, tipo erroneo) sin reflejar el valor; la invitacion sigue DRAFT", async () => {
+  const h = await startServer();
+  try {
+    const admin = await login(h.baseUrl, ADMIN_A);
+    const { invitationRef } = await createDraft(h, admin);
+    for (const bad of [fixtureUuid("channel-971"), "persona@gmail.com", "persona@example.cl", "sin-arroba", 42, ["a@x.test"], ""]) {
+      const res = await post(h.baseUrl, `/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-test", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: bad }, { login: admin });
+      assert.equal(res.status, 422, JSON.stringify(bad));
+      assertValid(validateCommon("Problem", res.json));
+      if (typeof bad === "string" && bad !== "") assert.equal(res.raw.includes(bad), false, "el error no refleja el valor");
+    }
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "DRAFT");
+    assertValid(validateApiPayload("MarkInvitationReadyRequest", readyBody));
+    assert.equal(validateApiPayload("MarkInvitationReadyRequest", { ...readyBody, recipientChannelRef: "persona@gmail.com" }).ok, false, "el schema rechaza dominios no reservados");
+    assert.equal(validateApiPayload("MarkInvitationReadyRequest", { ...readyBody, recipientChannelRef: fixtureUuid("channel-971") }).ok, false, "el schema ya no admite UUID");
+    const ok = await post(h.baseUrl, `/staff/invitations/${invitationRef}/ready`, readyBody, { login: admin });
+    assert.equal(ok.status, 200, ok.raw);
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-977: E2E memoria EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANNEL (email reservado) -> /send -> participante /i -> OTP al sink del email reservado -> decision -> recibo; UNBOUND sigue 404 uniforme en /otp/request", async () => {
+  const h = await startServer();
+  try {
+    const admin = await login(h.baseUrl, ADMIN_A);
+    const { invitationRef, enrollmentRef } = await createDraft(h, admin);
+    assert.equal((await post(h.baseUrl, `/staff/invitations/${invitationRef}/ready`, readyBody, { login: admin })).status, 200);
+    assert.equal((await post(h.baseUrl, `/staff/invitations/${invitationRef}/send`, {}, { login: admin })).status, 200);
+    const message = h.staff.invitationLinkSink.sent[0]!;
+    assert.equal(message.recipientChannelRef, CHANNEL);
+
+    const csrf = "csrf-token-abcdefgh";
+    const pPost = (path: string, session: string | undefined, body: unknown = {}): Promise<Response> =>
+      fetch(`${h.baseUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ALLOWED_ORIGIN, "x-csrf-token": csrf, cookie: [`__Host-cns-csrf=${csrf}`, ...(session ? [`${SESSION_COOKIE}=${session}`] : [])].join("; ") },
+        body: JSON.stringify(body),
+      });
+    let session: string | undefined;
+    const step = (res: Response): Response => {
+      session = parseAllSetCookies(res)[SESSION_COOKIE] ?? session;
+      return res;
+    };
+    const redeemed = await fetch(`${h.baseUrl}${message.invitationPath}`, { redirect: "manual" });
+    assert.equal(redeemed.status, 303);
+    const welcome = await fetch(`${h.baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE}=${parseAllSetCookies(redeemed)[INVITATION_HANDLE_COOKIE]}` } });
+    assert.equal(welcome.status, 200);
+    step(welcome);
+    assert.equal(step(await pPost("/invitation/open", session)).status, 200);
+    assert.equal(step(await pPost("/otp/request", session)).status, 202);
+    const sink = h.ports.otp.channel as unknown as { sent: Array<{ channelRef: string; code: string }> };
+    const otp = sink.sent[sink.sent.length - 1]!;
+    assert.equal(otp.channelRef, CHANNEL, "el OTP llega al sink del email reservado indicado por STAFF");
+    assert.equal(step(await pPost("/otp/submit", session, { code: otp.code })).status, 200);
+    for (const body of [
+      { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+      { stepKind: "CONSENT_VERSION_VIEWED" },
+      { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG.allowedRelationshipRefs[0], authorityDeclared: true },
+      { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
+    ]) assert.equal(step(await pPost("/decision/steps", session, body)).status, 200);
+    const purposes = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
+    const decided = await pPost("/decision/submit", session, { purposes });
+    assert.equal(decided.status, 200);
+    const out = (await decided.json()) as { state: string; receiptRef: string };
+    assert.equal(out.state, "GRANTED");
+    assert.ok(out.receiptRef, "recibo emitido");
+    assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "COMPLETED");
+
+    // IT0: UNBOUND se emite, pero el participante no completa OTP (404 uniforme, sin cambio de comportamiento).
+    const created2 = await post(h.baseUrl, "/staff/invitations", inviteBody(enrollmentRef), { login: admin, idempotencyKey: "test-idem-key-0972-bbbb" });
+    assert.equal(created2.status, 201, created2.raw);
+    const unboundRef = created2.json.invitationRef as string;
+    const unboundBody = { consentVersion: "v1-test", recipientBinding: "UNBOUND" };
+    assert.equal((await post(h.baseUrl, `/staff/invitations/${unboundRef}/ready`, unboundBody, { login: admin })).status, 200);
+    assert.equal((await post(h.baseUrl, `/staff/invitations/${unboundRef}/send`, {}, { login: admin })).status, 200);
+    const link = h.staff.invitationLinkSink.sent[1]!;
+    session = undefined;
+    const r2 = await fetch(`${h.baseUrl}${link.invitationPath}`, { redirect: "manual" });
+    const w2 = await fetch(`${h.baseUrl}/welcome`, { headers: { cookie: `${INVITATION_HANDLE_COOKIE}=${parseAllSetCookies(r2)[INVITATION_HANDLE_COOKIE]}` } });
+    step(w2);
+    assert.equal(step(await pPost("/invitation/open", session)).status, 200);
+    assert.equal((await pPost("/otp/request", session)).status, 404);
   } finally {
     await h.close();
   }

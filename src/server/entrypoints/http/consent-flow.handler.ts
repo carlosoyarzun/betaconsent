@@ -23,8 +23,8 @@
 // /decision/submit o /decision/steps se ignora por completo (nunca se lee del payload, SM R0.2;
 // DecisionStepRequest tampoco define ese campo en el contrato).
 
-import { opaqueUuidV4 } from "../../modules/common/opaque-ref.ts";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { deriveDecisionMakerRef as deriveKeyedDecisionMakerRef } from "../../modules/consent-decision/decision-maker-ref.ts";
 
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
@@ -66,6 +66,8 @@ export interface ConsentFlowPorts {
   readonly invitation: InvitationPorts;
   readonly otp: OtpChallengePorts;
   readonly decision: ConsentDecisionPorts;
+  /** CA-128 (Carlos, 2026-10-01): clave HMAC del decisionMakerRef (decision-maker-ref.ts), por entorno. */
+  readonly decisionMakerRefKey: Buffer;
 }
 
 export interface RawConsentRequest {
@@ -175,11 +177,10 @@ function checkCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): Ht
 }
 
 /** decisionMakerRef derivado del canal ya ligado a la invitación (nunca del cliente, GRD-OT-02
- * + D5). Es una ref opaca, no el canal en claro (cero PII en ledger/sesión más allá de lo que
- * ya persiste el propio canal de la invitación). */
-function deriveDecisionMakerRef(channelRef: string): string {
-  // Ref UUIDv4 opaco (common.schema.json Ref): el ledger lo exige (DECISION_MAKER_CHANNEL_VERIFIED.decisionMakerRef).
-  return opaqueUuidV4("decision-maker", channelRef);
+ * + D5). Es una ref opaca UUIDv4 derivado de un HMAC con clave de entorno (decision-maker-ref.ts; Carlos,
+ * 2026-10-01), no el canal en claro ni un hash sin sal. */
+function deriveDecisionMakerRef(key: Buffer, channelRef: string): string {
+  return deriveKeyedDecisionMakerRef(key, channelRef);
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +376,8 @@ export async function handleRequestOtp(
   // SEC-CNS-016: la lectura corre BAJO el tenant de la sesión (inTenant), nunca fuera de una tx.
   const invitationRef = session.invitationRef;
   const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  // EXT-B (i) (Carlos, 2026-10-01): en IT0 un participante solo completa OTP con invitacion RECIPIENT_CHANNEL;
+  // UNBOUND (sin canal) sigue siendo 404 uniforme. LD-21 (binding M2) pendiente para entrega real.
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   let verificationRef = session.verificationRef ?? randomUUID();
@@ -431,7 +434,7 @@ export async function handleResendOtp(
 // ---------------------------------------------------------------------------
 export async function handleSubmitOtp(
   request: RawConsentRequest,
-  ports: Pick<ConsentFlowPorts, "invitation" | "otp">,
+  ports: Pick<ConsentFlowPorts, "invitation" | "otp" | "decisionMakerRefKey">,
   config: RightsCaseHttpConfig,
   sessionSecret: Buffer,
 ): Promise<HttpResult> {
@@ -447,10 +450,10 @@ export async function handleSubmitOtp(
     const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
     if (!verificationRef) return uniformNotFound();
     try {
-      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(manageChannelRef(session.chainRef ?? "")));
+      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(ports.decisionMakerRefKey, manageChannelRef(session.chainRef ?? "")));
       const verifiedSession: ConsentSessionPayload =
         scope === "MANAGE"
-          ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(manageChannelRef(session.chainRef ?? "")) }
+          ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(ports.decisionMakerRefKey, manageChannelRef(session.chainRef ?? "")) }
           : { ...session, revocationOtpVerified: true };
       return {
         status: 200,
@@ -472,9 +475,11 @@ export async function handleSubmitOtp(
   // SEC-CNS-016: la lectura corre BAJO el tenant de la sesión (inTenant), nunca fuera de una tx.
   const invitationRef = session.invitationRef;
   const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  // EXT-B (i) (Carlos, 2026-10-01): en IT0 un participante solo completa OTP con invitacion RECIPIENT_CHANNEL;
+  // UNBOUND (sin canal) sigue siendo 404 uniforme. LD-21 (binding M2) pendiente para entrega real.
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
-  const decisionMakerRef = deriveDecisionMakerRef(invitation.recipientChannelRef);
+  const decisionMakerRef = deriveDecisionMakerRef(ports.decisionMakerRefKey, invitation.recipientChannelRef);
 
   try {
     await submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef);
