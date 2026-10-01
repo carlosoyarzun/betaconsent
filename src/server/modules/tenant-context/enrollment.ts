@@ -16,7 +16,6 @@ import type { EnrollmentRecord, EnrollmentRepositoryPort } from "../../ports/enr
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { TenantCatalogPort } from "../../ports/tenant-catalog.port.ts";
-import { appendNext } from "../common/ledger-append.ts";
 
 export interface EnrollmentPorts {
   readonly enrollmentRepo: EnrollmentRepositoryPort;
@@ -48,7 +47,21 @@ export interface OpenEnrollmentResult {
  * tenant es indistinguible de uno inexistente (ERR-CM-01, 404 uniforme): nunca revela que existe
  * en otro colegio.
  */
-export async function openEnrollment(
+export function openEnrollment(
+  ports: EnrollmentPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  input: OpenEnrollmentInput,
+): Promise<OpenEnrollmentResult> {
+  // CA-124 PR-D (SEC-CNS-015 P2-E): una tx; dentro, repo y ledger son los de la tx. Agregado nuevo:
+  // expectedSequence 0 explicito; la carrera por (sujeto, participacion) la resuelve el UNIQUE parcial
+  // GRD-TC-03 y el reintento del UoW (la perdedora ve al Enrollment ganador y falla con ERR-TC-03).
+  return ports.uow.inTenant(tenantId, (tx) =>
+    openEnrollmentTx({ ...ports, enrollmentRepo: tx.enrollmentRepo, ledger: tx.ledger }, tenantId, actorRole, input),
+  );
+}
+
+async function openEnrollmentTx(
   ports: EnrollmentPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -74,7 +87,8 @@ export async function openEnrollment(
     state: "ACTIVE",
   };
   await ports.enrollmentRepo.save(record);
-  const event = await appendNext(ports.ledger, {
+  const event = await ports.ledger.append({
+    expectedSequence: 0, // agregado nuevo
     eventType: "ENROLLMENT_STATUS_CHANGED",
     tenantId,
     aggregateType: "Enrollment",
