@@ -138,6 +138,11 @@ export async function proposeCaseVerificationTx(
     // X6 P2-3: una propuesta pendiente con otro proposalRef no se reemplaza en silencio.
     if (found.proposal !== undefined) throw new DomainError("ERR-CM-06");
     if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // RH2 nace en REQUESTED (RH2v fuera de alcance)
+    // CA-128 X6 P2: WITHDRAWN es terminal para esa proposalRef; una propuesta nueva exige una ref nueva.
+    const history = await p.ledger.listByAggregate(tenantId, "Revocation", revocationRef);
+    if (history.some((e) => e.eventType === "REVOCATION_PROPOSAL_WITHDRAWN" && (e.payload as Record<string, unknown>).proposalRef === input.proposalRef)) {
+      throw new DomainError("ERR-CM-06");
+    }
     const proposed: RevocationRecord = {
       ...found,
       proposal: { proposalRef: input.proposalRef, proposedByRef: actor.principalRef, verificationScriptVersion: input.verificationScriptVersion },
@@ -229,6 +234,70 @@ export async function approveCaseVerificationTx(
     });
     return { record: verified, attestation: "ATTESTED" };
   }
+}
+
+/**
+ * RH2 retiro (withdraw_case_verification_proposal, API-CNS-140; CA-128 X6 P2, Carlos 2026-10-01): SOLO el RIGHTS_OPERATOR que
+ * propuso (proposedByRef = actor) puede retirar su propuesta, SOLO mientras la Revocation sigue REQUESTED (propuesta PENDING).
+ * Efecto: la propuesta queda WITHDRAWN (terminal: se limpia de la Revocation y se registra REVOCATION_PROPOSAL_WITHDRAWN, solo
+ * refs); no se puede aprobar despues (ERR-CM-01) ni reusar la misma proposalRef (ERR-CM-06). La Revocation NO cambia de estado
+ * ni pasa a FAILED (INV-6: FAILED solo por R8) y queda disponible para una nueva propuesta. Fail-closed: rol invalido o
+ * principal distinto del proponente = ERR-RV-07; propuesta inexistente/ajena = ERR-CM-01; Revocation no REQUESTED = ERR-CM-06.
+ */
+export function withdrawCaseVerificationProposal(
+  ports: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  proposalRef: string,
+  actor: Rh2Actor,
+): Promise<RevocationRecord> {
+  return inTx(ports, tenantId, (p) => withdrawCaseVerificationProposalTx(p, staffIdentity, tenantId, revocationRef, caseRef, proposalRef, actor));
+}
+
+export async function withdrawCaseVerificationProposalTx(
+  p: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  proposalRef: string,
+  actor: Rh2Actor,
+): Promise<RevocationRecord> {
+  const base = await revocationSequence(p, tenantId, revocationRef);
+  const found = await requireRevocation(p, tenantId, revocationRef);
+  if (found.caseRef !== caseRef) throw new DomainError("ERR-CM-01");
+  if (!found.proposal || found.proposal.proposalRef !== proposalRef) {
+    // Idempotencia (x-idempotency: (revocationRef, proposal_ref)): ya retirada por este mismo principal -> mismo resultado, sin evento nuevo.
+    const prior = (await p.ledger.listByAggregate(tenantId, "Revocation", revocationRef)).find(
+      (e) => e.eventType === "REVOCATION_PROPOSAL_WITHDRAWN" && (e.payload as Record<string, unknown>).proposalRef === proposalRef,
+    );
+    if (prior && (prior.payload as Record<string, unknown>).withdrawnByRef === actor.principalRef) {
+      await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
+      if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06");
+      return found;
+    }
+    throw new DomainError("ERR-CM-01"); // inexistente, ajena, o retirada por otro principal: uniforme
+  }
+  await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
+  if (actor.principalRef !== found.proposal.proposedByRef) throw new DomainError("ERR-RV-07"); // solo el proponente retira
+  if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // propuesta ya no PENDING (aprobada/Revocation avanzada)
+  const { proposal: _withdrawn, ...rest } = found;
+  const withdrawn: RevocationRecord = rest;
+  await p.revocationRepo.save(withdrawn);
+  await p.ledger.append({
+    expectedSequence: base,
+    eventType: "REVOCATION_PROPOSAL_WITHDRAWN",
+    tenantId,
+    aggregateType: "Revocation",
+    aggregateId: revocationRef,
+    actorType: "HUMAN",
+    actorRole: "RIGHTS_OPERATOR",
+    payload: { revocationRef, caseRef, proposalRef, verificationScriptVersion: found.proposal.verificationScriptVersion, withdrawnByRef: actor.principalRef },
+    idempotencyKey: `${revocationRef}:rh2w:${proposalRef}`,
+  });
+  return withdrawn;
 }
 
 // ---------------------------------------------------------------------------

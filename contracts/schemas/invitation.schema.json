@@ -163,7 +163,11 @@
           ]
         },
         "recipientChannelRef": {
-          "$ref": "common.schema.json#/$defs/Ref"
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "pattern": "^[^@\\s]+@(([a-zA-Z0-9-]+\\.)*[a-zA-Z0-9-]+\\.(test|invalid)|example\\.(com|org|net))$",
+          "description": "Email sintético de dominio reservado (.test, .invalid, example.com|org|net), igual que api-payloads MarkInvitationReadyRequest y app.is_reserved_email (0010). Decisión EXT-B (i) (Carlos, 2026-10-01); LD-21 pendiente para entrega real. No es un Ref UUIDv4: el canal lo usa el sink y deriveDecisionMakerRef."
         },
         "boundDecisionMakerRef": {
           "$ref": "common.schema.json#/$defs/Ref"

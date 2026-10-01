@@ -78,6 +78,7 @@ import {
 } from "./revocation-flow.handler.ts";
 import {
   handleApproveCaseVerification,
+  handleWithdrawCaseVerificationProposal,
   handleCosignCaseConfirmation,
   handleDevStaffLogin,
   handleProposeCaseVerification,
@@ -933,6 +934,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       if (parts.length === 4 && parts[0] && parts[1] === "verification-proposals" && parts[2] && parts[3] === "approval") {
         writeResult(res, config, await handleApproveCaseVerification(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey, options.environment ?? "DEV"));
+        return;
+      }
+      if (parts.length === 4 && parts[0] && parts[1] === "verification-proposals" && parts[2] && parts[3] === "withdrawal") {
+        // API-CNS-140: retiro de la propuesta PENDING por su proponente.
+        writeResult(res, config, await handleWithdrawCaseVerificationProposal(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey));
         return;
       }
     }

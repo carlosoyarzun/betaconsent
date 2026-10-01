@@ -50,6 +50,7 @@
             "DOWNSTREAM_ERASURE_ATTESTED",
             "REVOCATION_FAILED",
             "REVOCATION_ESCALATED",
+            "REVOCATION_PROPOSAL_WITHDRAWN",
             "RIGHTS_CASE_OPENED",
             "RIGHTS_CASE_CONTACTING",
             "RIGHTS_CASE_CLOSED",
@@ -691,6 +692,25 @@
             "properties": {
               "payload": {
                 "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_ESCALATED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "REVOCATION_PROPOSAL_WITHDRAWN"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "ledger-event-payloads.schema.json#/$defs/REVOCATION_PROPOSAL_WITHDRAWN"
               }
             }
           }

@@ -911,6 +911,29 @@
         "attestation"
       ]
     },
+    "WithdrawCaseVerificationProposalRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "RH2 retiro (withdraw_case_verification_proposal, API-CNS-140). Sin campos: el retirante (withdrawnByRef) se deriva de la sesión CASE del RIGHTS_OPERATOR y debe ser el proponente; nunca viene del body (GRD-CM-07)."
+    },
+    "ProposalWithdrawalAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proposalState": {
+          "const": "WITHDRAWN"
+        },
+        "revocationState": {
+          "const": "REQUESTED",
+          "description": "El retiro no cambia el estado de la Revocation ni produce FAILED (INV-6); queda disponible para una nueva propuesta."
+        }
+      },
+      "required": [
+        "proposalState",
+        "revocationState"
+      ]
+    },
     "ApproveCaseVerificationRequest": {
       "type": "object",
       "additionalProperties": false,

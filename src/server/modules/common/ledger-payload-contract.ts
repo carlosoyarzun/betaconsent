@@ -8,7 +8,7 @@
 // Fail-closed: un payload fuera del contrato lanza LedgerPayloadViolationError (ERR-RV-13), sin escribir.
 
 import { validateLedgerOrSecurityPayload } from "./json-schema-lite.ts";
-import { LedgerVocabularyViolationError } from "./ledger-event-types.ts";
+import { LEDGER_LOCAL_SEED_EVENT_TYPES, LedgerVocabularyViolationError } from "./ledger-event-types.ts";
 
 export class LedgerPayloadViolationError extends LedgerVocabularyViolationError {
   readonly violations: number;
@@ -29,7 +29,10 @@ export class LedgerPayloadViolationError extends LedgerVocabularyViolationError 
 export function assertLedgerPayload(eventType: string, payload: Readonly<Record<string, unknown>>): void {
   const result = validateLedgerOrSecurityPayload(eventType, payload);
   if (result === null) {
-    if (Object.keys(payload).length !== 0) throw new LedgerPayloadViolationError(eventType, 1);
+    // X6 P2 (CA-128): el payload vacio solo es valido para los seed LOCAL; cualquier otro tipo sin $def (o
+    // desconocido) falla cerrado con ERR-RV-13.
+    const isLocalSeed = (LEDGER_LOCAL_SEED_EVENT_TYPES as readonly string[]).includes(eventType);
+    if (!isLocalSeed || Object.keys(payload).length !== 0) throw new LedgerPayloadViolationError(eventType, 1);
     return;
   }
   if (!result.ok) throw new LedgerPayloadViolationError(eventType, result.errors.length);

@@ -103,13 +103,13 @@ test("TEST-CNS-912 verifyChainRows: cadena integra y primer eslabon roto por cad
   assert.deepEqual(report.ok === false && report.brokenAt.reason, "EVENT_TYPE_NOT_ALLOWED");
 });
 
-test("TEST-CNS-912 lista blanca derivada del contrato (ledger-event-payloads.schema.json sin x-disabled-in-it0 + transitorios SECURITY + seed LOCAL) = TS = CHECK de 0013", () => {
+test("TEST-CNS-912 lista blanca derivada del contrato (ledger-event-payloads.schema.json sin x-disabled-in-it0 + transitorios SECURITY + seed LOCAL) = TS = CHECK vigente (0017)", () => {
   assert.equal(new Set(LEDGER_EVENT_TYPES).size, LEDGER_EVENT_TYPES.length);
   for (const t of LEDGER_EVENT_TYPES) assert.match(t, /^[A-Z][A-Z_]+$/);
   assert.equal(isLedgerEventType("OTP_ISSUED"), true);
   assert.equal(isLedgerEventType("otp_issued"), false);
 
-  const sql = readFileSync(join(HERE, "..", "..", "..", "db", "migrations", "0013_ledger_chain.sql"), "utf8");
+  const sql = readFileSync(join(HERE, "..", "..", "..", "db", "migrations", "0017_revocation_proposal_withdrawn_event.sql"), "utf8");
   const block = /audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\)[,;]/.exec(sql)?.[1] ?? "";
   const inSql = [...block.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1] as string);
   assert.deepEqual([...inSql].sort(), [...LEDGER_EVENT_TYPES].sort());

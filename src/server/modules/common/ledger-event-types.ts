@@ -4,7 +4,7 @@
 // specs/state-machines/*.spec.yaml). Subconjunto IT0 de ADR-011 (S4-16).
 //
 // Lista blanca de `event_type` del ledger integrity.audit_event. DEBE coincidir EXACTO con el
-// CHECK `audit_event_event_type_allowlist` de db/migrations/0013_ledger_chain.sql (test
+// CHECK `audit_event_event_type_allowlist` vigente (0013, redefinido por 0017_revocation_proposal_withdrawn_event.sql) (test
 // TEST-CNS-912 lo compara contra pg_get_constraintdef). Agregar un tipo = migracion nueva
 // (nunca editar una mergeada) + esta lista + la spec que lo declara.
 
@@ -18,6 +18,7 @@ export const LEDGER_CONTRACT_EVENT_TYPES = [
   "PURPOSE_DECISION_RECORDED", "CONSENT_GRANTED", "CONSENT_DECLINED", "RECEIPT_CREATED", "CONSENT_REVOKED",
   "REVOCATION_REQUESTED", "REVOCATION_VERIFIED", "REVOCATION_CONFIRMED", "REVOCATION_DOWNSTREAM_EMITTED",
   "REVOCATION_DELIVERED", "DOWNSTREAM_ERASURE_ATTESTED", "REVOCATION_FAILED", "REVOCATION_ESCALATED",
+  "REVOCATION_PROPOSAL_WITHDRAWN",
   "RIGHTS_CASE_OPENED", "RIGHTS_CASE_CONTACTING", "RIGHTS_CASE_CLOSED",
   "TENANT_STATUS_CHANGED", "SCHOOL_PARTICIPATION_STATUS_CHANGED", "ENROLLMENT_STATUS_CHANGED",
 ] as const;

@@ -287,6 +287,7 @@ transitions:
     effects:
       - "Dos pasos en sesiones distintas, SERIALIZABLE; ambos con step-up (P-36) y aserción del IdP (GRD-RC-12); el efecto exige ambas aserciones ATTESTED por integrity_verifier (INV-13)."
       - "El sistema no evalúa suficiencia de la verificación: registra el guion versionado (placeholder LD-02)."
+      - "CA-128 X6 P2 (Carlos, 2026-10-01): el proponente (verifiedByRef) puede retirar su propuesta mientras esté PENDING (API-CNS-140, withdraw_case_verification_proposal): la propuesta queda WITHDRAWN (terminal, no aprobable), se registra REVOCATION_PROPOSAL_WITHDRAWN y la Revocation sigue REQUESTED y disponible para una nueva propuesta (nunca FAILED, INV-6). Cualquier otro principal o una propuesta no PENDING falla cerrado."
     emits: [REVOCATION_VERIFIED]
     payloadValues: {authPath: RECOVERY, recoveryMethod: HUMAN_ASSISTED, caseRef: required, verifiedByRef: proposer, secondApproverRef: approver, assuranceLevel: "placeholder LD-02"}
     idempotencyKey: "(revocationRef, proposal_ref)"
@@ -294,6 +295,29 @@ transitions:
     governedBy: ["SM-CNS-001 §5.2 RH2", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08", "SEC-CNS-013", "SEC-CNS-014"]
     changeNote: "SEC-CNS-013 (P2, propuesta re-evaluada contra rev. 4c): antepone GRD-CM-01/06/07 (faltaban CM-01 y CM-07); errors += ERR-CM-01, ERR-CM-10, ERR-RC-10 (onFail de GRD-RC-15, ya presente, completitud F-SEC-013-02), ERR-RV-13 (onFail de GRD-RV-28, ya presente, completitud F-SEC-013-02). ERR-RC-05 sigue en la lista: guard huérfano (GRD-RC-12 se le quitó a RH3 por OPEN-RV-10, no a RH2); no se toca aquí. Sin cambio de semántica. SEC-CNS-014 (2026-09-27, aprobado por Carlos, cierra OPEN-RV-12 sobre esta transición): errors += ERR-RV-15 (onFail de GRD-RV-23). GRD-RV-19 ya cubierto por ERR-RV-13. Sin cambio de semántica."
     testIds: [TEST-CNS-235, TEST-CNS-309, TEST-CNS-413]
+  - id: RH2w
+    from: REQUESTED
+    to: REQUESTED
+    command: "withdraw_case_verification_proposal (API-CNS-140): retiro de la propuesta RH2 PENDING por su proponente"
+    authPath: RECOVERY
+    recoveryMethod: HUMAN_ASSISTED
+    actor:
+      recordedActor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
+      withdrawer: "RIGHTS_OPERATOR con sesión CASE del caso, igual a proposedByRef (withdrawnByRef)"
+    routeClass: RIGHTS
+    httpPost: true # consola CASE
+    guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-28]
+    stepUp: "OPEN-RV-14: alcance de P-36 sobre RH2w pendiente de Carlos; withdraw_case_verification_proposal no exige step-up/aserción del IdP hasta que lo decida (el body no lleva stepUpAssertion)"
+    effects:
+      - "CA-128 X6 P2 (Carlos, 2026-10-01): solo el proponente retira, solo mientras la propuesta está PENDING (Revocation REQUESTED); la propuesta queda WITHDRAWN (terminal: no aprobable ni reutilizable por proposalRef)."
+      - "No cambia el estado de la Revocation (REQUESTED -> REQUESTED) y nunca produce FAILED (INV-6: FAILED solo por R8); la Revocation queda disponible para una nueva propuesta RH2."
+    emits: [REVOCATION_PROPOSAL_WITHDRAWN]
+    payloadValues: {revocationRef: required, caseRef: required, proposalRef: required, verificationScriptVersion: required, withdrawnByRef: proposer}
+    idempotencyKey: "(revocationRef, proposal_ref)"
+    errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13]
+    governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09", "SEC-CNS-013"]
+    testIds: [TEST-CNS-235]
+    changeNote: "CA-128 X6 P2 (2026-10-01): transición nueva, sin cambiar RH2. Los tests propios son TEST-CNS-1013..1020 (traceability/test-matrix.csv); el h01-sm-checker limita los testIds de transición a 100-499, por eso aquí se cita TEST-CNS-235 (FINDING P2: ampliar el rango del checker, CODEOWNERS no lo cubre pero es herramienta de guardrail de specs)."
   - id: R3
     from: VERIFIED
     to: CONFIRMED
@@ -949,6 +973,12 @@ events:
     payload: [revocationRef, caseRef, reasonCode] # reasonCode = escalationReason; una sola emisión por disparo (AUDIT F-A11)
     governedBy: ["DEC-BR-017 §6", "SM-CNS-001 §5 R9", "AUDIT F-A11"]
     testIds: [TEST-CNS-244, TEST-CNS-344]
+  - id: REVOCATION_PROPOSAL_WITHDRAWN
+    stream: LEDGER
+    emittedBy: [RH2w]
+    payload: [revocationRef, caseRef, proposalRef, verificationScriptVersion, withdrawnByRef] # solo refs UUIDv4; withdrawnByRef = proposedByRef (solo el proponente retira, solo PENDING); la propuesta queda WITHDRAWN (terminal) y la Revocation sigue REQUESTED, nunca FAILED (INV-6)
+    governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09"]
+    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020]
   - id: RECOVERY_TOKEN_ISSUED
     stream: SECURITY
     emittedBy: [RV0, "rights-case:RC2"]
@@ -1095,4 +1125,10 @@ openItems:
     owner: "lampone-security → lampone-architect"
     status: OPEN
     refs: ["SEC-CNS-013"]
+    blocksDataReal: false
+  - id: OPEN-RV-14
+    item: "CA-128 X6 P2 (revisión de seguridad de P2-hardening): alcance de P-36 (step-up e IdP, GRD-RC-12) sobre RH2w (withdraw_case_verification_proposal, API-CNS-140): hoy el retiro no exige step-up ni stepUpAssertion en el body (a diferencia de RH2 propose/approve). Pendiente de Carlos."
+    owner: "Carlos"
+    status: OPEN
+    refs: ["P-36", "OPEN-RV-10", "API-CNS-140"]
     blocksDataReal: false
