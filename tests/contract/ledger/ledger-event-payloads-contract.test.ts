@@ -18,6 +18,7 @@
 // de este archivo y se reportan como finding, no se fuerza un valor inventado.
 // TEST-CNS-525..TEST-CNS-531 (traceability/test-matrix.csv).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -116,11 +117,11 @@ interface PendingDecision {
  * legibles para depurar). */
 async function bringToPendingDecision(ports: Ports, suffix: string): Promise<PendingDecision> {
   const invitationRef = randomUUID();
-  const verificationRef = `ver-${suffix}`;
+  const verificationRef = fixtureUuid(`ver-${suffix}`);
   const consentId = randomUUID();
-  const decisionMakerRef = `dm-${suffix}`;
+  const decisionMakerRef = fixtureUuid(`dm-${suffix}`);
 
-  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -131,7 +132,7 @@ async function bringToPendingDecision(ports: Ports, suffix: string): Promise<Pen
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
   await openInvitation(ports.invitation, TENANT_ID, token);
 
   await requestOtp(ports.otp, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
@@ -200,7 +201,7 @@ test("TEST-CNS-526: RECEIPT_CREATED (C5 DECLINED) también valida contra el sche
 test("TEST-CNS-527: INVITATION_READY valida contra el schema (expiresAt y recipientBinding, antes ausentes)", async () => {
   const ports = buildPorts();
   const invitationRef = randomUUID();
-  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -279,12 +280,12 @@ function buildRightsCasePorts(): RightsCaseTestPorts {
 test("TEST-CNS-530: RIGHTS_CASE_CONTACTING valida contra el schema (caseRef, antes ausente y requerido)", async () => {
   const ports = buildRightsCasePorts();
   const caseRef = randomUUID();
-  ports.tenantHandle.issue({ handle: "handle-530", tenantId: TENANT_ID, chainRef: "chain-530", revokedDecisionRef: "decision-530" });
+  ports.tenantHandle.issue({ handle: "handle-530", tenantId: TENANT_ID, chainRef: fixtureUuid("chain-530"), revokedDecisionRef: fixtureUuid("decision-530") });
   await ports.rightsCaseRepo.save({
     caseRef,
     tenantId: TENANT_ID,
-    chainRef: "chain-530",
-    revokedDecisionRef: "decision-530",
+    chainRef: fixtureUuid("chain-530"),
+    revokedDecisionRef: fixtureUuid("decision-530"),
     status: "OPEN",
     origin: "CHANNEL_UNREACHABLE",
   });
@@ -300,8 +301,8 @@ test("TEST-CNS-531: RIGHTS_CASE_CLOSED valida contra el schema (caseRef, antes a
   await ports.rightsCaseRepo.save({
     caseRef,
     tenantId: TENANT_ID,
-    chainRef: "chain-531",
-    revokedDecisionRef: "decision-531",
+    chainRef: fixtureUuid("chain-531"),
+    revokedDecisionRef: fixtureUuid("decision-531"),
     status: "CONTACTING",
     origin: "CHANNEL_UNREACHABLE",
   });

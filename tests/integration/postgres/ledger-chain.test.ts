@@ -5,6 +5,7 @@
 // lista blanca = CHECK), 914 (concurrencia por tenant), 915 (inmutabilidad para migrator y
 // superusuario). Requiere Postgres real (harness.ts); skip sin entorno. Solo datos sinteticos.
 
+import { payloadFor, revocationRequestedPayload } from "../../contract/ledger-payload-fixtures.ts";
 import assert from "node:assert/strict";
 
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
@@ -26,9 +27,9 @@ function ev(tenantId: string, aggregateId: string, extra: Partial<LedgerEventInp
     aggregateType: "Revocation",
     aggregateId,
     actorType: "HUMAN",
-    payload: { reasonCode: "SYNTHETIC" },
     expectedSequence: 0,
     ...extra,
+    payload: extra.payload ?? payloadFor(extra.eventType ?? "REVOCATION_REQUESTED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
   };
 }
 
@@ -62,7 +63,7 @@ async function seedChain(uow: PgUnitOfWork, tenant: string, n: number): Promise<
   const agg = fixtureUuid(`agg-${tenant}`);
   await uow.inTenant(tenant, async ({ ledger }) => {
     for (let i = 0; i < n; i++) {
-      await ledger.append(ev(tenant, agg, { expectedSequence: i, payload: { step: i + 1 }, eventType: i === 0 ? "REVOCATION_REQUESTED" : "REVOCATION_VERIFIED" }));
+      await ledger.append(ev(tenant, agg, { expectedSequence: i, eventType: i === 0 ? "REVOCATION_REQUESTED" : "REVOCATION_VERIFIED" }));
     }
   });
 }
@@ -139,7 +140,7 @@ pgTest("TEST-CNS-914 pg: appends concurrentes del mismo tenant (conexiones disti
     const jobs: Array<Promise<unknown>> = [];
     for (let i = 0; i < N; i++) {
       for (const t of [ta, tb]) {
-        jobs.push(uow.inTenant(t, ({ ledger }) => ledger.append(ev(t, fixtureUuid(`agg914-${t}-${i}`), { payload: { i } }))));
+        jobs.push(uow.inTenant(t, ({ ledger }) => ledger.append(ev(t, fixtureUuid(`agg914-${t}-${i}`), { payload: revocationRequestedPayload(`i${i}`) }))));
       }
     }
     await Promise.all(jobs);

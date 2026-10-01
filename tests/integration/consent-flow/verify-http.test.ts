@@ -6,6 +6,7 @@
 // un placeholder mínimo (Carlos 2026-09-27), igual patrón que lo fue /verify.
 // TEST-CNS-553..TEST-CNS-56x (traceability/test-matrix.csv).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -53,7 +54,7 @@ function startServer(): Promise<Harness> {
 }
 
 async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): Promise<string> {
-  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -64,7 +65,7 @@ async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
   return token;
 }
 
@@ -136,7 +137,7 @@ async function bringToOtpRequested(
 test("TEST-CNS-553: GET /verify con sesión válida (OTP ya solicitado) responde 200, HTML con un h1, lang=es y las cabeceras de seguridad", async () => {
   const harness = await startServer();
   try {
-    const { session } = await bringToOtpRequested(harness, "inv-553", "subject-553@example.invalid");
+    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-553"), fixtureUuid("subject-553"));
     const res = await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } });
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
@@ -156,7 +157,7 @@ test("TEST-CNS-553: GET /verify con sesión válida (OTP ya solicitado) responde
 test("TEST-CNS-554: GET /verify contiene el copy exacto del handoff, incluidos los placeholders [N] y [tiempo pendiente de aprobación] (P-01/P-02 sin valor aprobado)", async () => {
   const harness = await startServer();
   try {
-    const { session } = await bringToOtpRequested(harness, "inv-554", "subject-554@example.invalid");
+    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-554"), fixtureUuid("subject-554"));
     const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
     assert.match(html, /Enviamos un código a la vía de contacto registrada para continuar\. No lo compartas con nadie\./);
     assert.match(html, /Código de verificación/);
@@ -186,7 +187,7 @@ test("TEST-CNS-554: GET /verify contiene el copy exacto del handoff, incluidos l
 test("TEST-CNS-555: el campo de código tiene label visible, inputmode numeric y autocomplete one-time-code, asociado por aria-describedby al helper y al error", async () => {
   const harness = await startServer();
   try {
-    const { session } = await bringToOtpRequested(harness, "inv-555", "subject-555@example.invalid");
+    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-555"), fixtureUuid("subject-555"));
     const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
     assert.match(html, /<label class="lp-label" for="code-input">Código de verificación<\/label>/);
     assert.match(html, /id="code-input"/);
@@ -226,7 +227,7 @@ test("TEST-CNS-557: /assets/verify.js responde 200 con content-type javascript y
 test("TEST-CNS-558: flujo completo GET /i/{token} -> /welcome -> open -> request -> /verify -> submit con el código correcto del sink -> /decision", async () => {
   const harness = await startServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-558", "subject-558@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-558"), fixtureUuid("subject-558"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseAllSetCookies(opened)[SESSION_COOKIE_NAME] ?? landingSession;
@@ -262,7 +263,7 @@ test("TEST-CNS-558: flujo completo GET /i/{token} -> /welcome -> open -> request
 test("TEST-CNS-559: código incorrecto en /verify no expone intentos restantes en la respuesta de /otp/submit", async () => {
   const harness = await startServer();
   try {
-    const { session } = await bringToOtpRequested(harness, "inv-559", "subject-559@example.invalid");
+    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-559"), fixtureUuid("subject-559"));
     const rejected = await post(harness.baseUrl, {
       path: "/otp/submit",
       ...VALID_CSRF,
@@ -281,7 +282,7 @@ test("TEST-CNS-559: código incorrecto en /verify no expone intentos restantes e
 test("TEST-CNS-560: reenviar el código (POST /otp/resend) desde /verify reemplaza el código; el código viejo ya no verifica y el nuevo sí", async () => {
   const harness = await startServer();
   try {
-    const { session, sink } = await bringToOtpRequested(harness, "inv-560", "subject-560@example.invalid");
+    const { session, sink } = await bringToOtpRequested(harness, fixtureUuid("inv-560"), fixtureUuid("subject-560"));
     const oldCode = sink.sent[sink.sent.length - 1]?.code ?? "";
 
     const resent = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: session });
@@ -314,7 +315,7 @@ test("TEST-CNS-561: app.css fija min-height 44px (tap target) para .lp-verify-ta
 test("TEST-CNS-562: GET /verify aplica la clase de tap target (44px) a 'Reenviar código', ambos 'Solicitar nuevo código' y 'Reintentar', e incluye la región aria-live #resend-feedback", async () => {
   const harness = await startServer();
   try {
-    const { session } = await bringToOtpRequested(harness, "inv-562", "subject-562@example.invalid");
+    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-562"), fixtureUuid("subject-562"));
     const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
     for (const id of ["resend-btn", "request-new-code-btn-expired", "request-new-code-btn-locked", "retry-btn"]) {
       const re = new RegExp(`class="[^"]*lp-verify-tap-target[^"]*"[^>]*id="${id}"`);

@@ -2,6 +2,7 @@
 // specs/state-machines/rights-case.spec.yaml GRD-RC-14 (case_bound_to_handle_chain).
 // TEST-CNS-458, TEST-CNS-459 (traceability/test-matrix.csv).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -19,14 +20,14 @@ async function seedCase(repo: ReturnType<typeof createInMemoryRightsCaseReposito
 
 test("TEST-CNS-458: handle rotado en /m/ -> 404 uniforme (ERR-CM-01), sin resolver caso (GRD-RC-14/GRD-CM-01)", async () => {
   const tenantHandle = createInMemoryTenantHandleAdapter([
-    { handle: "handle-A", tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" },
+    { handle: "handle-A", tenantId: "tenant-1", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   await seedCase(rightsCaseRepo, {
-    caseRef: "case-1",
+    caseRef: fixtureUuid("case-1"),
     tenantId: "tenant-1",
-    chainRef: "chain-1",
-    revokedDecisionRef: "decision-1",
+    chainRef: fixtureUuid("chain-1"),
+    revokedDecisionRef: fixtureUuid("decision-1"),
     status: "OPEN",
   });
 
@@ -41,28 +42,28 @@ test("TEST-CNS-458: handle rotado en /m/ -> 404 uniforme (ERR-CM-01), sin resolv
 
 test("TEST-CNS-459: un caseRef de otro tenant enviado por el cliente se ignora; el caso resuelve SIEMPRE desde (tenant_id, chainRef) del handle", async () => {
   const tenantHandle = createInMemoryTenantHandleAdapter([
-    { handle: "handle-tenant-1", tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" },
+    { handle: "handle-tenant-1", tenantId: "tenant-1", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   await seedCase(rightsCaseRepo, {
-    caseRef: "case-tenant-1",
+    caseRef: fixtureUuid("case-tenant-1"),
     tenantId: "tenant-1",
-    chainRef: "chain-1",
-    revokedDecisionRef: "decision-1",
+    chainRef: fixtureUuid("chain-1"),
+    revokedDecisionRef: fixtureUuid("decision-1"),
     status: "OPEN",
   });
   // Caso de OTRO tenant, con un caseRef que un atacante podría intentar inyectar.
   await seedCase(rightsCaseRepo, {
-    caseRef: "case-tenant-2-victim",
+    caseRef: fixtureUuid("case-tenant-2-victim"),
     tenantId: "tenant-2",
-    chainRef: "chain-2",
-    revokedDecisionRef: "decision-2",
+    chainRef: fixtureUuid("chain-2"),
+    revokedDecisionRef: fixtureUuid("decision-2"),
     status: "OPEN",
   });
 
-  const resolved = await resolveCaseForHandle({ tenantHandle, uow: createInMemoryTenancy({ ledger: createInMemoryLedgerAdapter(), rightsCaseRepo }).uow }, "handle-tenant-1", "case-tenant-2-victim");
+  const resolved = await resolveCaseForHandle({ tenantHandle, uow: createInMemoryTenancy({ ledger: createInMemoryLedgerAdapter(), rightsCaseRepo }).uow }, "handle-tenant-1", fixtureUuid("case-tenant-2-victim"));
 
-  assert.equal(resolved.caseRef, "case-tenant-1");
+  assert.equal(resolved.caseRef, fixtureUuid("case-tenant-1"));
   assert.equal(resolved.tenantId, "tenant-1");
-  assert.notEqual(resolved.caseRef, "case-tenant-2-victim");
+  assert.notEqual(resolved.caseRef, fixtureUuid("case-tenant-2-victim"));
 });

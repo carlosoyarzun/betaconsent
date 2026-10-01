@@ -3,6 +3,7 @@
 // INV-CM-01, INV-CM-02/INV-3. Suite de contrato compartida memoria/Postgres para Ledger y Outbox
 // dentro de una unidad de trabajo de tenant. TEST-CNS-780..786. Solo datos sinteticos.
 
+import { payloadFor, revocationRequestedPayload } from "../ledger-payload-fixtures.ts";
 import assert from "node:assert/strict";
 
 import { LedgerSequenceConflictError } from "../../../src/server/ports/ledger.port.ts";
@@ -31,9 +32,9 @@ function event(tenantId: string, aggregateId: string, extra: Partial<LedgerEvent
     aggregateType: "Revocation",
     aggregateId,
     actorType: "HUMAN",
-    payload: { reasonCode: "SYNTHETIC" },
     expectedSequence: 0,
     ...extra,
+    payload: extra.payload ?? payloadFor(extra.eventType ?? "REVOCATION_REQUESTED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
   };
 }
 
@@ -57,7 +58,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     const agg = fixtureUuid("agg780");
     const records = await h.inTenant(t, async ({ ledger }) => {
       const a = await ledger.append(
-        event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: { n: 1, nested: { ok: true } } }),
+        event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: revocationRequestedPayload("780") }),
       );
       const b = await ledger.append(event(t, agg, { eventType: "REVOCATION_CONFIRMED", expectedSequence: 1 }));
       return [a, b];
@@ -73,7 +74,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     assert.deepEqual(listed.map((r) => [r.sequence, r.eventType]), [[1, "REVOCATION_REQUESTED"], [2, "REVOCATION_CONFIRMED"]]);
     assert.equal(listed[0]?.actorRole, "UNVERIFIED_BEARER");
     assert.equal(listed[0]?.recordedByRef, fixtureUuid("rec780"));
-    assert.deepEqual(listed[0]?.payload, { n: 1, nested: { ok: true } });
+    assert.deepEqual(listed[0]?.payload, revocationRequestedPayload("780"));
     assert.equal("cosignedByRef" in (listed[1] ?? {}), false, "los opcionales ausentes no aparecen");
   });
 
@@ -124,7 +125,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     const t = fixtureUuid("t783");
     const agg = fixtureUuid("agg783");
     const run = (label: string) =>
-      h.inTenant(t, async ({ ledger }) => ledger.append(event(t, agg, { expectedSequence: 0, payload: { label } }))).then(
+      h.inTenant(t, async ({ ledger }) => ledger.append(event(t, agg, { expectedSequence: 0, payload: revocationRequestedPayload(label) }))).then(
         (r) => ({ ok: true as const, sequence: r.sequence }),
         (e: unknown) => ({ ok: false as const, error: e }),
       );

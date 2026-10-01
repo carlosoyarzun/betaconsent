@@ -1,6 +1,7 @@
 // Gobierna: specs/state-machines/rights-case.spec.yaml RC3, specs/state-machines/revocation.spec.yaml
 // RC3/R12, common.spec.yaml actorModel.unverifiedBearer (R13-5). TEST-CNS-460.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -13,14 +14,14 @@ import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-ten
 
 async function buildPorts() {
   const tenantHandle = createInMemoryTenantHandleAdapter([
-    { handle: "handle-1", tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" },
+    { handle: "handle-1", tenantId: "tenant-1", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   await rightsCaseRepo.save({
-    caseRef: "case-1",
+    caseRef: fixtureUuid("case-1"),
     tenantId: "tenant-1",
-    chainRef: "chain-1",
-    revokedDecisionRef: "decision-1",
+    chainRef: fixtureUuid("chain-1"),
+    revokedDecisionRef: fixtureUuid("decision-1"),
     status: "CONTACTING",
   });
   const revocationRepo = createInMemoryRevocationRepository();

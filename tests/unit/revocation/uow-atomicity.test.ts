@@ -2,6 +2,7 @@
 // revocation.spec R3/R4/R3r/RH3. TEST-CNS-773..776: con UnitOfWork, un fallo inyectado en R4 deja
 // TODO como estaba antes de la operación y el reintento llega a APPLIED. SYNTHETIC DATA ONLY.
 
+import { revocationRequestedPayload, revocationVerifiedPayload } from "../../contract/ledger-payload-fixtures.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -33,14 +34,14 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 
 const T = fixtureUuid("tenant-773");
 const staff = createInMemoryStaffIdentityAdapter([
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-04"), role: "APPROVER" },
 ]);
 
 /** Ports con un revocationRepo que falla al guardar APPLIED (fallo inyectado en R4) mientras `fail.on`. */
-async function makePorts(decisionId: string, chainRef = "chain-773") {
+async function makePorts(decisionId: string, chainRef = fixtureUuid("chain-773")) {
   const inner = createInMemoryRevocationRepository();
   const fail = { on: true };
   const flaky: RevocationRepositoryPort = {
@@ -70,8 +71,8 @@ test("TEST-CNS-773: R3+R4 con fallo inyectado en R4 dejan la revocación como es
   const D = fixtureUuid("decision-773");
   const REV = fixtureUuid("rev-773");
   const { ports, inner, fail, outbox } = await makePorts(D);
-  await requestRevocation(ports, T, { revocationRef: REV, chainRef: "chain-773", revokedDecisionRef: D });
-  await verifyRevocationOtp(ports, T, REV, "ver-773");
+  await requestRevocation(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-773"), revokedDecisionRef: D });
+  await verifyRevocationOtp(ports, T, REV, fixtureUuid("ver-773"));
   const before = await eventTypes(ports, REV);
 
   await assert.rejects(() => confirmRevocation(ports, T, REV), /R4 falló/);
@@ -91,7 +92,7 @@ test("TEST-CNS-773: R3+R4 con fallo inyectado en R4 dejan la revocación como es
 
 test("TEST-CNS-774: recuperación con fallo inyectado en R4 no consume el token ni deja Revocation; el mismo enlace reintenta hasta APPLIED", async () => {
   const D = fixtureUuid("decision-774");
-  const CHAIN = "chain-774";
+  const CHAIN = fixtureUuid("chain-774");
   const { ports, inner, fail, outbox, sink } = await makePorts(D, CHAIN);
   await issueRecoveryLinkBearer(ports, T, CHAIN, D, "REQUESTER_ASKED");
   const token = sink.sent[0]!.recoveryPath.replace("/r/", "");
@@ -117,23 +118,23 @@ test("TEST-CNS-774: recuperación con fallo inyectado en R4 no consume el token 
 test("TEST-CNS-775: RH3 cosign+R4 con fallo inyectado en R4 deja la revocación VERIFIED con el paso 1 registrado y el reintento de cosign llega a APPLIED", async () => {
   const D = fixtureUuid("decision-775");
   const REV = fixtureUuid("rev-775");
-  const CASE = `case-${REV}`;
+  const CASE = fixtureUuid(`case-${REV}`);
   const { ports, inner, fail, outbox } = await makePorts(D);
-  await inner.save({ revocationRef: REV, tenantId: T, chainRef: "chain-775", caseRef: CASE, revokedDecisionRef: D, status: "REQUESTED" });
+  await inner.save({ revocationRef: REV, tenantId: T, chainRef: fixtureUuid("chain-775"), caseRef: CASE, revokedDecisionRef: D, status: "REQUESTED" });
   await attestHumanAssistedVerification(ports, T, REV, CASE);
-  await recordCaseConfirmationPendingCosign(ports, staff, T, REV, CASE, { recordedByPrincipalRef: "staff-synthetic-01" });
+  await recordCaseConfirmationPendingCosign(ports, staff, T, REV, CASE, { recordedByPrincipalRef: fixtureUuid("staff-synthetic-01") });
   const before = await eventTypes(ports, REV);
 
-  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, CASE, { cosignedByPrincipalRef: "staff-synthetic-02" }), /R4 falló/);
+  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, CASE, { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") }), /R4 falló/);
   const rolled = await inner.findByRef(T, REV);
   assert.equal(rolled?.status, "VERIFIED");
-  assert.equal(rolled?.recordedByRef, "staff-synthetic-01", "el paso 1 (anterior a la unidad de trabajo) se conserva");
+  assert.equal(rolled?.recordedByRef, fixtureUuid("staff-synthetic-01"), "el paso 1 (anterior a la unidad de trabajo) se conserva");
   assert.equal(rolled?.cosignedByRef, undefined);
   assert.deepEqual(await eventTypes(ports, REV), before);
   assert.equal(outbox.enqueued.length, 0);
 
   fail.on = false;
-  const retried = await cosignCaseConfirmation(ports, staff, T, REV, CASE, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const retried = await cosignCaseConfirmation(ports, staff, T, REV, CASE, { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
   assert.equal(retried.status, "APPLIED");
   const types = await eventTypes(ports, REV);
   for (const t of ["REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"]) assert.equal(types.filter((x) => x === t).length, 1, t);
@@ -142,7 +143,7 @@ test("TEST-CNS-775: RH3 cosign+R4 con fallo inyectado en R4 deja la revocación 
 
 test("TEST-CNS-776: LedgerPort.expectedSequence: procede solo si la última sequence del agregado coincide; conflicto no escribe y la dedupe por idempotencyKey se evalúa antes", async () => {
   const ledger = createInMemoryLedgerAdapter();
-  const base = { eventType: "REVOCATION_REQUESTED", tenantId: T, aggregateType: "Revocation", aggregateId: fixtureUuid("agg-776"), actorType: "HUMAN" as const, payload: {} };
+  const base = { eventType: "REVOCATION_REQUESTED", tenantId: T, aggregateType: "Revocation", aggregateId: fixtureUuid("agg-776"), actorType: "HUMAN" as const, payload: revocationRequestedPayload("base") };
   const first = await ledger.append({ ...base, expectedSequence: 0, idempotencyKey: "k1" });
   assert.equal(first.sequence, 1);
   assert.ok(!("expectedSequence" in first), "expectedSequence no se persiste en el registro");

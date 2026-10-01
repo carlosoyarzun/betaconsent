@@ -11,6 +11,7 @@ import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.
 import { createInMemoryDownstreamStub } from "../../../src/infra/adapters/in-memory-downstream-stub.adapter.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import type { RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
+import { LedgerPayloadViolationError } from "../../../src/server/modules/common/ledger-payload-contract.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { completeDownstream, REVOCATION_PATHS, revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
 import { pgTest } from "./harness.ts";
@@ -89,7 +90,7 @@ pgTest("TEST-CNS-971 pg (INV-6): con SchoolParticipation SUSPENDED/CLOSED, Enrol
     await withEnv(ctx, async (env, outside) => {
       await outside.enrollmentRepo.save({ enrollmentRef: fixtureUuid("e971"), tenantId: T, subjectRef: fixtureUuid("s971"), participationRef: "p971-s", state: "CLOSED" });
       await outside.otpRepo.save({
-        verificationRef: fixtureUuid("otp971"), tenantId: T, scope: "REVOCATION", parentRef: "chain-971-OTP", channelRef: "x6+971@example.invalid",
+        verificationRef: fixtureUuid("otp971"), tenantId: T, scope: "REVOCATION", parentRef: fixtureUuid("chain-971-OTP"), channelRef: "x6+971@example.invalid",
         codeHash: "0".repeat(64), attempts: 99, expiresAt: new Date("2000-01-01T00:00:00Z"), state: "LOCKED", resendCount: 5,
       });
       for (const path of REVOCATION_PATHS) {
@@ -99,6 +100,31 @@ pgTest("TEST-CNS-971 pg (INV-6): con SchoolParticipation SUSPENDED/CLOSED, Enrol
         assert.equal(n, 1, `${path}: consent.revoked encolado`);
       }
       assert.equal((await outside.otpRepo.findByRef(T, fixtureUuid("otp971")))?.state, "LOCKED");
+    });
+  } finally {
+    await admin.end();
+  }
+});
+
+pgTest("TEST-CNS-973 pg: el append del ledger rechaza (ERR-RV-13) un campo extra con PII sintética y NO persiste evento ni avanza la cadena", async (ctx) => {
+  const T = fixtureUuid("t973");
+  const admin = await ctx.connectAsSuperuser();
+  try {
+    await withEnv(ctx, async (env, outside) => {
+      const agg = fixtureUuid("inv973");
+      const valid = { invitationRef: agg, participationRef: fixtureUuid("p973"), enrollmentRef: fixtureUuid("e973"), subjectRef: fixtureUuid("s973"), reissueOfRef: null };
+      const ev = (payload: Record<string, unknown>) => ({
+        eventType: "INVITATION_CREATED", tenantId: T, aggregateType: "Invitation", aggregateId: agg, actorType: "HUMAN" as const, expectedSequence: 0, payload,
+      });
+      await assert.rejects(
+        () => env.ports.uow.inTenant(T, (tx) => tx.ledger.append(ev({ ...valid, guardianEmail: "padre.sintetico@example.invalid" }))),
+        (e: unknown) => e instanceof LedgerPayloadViolationError,
+      );
+      const n = (await admin.query("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2", [T, agg])).rows[0]?.n;
+      assert.equal(n, 0, "sin fila en el ledger");
+      assert.equal((await outside.ledger.listByAggregate(T, "Invitation", agg)).length, 0);
+      await env.ports.uow.inTenant(T, (tx) => tx.ledger.append(ev(valid)));
+      assert.equal((await outside.ledger.listByAggregate(T, "Invitation", agg)).length, 1, "el válido procede con sequence 1");
     });
   } finally {
     await admin.end();

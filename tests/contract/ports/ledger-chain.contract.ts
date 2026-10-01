@@ -2,6 +2,7 @@
 // por tenant, recomputacion y lista blanca), common.spec.yaml ledgerEnvelope. Suite de contrato
 // compartida memoria/Postgres sobre LedgerPort. TEST-CNS-910 y TEST-CNS-911. Solo datos sinteticos.
 
+import { payloadFor, revocationRequestedPayload } from "../ledger-payload-fixtures.ts";
 import assert from "node:assert/strict";
 
 import {
@@ -22,9 +23,9 @@ function event(tenantId: string, aggregateId: string, extra: Partial<LedgerEvent
     aggregateType: "Revocation",
     aggregateId,
     actorType: "HUMAN",
-    payload: { reasonCode: "SYNTHETIC" },
     expectedSequence: 0,
     ...extra,
+    payload: extra.payload ?? payloadFor(extra.eventType ?? "REVOCATION_REQUESTED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
   };
 }
 
@@ -40,11 +41,12 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
       const agg2 = fixtureUuid("agg910-2");
       const idemKey = "idem-910";
 
+      const canonPayload = revocationRequestedPayload("910-canon");
       const records = await h.inTenant(ta, async ({ ledger }) => {
-        const a = await ledger.append(event(ta, agg1, { payload: { z: 1, a: { y: true, b: null } }, idempotencyKey: idemKey }));
+        const a = await ledger.append(event(ta, agg1, { payload: canonPayload, idempotencyKey: idemKey }));
         const b = await ledger.append(event(ta, agg2, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec910") }));
         const c = await ledger.append(event(ta, agg1, { eventType: "REVOCATION_CONFIRMED", expectedSequence: 1 }));
-        const dup = await ledger.append(event(ta, agg1, { payload: { z: 1, a: { y: true, b: null } }, idempotencyKey: idemKey }));
+        const dup = await ledger.append(event(ta, agg1, { payload: canonPayload, idempotencyKey: idemKey }));
         return { a, b, c, dup };
       });
       assert.deepEqual([records.a.chainSeq, records.b.chainSeq, records.c.chainSeq], [1, 2, 3]);
@@ -53,7 +55,7 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
       assert.equal(records.c.previousEventHash, records.b.eventHash);
       assert.equal(records.dup.eventHash, records.a.eventHash, "el dedupe devuelve el eslabon existente");
       // El orden de claves del payload no cambia el hash (canonicalizacion determinista).
-      assert.equal(records.a.payloadHash, computePayloadHash({ a: { b: null, y: true }, z: 1 }));
+      assert.equal(records.a.payloadHash, computePayloadHash(Object.fromEntries(Object.entries(canonPayload).reverse())));
       // Otro tenant: cadena propia desde el genesis; el de A no se ve alterado.
       const other = await h.inTenant(tb, ({ ledger }) => ledger.append(event(tb, agg1)));
       assert.equal(other.chainSeq, 1);

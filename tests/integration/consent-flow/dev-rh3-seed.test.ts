@@ -4,6 +4,7 @@
 // Mismo patrón que dev-local-config.test.ts (TEST-CNS-566): usa los valores LOCAL_ONLY_DEV_*
 // reales, sin ejecutar dev.ts como proceso. TEST-CNS-687.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -66,9 +67,9 @@ async function runSeededRh3Flow() {
       });
     }
 
-    const recorded = await step("staff-synthetic-01", "", { confirmationGivenOnCasePage: true });
+    const recorded = await step(fixtureUuid("staff-synthetic-01"), "", { confirmationGivenOnCasePage: true });
     assert.equal(recorded.status, 200);
-    const cosigned = await step("staff-synthetic-02", "/cosign", {});
+    const cosigned = await step(fixtureUuid("staff-synthetic-02"), "/cosign", {});
     assert.equal(cosigned.status, 200);
     const ack = await cosigned.json();
     assert.deepEqual(ack, { cosign: "COSIGNED", revocationState: "APPLIED" });

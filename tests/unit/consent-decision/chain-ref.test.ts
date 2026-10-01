@@ -12,7 +12,7 @@ const SUBJECT = "22222222-2222-4222-8222-222222222222";
 test("TEST-CNS-878: chainRef opaco, determinista, de largo fijo y sin tenantId/subjectRef/decisionMakerRef", () => {
   const a = deriveChainRef(KEY, TENANT, "LECTORPRO/BETA_2026_01", SUBJECT, "dm:abcdef0123456789abcdef0123456789");
   assert.equal(a, deriveChainRef(KEY, TENANT, "LECTORPRO/BETA_2026_01", SUBJECT, "dm:abcdef0123456789abcdef0123456789"));
-  assert.match(a, /^chain:[0-9a-f]{64}$/);
+  assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.ok(a.length <= 100);
   for (const leak of [TENANT, SUBJECT, "abcdef0123456789", "BETA_2026_01", "dm:"]) assert.ok(!a.includes(leak));
   assert.notEqual(a, deriveChainRef(KEY, TENANT, "LECTORPRO/BETA_2026_01", SUBJECT, "dm:otro"));

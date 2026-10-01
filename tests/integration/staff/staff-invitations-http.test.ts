@@ -42,8 +42,8 @@ const INVITATION_HANDLE_COOKIE = "__Host-cns-i-handle";
 const SESSION_COOKIE = "__Host-cns-session";
 const TENANT_A = LOCAL_ONLY_DEV_TENANT_ID;
 const TENANT_B = LOCAL_ONLY_DEV_OTHER_TENANT_ID;
-const ADMIN_A = "staff-synthetic-05";
-const ADMIN_B = "staff-synthetic-06";
+const ADMIN_A = fixtureUuid("staff-synthetic-05");
+const ADMIN_B = fixtureUuid("staff-synthetic-06");
 const SUBJECT = fixtureUuid("subject-714");
 const SUBJECT_B = fixtureUuid("subject-b-714");
 const PARTICIPATION = fixtureUuid("participation-714");
@@ -229,7 +229,7 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
     assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, SUBJECT, PARTICIPATION), null);
 
     // Login: RIGHTS_OPERATOR (consola CASE), APPROVER e inexistentes no obtienen sesión STAFF.
-    for (const principalRef of ["staff-synthetic-01", "staff-synthetic-03", "no-existe"]) {
+    for (const principalRef of [fixtureUuid("staff-synthetic-01"), fixtureUuid("staff-synthetic-03"), "no-existe"]) {
       const res = await fetch(`${h.baseUrl}/__dev/staff-login`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -615,7 +615,7 @@ test("TEST-CNS-725: el login CASE (CA-128) sigue sin admitir TENANT_ADMIN y el l
       body: JSON.stringify({ confirmationGivenOnCasePage: true }),
     });
     assert.equal(caseRes.status, 404);
-    const op = await login(h.baseUrl, "staff-synthetic-01", { tenantId: TENANT_A, caseRef: fixtureUuid("case-725") }).catch(() => null);
+    const op = await login(h.baseUrl, fixtureUuid("staff-synthetic-01"), { tenantId: TENANT_A, caseRef: fixtureUuid("case-725") }).catch(() => null);
     assert.equal(op, null, "un RIGHTS_OPERATOR sin caso existente no obtiene sesión (login CASE intacto)");
   } finally {
     await h.close();

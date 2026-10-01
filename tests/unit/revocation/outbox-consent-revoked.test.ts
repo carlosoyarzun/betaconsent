@@ -38,10 +38,10 @@ import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenan
 
 const T = fixtureUuid("tenant-688");
 const staff = createInMemoryStaffIdentityAdapter([
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-04"), role: "APPROVER" },
 ]);
 
 type Ports = RevocationPorts & { readonly outbox: InMemoryOutbox; readonly recoveryLinkChannel: InMemoryRecoveryLinkChannelSink };
@@ -65,19 +65,19 @@ function ledgerOf(ports: Ports, ref: string) {
 }
 
 async function seedRh3(ports: Ports, ref: string, decisionId: string) {
-  await ports.revocationRepo.save({ revocationRef: ref, tenantId: T, chainRef: `chain-${ref}`, caseRef: `case-${ref}`, revokedDecisionRef: decisionId, status: "REQUESTED" });
-  await attestHumanAssistedVerification(ports, T, ref, `case-${ref}`);
-  await recordCaseConfirmationPendingCosign(ports, staff, T, ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
+  await ports.revocationRepo.save({ revocationRef: ref, tenantId: T, chainRef: `chain-${ref}`, caseRef: fixtureUuid(`case-${ref}`), revokedDecisionRef: decisionId, status: "REQUESTED" });
+  await attestHumanAssistedVerification(ports, T, ref, fixtureUuid(`case-${ref}`));
+  await recordCaseConfirmationPendingCosign(ports, staff, T, ref, fixtureUuid(`case-${ref}`), { recordedByPrincipalRef: fixtureUuid("staff-synthetic-01") });
 }
 
-const COSIGN = { cosignedByPrincipalRef: "staff-synthetic-02" };
+const COSIGN = { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") };
 
 test("TEST-CNS-688: R4 por OTP (autoservicio) encola exactamente un consent.revoked válido; effectiveAt = CONSENT_REVOKED.effectiveAt = occurredAt", async () => {
   const D = fixtureUuid("decision-688");
   const REV = fixtureUuid("rev-688");
   const ports = await makePorts({ seedDecisionId: D });
-  await requestRevocation(ports, T, { revocationRef: REV, chainRef: "chain-688", revokedDecisionRef: D });
-  await verifyRevocationOtp(ports, T, REV, "ver-688");
+  await requestRevocation(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-688"), revokedDecisionRef: D });
+  await verifyRevocationOtp(ports, T, REV, fixtureUuid("ver-688"));
   await confirmRevocation(ports, T, REV);
   assert.equal(ports.outbox.enqueued.length, 1);
   assertConsentRevokedOutbox(ports.outbox.enqueued, await ledgerOf(ports, REV), { tenantId: T, revocationRef: REV, decision: syntheticDecision(T, D) });
@@ -88,13 +88,13 @@ test("TEST-CNS-689: R4 por RECOVERY/CHANNEL_LINK y por RH3 cosign encolan exacta
   // Enlace de recuperación.
   const D1 = fixtureUuid("decision-689a");
   const p1 = await makePorts();
-  const d1 = { ...syntheticDecision(T, D1), chainRef: "chain-689" }; // GRD-RV-06: la GRANTED vigente de la cadena
+  const d1 = { ...syntheticDecision(T, D1), chainRef: fixtureUuid("chain-689") }; // GRD-RV-06: la GRANTED vigente de la cadena
   await p1.consentDecisionRepo.save(d1);
-  await issueRecoveryLinkBearer(p1, T, "chain-689", D1, "REQUESTER_ASKED");
+  await issueRecoveryLinkBearer(p1, T, fixtureUuid("chain-689"), D1, "REQUESTER_ASKED");
   const token = p1.recoveryLinkChannel.sent[p1.recoveryLinkChannel.sent.length - 1]!.recoveryPath.replace("/r/", "");
   const resolved = await resolveRecoveryTokenForRedeem(p1, token);
   assert.ok(resolved);
-  const outcome = await revokeWithRecoveryLink(p1, T, "chain-689", D1, resolved.tokenHash);
+  const outcome = await revokeWithRecoveryLink(p1, T, fixtureUuid("chain-689"), D1, resolved.tokenHash);
   assert.equal(outcome.kind, "CONFIRMED");
   const ref1 = (outcome as { revocationRef: string }).revocationRef;
   assert.equal(p1.outbox.enqueued.length, 1);
@@ -105,7 +105,7 @@ test("TEST-CNS-689: R4 por RECOVERY/CHANNEL_LINK y por RH3 cosign encolan exacta
   const REV2 = fixtureUuid("rev-689b");
   const p2 = await makePorts({ seedDecisionId: D2 });
   await seedRh3(p2, REV2, D2);
-  await cosignCaseConfirmation(p2, staff, T, REV2, `case-${REV2}`, COSIGN);
+  await cosignCaseConfirmation(p2, staff, T, REV2, fixtureUuid(`case-${REV2}`), COSIGN);
   assert.equal(p2.outbox.enqueued.length, 1);
   assertConsentRevokedOutbox(p2.outbox.enqueued, await ledgerOf(p2, REV2), { tenantId: T, revocationRef: REV2, decision: syntheticDecision(T, D2) });
 });
@@ -125,7 +125,7 @@ test("TEST-CNS-690: fallo inyectado en revocationRepo.save y reintento: 1 CONSEN
   };
   const ports = await makePorts({ revocationRepo: flaky, seedDecisionId: D });
   await seedRh3(ports, REV, D);
-  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN), /save falló/);
+  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN), /save falló/);
   // CA-124 (P2 de lampone-security): cosign + R4 son UNA unidad de trabajo; el fallo de
   // `revocationRepo.save` deja todo como antes del cosign (antes: CONFIRMED huérfana + outbox).
   assert.equal((await inner.findByRef(T, REV))?.status, "VERIFIED");
@@ -133,7 +133,7 @@ test("TEST-CNS-690: fallo inyectado en revocationRepo.save y reintento: 1 CONSEN
   assert.equal(ports.outbox.enqueued.length, 0);
 
   failApply = false;
-  const retried = await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
+  const retried = await cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN);
   assert.equal(retried.status, "APPLIED");
   const events = await ledgerOf(ports, REV);
   assert.equal(events.filter((e) => e.eventType === "CONSENT_REVOKED").length, 1);
@@ -152,7 +152,7 @@ test("TEST-CNS-691: decisión revocada inexistente -> ERR-CM-06 sin CONSENT_REVO
   const REV = fixtureUuid("rev-691");
   const ports = await makePorts(); // sin decisión sembrada
   await seedRh3(ports, REV, D);
-  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06");
+  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06");
   assert.equal((await ledgerOf(ports, REV)).filter((e) => e.eventType === "CONSENT_REVOKED" || e.eventType === "RECEIPT_CREATED").length, 0);
   assert.equal(ports.outbox.enqueued.length, 0);
   assert.equal((await ledgerOf(ports, REV)).filter((e) => e.eventType === "REVOCATION_CONFIRMED").length, 0, "el cosign se revirtió completo");
@@ -164,7 +164,7 @@ test("TEST-CNS-692: whitelist del sobre y del payload: 3 claves en el payload, n
   const REV = fixtureUuid("rev-692");
   const ports = await makePorts({ seedDecisionId: D });
   await seedRh3(ports, REV, D);
-  await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
+  await cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN);
   const env = ports.outbox.enqueued[0]!.envelope;
   assert.deepEqual(Object.keys(env.payload).sort(), ["effectiveAt", "revocationRef", "scope"]);
   assert.deepEqual(
@@ -194,9 +194,9 @@ test("TEST-CNS-693: sin outbox en R8 (FAILED) ni en R4 sobre un estado distinto 
   const D = fixtureUuid("decision-693");
   const REV = fixtureUuid("rev-693");
   const ports = await makePorts({ seedDecisionId: D });
-  await requestRevocation(ports, T, { revocationRef: REV, chainRef: "chain-693", revokedDecisionRef: D });
+  await requestRevocation(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-693"), revokedDecisionRef: D });
   await assert.rejects(() => applyRevocation(ports, T, REV), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06"); // REQUESTED
-  await verifyRevocationOtp(ports, T, REV, "ver-693");
+  await verifyRevocationOtp(ports, T, REV, fixtureUuid("ver-693"));
   await assert.rejects(() => applyRevocation(ports, T, REV), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06"); // VERIFIED
   const failed = await withdrawRevocation(ports, T, REV);
   assert.equal(failed.status, "FAILED");

@@ -7,6 +7,7 @@
 // ledger (sequence consecutivo por agregado, tenant_id en cada evento).
 // TEST-CNS-507.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -94,18 +95,18 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
   });
 
   try {
-    await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
-      invitationRef: "inv-507",
+    await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
+      invitationRef: fixtureUuid("inv-507"),
       contextRef: LECTORPRO_BETA_CONFIG.contextRef,
       productRef: LECTORPRO_BETA_CONFIG.productRef,
-      subjectRef: "subject-507@example.invalid",
+      subjectRef: fixtureUuid("subject-507"),
     });
-    await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", "inv-507", {
+    await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", fixtureUuid("inv-507"), {
       consentVersion: "v1",
       expiresAt: new Date(Date.now() + 60_000),
       recipientChannelRef: CHANNEL_REF,
     });
-    const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", "inv-507");
+    const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", fixtureUuid("inv-507"), { deliveryChannel: "CONSENT_APP_EMAIL" });
 
     // GET /i/{token} (API-CNS-101, P-12, SEC-CNS-014): canje uniforme sin transición
     // (INV-CM-08 reforzado), fija solo el handle INVITATION_LANDING (Carlos, 2026-09-28).
@@ -165,10 +166,10 @@ test("TEST-CNS-507: HTTP end-to-end invitación -> OTP (sink) -> decisión; cade
     const decidedBody = (await decided.json()) as { consentId: string; state: string };
     assert.equal(decidedBody.state, "GRANTED");
 
-    assert.equal((await ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-507"))?.state, "COMPLETED");
+    assert.equal((await ports.invitation.invitationRepo.findByRef(TENANT_ID, fixtureUuid("inv-507")))?.state, "COMPLETED");
 
     for (const [aggregateType, aggregateId] of [
-      ["Invitation", "inv-507"],
+      ["Invitation", fixtureUuid("inv-507")],
       ["ConsentDecision", decidedBody.consentId],
     ] as const) {
       const events = await ports.decision.ledger.listByAggregate(TENANT_ID, aggregateType, aggregateId);

@@ -36,12 +36,12 @@ import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenan
 
 const T = fixtureUuid("tenant-698");
 const staff = createInMemoryStaffIdentityAdapter([
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-04"), role: "APPROVER" },
 ]);
-const COSIGN = { cosignedByPrincipalRef: "staff-synthetic-02" };
+const COSIGN = { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") };
 
 type Ports = RevocationPorts & { readonly outbox: InMemoryOutbox; readonly recoveryLinkChannel: InMemoryRecoveryLinkChannelSink };
 
@@ -64,9 +64,9 @@ async function stateOf(ports: Ports, id: string) {
 }
 
 async function seedRh3(ports: Ports, ref: string, decisionId: string) {
-  await ports.revocationRepo.save({ revocationRef: ref, tenantId: T, chainRef: `chain-${ref}`, caseRef: `case-${ref}`, revokedDecisionRef: decisionId, status: "REQUESTED" });
-  await attestHumanAssistedVerification(ports, T, ref, `case-${ref}`);
-  await recordCaseConfirmationPendingCosign(ports, staff, T, ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
+  await ports.revocationRepo.save({ revocationRef: ref, tenantId: T, chainRef: `chain-${ref}`, caseRef: fixtureUuid(`case-${ref}`), revokedDecisionRef: decisionId, status: "REQUESTED" });
+  await attestHumanAssistedVerification(ports, T, ref, fixtureUuid(`case-${ref}`));
+  await recordCaseConfirmationPendingCosign(ports, staff, T, ref, fixtureUuid(`case-${ref}`), { recordedByPrincipalRef: fixtureUuid("staff-synthetic-01") });
 }
 
 test("TEST-CNS-698: R4 deja la decisión en REVOKED en las tres vías (autoservicio OTP, recuperación y RH3)", async () => {
@@ -75,21 +75,21 @@ test("TEST-CNS-698: R4 deja la decisión en REVOKED en las tres vías (autoservi
   const REV1 = fixtureUuid("rev-698a");
   const p1 = await makePorts(syntheticDecision(T, D1));
   assert.equal(await stateOf(p1, D1), "GRANTED");
-  await requestRevocation(p1, T, { revocationRef: REV1, chainRef: "chain-698a", revokedDecisionRef: D1 });
-  await verifyRevocationOtp(p1, T, REV1, "ver-698a");
+  await requestRevocation(p1, T, { revocationRef: REV1, chainRef: fixtureUuid("chain-698a"), revokedDecisionRef: D1 });
+  await verifyRevocationOtp(p1, T, REV1, fixtureUuid("ver-698a"));
   assert.equal(await stateOf(p1, D1), "GRANTED", "antes de R3/R4 sigue GRANTED");
   await confirmRevocation(p1, T, REV1);
   assert.equal(await stateOf(p1, D1), "REVOKED");
 
   // Recuperación.
   const D2 = fixtureUuid("decision-698b");
-  const d2 = { ...syntheticDecision(T, D2), chainRef: "chain-698b" };
+  const d2 = { ...syntheticDecision(T, D2), chainRef: fixtureUuid("chain-698b") };
   const p2 = await makePorts(d2);
-  await issueRecoveryLinkBearer(p2, T, "chain-698b", D2, "REQUESTER_ASKED");
+  await issueRecoveryLinkBearer(p2, T, fixtureUuid("chain-698b"), D2, "REQUESTER_ASKED");
   const token = p2.recoveryLinkChannel.sent[p2.recoveryLinkChannel.sent.length - 1]!.recoveryPath.replace("/r/", "");
   const resolved = await resolveRecoveryTokenForRedeem(p2, token);
   assert.ok(resolved);
-  assert.equal((await revokeWithRecoveryLink(p2, T, "chain-698b", D2, resolved.tokenHash)).kind, "CONFIRMED");
+  assert.equal((await revokeWithRecoveryLink(p2, T, fixtureUuid("chain-698b"), D2, resolved.tokenHash)).kind, "CONFIRMED");
   assert.equal(await stateOf(p2, D2), "REVOKED");
 
   // RH3.
@@ -98,7 +98,7 @@ test("TEST-CNS-698: R4 deja la decisión en REVOKED en las tres vías (autoservi
   const p3 = await makePorts(syntheticDecision(T, D3));
   await seedRh3(p3, REV3, D3);
   assert.equal(await stateOf(p3, D3), "GRANTED", "antes del cosign sigue GRANTED");
-  await cosignCaseConfirmation(p3, staff, T, REV3, `case-${REV3}`, COSIGN);
+  await cosignCaseConfirmation(p3, staff, T, REV3, fixtureUuid(`case-${REV3}`), COSIGN);
   assert.equal(await stateOf(p3, D3), "REVOKED");
 });
 
@@ -109,7 +109,7 @@ test("TEST-CNS-699: findActiveGrantByChain no devuelve la decisión revocada (IN
   const ports = await makePorts(decision);
   assert.equal((await ports.consentDecisionRepo.findActiveGrantByChain(T, decision.chainRef))?.consentId, D);
   await seedRh3(ports, REV, D);
-  await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
+  await cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN);
   assert.equal(await ports.consentDecisionRepo.findActiveGrantByChain(T, decision.chainRef), null);
   // Re-consentir = consentId nuevo (no revive la revocada); GRD-CD-08 lo permite.
   const D2 = fixtureUuid("decision-699-new");
@@ -141,7 +141,7 @@ test("TEST-CNS-700: reintentar R4 no reproyecta ni duplica: un solo guardado REV
   };
   const ports = await makePorts(syntheticDecision(T, D), { revocationRepo: flaky, decisionRepo: countingDecisions });
   await seedRh3(ports, REV, D);
-  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN), /save falló/);
+  await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN), /save falló/);
   // CA-124 (P2 de lampone-security): RH3 cosign + R4 son UNA unidad de trabajo; el fallo deja todo
   // como estaba antes del cosign (antes: C6 proyectada y Revocation CONFIRMED huérfana).
   assert.equal(revokedSaves, 1, "R4 intentó proyectar C6 antes de fallar");
@@ -149,7 +149,7 @@ test("TEST-CNS-700: reintentar R4 no reproyecta ni duplica: un solo guardado REV
   assert.equal((await inner.findByRef(T, REV))?.status, "VERIFIED");
 
   failApply = false;
-  const retried = await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
+  const retried = await cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN);
   assert.equal(retried.status, "APPLIED");
   assert.equal(revokedSaves, 2, "la proyección REVOKED confirmada ocurre una sola vez (la del primer intento se revirtió)");
   const events = await ports.ledger.listByAggregate(T, "Revocation", REV);
@@ -162,29 +162,29 @@ test("TEST-CNS-700: reintentar R4 no reproyecta ni duplica: un solo guardado REV
 test("TEST-CNS-701: sobre una cadena ya REVOKED, R1 (ERR-RV-02) y RV0 no crean revocación ni emiten token; el token de recuperación previo deja de ser elegible (GRD-RV-06)", async () => {
   const D = fixtureUuid("decision-701");
   const REV = fixtureUuid("rev-701");
-  const decision = { ...syntheticDecision(T, D), chainRef: "chain-701" };
+  const decision = { ...syntheticDecision(T, D), chainRef: fixtureUuid("chain-701") };
   const ports = await makePorts(decision);
   // Token emitido ANTES de la revocación (aún elegible).
-  await issueRecoveryLinkBearer(ports, T, "chain-701", D, "REQUESTER_ASKED");
+  await issueRecoveryLinkBearer(ports, T, fixtureUuid("chain-701"), D, "REQUESTER_ASKED");
   const token = ports.recoveryLinkChannel.sent[0]!.recoveryPath.replace("/r/", "");
   const resolved = await resolveRecoveryTokenForRedeem(ports, token);
   assert.ok(resolved);
   assert.ok(await evaluateRecoveryTokenEligibilityByHash(ports, resolved.tokenHash));
 
   await seedRh3(ports, REV, D);
-  await cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN);
+  await cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN);
   assert.equal(await stateOf(ports, D), "REVOKED");
 
   assert.equal(await evaluateRecoveryTokenEligibilityByHash(ports, resolved.tokenHash), null, "GRD-RV-06: uniforme");
-  assert.equal((await revokeWithRecoveryLink(ports, T, "chain-701", D, resolved.tokenHash)).kind, "UNIFORM");
+  assert.equal((await revokeWithRecoveryLink(ports, T, fixtureUuid("chain-701"), D, resolved.tokenHash)).kind, "UNIFORM");
 
   const sentBefore = ports.recoveryLinkChannel.sent.length;
-  assert.equal((await issueRecoveryLinkBearer(ports, T, "chain-701", D, "REQUESTER_ASKED")).sent, false);
+  assert.equal((await issueRecoveryLinkBearer(ports, T, fixtureUuid("chain-701"), D, "REQUESTER_ASKED")).sent, false);
   assert.equal(ports.recoveryLinkChannel.sent.length, sentBefore);
 
   const NEW = fixtureUuid("rev-701-new");
   await assert.rejects(
-    () => requestRevocation(ports, T, { revocationRef: NEW, chainRef: "chain-701", revokedDecisionRef: D }),
+    () => requestRevocation(ports, T, { revocationRef: NEW, chainRef: fixtureUuid("chain-701"), revokedDecisionRef: D }),
     (e: unknown) => e instanceof DomainError && e.code === "ERR-RV-02",
   );
   assert.equal(await ports.revocationRepo.findByRef(T, NEW), null);
@@ -198,7 +198,7 @@ test("TEST-CNS-702: C6 solo revoca una decisión GRANTED (GRD-CD-09): PENDING/DE
     const ports = await makePorts({ ...syntheticDecision(T, D), state });
     await seedRh3(ports, REV, D);
     await assert.rejects(
-      () => cosignCaseConfirmation(ports, staff, T, REV, `case-${REV}`, COSIGN),
+      () => cosignCaseConfirmation(ports, staff, T, REV, fixtureUuid(`case-${REV}`), COSIGN),
       (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06",
     );
     assert.equal(await stateOf(ports, D), state);

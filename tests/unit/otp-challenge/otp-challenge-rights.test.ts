@@ -3,6 +3,7 @@
 // deniega la vía de revocación: se prueba en la capa HTTP, ver revocation-http.test.ts).
 // TEST-CNS-571..TEST-CNS-574.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -29,45 +30,45 @@ function makePorts() {
 
 test("TEST-CNS-571: requestRightsOtp scope MANAGE emite OTP_ISSUED y el código nunca sale en claro del sink más allá del code (INV-OT-02)", async () => {
   const ports = makePorts();
-  const record = await requestRightsOtp(ports, "tenant-1", "ver-manage-1", "MANAGE", "chain-1", "mgmt:chain-1");
+  const record = await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-manage-1"), "MANAGE", fixtureUuid("chain-1"), "mgmt:chain-1");
   assert.equal(record.scope, "MANAGE");
   assert.equal(record.state, "CODE_SENT");
-  assert.equal(record.parentRef, "chain-1");
+  assert.equal(record.parentRef, fixtureUuid("chain-1"));
   assert.ok(!("code" in record));
-  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", "ver-manage-1");
+  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", fixtureUuid("ver-manage-1"));
   assert.equal(events[0]?.eventType, "OTP_ISSUED");
 });
 
 test("TEST-CNS-572: submitRightsOtp con el código correcto (scope REVOCATION) -> VERIFIED, emite DECISION_MAKER_CHANNEL_VERIFIED", async () => {
   const ports = makePorts();
-  await requestRightsOtp(ports, "tenant-1", "ver-rev-1", "REVOCATION", "chain-1", "mgmt:chain-1");
+  await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-1"), "REVOCATION", fixtureUuid("chain-1"), "mgmt:chain-1");
   const code = ports.channel.sent[0]?.code ?? "";
   assert.ok(code.length > 0);
-  const verified = await submitRightsOtp(ports, "tenant-1", "ver-rev-1", "REVOCATION", code);
+  const verified = await submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-1"), "REVOCATION", code, fixtureUuid("dm-fixture"));
   assert.equal(verified.state, "VERIFIED");
-  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", "ver-rev-1");
+  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", fixtureUuid("ver-rev-1"));
   assert.ok(events.some((e) => e.eventType === "DECISION_MAKER_CHANNEL_VERIFIED"));
 });
 
 test("TEST-CNS-573: submitRightsOtp agota los intentos (maxAttempts) -> LOCKED (V4), nunca FAILED de la Revocation (INV-OT-05)", async () => {
   const ports = makePorts();
-  await requestRightsOtp(ports, "tenant-1", "ver-rev-2", "REVOCATION", "chain-1", "mgmt:chain-1");
+  await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-2"), "REVOCATION", fixtureUuid("chain-1"), "mgmt:chain-1");
   for (let i = 0; i < 3; i += 1) {
     await assert.rejects(
-      () => submitRightsOtp(ports, "tenant-1", "ver-rev-2", "REVOCATION", "000000"),
+      () => submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-2"), "REVOCATION", "000000", fixtureUuid("dm-fixture")),
       (err: unknown) => err instanceof DomainError,
     );
   }
-  const record = await ports.otpRepo.findByRef("tenant-1", "ver-rev-2");
+  const record = await ports.otpRepo.findByRef("tenant-1", fixtureUuid("ver-rev-2"));
   assert.equal(record?.state, "LOCKED");
 });
 
 test("TEST-CNS-574: submitRightsOtp con el scope equivocado (VERIFIED MANAGE no sirve para REVOCATION) -> rechazo determinista (ERR-OT-05/scope misuse)", async () => {
   const ports = makePorts();
-  await requestRightsOtp(ports, "tenant-1", "ver-manage-2", "MANAGE", "chain-1", "mgmt:chain-1");
+  await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-manage-2"), "MANAGE", fixtureUuid("chain-1"), "mgmt:chain-1");
   const code = ports.channel.sent[0]?.code ?? "";
   await assert.rejects(
-    () => submitRightsOtp(ports, "tenant-1", "ver-manage-2", "REVOCATION", code),
+    () => submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-manage-2"), "REVOCATION", code, fixtureUuid("dm-fixture")),
     (err: unknown) => err instanceof DomainError,
   );
 });

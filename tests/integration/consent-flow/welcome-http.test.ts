@@ -6,6 +6,7 @@
 // GET /welcome (csrf.ts) es la misma que welcome.js copiaría al header x-csrf-token.
 // TEST-CNS-538..TEST-CNS-544 (traceability/test-matrix.csv).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
@@ -53,7 +54,7 @@ function startServer(): Promise<Harness> {
 }
 
 async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): Promise<string> {
-  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -64,7 +65,7 @@ async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
   return token;
 }
 
@@ -104,7 +105,7 @@ async function getWelcome(baseUrl: string, sessionCookie: string | undefined): P
 test("TEST-CNS-538: GET /welcome con sesión válida responde 200, HTML con un h1, lang=es y las cabeceras de seguridad (Cache-Control, Referrer-Policy, CSP)", async () => {
   const harness = await startServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-538", "subject-538@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-538"), fixtureUuid("subject-538"));
     const session = await redeem(harness.baseUrl, token);
     const res = await getWelcome(harness.baseUrl, session);
     assert.equal(res.status, 200);
@@ -138,7 +139,7 @@ test("TEST-CNS-539: GET /welcome sin sesión (sin canjear /i/{token}) muestra el
 test("TEST-CNS-540: GET /welcome contiene el copy exacto del handoff (welcome-handoff.md §3)", async () => {
   const harness = await startServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-540", "subject-540@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-540"), fixtureUuid("subject-540"));
     const session = await redeem(harness.baseUrl, token);
     const html = await (await getWelcome(harness.baseUrl, session)).text();
     assert.match(html, /Colegio Ejemplo te invita a participar en el Estudio Beta de LectorPro\./);
@@ -218,7 +219,7 @@ test("TEST-CNS-542: una ruta fuera de la lista blanca, incluido un intento de tr
 test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/open -> POST /otp/request replica exactamente la secuencia y el CSRF double-submit que ejecuta welcome.js", async () => {
   const harness = await startServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-543", "subject-543@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-543"), fixtureUuid("subject-543"));
 
     // 1) GET /i/{token} (P-12, SEC-CNS-014): redirige a /welcome sin transicionar (INV-CM-08
     // reforzado) y sin fijar la sesión real todavía, solo el handle INVITATION_LANDING.
@@ -266,7 +267,7 @@ test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/ope
     assert.equal(requested.status, 202);
     assert.deepEqual(await requested.json(), { result: "RECEIVED" });
 
-    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-543"))?.state, "OPENED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, fixtureUuid("inv-543")))?.state, "OPENED");
   } finally {
     await harness.close();
   }

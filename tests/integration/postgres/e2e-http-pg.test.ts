@@ -134,14 +134,14 @@ pgTest("TEST-CNS-872 e2e pg: invitacion /i -> OTP -> decision por HTTP; estado y
   try {
     const { ports } = env.bundle;
     const inv = fixtureUuid("inv872");
-    await createInvitation(ports.invitation, T, "INVITER", {
+    await createInvitation(ports.invitation, T, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
       invitationRef: inv,
       contextRef: LECTORPRO_BETA_CONFIG.contextRef,
       productRef: LECTORPRO_BETA_CONFIG.productRef,
       subjectRef: fixtureUuid("subj872"),
     });
     await markInvitationReady(ports.invitation, T, "INVITER", inv, { consentVersion: "v1-dev", expiresAt: new Date(Date.now() + 3_600_000), recipientChannelRef: "e2e-872@example.invalid" });
-    const { token } = await sendInvitation(ports.invitation, T, "INVITER", inv);
+    const { token } = await sendInvitation(ports.invitation, T, "INVITER", inv, { deliveryChannel: "CONSENT_APP_EMAIL" });
 
     const redeemed = await fetch(`${env.baseUrl}/i/${token}`, { redirect: "manual" });
     assert.equal(redeemed.status, 303);
@@ -183,7 +183,7 @@ pgTest("TEST-CNS-872 e2e pg: invitacion /i -> OTP -> decision por HTTP; estado y
 
 async function seedManage(env: Env, label: string): Promise<{ handleToken: string; consentId: string; chain: string }> {
   const consentId = fixtureUuid(`consent-${label}`);
-  const chain = `chain-${label}`;
+  const chain = fixtureUuid(`chain-${label}`);
   const handleToken = `mgmt-token-${label}`;
   await env.store.uow.inTenant(T, (tx) =>
     tx.consentDecisionRepo.save({
@@ -193,8 +193,8 @@ async function seedManage(env: Env, label: string): Promise<{ handleToken: strin
       productRef: LECTORPRO_BETA_CONFIG.productRef,
       subjectRef: fixtureUuid(`subj-${label}`),
       decisionMakerRef: `dm:${label}`,
-      invitationRef: `inv-${label}`,
-      verificationRef: `ver-${label}`,
+      invitationRef: fixtureUuid(`inv-${label}`),
+      verificationRef: fixtureUuid(`ver-${label}`),
       chainRef: chain,
       state: "GRANTED",
       purposes: GRANT_ALL,
@@ -313,11 +313,11 @@ pgTest("TEST-CNS-875 e2e pg: RH3 registro + co-firma por dos RIGHTS_OPERATOR dis
         headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": who.csrf, cookie: Object.entries(who.jar).map(([k, v]) => `${k}=${v}`).join("; ") },
         body: JSON.stringify(body),
       });
-    const op1 = await login("staff-synthetic-01");
+    const op1 = await login(fixtureUuid("staff-synthetic-01"));
     const first = await call(op1, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true });
     assert.equal(first.status, 200);
     assert.deepEqual(await first.json(), { cosign: "AWAITING_COSIGN", revocationState: "VERIFIED" });
-    const op2 = await login("staff-synthetic-02");
+    const op2 = await login(fixtureUuid("staff-synthetic-02"));
     const second = await call(op2, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, {});
     assert.equal(second.status, 200);
     assert.equal(((await second.json()) as { cosign: string }).cosign, "COSIGNED");
@@ -337,7 +337,7 @@ pgTest("TEST-CNS-880 e2e pg: consola STAFF (EN0 enrolar, I1 invitar, ready, send
     const login = await fetch(`${env.baseUrl}/__dev/staff-login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ principalRef: "staff-synthetic-05" }),
+      body: JSON.stringify({ principalRef: fixtureUuid("staff-synthetic-05") }),
     });
     assert.equal(login.status, 200);
     const c = cookiesOf(login);

@@ -24,11 +24,11 @@ pgTest("TEST-CNS-876 pg X5: con una sola conexion A->B->(sin tenant) ninguna tab
     await uow.inTenant(A, async (tx) => {
       await tx.invitationRepo.save({ invitationRef: fixtureUuid("inv"), tenantId: A, contextRef: "BETA_2026_01", productRef: "LECTORPRO", subjectRef: fixtureUuid("s"), state: "DRAFT" });
       await tx.otpRepo.save({ verificationRef: fixtureUuid("ver"), tenantId: A, scope: "DECISION", parentRef: fixtureUuid("inv"), channelRef: "x876@example.invalid", codeHash: key, attempts: 0, expiresAt: new Date(Date.now() + 60_000), state: "CODE_SENT", resendCount: 0 });
-      await tx.rightsCaseRepo.save({ caseRef: fixtureUuid("case"), tenantId: A, chainRef: "chain-876", revokedDecisionRef: fixtureUuid("d"), status: "OPEN" });
+      await tx.rightsCaseRepo.save({ caseRef: fixtureUuid("case"), tenantId: A, chainRef: fixtureUuid("chain-876"), revokedDecisionRef: fixtureUuid("d"), status: "OPEN" });
       await tx.enrollmentRepo.save({ enrollmentRef: fixtureUuid("en"), tenantId: A, subjectRef: fixtureUuid("s"), participationRef: fixtureUuid("p"), state: "ACTIVE" });
-      await tx.consentDecisionRepo.save({ ...syntheticDecision(A, fixtureUuid("d")), chainRef: "chain-876" });
-      await tx.revocationRepo.save({ revocationRef: fixtureUuid("rev"), tenantId: A, chainRef: "chain-876", revokedDecisionRef: fixtureUuid("d"), status: "REQUESTED" });
-      await tx.recoveryTokenRepo.save({ tokenHash: key, recoveryRef: "rec-876", tenantId: A, chainRef: "chain-876", revokedDecisionRef: fixtureUuid("d"), expiresAt: new Date(Date.now() + 60_000) });
+      await tx.consentDecisionRepo.save({ ...syntheticDecision(A, fixtureUuid("d")), chainRef: fixtureUuid("chain-876") });
+      await tx.revocationRepo.save({ revocationRef: fixtureUuid("rev"), tenantId: A, chainRef: fixtureUuid("chain-876"), revokedDecisionRef: fixtureUuid("d"), status: "REQUESTED" });
+      await tx.recoveryTokenRepo.save({ tokenHash: key, recoveryRef: "rec-876", tenantId: A, chainRef: fixtureUuid("chain-876"), revokedDecisionRef: fixtureUuid("d"), expiresAt: new Date(Date.now() + 60_000) });
       await tx.idempotency.store(A, key, { payloadHash: key, status: 201, body: { ok: true } });
     });
     const countRows = async (tenant: string | null): Promise<Record<string, number>> => {

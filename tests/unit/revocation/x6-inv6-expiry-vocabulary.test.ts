@@ -98,22 +98,22 @@ test("TEST-CNS-966 (INV-10): la expiración nunca produce FAILED en las vías OT
     const env = makeX6Env({ extra: { otpRepo } });
     const D = fixtureUuid("d966-otp");
     const R = fixtureUuid("r966-otp");
-    await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: "chain-966-otp" });
-    await requestRevocation(env.ports, T, { revocationRef: R, chainRef: "chain-966-otp", revokedDecisionRef: D });
-    await otpRepo.save({ verificationRef: fixtureUuid("otp966"), tenantId: T, scope: "REVOCATION", parentRef: "chain-966-otp", channelRef: "chan-synthetic", codeHash: "0".repeat(64), attempts: 0, expiresAt: new Date(0), state: "EXPIRED", resendCount: 0 });
+    await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: fixtureUuid("chain-966-otp") });
+    await requestRevocation(env.ports, T, { revocationRef: R, chainRef: fixtureUuid("chain-966-otp"), revokedDecisionRef: D });
+    await otpRepo.save({ verificationRef: fixtureUuid("otp966"), tenantId: T, scope: "REVOCATION", parentRef: fixtureUuid("chain-966-otp"), channelRef: "chan-synthetic", codeHash: "0".repeat(64), attempts: 0, expiresAt: new Date(0), state: "EXPIRED", resendCount: 0 });
     assert.equal((await env.ports.revocationRepo.findByRef(T, R))?.status, "REQUESTED");
   }
   {
     const env = makeX6Env({ recoveryTtlMs: 1 });
     const D = fixtureUuid("d966-link");
-    await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: "chain-966-link" });
-    await issueRecoveryLinkBearer(env.ports, T, "chain-966-link", D, "REQUESTER_ASKED");
+    await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: fixtureUuid("chain-966-link") });
+    await issueRecoveryLinkBearer(env.ports, T, fixtureUuid("chain-966-link"), D, "REQUESTER_ASKED");
     const token = env.sink.sent[0]!.recoveryPath.replace("/r/", "");
     await new Promise((r) => setTimeout(r, 10));
     const outcome = await revokeWithRecoveryLinkByHash(env.ports, hashRecoveryToken(token));
     assert.equal(outcome.kind, "UNIFORM", "ERR-RV-05 uniforme");
-    assert.equal(await env.ports.revocationRepo.findOpenByChain(T, "chain-966-link"), null, "un /r/ expirado no crea Revocation ni emite nada");
-    const linkEvents = (await env.ports.ledger.listByAggregate(T, "Revocation", "chain-966-link")).map((e) => e.eventType);
+    assert.equal(await env.ports.revocationRepo.findOpenByChain(T, fixtureUuid("chain-966-link")), null, "un /r/ expirado no crea Revocation ni emite nada");
+    const linkEvents = (await env.ports.ledger.listByAggregate(T, "Revocation", fixtureUuid("chain-966-link"))).map((e) => e.eventType);
     assert.deepEqual(linkEvents, ["RECOVERY_TOKEN_ISSUED"], "solo la emisión del token; ni REVOCATION_* ni FAILED");
   }
   // Vía caso humano: una Revocation con caseRef abierta no la cierra ningún temporizador (INV-10): no hay
@@ -153,9 +153,9 @@ test("TEST-CNS-967 (DEC-BR-017 §6): todos los eventos de revocación/recuperaci
   {
     const env = makeX6Env();
     const D = fixtureUuid("d967-r8");
-    await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: "chain-967-r8" });
+    await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: fixtureUuid("chain-967-r8") });
     const R = fixtureUuid("r967-r8");
-    await requestRevocation(env.ports, T, { revocationRef: R, chainRef: "chain-967-r8", revokedDecisionRef: D });
+    await requestRevocation(env.ports, T, { revocationRef: R, chainRef: fixtureUuid("chain-967-r8"), revokedDecisionRef: D });
     await withdrawRevocation(env.ports, T, R);
     for (const e of await env.ports.ledger.listByAggregate(T, "Revocation", R)) {
       const keys = emitted.get(e.eventType) ?? new Set<string>();

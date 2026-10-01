@@ -44,17 +44,17 @@ test("TEST-CNS-960: GRD-RV-04 R1 con otra revocationRef sobre la misma decisión
   const A = fixtureUuid("r960-a");
   const B = fixtureUuid("r960-b");
   const C = fixtureUuid("r960-c");
-  const ports = await makePorts(D, "chain-960");
+  const ports = await makePorts(D, fixtureUuid("chain-960"));
 
-  const first = await requestRevocation(ports, T, { revocationRef: A, chainRef: "chain-960", revokedDecisionRef: D });
-  const attachedRequested = await requestRevocation(ports, T, { revocationRef: B, chainRef: "chain-960", revokedDecisionRef: D });
+  const first = await requestRevocation(ports, T, { revocationRef: A, chainRef: fixtureUuid("chain-960"), revokedDecisionRef: D });
+  const attachedRequested = await requestRevocation(ports, T, { revocationRef: B, chainRef: fixtureUuid("chain-960"), revokedDecisionRef: D });
   assert.equal(attachedRequested.revocationRef, A);
   assert.equal(attachedRequested.status, "REQUESTED");
   assert.equal(await ports.revocationRepo.findByRef(T, B), null, "no se crea fila para la adjunta");
   assert.equal((await ports.ledger.listByAggregate(T, "Revocation", B)).length, 0, "sin eventos para la adjunta");
 
   await verifyRevocationOtp(ports, T, A, fixtureUuid("v960"));
-  const attachedVerified = await requestRevocation(ports, T, { revocationRef: C, chainRef: "chain-960", revokedDecisionRef: D });
+  const attachedVerified = await requestRevocation(ports, T, { revocationRef: C, chainRef: fixtureUuid("chain-960"), revokedDecisionRef: D });
   assert.equal(attachedVerified.revocationRef, A);
   assert.equal(attachedVerified.status, "VERIFIED");
 
@@ -65,19 +65,19 @@ test("TEST-CNS-960: GRD-RV-04 R1 con otra revocationRef sobre la misma decisión
 
 test("TEST-CNS-961: GRD-RV-02 precede a GRD-RV-04: tras APPLIED (decisión REVOKED) una R1 nueva da ERR-RV-02, no se adjunta; otra decisión no se adjunta a la abierta", async () => {
   const D = fixtureUuid("d961");
-  const ports = await makePorts(D, "chain-961");
+  const ports = await makePorts(D, fixtureUuid("chain-961"));
   const A = fixtureUuid("r961-a");
-  await requestRevocation(ports, T, { revocationRef: A, chainRef: "chain-961", revokedDecisionRef: D });
+  await requestRevocation(ports, T, { revocationRef: A, chainRef: fixtureUuid("chain-961"), revokedDecisionRef: D });
   await verifyRevocationOtp(ports, T, A, fixtureUuid("v961"));
   await confirmRevocation(ports, T, A);
   await assert.rejects(
-    () => requestRevocation(ports, T, { revocationRef: fixtureUuid("r961-b"), chainRef: "chain-961", revokedDecisionRef: D }),
+    () => requestRevocation(ports, T, { revocationRef: fixtureUuid("r961-b"), chainRef: fixtureUuid("chain-961"), revokedDecisionRef: D }),
     (e: unknown) => e instanceof DomainError && e.code === "ERR-RV-02",
   );
 
   // Otra decisión GRANTED (ciclo nuevo) de otra cadena: crea, no se adjunta a la abierta de D.
   const D2 = fixtureUuid("d961-2");
-  await ports.consentDecisionRepo.save({ ...syntheticDecision(T, D2), chainRef: "chain-961-2" });
-  const created = await requestRevocation(ports, T, { revocationRef: fixtureUuid("r961-c"), chainRef: "chain-961-2", revokedDecisionRef: D2 });
+  await ports.consentDecisionRepo.save({ ...syntheticDecision(T, D2), chainRef: fixtureUuid("chain-961-2") });
+  const created = await requestRevocation(ports, T, { revocationRef: fixtureUuid("r961-c"), chainRef: fixtureUuid("chain-961-2"), revokedDecisionRef: D2 });
   assert.equal(created.revocationRef, fixtureUuid("r961-c"));
 });

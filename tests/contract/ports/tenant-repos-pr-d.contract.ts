@@ -101,7 +101,7 @@ export function runTenantReposPrDContract(adapterName: string, register: Registe
       expiresAt: new Date("2030-02-03T04:05:06.000Z"),
       recipientChannelRef: "contract+830@example.invalid",
       tokenHash: sha("tok:830-b"),
-      boundDecisionMakerRef: "dm-830",
+      boundDecisionMakerRef: fixtureUuid("dm-830"),
       enrollmentRef: fixtureUuid("enr:830"),
       participationRef: fixtureUuid("part:830"),
       reissueOfRef: fixtureUuid("inv:830-prev"),
@@ -144,9 +144,9 @@ export function runTenantReposPrDContract(adapterName: string, register: Registe
       assert.equal(await h.uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, a.parentRef, "DECISION")), null, state);
     }
 
-    const rights = otp(t, "831-r", { scope: "REVOCATION", parentRef: "chain-831", channelRef: "mgmt:chain-831" });
+    const rights = otp(t, "831-r", { scope: "REVOCATION", parentRef: fixtureUuid("chain-831"), channelRef: "mgmt:chain-831" });
     await h.uow.inTenant(t, (tx) => tx.otpRepo.save(rights));
-    assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, "chain-831", "REVOCATION")), rights);
+    assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, fixtureUuid("chain-831"), "REVOCATION")), rights);
   });
 
   register(name("TEST-CNS-832", "RightsCaseRepository: round-trip con y sin opcionales, upsert de estado, findOpenByChain (RESOLVED/WITHDRAWN no cuentan) y findByRefForUpdate"), async (h) => {
@@ -211,8 +211,8 @@ export function runTenantReposPrDContract(adapterName: string, register: Registe
   register(name("TEST-CNS-835", "TenantResolver.byHandleHash y TenantHandlePort: resuelven (tenant, cadena, decision) por hash o por handle en claro; desconocido o rotado = null"), async (h) => {
     const ta = fixtureUuid("t835-a");
     const tb = fixtureUuid("t835-b");
-    const seedA = { handle: "handle-835-a", chainRef: "chain-835-a", revokedDecisionRef: fixtureUuid("dec835-a") };
-    const seedB = { handle: "handle-835-b", chainRef: "chain-835-b", revokedDecisionRef: fixtureUuid("dec835-b") };
+    const seedA = { handle: "handle-835-a", chainRef: fixtureUuid("chain-835-a"), revokedDecisionRef: fixtureUuid("dec835-a") };
+    const seedB = { handle: "handle-835-b", chainRef: fixtureUuid("chain-835-b"), revokedDecisionRef: fixtureUuid("dec835-b") };
     await h.issueHandle(ta, seedA);
     await h.issueHandle(tb, seedB);
     const expectedA = { tenantId: ta, chainRef: seedA.chainRef, revokedDecisionRef: seedA.revokedDecisionRef };

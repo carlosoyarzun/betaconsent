@@ -16,7 +16,7 @@ export type RegisterAccessLogTest = (name: string, body: (h: AccessLogHarness) =
 function entry(tenantId: string, over: Partial<AccessLogEntry> = {}): AccessLogEntry {
   return {
     tenantId,
-    actorRef: "staff-synthetic-01",
+    actorRef: fixtureUuid("staff-synthetic-01"),
     actorRole: "RIGHTS_OPERATOR",
     action: "RIGHTS_CASE_READ",
     resourceType: "RIGHTS_CASE",
@@ -33,12 +33,12 @@ export function runAccessLogContract(adapterName: string, register: RegisterAcce
     const b = fixtureUuid("t918-b");
     await h.inTenant(a, async ({ accessLog }) => {
       await accessLog.record(entry(a, { resourceRef: fixtureUuid("c1") }));
-      await accessLog.record(entry(a, { actorRef: "staff-synthetic-03", actorRole: "APPROVER", resourceRef: fixtureUuid("c2") }));
+      await accessLog.record(entry(a, { actorRef: fixtureUuid("staff-synthetic-03"), actorRole: "APPROVER", resourceRef: fixtureUuid("c2") }));
     });
     const seen = await h.inTenant(a, ({ accessLog }) => accessLog.listByTenant(a));
     assert.deepEqual(seen.map((r) => [r.actorRef, r.actorRole, r.resourceRef]), [
-      ["staff-synthetic-01", "RIGHTS_OPERATOR", fixtureUuid("c1")],
-      ["staff-synthetic-03", "APPROVER", fixtureUuid("c2")],
+      [fixtureUuid("staff-synthetic-01"), "RIGHTS_OPERATOR", fixtureUuid("c1")],
+      [fixtureUuid("staff-synthetic-03"), "APPROVER", fixtureUuid("c2")],
     ]);
     assert.equal(seen[0]?.dataClass, "SYNTHETIC");
     assert.equal(seen[0]?.environment, "LOCAL");
