@@ -119,7 +119,7 @@ pgTest("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums
     await expectFail("INSERT INTO tenant_resolve.recovery_token (token_hash, tenant_id, recovery_ref, data_class) VALUES ($1, $2, 'r', 'REAL')", [hex("h808b"), t], "recovery_token_data_class_synthetic");
 
     // Enums, formas y pares.
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r', 'ch', 'COMPLETED')", [t], "revocation_status_enum");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r', 'ch', 'EXPIRED')", [t], "revocation_status_enum");
     await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, verified_auth_path) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'SMS')", [t], "revocation_auth_path_enum");
     await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, reason_code) VALUES ('dec', $1, 'r', 'ch', 'FAILED', 'OTHER')", [t], "revocation_reason_code_enum");
     await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, attested_case_ref) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'case')", [t], "revocation_attestation_pair");
