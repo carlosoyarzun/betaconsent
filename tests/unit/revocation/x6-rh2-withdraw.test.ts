@@ -64,7 +64,7 @@ test("TEST-CNS-1014 retiro RH2: otro staff (otro RIGHTS_OPERATOR, APPROVER, desc
   assert.deepEqual(await types(ports, revocationRef), []);
 });
 
-test("TEST-CNS-1015 retiro RH2: una propuesta no PENDING (ya aprobada, Revocation VERIFIED) o ya retirada se rechaza (ERR-CM-06 / ERR-CM-01) sin evento nuevo", async () => {
+test("TEST-CNS-1015 retiro RH2: una propuesta no PENDING (ya aprobada, Revocation VERIFIED) o ya retirada y reclamada por otro principal se rechaza (ERR-CM-06 / ERR-CM-01) sin evento nuevo", async () => {
   const { ports, revocationRef, caseRef, proposalRef } = await seed("1015");
   await approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_APPROVER }, true);
   assert.equal((await ports.revocationRepo.findByRef(T, revocationRef))?.status, "VERIFIED");
@@ -75,9 +75,9 @@ test("TEST-CNS-1015 retiro RH2: una propuesta no PENDING (ya aprobada, Revocatio
   const second = await seed("1015b");
   await withdrawCaseVerificationProposal(second.ports, RH2_ROSTER, T, second.revocationRef, second.caseRef, second.proposalRef, { principalRef: RH2_OPERATOR });
   await assert.rejects(
-    () => withdrawCaseVerificationProposal(second.ports, RH2_ROSTER, T, second.revocationRef, second.caseRef, second.proposalRef, { principalRef: RH2_OPERATOR }),
+    () => withdrawCaseVerificationProposal(second.ports, RH2_ROSTER, T, second.revocationRef, second.caseRef, second.proposalRef, { principalRef: OP2 }),
     code("ERR-CM-01"),
-    "WITHDRAWN es terminal: no se retira dos veces",
+    "ya retirada: otro principal sigue con ERR-CM-01",
   );
   assert.equal((await types(second.ports, second.revocationRef)).length, 1);
 });
@@ -104,4 +104,21 @@ test("TEST-CNS-1017 retiro RH2: tras el retiro la Revocation admite una propuest
   const approved = await approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, next, { principalRef: RH2_APPROVER }, true);
   assert.equal(approved.record.status, "VERIFIED");
   assert.deepEqual(await types(ports, revocationRef), ["REVOCATION_PROPOSAL_WITHDRAWN", "REVOCATION_VERIFIED"]);
+});
+
+test("TEST-CNS-1021 retiro RH2 idempotente (x-idempotency (revocationRef, proposal_ref)): repetir el retiro por el mismo proponente devuelve el mismo resultado sin evento nuevo; otro actor ERR-CM-01; tras avanzar la Revocation ERR-CM-06", async () => {
+  const { ports, revocationRef, caseRef, proposalRef } = await seed("1021");
+  const first = await withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR });
+  const again = await withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR });
+  assert.deepEqual(again, first);
+  assert.deepEqual(await types(ports, revocationRef), ["REVOCATION_PROPOSAL_WITHDRAWN"], "un solo evento");
+  for (const who of [OP2, RH2_APPROVER]) {
+    await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: who }), code("ERR-CM-01"));
+  }
+  await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, fixtureUuid("otra"), { principalRef: RH2_OPERATOR }), code("ERR-CM-01"));
+  const next = fixtureUuid("p-1021-nueva");
+  await proposeCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, { principalRef: RH2_OPERATOR }, { proposalRef: next, verificationScriptVersion: "guion-2" });
+  await approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, next, { principalRef: RH2_APPROVER }, true);
+  await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR }), code("ERR-CM-06"));
+  assert.equal((await types(ports, revocationRef)).filter((e) => e === "REVOCATION_PROPOSAL_WITHDRAWN").length, 1);
 });

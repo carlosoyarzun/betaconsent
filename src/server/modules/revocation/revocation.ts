@@ -268,7 +268,18 @@ export async function withdrawCaseVerificationProposalTx(
   const base = await revocationSequence(p, tenantId, revocationRef);
   const found = await requireRevocation(p, tenantId, revocationRef);
   if (found.caseRef !== caseRef) throw new DomainError("ERR-CM-01");
-  if (!found.proposal || found.proposal.proposalRef !== proposalRef) throw new DomainError("ERR-CM-01"); // inexistente, ajena o ya retirada: uniforme
+  if (!found.proposal || found.proposal.proposalRef !== proposalRef) {
+    // Idempotencia (x-idempotency: (revocationRef, proposal_ref)): ya retirada por este mismo principal -> mismo resultado, sin evento nuevo.
+    const prior = (await p.ledger.listByAggregate(tenantId, "Revocation", revocationRef)).find(
+      (e) => e.eventType === "REVOCATION_PROPOSAL_WITHDRAWN" && (e.payload as Record<string, unknown>).proposalRef === proposalRef,
+    );
+    if (prior && (prior.payload as Record<string, unknown>).withdrawnByRef === actor.principalRef) {
+      await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
+      if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06");
+      return found;
+    }
+    throw new DomainError("ERR-CM-01"); // inexistente, ajena, o retirada por otro principal: uniforme
+  }
   await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
   if (actor.principalRef !== found.proposal.proposedByRef) throw new DomainError("ERR-RV-07"); // solo el proponente retira
   if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // propuesta ya no PENDING (aprobada/Revocation avanzada)

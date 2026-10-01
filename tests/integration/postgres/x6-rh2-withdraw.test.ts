@@ -52,7 +52,7 @@ async function seed(ports: RevocationPorts, tenantId: string, label: string) {
   return { revocationRef, caseRef, proposalRef };
 }
 
-pgTest("TEST-CNS-1019 pg: retiro RH2 limpia la propuesta (columnas NULL), registra REVOCATION_PROPOSAL_WITHDRAWN (CHECK de 0017), no cambia el estado; aprobar tras retiro falla y una propuesta nueva se aprueba hasta VERIFIED", async (ctx) => {
+pgTest("TEST-CNS-1019 y 1022 pg: retiro RH2 limpia la propuesta (columnas NULL), registra REVOCATION_PROPOSAL_WITHDRAWN (CHECK de 0017), no cambia el estado; aprobar tras retiro falla y una propuesta nueva se aprueba hasta VERIFIED", async (ctx) => {
   const T = fixtureUuid("t1019");
   const admin = await ctx.connectAsSuperuser();
   try {
@@ -70,7 +70,11 @@ pgTest("TEST-CNS-1019 pg: retiro RH2 limpia la propuesta (columnas NULL), regist
       assert.deepEqual(events[0]!.payload, { revocationRef, caseRef, proposalRef, verificationScriptVersion: "guion-1", withdrawnByRef: RH2_OPERATOR });
 
       await assert.rejects(() => approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_APPROVER }, true), code("ERR-CM-01"));
-      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR }), code("ERR-CM-01"));
+      // TEST-CNS-1022: repetir el retiro por el mismo proponente es idempotente (sin evento nuevo); otro principal ERR-CM-01.
+      const replay = await withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR });
+      assert.equal(replay.status, "REQUESTED");
+      assert.equal((await ports.ledger.listByAggregate(T, "Revocation", revocationRef)).length, 1, "sin segundo evento");
+      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: fixtureUuid("rh2-operator-2") }), code("ERR-CM-01"));
       await assert.rejects(() => proposeCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, { principalRef: RH2_OPERATOR }, { proposalRef, verificationScriptVersion: "guion-1" }), code("ERR-CM-06"));
 
       const next = fixtureUuid("p-1019-nueva");

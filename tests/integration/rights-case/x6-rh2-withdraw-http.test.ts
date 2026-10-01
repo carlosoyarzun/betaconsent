@@ -215,7 +215,11 @@ test("TEST-CNS-1018: retiro RH2 HTTP: el proponente retira (200 WITHDRAWN, Revoc
     assert.deepEqual(events.map((e) => e.eventType), ["REVOCATION_PROPOSAL_WITHDRAWN"]);
     assert.equal((events[0]!.payload as Record<string, unknown>).withdrawnByRef, OP1, "withdrawnByRef = principal de la sesion CASE");
 
-    assert.equal((await post(fx.baseUrl, withdraw, op1, {})).status, 404, "ya retirada");
+    const replay = await post(fx.baseUrl, withdraw, op1, {});
+    assert.equal(replay.status, 200, "idempotente: mismo proponente");
+    assert.deepEqual(await replay.json(), ack);
+    assert.equal((await fx.revocationPorts.revocation.ledger.listByAggregate(TENANT_ID, "Revocation", fx.revocationRef)).length, 1, "sin evento nuevo");
+    assert.equal((await post(fx.baseUrl, withdraw, op2, {})).status, 404, "ya retirada: otro operador");
     assert.equal((await post(fx.baseUrl, `${base}/${proposalRef}/approval`, approver, STEP_UP)).status, 404, "aprobar tras retiro");
     assert.equal((await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef))?.status, "REQUESTED");
 
