@@ -107,6 +107,11 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       // Reintento con la misma clave: devuelve el existente aunque expectedSequence ya no coincida.
       const again = await ledger.append(event(t, agg, { expectedSequence: 1, idempotencyKey: "k-782" }));
       assert.equal(again.sequence, 2);
+      // sequence = expectedSequence + 1 sin huecos: una expectedSequence en el futuro tambien es conflicto.
+      await assert.rejects(
+        () => ledger.append(event(t, agg, { expectedSequence: 5 })),
+        (e: unknown) => e instanceof LedgerSequenceConflictError && e.expectedSequence === 5 && e.actualSequence === 2,
+      );
       assert.equal((await ledger.listByAggregate(t, "Revocation", agg)).length, 2, "ni el conflicto ni el replay escribieron");
     });
   });
