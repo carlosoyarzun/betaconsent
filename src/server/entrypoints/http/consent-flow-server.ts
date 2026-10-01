@@ -3,7 +3,7 @@
 // puro (sin frameworks, sin dependencias nuevas), análogo a server.ts (RC2u).
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
@@ -526,7 +526,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     staffIdentity,
   };
 
-  return createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0] ?? "";
 
@@ -975,5 +975,34 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
     }
     writeResult(res, config, result);
+  };
+
+  // SEC-CNS-017 F1: catch global. Un rechazo no capturado del callback async mata el proceso en Node
+  // 24 e imprime el error de pg completo (detail/valores de fila = posible PII). Respuesta 500
+  // uniforme sin message/detail; se registra solo `name` y `code` (nunca message/stack/detail).
+  return createServer((req: IncomingMessage, res: ServerResponse) => {
+    handleRequest(req, res).catch((error: unknown) => {
+      const e = error as { name?: unknown; code?: unknown } | null;
+      const name = typeof e?.name === "string" ? e.name.slice(0, 60) : "UnknownError";
+      const code = typeof e?.code === "string" ? e.code.slice(0, 20) : undefined;
+      console.error(`request_failed name=${name}${code ? ` code=${code}` : ""}`);
+      try {
+        if (res.headersSent) {
+          res.destroy();
+          return;
+        }
+        const wantsHtml = (headerValue(req.headers.accept) ?? "").includes("text/html");
+        if (wantsHtml) {
+          writeHtmlSecurityHeaders(res);
+          res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
+          res.end("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><title>Error</title></head><body><p>Error interno.</p></body></html>");
+        } else {
+          res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ code: "INTERNAL_ERROR", status: 500, correlationId: randomUUID() }));
+        }
+      } catch {
+        res.destroy();
+      }
+    });
   });
 }
