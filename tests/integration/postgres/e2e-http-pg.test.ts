@@ -36,7 +36,7 @@ import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revoc
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { applyLocalFixtures, loadLocalFixtures } from "../../../src/infra/adapters/postgres/local-fixtures.ts";
-import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
+import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, LOCAL_ONLY_DEV_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { listOutboxEnvelopes } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
@@ -397,10 +397,10 @@ pgTest("TEST-CNS-889 e2e pg: /ready con RECIPIENT_CHANNEL responde 422 uniforme 
         headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": c["__Host-cns-staff-csrf"]!, cookie: jar, ...extra },
         body: JSON.stringify(body),
       });
-    const enrolled = await staffPost("/staff/enrollments", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF });
+    const enrolled = await staffPost("/staff/enrollments", { subjectRef: LOCAL_ONLY_DEV_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF });
     assert.equal(enrolled.status, 201, await enrolled.clone().text());
     const { enrollmentRef } = (await enrolled.json()) as { enrollmentRef: string };
-    const invited = await staffPost("/staff/invitations", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef }, { "idempotency-key": "pg-889-idem-key-0001" });
+    const invited = await staffPost("/staff/invitations", { subjectRef: LOCAL_ONLY_DEV_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef }, { "idempotency-key": "pg-889-idem-key-0001" });
     assert.equal(invited.status, 201, await invited.clone().text());
     const { invitationRef } = (await invited.json()) as { invitationRef: string };
 
