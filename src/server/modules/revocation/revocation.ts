@@ -283,7 +283,7 @@ export async function withdrawCaseVerificationProposalTx(
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "RIGHTS_OPERATOR",
-    payload: { revocationRef, caseRef, proposalRef, withdrawnByRef: actor.principalRef },
+    payload: { revocationRef, caseRef, proposalRef, verificationScriptVersion: found.proposal.verificationScriptVersion, withdrawnByRef: actor.principalRef },
     idempotencyKey: `${revocationRef}:rh2w:${proposalRef}`,
   });
   return withdrawn;

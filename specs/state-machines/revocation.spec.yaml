@@ -311,7 +311,7 @@ transitions:
       - "CA-128 X6 P2 (Carlos, 2026-10-01): solo el proponente retira, solo mientras la propuesta está PENDING (Revocation REQUESTED); la propuesta queda WITHDRAWN (terminal: no aprobable ni reutilizable por proposalRef)."
       - "No cambia el estado de la Revocation (REQUESTED -> REQUESTED) y nunca produce FAILED (INV-6: FAILED solo por R8); la Revocation queda disponible para una nueva propuesta RH2."
     emits: [REVOCATION_PROPOSAL_WITHDRAWN]
-    payloadValues: {revocationRef: required, caseRef: required, proposalRef: required, withdrawnByRef: proposer}
+    payloadValues: {revocationRef: required, caseRef: required, proposalRef: required, verificationScriptVersion: required, withdrawnByRef: proposer}
     idempotencyKey: "(revocationRef, proposal_ref)"
     errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13]
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09", "SEC-CNS-013"]
@@ -975,7 +975,7 @@ events:
   - id: REVOCATION_PROPOSAL_WITHDRAWN
     stream: LEDGER
     emittedBy: [RH2w]
-    payload: [revocationRef, caseRef, proposalRef, withdrawnByRef] # solo refs UUIDv4; withdrawnByRef = proposedByRef (solo el proponente retira, solo PENDING); la propuesta queda WITHDRAWN (terminal) y la Revocation sigue REQUESTED, nunca FAILED (INV-6)
+    payload: [revocationRef, caseRef, proposalRef, verificationScriptVersion, withdrawnByRef] # solo refs UUIDv4; withdrawnByRef = proposedByRef (solo el proponente retira, solo PENDING); la propuesta queda WITHDRAWN (terminal) y la Revocation sigue REQUESTED, nunca FAILED (INV-6)
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09"]
     testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020]
   - id: RECOVERY_TOKEN_ISSUED

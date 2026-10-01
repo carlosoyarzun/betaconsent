@@ -852,6 +852,11 @@
         "proposalRef": {
           "$ref": "common.schema.json#/$defs/Ref"
         },
+        "verificationScriptVersion": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,32}$",
+          "description": "Guion versionado de la propuesta retirada, leído de la fila antes de limpiarla (LD-02: el sistema lo registra, no evalúa su suficiencia)."
+        },
         "withdrawnByRef": {
           "$ref": "common.schema.json#/$defs/Ref",
           "description": "Principal RIGHTS_OPERATOR que propuso y retira (= proposedByRef de la propuesta). Derivado de la sesión CASE, nunca del body (GRD-CM-07)."
@@ -861,6 +866,7 @@
         "revocationRef",
         "caseRef",
         "proposalRef",
+        "verificationScriptVersion",
         "withdrawnByRef"
       ],
       "description": "Retiro de una propuesta RH2 PENDING por su proponente (API-CNS-140). Estado terminal de la propuesta (WITHDRAWN); NO transiciona la Revocation ni produce FAILED (INV-6). Solo refs opacas, cero PII."

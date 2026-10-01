@@ -40,7 +40,7 @@ test("TEST-CNS-1013 retiro RH2: el proponente retira su propuesta PENDING; queda
   assert.equal((await ports.revocationRepo.findByRef(T, revocationRef))?.proposal, undefined);
   const events = (await ports.ledger.listByAggregate(T, "Revocation", revocationRef)).filter((e) => e.eventType === "REVOCATION_PROPOSAL_WITHDRAWN");
   assert.equal(events.length, 1);
-  assert.deepEqual(events[0]!.payload, { revocationRef, caseRef, proposalRef, withdrawnByRef: RH2_OPERATOR });
+  assert.deepEqual(events[0]!.payload, { revocationRef, caseRef, proposalRef, verificationScriptVersion: "guion-1", withdrawnByRef: RH2_OPERATOR });
   assert.ok(validateLedgerEventPayload("REVOCATION_PROPOSAL_WITHDRAWN", events[0]!.payload).ok);
   assert.deepEqual(await types(ports, revocationRef), ["REVOCATION_PROPOSAL_WITHDRAWN"], "ningun REVOCATION_FAILED ni otro evento");
   // Contrato: la whitelist derivada y assertLedgerPayload lo validan; PII o campo extra no.
@@ -48,6 +48,7 @@ test("TEST-CNS-1013 retiro RH2: el proponente retira su propuesta PENDING; queda
   const p = events[0]!.payload as Record<string, unknown>;
   assert.throws(() => assertLedgerPayload("REVOCATION_PROPOSAL_WITHDRAWN", { ...p, withdrawnByRef: "operador@example.invalid" }), LedgerPayloadViolationError);
   assert.throws(() => assertLedgerPayload("REVOCATION_PROPOSAL_WITHDRAWN", { ...p, reason: "texto libre" }), LedgerPayloadViolationError);
+  assert.throws(() => assertLedgerPayload("REVOCATION_PROPOSAL_WITHDRAWN", { ...p, verificationScriptVersion: "guion con espacios" }), LedgerPayloadViolationError);
   const { withdrawnByRef: _w, ...incomplete } = p;
   assert.throws(() => assertLedgerPayload("REVOCATION_PROPOSAL_WITHDRAWN", incomplete), LedgerPayloadViolationError);
 });

@@ -67,7 +67,7 @@ pgTest("TEST-CNS-1019 pg: retiro RH2 limpia la propuesta (columnas NULL), regist
       assert.deepEqual(row, { status: "REQUESTED", proposal_ref: null, proposed_by_ref: null, verification_script_version: null, second_approver_ref: null });
       const events = await ports.ledger.listByAggregate(T, "Revocation", revocationRef);
       assert.deepEqual(events.map((e) => e.eventType), ["REVOCATION_PROPOSAL_WITHDRAWN"]);
-      assert.deepEqual(events[0]!.payload, { revocationRef, caseRef, proposalRef, withdrawnByRef: RH2_OPERATOR });
+      assert.deepEqual(events[0]!.payload, { revocationRef, caseRef, proposalRef, verificationScriptVersion: "guion-1", withdrawnByRef: RH2_OPERATOR });
 
       await assert.rejects(() => approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_APPROVER }, true), code("ERR-CM-01"));
       await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR }), code("ERR-CM-01"));
