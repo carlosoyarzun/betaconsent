@@ -7,9 +7,8 @@
 // funcion SECURITY DEFINER tenant_resolve.by_*_hash. Devuelve solo (tenantId, ref opaca);
 // desconocido => null (respuesta uniforme). No evalua consumo ni expiracion.
 //
-// byInvitationTokenHash y byHandleHash quedan fuera de PR-C (sus tablas llegan en PR-D): lanzan
-// en vez de devolver null, para que un cableado prematuro no confunda "no implementado" con
-// "desconocido".
+// CA-124 PR-D: byInvitationTokenHash (tenant_resolve.by_invitation_token_hash) y byHandleHash
+// (tenant_resolve.by_handle_hash, 0011) completan el puerto; el handle rotado ya no resuelve.
 
 import type {
   ResolvedInvitationToken,
@@ -17,42 +16,57 @@ import type {
   ResolvedTenantHandle,
   TenantResolverPort,
 } from "../../../server/ports/tenant-resolver.port.ts";
+import type { ChainRef } from "../../../server/modules/common/types.ts";
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-export class TenantResolverNotImplementedError extends Error {
-  constructor(method: string) {
-    super(`PgTenantResolver.${method} no está implementado todavía (CA-124 PR-D).`);
-    this.name = "TenantResolverNotImplementedError";
+async function resolveOne<R, T>(
+  pool: PoolLike,
+  hash: string,
+  sql: string,
+  map: (row: R) => T,
+): Promise<T | null> {
+  // Un hash que no es SHA-256 hex no puede existir: sin viaje a la base.
+  if (!SHA256_HEX.test(hash)) return null;
+  const client = await acquireCleanClient(pool);
+  try {
+    const r = await client.query<R>(sql, [hash]);
+    const row = r.rows[0];
+    client.release();
+    return row ? map(row) : null;
+  } catch (error) {
+    client.release(true);
+    throw error;
   }
 }
 
 export function createPgTenantResolver(pool: PoolLike): TenantResolverPort {
   return {
-    async byInvitationTokenHash(): Promise<ResolvedInvitationToken | null> {
-      throw new TenantResolverNotImplementedError("byInvitationTokenHash");
+    byInvitationTokenHash(tokenHash: string): Promise<ResolvedInvitationToken | null> {
+      return resolveOne<{ tenant_id: string; invitation_ref: string }, ResolvedInvitationToken>(
+        pool,
+        tokenHash,
+        "SELECT tenant_id, invitation_ref FROM tenant_resolve.by_invitation_token_hash($1)",
+        (row) => ({ tenantId: row.tenant_id, invitationRef: row.invitation_ref }),
+      );
     },
-    async byRecoveryTokenHash(tokenHash: string): Promise<ResolvedRecoveryToken | null> {
-      // Un hash que no es SHA-256 hex no puede existir: sin viaje a la base.
-      if (!SHA256_HEX.test(tokenHash)) return null;
-      const client = await acquireCleanClient(pool);
-      try {
-        const r = await client.query<{ tenant_id: string; recovery_ref: string }>(
-          "SELECT tenant_id, recovery_ref FROM tenant_resolve.by_recovery_token_hash($1)",
-          [tokenHash],
-        );
-        const row = r.rows[0];
-        client.release();
-        return row ? { tenantId: row.tenant_id, recoveryRef: row.recovery_ref } : null;
-      } catch (error) {
-        client.release(true);
-        throw error;
-      }
+    byRecoveryTokenHash(tokenHash: string): Promise<ResolvedRecoveryToken | null> {
+      return resolveOne<{ tenant_id: string; recovery_ref: string }, ResolvedRecoveryToken>(
+        pool,
+        tokenHash,
+        "SELECT tenant_id, recovery_ref FROM tenant_resolve.by_recovery_token_hash($1)",
+        (row) => ({ tenantId: row.tenant_id, recoveryRef: row.recovery_ref }),
+      );
     },
-    async byHandleHash(): Promise<ResolvedTenantHandle | null> {
-      throw new TenantResolverNotImplementedError("byHandleHash");
+    byHandleHash(handleHash: string): Promise<ResolvedTenantHandle | null> {
+      return resolveOne<{ tenant_id: string; chain_ref: string; revoked_decision_ref: string }, ResolvedTenantHandle>(
+        pool,
+        handleHash,
+        "SELECT tenant_id, chain_ref, revoked_decision_ref FROM tenant_resolve.by_handle_hash($1)",
+        (row) => ({ tenantId: row.tenant_id, chainRef: row.chain_ref as ChainRef, revokedDecisionRef: row.revoked_decision_ref }),
+      );
     },
   };
 }

@@ -21,6 +21,7 @@ import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/i
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 import { loadTransitionErrorsIndex } from "../../../tools/spec-checks/transition-errors-index.ts";
 
 const SPEC_DIR = resolve(import.meta.dirname, "../../../specs/state-machines");
@@ -57,7 +58,7 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  const ports: RightsCasePorts = { tenantHandle, rightsCaseRepo, revocationRepo, ledger };
+  const ports: RightsCasePorts = { tenantHandle, rightsCaseRepo, revocationRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo, revocationRepo }).uow };
 
   // Caso A: origin != CHANNEL_UNREACHABLE (GRD-RC-07 no se cumple).
   await rightsCaseRepo.save({

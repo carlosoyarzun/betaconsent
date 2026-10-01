@@ -17,18 +17,25 @@ import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryOtpVerificationRepository } from "../../../src/infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import { createInMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
+
 const CHANNEL_REF = "test+channel-1@example.invalid";
 
 function makeOtpPorts(ledger = createInMemoryLedgerAdapter()): { invitationPorts: InvitationPorts; otpPorts: OtpChallengePorts } {
+  const invitationRepo = createInMemoryInvitationRepository();
+  const otpRepo = createInMemoryOtpVerificationRepository();
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo });
   const invitationPorts: InvitationPorts = {
-    invitationRepo: createInMemoryInvitationRepository(),
+    invitationRepo,
     eligibility: createInMemoryEligibilityAdapter(),
     ledger,
+    ...tenancy,
   };
   const otpPorts: OtpChallengePorts = {
-    otpRepo: createInMemoryOtpVerificationRepository(),
+    otpRepo,
     channel: createInMemoryOtpChannelSink(),
     ledger,
+    uow: tenancy.uow,
     invitation: invitationPorts,
     policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),

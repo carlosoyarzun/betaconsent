@@ -35,9 +35,12 @@ export function createInMemoryRecoveryTokenRepository(): InMemoryRecoveryTokenRe
       byKey.set(key(record.tenantId, record.recoveryRef), { ...record });
     },
     async consume(tenantId, recoveryRef) {
+      // Atomico (SEC-CNS-015 P2-D): sin await entre la comprobacion y la escritura, y la UoW
+      // in-memory serializa las unidades; solo el primer llamador ve `true`.
       const found = byKey.get(key(tenantId, recoveryRef));
-      if (!found) return;
+      if (!found || found.consumedAt) return false;
       byKey.set(key(tenantId, recoveryRef), { ...found, consumedAt: new Date() });
+      return true;
     },
   };
 }

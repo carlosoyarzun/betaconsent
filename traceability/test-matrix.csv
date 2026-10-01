@@ -339,3 +339,24 @@ TEST-CNS-823,integration,tests/integration/postgres/concurrency.test.ts,"pg: GRD
 TEST-CNS-824,integration,tests/integration/postgres/concurrency.test.ts,"pg: GRD-RV-04 UNIQUE parcial por decisión, revoked_decision_ref NOT NULL, R1 concurrentes: perdedor ERR-CM-06","CA-124;PR-C;SEC-CNS-015 P1-2;GRD-RV-04",ACTIVE
 TEST-CNS-825,integration,tests/integration/postgres/concurrency.test.ts,"pg: R1 ∥ R1r misma decisión: una sola revocación abierta y un solo CONSENT_REVOKED/recibo/outbox","CA-124;PR-C;SEC-CNS-015 P1-2;GRD-RV-04",ACTIVE
 TEST-CNS-826,unit,tests/unit/revocation/r4-expected-sequence.test.ts,"token con hash distinto del pedido no es elegible aunque el resolver lo apunte","CA-124;PR-C;SEC-CNS-015 P2-A;GRD-RV-06",ACTIVE
+TEST-CNS-830,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"InvitationRepository: round-trip, upsert, ForUpdate, findActiveBySubject","CA-124;PR-D;invitation.spec GRD-IV-01",ACTIVE
+TEST-CNS-831,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"OtpVerificationRepository: round-trip, findActiveByParent, ForUpdate","CA-124;PR-D;otp-challenge.spec GRD-OT-08",ACTIVE
+TEST-CNS-832,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"RightsCaseRepository: round-trip, findOpenByChain, ForUpdate","CA-124;PR-D;rights-case.spec GRD-RC-02",ACTIVE
+TEST-CNS-833,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"EnrollmentRepository: round-trip y findActive","CA-124;PR-D;tenant-context.spec GRD-TC-03",ACTIVE
+TEST-CNS-834,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"TenantResolver.byInvitationTokenHash sin tenant previo","CA-124;PR-D;GRD-IV-07;ADR-006 §4",ACTIVE
+TEST-CNS-835,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"TenantResolver.byHandleHash y TenantHandlePort (rotado = null)","CA-124;PR-D;GRD-CM-01;GRD-RC-14",ACTIVE
+TEST-CNS-836,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"aislamiento A->B de los repos de PR-D (X5)","CA-124;PR-D;INV-CM-02;INV-3",ACTIVE
+TEST-CNS-837,contract,tests/contract/ports/tenant-repos-pr-d.test.ts,"atomicidad de los repos de PR-D y del registro del resolver","CA-124;PR-D;INV-CM-01",ACTIVE
+TEST-CNS-838,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: FORCE RLS, policies, grants por columna, identidad inmutable (4 tablas)","CA-124;PR-D;ADR-006",ACTIVE
+TEST-CNS-839,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: CHECK SYNTHETIC/enums/formas y email reservado en columnas de contacto o destino","CA-124;PR-D;SEC-CNS-015 P2-B",ACTIVE
+TEST-CNS-840,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: tenant_resolve invitation_token/handle SECURITY DEFINER, tenant desde la tx","CA-124;PR-D;SEC-CNS-012 P1-2",ACTIVE
+TEST-CNS-841,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: unicos parciales GRD-IV-01/OT-08/RC-02/TC-03 y reintento del UoW","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-842,unit,tests/unit/common/p2e-expected-sequence.test.ts,"otp V3: expectedSequence capturada antes del lock; si el agregado avanza, conflicto y nada queda VERIFIED","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-843,unit,tests/unit/common/p2e-expected-sequence.test.ts,"decision C3/C5: appends base+k (sequencedAppender) y conflicto si el agregado avanza tras la base","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-844,unit,tests/unit/common/p2e-expected-sequence.test.ts,"rights-case RC2u/RC4-6: expectedSequence previa al lock y conflicto si el caso avanza; RIGHTS_CASE_CLOSED tras RC2u","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-845,integration,tests/integration/postgres/p2e-races.test.ts,"pg: OTP verify ∥ verify: una gana, la otra ERR-OT-03, sin conflicto de secuencia (FOR UPDATE + base previa)","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-846,integration,tests/integration/postgres/p2e-races.test.ts,"pg: submit de decision ∥ submit: una decide, la otra ERR-CD-08, secuencia contigua e I6 atomica","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-847,integration,tests/integration/postgres/p2e-races.test.ts,"pg: RC2u ∥ RC2u: un solo RIGHTS_CASE_CONTACTING, ambas ven CONTACTING","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-848,integration,tests/integration/postgres/p2e-races.test.ts,"pg: dos POST con el mismo token de recuperacion: uno gana, el otro UNIFORM sin efectos (P2-D)","CA-124;PR-D;SEC-CNS-015 P2-D",ACTIVE
+TEST-CNS-849,integration,tests/integration/postgres/p2e-races.test.ts,"pg: N submits OTP incorrectos concurrentes: attempts=N, LOCKED en maxAttempts, un solo OTP_LOCKED (GRD-OT-04)","CA-124;PR-D;SEC-CNS-016 C2",ACTIVE
+TEST-CNS-850,unit,tests/unit/otp-challenge/otp-expired-reissue.test.ts,"V1 con el challenge activo expirado lo vence y emite uno nuevo con ref fresca","CA-124;PR-D;SEC-CNS-016 P2-3;otp-challenge.spec V5",ACTIVE

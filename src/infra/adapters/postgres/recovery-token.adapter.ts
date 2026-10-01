@@ -83,12 +83,17 @@ export function createPgRecoveryTokenRepository(tx: TenantTx): RecoveryTokenRepo
       await tx.query("SELECT tenant_resolve.register_recovery_token($1, $2)", [record.tokenHash, record.recoveryRef]);
     },
     async consume(tenantId, recoveryRef) {
-      // Un solo uso: conserva el primer consumed_at. Bajo RLS, otro tenant afecta 0 filas (no-op).
-      await tx.query(
-        `UPDATE app.recovery_token SET consumed_at = COALESCE(consumed_at, pg_catalog.now())
-          WHERE tenant_id = $1 AND recovery_ref = $2`,
+      // Consumo ATOMICO de un solo uso (SEC-CNS-015 P2-D): una sola sentencia UPDATE ... WHERE
+      // consumed_at IS NULL RETURNING. Dos POST concurrentes con el mismo token se serializan en el
+      // lock de fila; el segundo re-evalua el WHERE (READ COMMITTED), no encuentra fila y recibe
+      // `false`. Bajo RLS, otro tenant o una ref inexistente tambien devuelven `false`.
+      const r = await tx.query(
+        `UPDATE app.recovery_token SET consumed_at = pg_catalog.now()
+          WHERE tenant_id = $1 AND recovery_ref = $2 AND consumed_at IS NULL
+          RETURNING recovery_ref`,
         [tenantId, recoveryRef],
       );
+      return r.rows.length === 1;
     },
   };
 }

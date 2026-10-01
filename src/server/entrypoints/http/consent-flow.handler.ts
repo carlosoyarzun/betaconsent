@@ -373,9 +373,11 @@ export async function handleRequestOtp(
   const invitation = await ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
-  const verificationRef = session.verificationRef ?? randomUUID();
+  let verificationRef = session.verificationRef ?? randomUUID();
   try {
-    await requestOtp(ports.otp, session.tenantId, verificationRef, session.invitationRef, invitation.recipientChannelRef);
+    // La sesion guarda la ref del challenge VIGENTE: si el activo expiro, V1 emite uno nuevo (otp-challenge.spec V5).
+    const record = await requestOtp(ports.otp, session.tenantId, verificationRef, session.invitationRef, invitation.recipientChannelRef);
+    verificationRef = record.verificationRef;
   } catch (err) {
     if (!(err instanceof DomainError)) throw err;
     // ERR-OT-01/ERR-OT-08: x-uniform-response, no se distingue del éxito (202 igual).

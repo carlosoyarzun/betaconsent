@@ -9,20 +9,28 @@
 
 import type { TenantId } from "../modules/common/types.ts";
 import type { ConsentDecisionRepositoryPort } from "./consent-decision-repository.port.ts";
+import type { EnrollmentRepositoryPort } from "./enrollment-repository.port.ts";
+import type { InvitationRepositoryPort } from "./invitation-repository.port.ts";
 import type { LedgerPort } from "./ledger.port.ts";
+import type { OtpVerificationRepositoryPort } from "./otp-verification-repository.port.ts";
 import type { OutboxPort } from "./outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "./recovery-token.port.ts";
 import type { RevocationRepositoryPort } from "./revocation-repository.port.ts";
+import type { RightsCaseRepositoryPort } from "./rights-case-repository.port.ts";
 
 /**
  * Puertos ligados a UN tenant y a UNA unidad de trabajo. Todo lo que se escribe a través de
- * ellos dentro de `inTenant` confirma junto o no deja nada. Otros agregados (Invitation,
- * OtpVerification, RightsCase, ...) se suman en las PR que los migran (PR-C/PR-D del diseño).
+ * ellos dentro de `inTenant` confirma junto o no deja nada (CA-124 PR-D: todos los agregados con
+ * estado de tenant: Invitation, OtpVerification, RightsCase y Enrollment se suman a los de PR-C).
  */
 export interface TenantTxPorts {
   readonly revocationRepo: RevocationRepositoryPort;
   readonly consentDecisionRepo: ConsentDecisionRepositoryPort;
   readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
+  readonly invitationRepo: InvitationRepositoryPort;
+  readonly otpRepo: OtpVerificationRepositoryPort;
+  readonly rightsCaseRepo: RightsCaseRepositoryPort;
+  readonly enrollmentRepo: EnrollmentRepositoryPort;
   readonly ledger: LedgerPort;
   readonly outbox: OutboxPort;
 }

@@ -541,7 +541,8 @@ async function applyRevocationTx(
       ...(verifiedAuthPath === "RECOVERY" ? { recoveryMethod: verifiedRecoveryMethod } : {}),
       originPurposeRef: "ALL", // scope ALL en IT0; mismo valor que REVOCATION_REQUESTED.
     },
-    idempotencyKey: revocationRef,
+    // ":r4": la key plana colisionaba con otros eventos del agregado; sigue deduplicando los reintentos de R4 (SEC-CNS-016 P2-5).
+    idempotencyKey: `${revocationRef}:r4`,
   });
   // Recibo de la revocación: receiptRef = revocationRef, el mismo "Comprobante" que muestra la
   // UI de autoservicio/recuperación. managementLinkIssued=false (IT0: sin management_token).
@@ -915,8 +916,13 @@ async function revokeWithRecoveryLinkTx(
     return { kind: "UNIFORM" };
   }
 
-  // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto.
-  await ports.recoveryTokenRepo.consume(tenantId, tokenRecord.recoveryRef);
+  // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto. El consumo es
+  // atómico (SEC-CNS-015 P2-D): solo UN llamador lo consume; si `consume` devuelve false otro POST
+  // concurrente (o uno previo) ya lo usó entre la lectura de elegibilidad y este punto, y la
+  // respuesta es UNIFORM (ERR-RV-05) sin ningún efecto ni evento (nada se escribió antes).
+  if (!(await ports.recoveryTokenRepo.consume(tenantId, tokenRecord.recoveryRef))) {
+    return { kind: "UNIFORM" };
+  }
 
   let record: RevocationRecord;
   if (!existing) {

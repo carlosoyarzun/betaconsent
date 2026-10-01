@@ -1,6 +1,6 @@
 // Gobierna: specs/state-machines/otp-challenge.spec.yaml (aggregateType
 // DecisionMakerVerification). Puerto (ADR-001 §11): proyección del ledger para el agregado.
-// Adaptador in-memory en IT0.
+// Adaptadores in-memory y Postgres (CA-124 PR-D).
 //
 // CA-116 (revocación IT0, UX-CNS-004): scope ahora incluye REVOCATION/MANAGE (padre = chainRef,
 // routeClass RIGHTS), además de DECISION (padre = invitationRef). Ver otp-challenge.ts
@@ -32,6 +32,9 @@ export interface OtpVerificationRecord {
 
 export interface OtpVerificationRepositoryPort {
   findByRef(tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord | null>;
+  /** Como `findByRef` con lock de fila hasta el fin de la unidad de trabajo (FOR UPDATE; SEC-CNS-015
+   * P2-E): V2/V3/V4/V2r deciden sobre el estado bloqueado. In-memory: equivalente a `findByRef`. */
+  findByRefForUpdate(tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord | null>;
   /** GRD-OT-08: uno activo por (tenantId, parentRef, scope). */
   findActiveByParent(tenantId: TenantId, parentRef: string, scope: OtpScope): Promise<OtpVerificationRecord | null>;
   save(record: OtpVerificationRecord): Promise<void>;

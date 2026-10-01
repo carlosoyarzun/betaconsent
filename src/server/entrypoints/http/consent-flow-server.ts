@@ -161,11 +161,13 @@ export function createDefaultStaffConsolePorts(
   policy?: InvitationIssuancePolicy,
 ): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink; readonly catalog: FixtureTenantCatalogPort } {
   const enrollmentRepo = createInMemoryEnrollmentRepository();
+  // CA-124: UoW de EN0 sobre el MISMO enrollmentRepo (y el ledger/invitationRepo compartidos).
+  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo });
   const tenantCatalog = createInMemoryTenantCatalogAdapter();
   const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
   return {
     issuance: { invitation, enrollmentRepo, tenantCatalog, invitationLinkChannel: invitationLinkSink, ...(policy ? { policy } : {}) },
-    enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger },
+    enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger, uow: tenancy.uow },
     idempotency: createInMemoryIdempotencyAdapter(),
     staffIdentity,
     invitationLinkSink,
@@ -178,23 +180,31 @@ export function createDefaultStaffConsolePorts(
  * (dev.ts LOCAL, o tests) siempre pasa un override explícito. */
 export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationshipConfig: DecisionRelationshipConfig): ConsentFlowPorts {
   const ledger = createInMemoryLedgerAdapter();
+  const invitationRepo = createInMemoryInvitationRepository();
+  const otpRepo = createInMemoryOtpVerificationRepository();
+  const decisionRepo = createInMemoryConsentDecisionRepository();
+  // CA-124: UoW + resolver in-memory sobre los MISMOS adaptadores del flujo de consentimiento.
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo, consentDecisionRepo: decisionRepo });
   const invitation: InvitationPorts = {
-    invitationRepo: createInMemoryInvitationRepository(),
+    invitationRepo,
     eligibility: createInMemoryEligibilityAdapter(),
     ledger,
+    ...tenancy,
   };
   const otp: OtpChallengePorts = {
-    otpRepo: createInMemoryOtpVerificationRepository(),
+    otpRepo,
     channel: createInMemoryOtpChannelSink(),
     ledger,
     invitation,
+    uow: tenancy.uow,
     policy: otpPolicy,
     secret: randomBytes(32),
   };
   const decision: ConsentDecisionPorts = {
-    repo: createInMemoryConsentDecisionRepository(),
+    repo: decisionRepo,
     ledger,
     invitation,
+    uow: tenancy.uow,
     config: LECTORPRO_BETA_CONFIG,
     relationships: relationshipConfig,
   };
@@ -248,6 +258,8 @@ export function createDefaultRevocationFlowPorts(
   const revocationRepo = createInMemoryRevocationRepository();
   const outbox = createInMemoryOutboxAdapter();
   const recoveryTokenRepo = createInMemoryRecoveryTokenRepository();
+  const rightsCaseRepo = createInMemoryRightsCaseRepository();
+  const tenancy = createInMemoryTenancy({ revocationRepo, ledger, outbox, recoveryTokenRepo, consentDecisionRepo, rightsCaseRepo, tenantHandle });
   return {
     tenantHandle,
     revocation: {
@@ -259,9 +271,9 @@ export function createDefaultRevocationFlowPorts(
       recoveryTokenPolicy,
       consentDecisionRepo,
       // CA-124: UoW + resolver in-memory sobre los MISMOS adaptadores del proceso.
-      ...createInMemoryTenancy({ revocationRepo, ledger, outbox, recoveryTokenRepo, consentDecisionRepo, tenantHandle }),
+      ...tenancy,
     },
-    rightsCase: { rightsCaseRepo: createInMemoryRightsCaseRepository(), ledger },
+    rightsCase: { rightsCaseRepo, ledger, uow: tenancy.uow },
   };
 }
 

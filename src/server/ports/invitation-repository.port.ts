@@ -1,7 +1,7 @@
 // Gobierna: specs/state-machines/invitation.spec.yaml (aggregateType Invitation).
-// Puerto (ADR-001 §11): proyección del ledger para el agregado Invitation. En IT0 el
-// adaptador es in-memory (src/infra/adapters/**); el adaptador de Postgres llega con la
-// historia de infraestructura correspondiente.
+// Puerto (ADR-001 §11): proyección del ledger para el agregado Invitation. Adaptadores:
+// in-memory y Postgres (src/infra/adapters/**, CA-124 PR-D). El lookup por tokenHash SIN tenant
+// (GRD-IV-07) vive en `TenantResolverPort.byInvitationTokenHash` (diseño CA-124 §5), no aquí.
 
 import type { TenantId } from "../modules/common/types.ts";
 
@@ -32,9 +32,11 @@ export interface InvitationRecord {
 
 export interface InvitationRepositoryPort {
   findByRef(tenantId: TenantId, invitationRef: string): Promise<InvitationRecord | null>;
+  /** Como `findByRef` con lock de fila hasta el fin de la unidad de trabajo (FOR UPDATE; SEC-CNS-015
+   * P2-E): toda transicion que decide estado (I2..I7) lee con este metodo tras capturar la secuencia
+   * base. Solo dentro de `UnitOfWorkPort.inTenant`. In-memory: equivalente a `findByRef`. */
+  findByRefForUpdate(tenantId: TenantId, invitationRef: string): Promise<InvitationRecord | null>;
   /** GRD-IV-01: no debe existir otra Invitation no terminal para (tenantId, contextRef, subjectRef). */
   findActiveBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): Promise<InvitationRecord | null>;
-  /** GRD-IV-07: resuelve por tokenHash (igualdad exacta), nunca por el token en claro. */
-  findByTokenHash(tokenHash: string): Promise<InvitationRecord | null>;
   save(record: InvitationRecord): Promise<void>;
 }

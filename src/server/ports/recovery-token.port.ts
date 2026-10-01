@@ -30,6 +30,11 @@ export interface RecoveryTokenRepositoryPort {
    * por su hash: nunca por el token en claro ni sin tenant (diseño CA-124 §5). */
   findByRef(tenantId: TenantId, recoveryRef: string): Promise<RecoveryTokenRecord | null>;
   save(record: RecoveryTokenRecord): Promise<void>;
-  /** Marca el token como consumido (un solo uso); no-op si (tenantId, recoveryRef) no existe. */
-  consume(tenantId: TenantId, recoveryRef: string): Promise<void>;
+  /**
+   * Consumo ATOMICO de un solo uso (SEC-CNS-015 P2-D, GRD-RV-06/GRD-RV-23): marca `consumedAt`
+   * solo si el token existe en este tenant y aun no estaba consumido, y devuelve `true` UNICAMENTE
+   * al llamador que lo consumio. `false` = ya consumido, inexistente o de otro tenant: el llamador
+   * responde UNIFORM sin efectos. Nunca se decide sobre una lectura previa del estado de consumo.
+   */
+  consume(tenantId: TenantId, recoveryRef: string): Promise<boolean>;
 }

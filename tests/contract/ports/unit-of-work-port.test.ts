@@ -6,13 +6,13 @@ import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
-import { createInMemoryUnitOfWork } from "../../../src/infra/adapters/in-memory-unit-of-work.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 runUnitOfWorkPortContract("in-memory", async () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
   const outbox = createInMemoryOutboxAdapter();
-  const uow = createInMemoryUnitOfWork({
+  const { uow } = createInMemoryTenancy({
     revocationRepo,
     ledger,
     outbox,

@@ -20,6 +20,7 @@ import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import type { InvitationRepositoryPort } from "../../../src/server/ports/invitation-repository.port.ts";
 import type { TenantHandlePort } from "../../../src/server/ports/tenant-handle.port.ts";
+import type { TenantResolverPort } from "../../../src/server/ports/tenant-resolver.port.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
@@ -153,30 +154,34 @@ test("TEST-CNS-611: GET /m/{token} responde idéntico (status, headers, Location
 // 0 lecturas de BD en el GET de canje.
 // ---------------------------------------------------------------------------
 
-test("TEST-CNS-612: GET /i/{token} nunca llama invitationRepo.findByTokenHash ni findByRef (hashea sin leer la BD, SEC-CNS-014)", async () => {
+test("TEST-CNS-612: GET /i/{token} nunca llama tenantResolver.byInvitationTokenHash ni invitationRepo.findByRef (hashea sin leer la BD, SEC-CNS-014)", async () => {
   const harness = await startHarness();
   try {
     const token = await seedSentInvitation(harness.ports, "inv-612");
-    let findByTokenHashCalls = 0;
+    let resolveByTokenHashCalls = 0;
     let findByRefCalls = 0;
     const realRepo: InvitationRepositoryPort = harness.ports.invitation.invitationRepo;
     const spiedRepo: InvitationRepositoryPort = {
       ...realRepo,
-      findByTokenHash: (hash) => {
-        findByTokenHashCalls += 1;
-        return realRepo.findByTokenHash(hash);
-      },
       findByRef: (tenantId, ref) => {
         findByRefCalls += 1;
         return realRepo.findByRef(tenantId, ref);
       },
     };
     (harness.ports.invitation as { invitationRepo: InvitationRepositoryPort }).invitationRepo = spiedRepo;
+    const realResolver: TenantResolverPort = harness.ports.invitation.tenantResolver;
+    (harness.ports.invitation as { tenantResolver: TenantResolverPort }).tenantResolver = {
+      ...realResolver,
+      byInvitationTokenHash: (hash) => {
+        resolveByTokenHashCalls += 1;
+        return realResolver.byInvitationTokenHash(hash);
+      },
+    };
 
     await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
     await fetch(`${harness.baseUrl}/i/token-inexistente-612`, { redirect: "manual" });
 
-    assert.equal(findByTokenHashCalls, 0, "GET /i/{token} no debe leer invitationRepo (INV-CM-08 reforzado)");
+    assert.equal(resolveByTokenHashCalls, 0, "GET /i/{token} no debe resolver el token por la BD (INV-CM-08 reforzado)");
     assert.equal(findByRefCalls, 0);
   } finally {
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
@@ -203,6 +208,14 @@ test("TEST-CNS-613: GET /m/{token} nunca llama tenantHandle.resolve ni resolveBy
       },
     };
     (harness.revocationPorts as { tenantHandle: TenantHandlePort }).tenantHandle = spiedPort;
+    const realResolver: TenantResolverPort = harness.revocationPorts.revocation.tenantResolver;
+    (harness.revocationPorts.revocation as { tenantResolver: TenantResolverPort }).tenantResolver = {
+      ...realResolver,
+      byHandleHash: (h) => {
+        resolveByHashCalls += 1;
+        return realResolver.byHandleHash(h);
+      },
+    };
 
     await fetch(`${harness.baseUrl}/m/mgmt-613`, { redirect: "manual" });
     await fetch(`${harness.baseUrl}/m/mgmt-inexistente-613`, { redirect: "manual" });

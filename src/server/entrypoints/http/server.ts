@@ -13,6 +13,8 @@ import {
 } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { RightsCaseRepositoryPort } from "../../ports/rights-case-repository.port.ts";
+import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
+import { createInMemoryTenancy } from "../../../infra/adapters/in-memory-tenancy.ts";
 import type { RightsCasePorts } from "../../modules/rights-case/rights-case.ts";
 import { loadRightsCaseHttpConfig, type RightsCaseHttpConfig } from "./config.ts";
 import { handleConfirmCaseReturnViaHandle } from "./rights-case-resume.handler.ts";
@@ -24,20 +26,24 @@ export interface RightsCaseInMemoryPorts {
   readonly tenantHandle: InMemoryTenantHandleAdapter;
   readonly rightsCaseRepo: RightsCaseRepositoryPort;
   readonly ledger: LedgerPort;
+  readonly uow: UnitOfWorkPort;
 }
 
 export interface RightsCaseHttpServerOptions {
   readonly config?: Partial<RightsCaseHttpConfig>;
   /** Ports a usar; si se omiten, este entrypoint los cablea. Los tests inyectan los suyos
    * para poder seedear estado antes del request. */
-  readonly ports?: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger">;
+  readonly ports?: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo" | "ledger" | "uow">;
 }
 
 export function createDefaultInMemoryPorts(): RightsCaseInMemoryPorts {
+  const rightsCaseRepo = createInMemoryRightsCaseRepository();
+  const ledger = createInMemoryLedgerAdapter();
   return {
     tenantHandle: createInMemoryTenantHandleAdapter(),
-    rightsCaseRepo: createInMemoryRightsCaseRepository(),
-    ledger: createInMemoryLedgerAdapter(),
+    rightsCaseRepo,
+    ledger,
+    uow: createInMemoryTenancy({ ledger, rightsCaseRepo }).uow,
     // revocationRepo no lo usa RC2u; se mantiene fuera de este subconjunto de ports.
   };
 }

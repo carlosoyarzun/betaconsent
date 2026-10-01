@@ -8,13 +8,14 @@
 // otra unidad avanzo el agregado entre la lectura y el append, el ledger falla con
 // LedgerSequenceConflictError en vez de escribir sobre un estado que ya cambio.
 //
-// `appendNext` (lee la secuencia justo antes del append) SOLO es valido para:
-//   1. emisiones que no deciden estado: RECOVERY_TOKEN_ISSUED (RV0);
-//   2. modulos que aun NO corren en UnitOfWork y que se migraran en PR-D/PR-E (invitation,
-//      otp-challenge, consent-decision, rights-case, tenant-context): hoy sus lecturas de estado
-//      no son transaccionales, de modo que no hay "lectura previa" que proteger. AL MIGRARLOS a
-//      `inTenant` deben capturar la secuencia como la Revocation (SEC-CNS-015 P1-1, tarea de PR-D).
-// R1/R1r (agregado nuevo) pasan `expectedSequence: 0` explicito, sin appendNext.
+// `appendNext` (lee la secuencia justo antes del append) SOLO es valido para emisiones que no deciden
+// estado de un agregado (lista final, SEC-CNS-015 P2-E, PR-D):
+//   RECOVERY_TOKEN_ISSUED (RV0, issueRecoveryLinkBearer) y las emisiones de siembra de tenant-context/seed.ts (agregados nuevos de fixtures, sin decision de estado).
+// Todo lo demas (invitation I2-I7, otp-challenge V1-V4/V2r, consent-decision C1-C5, rights-case
+// RC1/RC2u/RC3/RC4-6 y enrollment EN0) corre en `uow.inTenant` con lock de fila + base previa.
+// Transiciones que emiten VARIOS eventos del mismo agregado (consent-decision C3/C5) usan
+// `sequencedAppender(ledger, tenantId, aggregateId, base)`: cada append declara base + k.
+// R1/R1r/I1/EN0/V1/RC1 (agregado nuevo) pasan `expectedSequence: 0` explicito, sin appendNext.
 
 import type { LedgerEventInput, LedgerPort, LedgerRecord } from "../../ports/ledger.port.ts";
 
@@ -29,4 +30,23 @@ export function lastLedgerSequence(ledger: LedgerPort, tenantId: string, aggrega
 export async function appendNext(ledger: LedgerPort, event: LedgerAppendInput): Promise<LedgerRecord> {
   const expectedSequence = await lastLedgerSequence(ledger, event.tenantId, event.aggregateId);
   return ledger.append({ ...event, expectedSequence });
+}
+
+/**
+ * Appends secuenciados de UN agregado dentro de una tx que ya capturo `base` ANTES del lock de fila:
+ * el k-esimo append declara `expectedSequence = base + k`. Si un append deduplicado por idempotencyKey
+ * devuelve un registro previo, la siguiente esperada no retrocede (max con la sequence devuelta).
+ */
+export function sequencedAppender(
+  ledger: LedgerPort,
+  base: number,
+): { append(event: LedgerAppendInput): Promise<LedgerRecord> } {
+  let expected = base;
+  return {
+    async append(event) {
+      const record = await ledger.append({ ...event, expectedSequence: expected });
+      expected = Math.max(expected, record.sequence);
+      return record;
+    },
+  };
 }

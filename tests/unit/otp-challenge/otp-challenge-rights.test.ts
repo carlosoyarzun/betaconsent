@@ -12,12 +12,16 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../src/infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import { createInMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 function makePorts() {
+  const otpRepo = createInMemoryOtpVerificationRepository();
+  const ledger = createInMemoryLedgerAdapter();
   return {
-    otpRepo: createInMemoryOtpVerificationRepository(),
+    otpRepo,
     channel: createInMemoryOtpChannelSink(),
-    ledger: createInMemoryLedgerAdapter(),
+    ledger,
+    uow: createInMemoryTenancy({ ledger, otpRepo }).uow,
     policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),
   };
