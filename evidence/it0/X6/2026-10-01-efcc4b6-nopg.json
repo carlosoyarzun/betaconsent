@@ -1,0 +1,24 @@
+{
+  "condition": "X6",
+  "commit": "efcc4b63d43809c88ab5560bc6f197dd6365c0c7",
+  "branch": "chore/CA-128-evidence-manifests",
+  "runAt": "2026-10-01T21:40:16.627Z",
+  "environment": "LOCAL",
+  "postgres": {
+    "imageDigest": null
+  },
+  "tests": [
+    {
+      "id": "TEST-CNS-100",
+      "title": "X6 SOLO PARTE BD: ledger append-only con triggers ENABLE ALWAYS (788), UNIQUE(tenant,aggregate,sequence) (789), append+proyeccion+outbox en una tx (786, 773). Cierre de X6 pendiente de D6 (Carlos): INV-6 y ops.access_log",
+      "file": "tests/integration/postgres/ledger-outbox-schema.test.ts",
+      "status": "skip"
+    }
+  ],
+  "summary": {
+    "pass": 0,
+    "fail": 0,
+    "skip": 1
+  },
+  "exitCode": 0
+}

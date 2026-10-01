@@ -1,0 +1,120 @@
+{
+  "condition": "X5",
+  "commit": "efcc4b63d43809c88ab5560bc6f197dd6365c0c7",
+  "branch": "chore/CA-128-evidence-manifests",
+  "runAt": "2026-10-01T21:40:49.312Z",
+  "environment": "LOCAL",
+  "postgres": {
+    "imageDigest": "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54"
+  },
+  "tests": [
+    {
+      "id": "TEST-CNS-102",
+      "title": "X5 aislamiento A->B de IdempotencyPort (TEST-CNS-864; pg con pool max=1 en idempotency-contract.test.ts)",
+      "file": "tests/contract/ports/idempotency-tx.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-102",
+      "title": "X5 aislamiento A->B de ledger y outbox (TEST-CNS-785; pg en ledger-outbox-contract.test.ts)",
+      "file": "tests/contract/ports/ledger-outbox-tx.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-102",
+      "title": "X5 aislamiento A->B de invitacion/OTP/caso/enrollment (TEST-CNS-836; pg en tenant-repos-pr-d-contract.test.ts)",
+      "file": "tests/contract/ports/tenant-repos-pr-d.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-102",
+      "title": "X5 aislamiento A->B de revocacion/decision/token/catalogo (TEST-CNS-805; pg en tenant-repos-contract.test.ts)",
+      "file": "tests/contract/ports/tenant-repos-tx.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-102",
+      "title": "X5 aislamiento A->B del UnitOfWorkPort (TEST-CNS-771; pg en tests/integration/postgres)",
+      "file": "tests/contract/ports/unit-of-work-port.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-102",
+      "title": "X5 conexion reusada A->B con pool max=1 (TEST-CNS-740); tablas reales: ledger-outbox-schema (790), pr-c-schema (809), x5-reused-connection (876)",
+      "file": "tests/integration/postgres/tenant-context.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-805",
+      "title": "TenantRepos contract (memoria y Postgres): aislamiento A→B (X5) de revocación/decisión/token/resolver y escritura con tenantId ajeno rechazada",
+      "file": "tests/contract/ports/tenant-repos-tx.contract.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-809",
+      "title": "pg: sin tenant 0 filas y escritura rechazada; tenant_id falso rechazado; conexión reusada A→B (max=1) sobre las tablas nuevas",
+      "file": "tests/integration/postgres/pr-c-schema.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-836",
+      "title": "aislamiento A->B de los repos de PR-D (X5)",
+      "file": "tests/contract/ports/tenant-repos-pr-d.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-845",
+      "title": "pg: OTP verify ∥ verify: una gana, la otra ERR-OT-03, sin conflicto de secuencia (FOR UPDATE + base previa)",
+      "file": "tests/integration/postgres/p2e-races.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-849",
+      "title": "pg: N submits OTP incorrectos concurrentes: attempts=N, LOCKED en maxAttempts, un solo OTP_LOCKED (GRD-OT-04)",
+      "file": "tests/integration/postgres/p2e-races.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-864",
+      "title": "IdempotencyPort X5: el tenant B no ve la clave de A (misma scopeKeyHash), tampoco con la misma conexion A->B (pg max=1)",
+      "file": "tests/contract/ports/idempotency-tx.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-876",
+      "title": "pg X5: una sola conexion A->B->sin tenant: ninguna tabla de agregado de PR-C/D/E filtra filas ni admite escritura cruzada",
+      "file": "tests/integration/postgres/x5-reused-connection.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-951",
+      "title": "X5: guardrail organization_* (organization_*/organizationId/organizationRef) en src/, db/, contracts/ (codigo y claves estructurales; patron no vacuo)",
+      "file": "tests/unit/spec-checks/no-organization-keys.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-952",
+      "title": "X5: PII scan e2e (memoria) de /i->OTP->decision, /m->retiro, /r, RH3 y STAFF: 0 emails, OTP, tokens, cookies __Host-*, secretos ni dm: en stdout/stderr ni URLs (Location/href); token solo en el request inicial",
+      "file": "tests/integration/consent-flow/pii-scan-http.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-953",
+      "title": "X5: PII scan e2e sobre Postgres real (mismo recorrido y escaner que TEST-CNS-952; password de BD y secretos como secretos de entorno)",
+      "file": "tests/integration/postgres/pii-scan-http-pg.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-954",
+      "title": "X5: el escaner de PII no es vacuo: detecta fugas plantadas (email, OTP, token, cookie, secreto, dm:, token reutilizado) y la captura de stdout/stderr funciona",
+      "file": "tests/integration/consent-flow/pii-scan-http.test.ts",
+      "status": "pass"
+    }
+  ],
+  "summary": {
+    "pass": 17,
+    "fail": 0,
+    "skip": 0
+  },
+  "exitCode": 0
+}
