@@ -56,6 +56,11 @@ export function runAccessLogContract(adapterName: string, register: RegisterAcce
       const bad: Array<Partial<AccessLogEntry>> = [
         { actorRef: "operadora@example.invalid" },
         { actorRef: "Nombre Apellido" },
+        { actorRef: "12.345.678-5" }, // RUT
+        { actorRef: "Juan Perez" },
+        { resourceRef: "12345678-5" }, // RUT
+        { resourceRef: "Juan Perez" },
+        { resourceRef: "case-1" }, // no es Ref UUIDv4
         { actorRef: "" },
         { resourceRef: "caso de Pedro" },
         { resourceRef: "x".repeat(101) },

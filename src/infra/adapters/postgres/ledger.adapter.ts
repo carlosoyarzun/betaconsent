@@ -2,6 +2,11 @@
 // common.spec.yaml ledgerEnvelope (UNIQUE tenant_id, aggregate_id, sequence; concurrency
 // expectedSequence), INV-CM-01, INV-CM-02. ADR-001 §11: solo este adaptador conoce el SQL.
 //
+// P2-4 (X6): el primer `append` de una tx toma el advisory lock del tenant (`ledger-chain:<tenantId>`) y lo
+// retiene HASTA COMMIT/ROLLBACK. Por eso, tras el primer append NO debe hacerse I/O externo (red, sinks de canal,
+// esperas de terceros) dentro de la misma unidad de trabajo: bloquearia el ledger de TODO el tenant. Hacer la
+// entrega/I/O fuera de la tx (o antes del primer append). El lock_timeout de la tx acota la espera (55P03).
+//
 // Opera DENTRO de la transaccion de PgUnitOfWork.inTenant (tenant fijado con set_config local):
 // RLS filtra por app.current_tenant_id(); aqui tenant_id solo se pasa para WITH CHECK y filtros.
 
@@ -36,6 +41,7 @@ interface AuditEventRow {
   payload: Record<string, unknown>;
   idempotency_key_hash: string | null;
   occurred_at: Date;
+  occurred_at_txt: string;
   environment: Environment;
   chain_seq: number;
   payload_hash: string;
@@ -45,7 +51,8 @@ interface AuditEventRow {
 
 const COLUMNS =
   "tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, " +
-  "cosigned_by_ref, payload, idempotency_key_hash, occurred_at, environment, " +
+  "cosigned_by_ref, payload, idempotency_key_hash, occurred_at, " +
+  `to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at_txt, environment, ` +
   // chain_seq es bigint (pg lo entregaria como string); float8 es exacto hasta 2^53 y llega como number.
   "chain_seq::float8 AS chain_seq, payload_hash, previous_event_hash, event_hash";
 
@@ -119,6 +126,12 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
       )).rows[0];
       const chainSeq = (tailRow?.chain_seq ?? 0) + 1;
       const previousEventHash = tailRow?.event_hash ?? LEDGER_GENESIS_HASH;
+      // P2-1: occurred_at (now() de la tx, UTC, microsegundos) y environment (catalogo) se leen en la MISMA tx y se
+      // insertan explicitos; entran al eventHash y la base los fuerza con CHECK (0013).
+      const stamp = (await tx.query<{ occurred_at: string; environment: string }>(
+        `SELECT to_char(pg_catalog.now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at, ops.catalog_environment() AS environment`,
+      )).rows[0];
+      if (!stamp) throw new Error("ledger: no se pudo leer now()/environment");
       const payloadHash = computePayloadHash(event.payload);
       const eventHash = computeEventHash({
         tenantId: event.tenantId,
@@ -132,6 +145,8 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
         recordedByRef: event.recordedByRef ?? null,
         cosignedByRef: event.cosignedByRef ?? null,
         idempotencyKeyHash: keyHash,
+        occurredAt: stamp.occurred_at,
+        environment: stamp.environment,
         payloadHash,
         previousEventHash,
       });
@@ -147,8 +162,8 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
           `INSERT INTO integrity.audit_event
              (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role,
               recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
-              chain_seq, payload_hash, previous_event_hash, event_hash)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)
+              chain_seq, payload_hash, previous_event_hash, event_hash, occurred_at, environment)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16::timestamptz, $17)
            ON CONFLICT (tenant_id, aggregate_id, sequence) DO NOTHING
            RETURNING ${COLUMNS}`,
           [
@@ -167,6 +182,8 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
             payloadHash,
             previousEventHash,
             eventHash,
+            stamp.occurred_at,
+            stamp.environment,
           ],
         );
       } catch (error) {
@@ -209,6 +226,8 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
         recordedByRef: row.recorded_by_ref,
         cosignedByRef: row.cosigned_by_ref,
         idempotencyKeyHash: row.idempotency_key_hash,
+        occurredAt: row.occurred_at_txt,
+        environment: row.environment,
         payload: row.payload,
         payloadHash: row.payload_hash,
         previousEventHash: row.previous_event_hash,

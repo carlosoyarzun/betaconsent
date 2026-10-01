@@ -54,6 +54,18 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
       assert.equal(records.dup.eventHash, records.a.eventHash, "el dedupe devuelve el eslabon existente");
       // El orden de claves del payload no cambia el hash (canonicalizacion determinista).
       assert.equal(records.a.payloadHash, computePayloadHash({ a: { b: null, y: true }, z: 1 }));
+      // Otro tenant: cadena propia desde el genesis; el de A no se ve alterado.
+      const other = await h.inTenant(tb, ({ ledger }) => ledger.append(event(tb, agg1)));
+      assert.equal(other.chainSeq, 1);
+      assert.equal(other.previousEventHash, LEDGER_GENESIS_HASH);
+      assert.notEqual(other.eventHash, records.a.eventHash, "el hash cubre tenantId");
+
+      const reports = await h.inTenant(ta, async ({ ledger }) => ({
+        report: await verifyLedgerChain(ledger, ta),
+        rows: await ledger.readChain(ta),
+        foreign: await ledger.readChain(tb),
+      }));
+      assert.deepEqual(reports.report, { ok: true, verified: 3 });
       assert.equal(
         records.a.eventHash,
         computeEventHash({
@@ -68,23 +80,14 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
           recordedByRef: null,
           cosignedByRef: null,
           idempotencyKeyHash: (await import("node:crypto")).createHash("sha256").update(idemKey, "utf8").digest("hex"),
+          occurredAt: reports.rows[0]?.occurredAt ?? "",
+          environment: reports.rows[0]?.environment ?? "",
           payloadHash: records.a.payloadHash,
           previousEventHash: LEDGER_GENESIS_HASH,
         }),
       );
-
-      // Otro tenant: cadena propia desde el genesis; el de A no se ve alterado.
-      const other = await h.inTenant(tb, ({ ledger }) => ledger.append(event(tb, agg1)));
-      assert.equal(other.chainSeq, 1);
-      assert.equal(other.previousEventHash, LEDGER_GENESIS_HASH);
-      assert.notEqual(other.eventHash, records.a.eventHash, "el hash cubre tenantId");
-
-      const reports = await h.inTenant(ta, async ({ ledger }) => ({
-        report: await verifyLedgerChain(ledger, ta),
-        rows: await ledger.readChain(ta),
-        foreign: await ledger.readChain(tb),
-      }));
-      assert.deepEqual(reports.report, { ok: true, verified: 3 });
+      assert.match(reports.rows[0]?.occurredAt ?? "", /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/, "occurredAt canonico con microsegundos");
+      assert.equal(reports.rows[0]?.environment, "LOCAL");
       assert.deepEqual(reports.rows.map((r) => r.chainSeq), [1, 2, 3]);
       assert.deepEqual(reports.foreign, [], "bajo la tx de A no se lee la cadena de B (RLS / scope)");
       assert.deepEqual(await h.inTenant(tb, ({ ledger }) => verifyLedgerChain(ledger, tb)), { ok: true, verified: 1 });

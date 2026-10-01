@@ -405,6 +405,7 @@ TEST-CNS-916,integration,tests/integration/postgres/ledger-chain.test.ts,"X6 pg:
 TEST-CNS-917,integration,tests/integration/postgres/access-log.test.ts,"X6 pg: ops.access_log con FORCE RLS por tenant, grants minimos, CHECK SYNTHETIC y sin PII, append-only para runtime, migrator y superusuario (replica)","CA-128;X6;DEC-BR-014 rev. 8 §3;rights-case.spec INV-RC-04;ADR-002 §10",ACTIVE
 TEST-CNS-918,contract,tests/contract/ports/access-log.contract.ts,"AccessLogPort contract (memoria y Postgres): record/list con aislamiento por tenant, rechazo de PII y vocabulario, atomicidad","CA-128;X6;DEC-BR-014 rev. 8 §3;rights-case.spec INV-RC-04",ACTIVE
 TEST-CNS-919,integration,tests/integration/rights-case/rh3-case-confirmation-http.test.ts,"X6: la lectura del caso por el operador queda en ops.access_log (refs opacas, sin PII), no en el ledger; sin lectura no hay registro","CA-128;X6;DEC-BR-014 rev. 8 §3;rights-case.spec INV-RC-04",ACTIVE
+<<<<<<< HEAD
 TEST-CNS-960,unit,tests/unit/revocation/x6-attach-open-revocation.test.ts,"X6: GRD-RV-04 R1 con otra revocationRef sobre la misma decisión se adjunta a la abierta (misma ref y estado, sin eventos duplicados)","CA-128;X6;DEC-BR-014 rev. 8 §3;GRD-RV-04;INV-RV-01",ACTIVE
 TEST-CNS-961,unit,tests/unit/revocation/x6-attach-open-revocation.test.ts,"X6: GRD-RV-02 precede a GRD-RV-04 (decisión REVOKED = ERR-RV-02) y otra decisión crea su propia revocación","CA-128;X6;DEC-BR-014 rev. 8 §3;GRD-RV-04;GRD-RV-02",ACTIVE
 TEST-CNS-962,unit,tests/unit/revocation/x6-downstream-completed.test.ts,"X6: revocación hasta COMPLETED contra el stub interno (R5-1) en las vías OTP, enlace y caso humano; DELIVERED no es COMPLETED; destinos congelados; idempotencia; payloads válidos","CA-128;X6;DEC-BR-014 rev. 8 §3;revocation.spec R5/R6/R7;INV-RV-03;R5-1",ACTIVE
@@ -417,3 +418,8 @@ TEST-CNS-968,unit,tests/unit/revocation/x6-manage-handle-ttl.test.ts,"TTL del ha
 TEST-CNS-969,integration,tests/integration/postgres/x6-revocation.test.ts,"X6 pg: la revocación llega hasta COMPLETED con el stub interno en las tres vías; ledger sin huecos; COMPLETED deja de ser abierta","CA-128;X6;revocation.spec R5/R6/R7;R5-1",ACTIVE
 TEST-CNS-970,integration,tests/integration/postgres/x6-revocation.test.ts,"X6 pg: 0015 CHECK de estados e índice único GRD-RV-04 con COMPLETED","CA-128;X6;GRD-RV-04;0015",ACTIVE
 TEST-CNS-971,integration,tests/integration/postgres/x6-revocation.test.ts,"X6 pg INV-6: con participación SUSPENDED/CLOSED, enrollment CLOSED y OTP LOCKED la revocación llega a APPLIED y encola consent.revoked","CA-128;X6;revocation.spec INV-6",ACTIVE
+=======
+TEST-CNS-920,integration,tests/integration/postgres/ledger-chain.test.ts,"X6 pg: CLI verificador falla ante fila sin eslabon posterior al inicio de la cadena (el legado previo no cuenta)","CA-128;X6;P2-2",ACTIVE
+TEST-CNS-921,integration,tests/integration/postgres/ledger-chain.test.ts,"X6 pg: app_rw no puede falsear occurred_at/environment (CHECK); eventHash v2 los cubre","CA-128;X6;P2-1",ACTIVE
+TEST-CNS-922,unit,tests/unit/common/ledger-payload-contract.test.ts,"assertLedgerPayload valida el payload contra el contrato (ERR-RV-13); NO cableado: payloads vigentes no cumplen (FINDING P1-A)","CA-128;X6;P1-A;common.spec INV-CM-05;GRD-RV-19",ACTIVE
+>>>>>>> feat/CA-128-x6-ledger-chain

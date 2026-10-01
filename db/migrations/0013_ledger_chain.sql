@@ -42,28 +42,46 @@ ALTER TABLE integrity.audit_event
   ADD CONSTRAINT audit_event_chain_seq_unique UNIQUE (tenant_id, chain_seq),
   ADD CONSTRAINT audit_event_previous_hash_unique UNIQUE (tenant_id, previous_event_hash);
 
--- Lista blanca de tipos de evento (X6). Fuera de la lista: 23514.
+-- Lista blanca de tipos de evento (X6). Fuera de la lista: 23514. Fuente: contracts/schemas/
+-- ledger-event-payloads.schema.json ($defs menos x-disabled-in-it0 = CONSENT_EXPIRED, CONSENT_SUPERSEDED,
+-- DECISION_CONTESTED) + TRANSITORIOS + seed LOCAL. Espejo de src/server/modules/common/ledger-event-types.ts.
+--   * TRANSITORIOS (OTP_*, MANAGEMENT_TOKEN_ROTATED, RECOVERY_TOKEN_ISSUED): eventos del stream SECURITY
+--     (security-event-payloads.schema.json) que hoy el dominio emite al ledger; common.spec.yaml:141 dice que
+--     ese stream vive en ops.security_event y "no es ledger de consentimiento". Se migraran fuera del ledger
+--     cuando exista esa tabla (migracion nueva); quitarlos hoy romperia OTP y recuperacion.
+--   * Seed LOCAL (TENANT_SEEDED, SCHOOL_PARTICIPATION_SEEDED): sin $def en el contrato; solo con actor FIXTURE.
 ALTER TABLE integrity.audit_event
   ADD CONSTRAINT audit_event_event_type_allowlist CHECK (event_type IN (
-    'CONTEXT_INFORMATION_VIEWED', 'CONSENT_VERSION_VIEWED', 'DECISION_MAKER_AUTHORITY_DECLARED',
-    'SUBJECT_CONFIRMED', 'PURPOSE_DECISION_RECORDED', 'CONSENT_GRANTED', 'CONSENT_DECLINED',
-    'RECEIPT_CREATED', 'CONSENT_REVOKED', 'CONSENT_EXPIRED', 'CONSENT_SUPERSEDED', 'DECISION_CONTESTED',
-    'INVITATION_CREATED', 'INVITATION_READY', 'INVITATION_SENT', 'INVITATION_TOKEN_ROTATED',
-    'INVITATION_OPENED', 'INVITATION_VERIFIED', 'INVITATION_COMPLETED', 'INVITATION_DECLINED',
-    'INVITATION_EXPIRED', 'INVITATION_CANCELLED',
-    'OTP_ISSUED', 'OTP_FAILED', 'OTP_LOCKED', 'OTP_EXPIRED', 'OTP_BUDGET_EXHAUSTED',
-    'MANAGEMENT_TOKEN_ROTATED', 'DECISION_MAKER_CHANNEL_VERIFIED',
+    'INVITATION_CREATED', 'INVITATION_READY', 'INVITATION_SENT', 'INVITATION_TOKEN_ROTATED', 'INVITATION_OPENED',
+    'INVITATION_VERIFIED', 'INVITATION_COMPLETED', 'INVITATION_DECLINED', 'INVITATION_EXPIRED', 'INVITATION_CANCELLED',
+    'DECISION_MAKER_CHANNEL_VERIFIED',
+    'CONTEXT_INFORMATION_VIEWED', 'CONSENT_VERSION_VIEWED', 'DECISION_MAKER_AUTHORITY_DECLARED', 'SUBJECT_CONFIRMED',
+    'PURPOSE_DECISION_RECORDED', 'CONSENT_GRANTED', 'CONSENT_DECLINED', 'RECEIPT_CREATED', 'CONSENT_REVOKED',
     'REVOCATION_REQUESTED', 'REVOCATION_VERIFIED', 'REVOCATION_CONFIRMED', 'REVOCATION_DOWNSTREAM_EMITTED',
     'REVOCATION_DELIVERED', 'DOWNSTREAM_ERASURE_ATTESTED', 'REVOCATION_FAILED', 'REVOCATION_ESCALATED',
-    'RECOVERY_TOKEN_ISSUED',
     'RIGHTS_CASE_OPENED', 'RIGHTS_CASE_CONTACTING', 'RIGHTS_CASE_CLOSED',
     'TENANT_STATUS_CHANGED', 'SCHOOL_PARTICIPATION_STATUS_CHANGED', 'ENROLLMENT_STATUS_CHANGED',
-    'CONSENT_CONTEXT_STATUS_CHANGED',
+    -- TRANSITORIOS (stream SECURITY)
+    'OTP_ISSUED', 'OTP_FAILED', 'OTP_LOCKED', 'OTP_EXPIRED', 'OTP_BUDGET_EXHAUSTED',
+    'MANAGEMENT_TOKEN_ROTATED', 'RECOVERY_TOKEN_ISSUED',
+    -- Seed LOCAL
     'TENANT_SEEDED', 'SCHOOL_PARTICIPATION_SEEDED'
-  ));
+  )),
+  ADD CONSTRAINT audit_event_seed_only_fixture CHECK (
+    event_type NOT IN ('TENANT_SEEDED', 'SCHOOL_PARTICIPATION_SEEDED') OR actor_type = 'FIXTURE'
+  );
 
 -- El servicio aporta las cuatro columnas de la cadena (las calcula el adaptador); el resto de
 -- columnas decididas por la base sigue sin grant. Los triggers de inmutabilidad de 0002 no se
 -- tocan: siguen ENABLE ALWAYS y aplican tambien al dueno / consent_migrator y a superusuario.
 GRANT INSERT (chain_seq, payload_hash, previous_event_hash, event_hash)
   ON integrity.audit_event TO app_rw;
+
+-- P2-1: el eventHash (v=2) cubre occurred_at y environment. El adaptador los lee (now() de la tx y
+-- ops.catalog_environment()) en la misma tx y los inserta explicitos; por eso app_rw recibe INSERT SOLO sobre
+-- esas dos columnas, y la base fuerza que no se puedan falsear: environment = catalogo, occurred_at = now()
+-- (inicio de la tx). NOT VALID: las filas previas a 0013 se crearon con el default y no se revalidan.
+GRANT INSERT (occurred_at, environment) ON integrity.audit_event TO app_rw;
+ALTER TABLE integrity.audit_event
+  ADD CONSTRAINT audit_event_environment_is_catalog CHECK (environment = ops.catalog_environment()) NOT VALID,
+  ADD CONSTRAINT audit_event_occurred_at_is_now CHECK (occurred_at = pg_catalog.now()) NOT VALID;

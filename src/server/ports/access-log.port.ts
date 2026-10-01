@@ -13,8 +13,10 @@ export type AccessLogResourceType = "RIGHTS_CASE";
 export const ACCESS_LOG_ACTOR_ROLES: readonly AccessLogActorRole[] = ["RIGHTS_OPERATOR", "APPROVER", "TENANT_ADMIN", "PLATFORM_ADMIN"];
 export const ACCESS_LOG_ACTIONS: readonly AccessLogAction[] = ["RIGHTS_CASE_READ"];
 export const ACCESS_LOG_RESOURCE_TYPES: readonly AccessLogResourceType[] = ["RIGHTS_CASE"];
-/** Ref opaca: sin '@', espacios ni texto libre (espejo del CHECK de 0014_ops_access_log.sql). */
-export const ACCESS_LOG_REF_PATTERN = /^[A-Za-z0-9._:-]{1,100}$/;
+/** principalRef canonico: "staff-synthetic-NN" (roster IT0, staff-identity.port.ts) o Ref UUIDv4; espejo del CHECK de 0014. */
+export const ACCESS_LOG_ACTOR_REF_PATTERN = /^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
+/** Ref UUIDv4 (common.schema.json#/$defs/Ref); espejo del CHECK de 0014. */
+export const ACCESS_LOG_RESOURCE_REF_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export interface AccessLogEntry {
   readonly tenantId: TenantId;
@@ -46,11 +48,11 @@ export class AccessLogValidationError extends Error {
 
 export function validateAccessLogEntry(entry: AccessLogEntry): void {
   if (typeof entry.tenantId !== "string" || entry.tenantId.length === 0) throw new AccessLogValidationError("tenantId");
-  if (!ACCESS_LOG_REF_PATTERN.test(entry.actorRef)) throw new AccessLogValidationError("actorRef");
+  if (!ACCESS_LOG_ACTOR_REF_PATTERN.test(entry.actorRef)) throw new AccessLogValidationError("actorRef");
   if (!ACCESS_LOG_ACTOR_ROLES.includes(entry.actorRole)) throw new AccessLogValidationError("actorRole");
   if (!ACCESS_LOG_ACTIONS.includes(entry.action)) throw new AccessLogValidationError("action");
   if (!ACCESS_LOG_RESOURCE_TYPES.includes(entry.resourceType)) throw new AccessLogValidationError("resourceType");
-  if (!ACCESS_LOG_REF_PATTERN.test(entry.resourceRef)) throw new AccessLogValidationError("resourceRef");
+  if (!ACCESS_LOG_RESOURCE_REF_PATTERN.test(entry.resourceRef)) throw new AccessLogValidationError("resourceRef");
 }
 
 export interface AccessLogPort {

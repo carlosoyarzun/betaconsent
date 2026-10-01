@@ -6,6 +6,7 @@
 
 import {
   computeEventHash,
+  formatOccurredAt,
   computePayloadHash,
   LEDGER_GENESIS_HASH,
   sha256Hex,
@@ -69,6 +70,7 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
       const chainSeq = (tail?.chainSeq ?? 0) + 1;
       const previousEventHash = tail?.eventHash ?? LEDGER_GENESIS_HASH;
       const payloadHash = computePayloadHash(event.payload);
+      const occurredAt = new Date();
       const eventHash = computeEventHash({
         tenantId: event.tenantId,
         chainSeq,
@@ -81,6 +83,8 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
         recordedByRef: event.recordedByRef ?? null,
         cosignedByRef: event.cosignedByRef ?? null,
         idempotencyKeyHash: event.idempotencyKey !== undefined ? sha256Hex(event.idempotencyKey) : null,
+        occurredAt: formatOccurredAt(occurredAt),
+        environment: "LOCAL",
         payloadHash,
         previousEventHash,
       });
@@ -94,7 +98,7 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
         previousEventHash,
         eventHash,
         sequence: nextSequence,
-        occurredAt: new Date(),
+        occurredAt,
         environment: "LOCAL",
         evidentiary: false,
         dataClass: "SYNTHETIC",
@@ -127,6 +131,8 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
           recordedByRef: r.recordedByRef ?? null,
           cosignedByRef: r.cosignedByRef ?? null,
           idempotencyKeyHash: r.idempotencyKey !== undefined ? sha256Hex(r.idempotencyKey) : null,
+          occurredAt: formatOccurredAt(r.occurredAt),
+          environment: r.environment,
           payload: r.payload,
           payloadHash: r.payloadHash,
           previousEventHash: r.previousEventHash,

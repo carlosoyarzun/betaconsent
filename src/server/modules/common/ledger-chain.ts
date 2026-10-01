@@ -10,17 +10,19 @@
 //   * payloadHash = SHA-256(hex) de canonicalJson(payload);
 //   * eventHash   = SHA-256(hex) de canonicalJson(sobre), con sobre = { v, tenantId, chainSeq,
 //     aggregateType, aggregateId, sequence, eventType, actorType, actorRole, recordedByRef,
-//     cosignedByRef, idempotencyKeyHash, payloadHash, previousEventHash } (ausentes = null);
+//     cosignedByRef, idempotencyKeyHash, occurredAt, environment, payloadHash, previousEventHash }
+//     (ausentes = null). occurredAt = now() de la tx en UTC con microsegundos (`YYYY-MM-DDTHH:MM:SS.uuuuuuZ`)
+//     y environment = catalogo de la base, ambos leidos en la MISMA tx e insertados explicitamente
+//     (la base los fuerza con CHECK a ser now() y el catalogo);
 //   * genesis: previousEventHash del primer eslabon = 64 ceros;
-//   * NO cubre eventId/occurredAt/environment: los fija la base DESPUES del hash (default de
-//     columna sin grant para runtime, SEC N2-06). ADR-011 debe decidir si el HMAC los cubre.
+//   * NO cubre eventId (default de la base; no semantico).
 // El hash se calcula en el adaptador (in-memory y Postgres identicos) con ESTE modulo.
 
 import { createHash } from "node:crypto";
 
 import { isLedgerEventType } from "./ledger-event-types.ts";
 
-export const LEDGER_CHAIN_VERSION = 1;
+export const LEDGER_CHAIN_VERSION = 2; // v2 (P2-1): el sobre cubre occurredAt y environment
 export const LEDGER_GENESIS_HASH = "0".repeat(64);
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -61,6 +63,11 @@ function serialize(value: unknown): string {
   }
 }
 
+/** Formato canonico de occurredAt en el hash: UTC con microsegundos (JS solo tiene ms: se rellena con 000). */
+export function formatOccurredAt(date: Date): string {
+  return `${date.toISOString().slice(0, 23)}000Z`;
+}
+
 export function computePayloadHash(payload: unknown): string {
   return sha256Hex(canonicalJson(payload));
 }
@@ -78,6 +85,8 @@ export interface ChainLinkFields {
   readonly recordedByRef: string | null;
   readonly cosignedByRef: string | null;
   readonly idempotencyKeyHash: string | null;
+  readonly occurredAt: string;
+  readonly environment: string;
   readonly payloadHash: string;
   readonly previousEventHash: string;
 }
@@ -97,6 +106,8 @@ export function computeEventHash(link: ChainLinkFields): string {
       recordedByRef: link.recordedByRef,
       cosignedByRef: link.cosignedByRef,
       idempotencyKeyHash: link.idempotencyKeyHash,
+      occurredAt: link.occurredAt,
+      environment: link.environment,
       payloadHash: link.payloadHash,
       previousEventHash: link.previousEventHash,
     }),

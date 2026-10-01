@@ -71,6 +71,8 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
         [schema, table, column],
       )).rows[0]?.n;
       if (!has || column === "occurred_at") continue; // occurred_at del outbox si es insertable (lo aporta el productor)
+      // 0013 (P2-1): audit_event deja INSERT por columna en environment; la base lo valida (CHECK = catalogo), no el grant.
+      if (schema === "integrity" && column === "environment") continue;
       const p = (await admin.query<{ p: boolean }>("SELECT has_column_privilege('app_rw', $1, $2, 'INSERT') AS p", [`${schema}.${table}`, column])).rows[0];
       assert.equal(p?.p, false, `app_rw no debe poder insertar ${schema}.${table}.${column}`);
     }
@@ -109,11 +111,12 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   await app.query("SELECT set_config('app.tenant_id', $1, true)", [fixtureUuid("t787")]);
   await assert.rejects(
     () => app.query(
-      `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, environment)
-       VALUES ($1, 'A', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 'DEV')`,
+      `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, environment,
+                                           chain_seq, payload_hash, previous_event_hash, event_hash)
+       VALUES ($1, 'A', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 'DEV', 1, repeat('a', 64), repeat('0', 64), repeat('a', 64))`,
       [fixtureUuid("t787")],
     ),
-    (e: unknown) => codeOf(e) === "42501",
+    (e: unknown) => codeOf(e) === "23514", // 0013 (P2-1): el grant existe pero el CHECK fija environment = catalogo
   );
   await app.query("ROLLBACK");
 });
