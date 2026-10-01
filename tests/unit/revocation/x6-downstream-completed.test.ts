@@ -26,13 +26,13 @@ for (const path of REVOCATION_PATHS) {
     assert.deepEqual(refs, [INTERNAL_STUB_SUBSCRIPTION_REF]);
 
     assert.equal((await emitRevocationDownstream(env.ports, T, revocationRef)).status, "DOWNSTREAM_PENDING");
-    const ack = signedEvidence(env, "ACK", revocationRef, refs, `962-${path}`);
+    const ack = signedEvidence(env, T, "ACK", revocationRef, refs, `962-${path}`);
     assert.equal((await recordDownstreamAck(env.ports, T, revocationRef, ack)).status, "DELIVERED");
     // INV-RV-03: DELIVERED = recibido, no suprimido; sin atestación no hay COMPLETED ni recibo final.
     assert.notEqual((await env.ports.revocationRepo.findByRef(T, revocationRef))?.status, "COMPLETED");
     assert.equal((await types(env, revocationRef)).includes("DOWNSTREAM_ERASURE_ATTESTED"), false);
 
-    const attest = signedEvidence(env, "ERASURE_CONFIRMED", revocationRef, refs, `962-${path}`);
+    const attest = signedEvidence(env, T, "ERASURE_CONFIRMED", revocationRef, refs, `962-${path}`);
     assert.equal((await attestDownstreamErasure(env.ports, T, revocationRef, attest)).status, "COMPLETED");
 
     // Idempotencia (revocationRef, ackRef|attestationRef): reintentos devuelven COMPLETED sin eventos nuevos.
@@ -72,22 +72,22 @@ test("TEST-CNS-963: evidencia falsa, incompleta o fuera de orden no avanza el es
   const code = (c: string) => (e: unknown) => e instanceof DomainError && e.code === c;
 
   // Fuera de orden: R6/R7 antes de R5 y R7 antes de R6.
-  await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, signedEvidence(env, "ACK", revocationRef, refs, "963")), code("ERR-CM-06"));
-  await assert.rejects(() => attestDownstreamErasure(env.ports, T, revocationRef, signedEvidence(env, "ERASURE_CONFIRMED", revocationRef, refs, "963")), code("ERR-CM-06"));
+  await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, signedEvidence(env, T, "ACK", revocationRef, refs, "963")), code("ERR-CM-06"));
+  await assert.rejects(() => attestDownstreamErasure(env.ports, T, revocationRef, signedEvidence(env, T, "ERASURE_CONFIRMED", revocationRef, refs, "963")), code("ERR-CM-06"));
   await emitRevocationDownstream(env.ports, T, revocationRef);
-  await assert.rejects(() => attestDownstreamErasure(env.ports, T, revocationRef, signedEvidence(env, "ERASURE_CONFIRMED", revocationRef, refs, "963")), code("ERR-CM-06"));
+  await assert.rejects(() => attestDownstreamErasure(env.ports, T, revocationRef, signedEvidence(env, T, "ERASURE_CONFIRMED", revocationRef, refs, "963")), code("ERR-CM-06"));
   assert.equal(await state(), "DOWNSTREAM_PENDING", "no se salta DELIVERED");
 
-  const good = signedEvidence(env, "ACK", revocationRef, refs, "963");
+  const good = signedEvidence(env, T, "ACK", revocationRef, refs, "963");
   const before = await env.ports.ledger.listByAggregate(T, "Revocation", revocationRef);
   // ACK de un solo destino (conjunto congelado de 2), con firma falsa, ajena a otra revocación, o de un destino no congelado.
   await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, [good[0]!]), code("ERR-RV-10"));
   await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, [good[0]!, { ...good[1]!, signature: "00".repeat(32) }]), code("ERR-RV-10"));
   await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, [good[0]!, { ...good[1]!, signature: "zz" }]), code("ERR-RV-10"));
-  const foreign = signedEvidence(env, "ACK", fixtureUuid("otra-revocacion"), refs, "963");
+  const foreign = signedEvidence(env, T, "ACK", fixtureUuid("otra-revocacion"), refs, "963");
   await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, foreign), code("ERR-RV-10"));
   await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, [good[0]!, { ...good[0]! }]), code("ERR-RV-10"));
-  const wrongKind = signedEvidence(env, "ERASURE_CONFIRMED", revocationRef, refs, "963");
+  const wrongKind = signedEvidence(env, T, "ERASURE_CONFIRMED", revocationRef, refs, "963");
   await assert.rejects(() => recordDownstreamAck(env.ports, T, revocationRef, wrongKind), code("ERR-RV-10"));
   assert.equal(await state(), "DOWNSTREAM_PENDING");
   assert.equal((await env.ports.ledger.listByAggregate(T, "Revocation", revocationRef)).length, before.length, "evidencia falsa: sin eventos");

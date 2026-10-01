@@ -932,7 +932,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
       }
       if (parts.length === 4 && parts[0] && parts[1] === "verification-proposals" && parts[2] && parts[3] === "approval") {
-        writeResult(res, config, await handleApproveCaseVerification(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey));
+        writeResult(res, config, await handleApproveCaseVerification(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey, options.environment ?? "DEV"));
         return;
       }
     }

@@ -17,7 +17,7 @@
 // en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
 
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03, opaqueUuidV4 } from "../common/opaque-ref.ts";
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, hkdfSync, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { DomainError, type DomainErrorCode } from "../common/errors.ts";
 import { assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
@@ -60,8 +60,16 @@ export interface OtpChallengePorts {
 
 /** OTP_ISSUED.channelRef (security-event-payloads: Ref opaco): el canal real (email) nunca va al ledger; HMAC con el
  * secreto del módulo, determinista por (tenant, canal). */
-function opaqueChannelRef(secret: Buffer, tenantId: TenantId, channelRef: string): string {
-  return opaqueUuidV4("otp-channel", `${tenantId}\u0000${channelRef}`, secret);
+// X6 P2-5: subclave HKDF con info propio, distinta de la clave con que se hashea el código OTP (hashCode usa
+// el secreto directo): una colisión de uso entre ambos HMAC no puede revelar el canal ni el código.
+const OTP_CHANNEL_REF_HKDF_INFO = "lampone-cns/otp-channel-ref/v1";
+
+export function deriveOtpChannelRefKey(secret: Buffer): Buffer {
+  return Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), OTP_CHANNEL_REF_HKDF_INFO, 32));
+}
+
+export function opaqueChannelRef(secret: Buffer, tenantId: TenantId, channelRef: string): string {
+  return opaqueUuidV4("otp-channel", `${tenantId}\u0000${channelRef}`, deriveOtpChannelRefKey(secret));
 }
 
 const clockMs = (ports: { readonly now?: () => number }): number => (ports.now ?? Date.now)();

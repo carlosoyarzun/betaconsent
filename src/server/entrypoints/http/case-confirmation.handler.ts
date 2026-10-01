@@ -306,6 +306,7 @@ export async function handleApproveCaseVerification(
   ports: CaseConfirmationPorts,
   config: RightsCaseHttpConfig,
   caseSessionKey: Buffer,
+  environment: Environment = "DEV",
 ): Promise<HttpResult> {
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
@@ -322,7 +323,8 @@ export async function handleApproveCaseVerification(
   try {
     const result = await approveCaseVerification(
       ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, proposalRefFromPath,
-      { principalRef: session.principalRef }, true, // aserción ATTESTED: stub LOCAL-only (APR-IDP PENDING), ver cabecera
+      { principalRef: session.principalRef },
+      environment === "LOCAL", // X6 P2-1: ATTESTED solo en LOCAL (stub, APR-IDP PENDING); fuera de LOCAL queda PENDING, nunca atestado
     );
     return { status: 200, body: { attestation: result.attestation, revocationState: result.record.status === "VERIFIED" ? "VERIFIED" : "REQUESTED" } };
   } catch (err) {

@@ -4,14 +4,14 @@
 -- (verifiedByRef, secondApproverRef). Migración nueva: 0006/0009/0015 no se editan.
 --
 -- app.revocation guarda la propuesta del paso 1 (proposal_ref, proposed_by_ref = verifiedByRef, guion versionado) y el
--- aprobador del paso 2 (second_approver_ref). Refs opacas (CHECK de largo y sin '@'); aprobador distinto del proponente
+-- aprobador del paso 2 (second_approver_ref). Refs opacas (CHECK de forma: proposal_ref UUIDv4; proposed_by_ref/second_approver_ref UUIDv4 o staff-synthetic-NN, el mismo patrón que actor_ref de 0014; un email o RUT no cumple); aprobador distinto del proponente
 -- (GRD-RV-09) y propuesta completa o ninguna, impuestos también en la base.
 
 ALTER TABLE app.revocation
-  ADD COLUMN proposal_ref                 text CONSTRAINT revocation_proposal_ref_len CHECK (pg_catalog.length(proposal_ref) BETWEEN 1 AND 100),
-  ADD COLUMN proposed_by_ref              text CONSTRAINT revocation_proposed_by_len CHECK (pg_catalog.length(proposed_by_ref) BETWEEN 1 AND 100),
+  ADD COLUMN proposal_ref                 text CONSTRAINT revocation_proposal_ref_shape CHECK (proposal_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
+  ADD COLUMN proposed_by_ref              text CONSTRAINT revocation_proposed_by_shape CHECK (proposed_by_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$'),
   ADD COLUMN verification_script_version  text CONSTRAINT revocation_script_version_shape CHECK (verification_script_version ~ '^[A-Za-z0-9._-]{1,32}$'),
-  ADD COLUMN second_approver_ref          text CONSTRAINT revocation_second_approver_len CHECK (pg_catalog.length(second_approver_ref) BETWEEN 1 AND 100),
+  ADD COLUMN second_approver_ref          text CONSTRAINT revocation_second_approver_shape CHECK (second_approver_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$'),
   ADD CONSTRAINT revocation_proposal_triple CHECK ((proposal_ref IS NULL) = (proposed_by_ref IS NULL) AND (proposal_ref IS NULL) = (verification_script_version IS NULL)),
   ADD CONSTRAINT revocation_rh2_distinct_humans CHECK (second_approver_ref IS NULL OR (proposed_by_ref IS NOT NULL AND second_approver_ref <> proposed_by_ref));
 

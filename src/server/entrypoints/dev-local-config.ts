@@ -80,7 +80,8 @@ export const LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY = {
  * en StaffIdentityPort (in-memory-staff-identity.adapter.ts) y lo resuelve únicamente el
  * endpoint de desarrollo /__dev/staff-login (case-confirmation.handler.ts, LOCAL-only,
  * GRD-CM-13). Cero PII: solo refs opacas sintéticas, nunca email, nombre ni RUT. LEGAL DECISION
- * LD-03 (quién tiene autoridad legal para registrar/co-firmar RH3) no se decide aquí. */
+ * LD-03 (quién tiene autoridad legal para registrar/co-firmar RH3) no se decide aquí.
+ * OPEN-TC-06: PRIVACY_LEGAL y SECURITY se modelan como APPROVER en IT0 (Carlos, 2026-10-01). */
 export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
   { principalRef: "7647258d-b4b5-41c0-b8f1-34030bb08f80", role: "RIGHTS_OPERATOR" as const },
   { principalRef: "d0c8c95a-8a9b-400d-b5ad-009a4bc46fe9", role: "RIGHTS_OPERATOR" as const },

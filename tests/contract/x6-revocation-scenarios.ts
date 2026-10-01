@@ -76,6 +76,7 @@ export async function revokeVia(env: X6Env, T: string, label: string, path: Revo
 
 export function signedEvidence(
   env: X6Env,
+  T: string,
   kind: "ACK" | "ERASURE_CONFIRMED",
   revocationRef: string,
   subscriptionRefs: readonly string[],
@@ -83,7 +84,7 @@ export function signedEvidence(
 ): DownstreamEvidence[] {
   return subscriptionRefs.map((subscriptionRef) => {
     const evidenceRef = fixtureUuid(`${kind}-${label}-${subscriptionRef}`);
-    return { subscriptionRef, evidenceRef, signature: env.stub.sign(kind, revocationRef, subscriptionRef, evidenceRef) };
+    return { subscriptionRef, evidenceRef, signature: env.stub.sign(T, kind, revocationRef, subscriptionRef, evidenceRef) };
   });
 }
 
@@ -92,8 +93,8 @@ export async function completeDownstream(env: X6Env, T: string, revocationRef: s
   const { ports, stub } = env;
   const refs = await stub.currentSubscriptionRefs(T);
   assert.equal((await emitRevocationDownstream(ports, T, revocationRef)).status, "DOWNSTREAM_PENDING");
-  assert.equal((await recordDownstreamAck(ports, T, revocationRef, signedEvidence(env, "ACK", revocationRef, refs, label))).status, "DELIVERED");
-  assert.equal((await attestDownstreamErasure(ports, T, revocationRef, signedEvidence(env, "ERASURE_CONFIRMED", revocationRef, refs, label))).status, "COMPLETED");
+  assert.equal((await recordDownstreamAck(ports, T, revocationRef, signedEvidence(env, T, "ACK", revocationRef, refs, label))).status, "DELIVERED");
+  assert.equal((await attestDownstreamErasure(ports, T, revocationRef, signedEvidence(env, T, "ERASURE_CONFIRMED", revocationRef, refs, label))).status, "COMPLETED");
 }
 
 /** Puertos in-memory completos (IT0 LOCAL/CI) con el stub interno de R5-1. */

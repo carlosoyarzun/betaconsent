@@ -450,3 +450,9 @@ TEST-CNS-1000,unit,tests/unit/common/json-schema-lite-failclosed.test.ts,"Ledger
 TEST-CNS-1001,unit,tests/unit/common/json-schema-lite-failclosed.test.ts,"Seed LOCAL del ledger: solo payload vacío; string arbitrario rechazado","CA-128;X6;INV-CM-05",ACTIVE
 TEST-CNS-1002,unit,tests/unit/common/json-schema-lite-failclosed.test.ts,"Validador: anyOf, if/then/else, not, minLength/maxLength y date-time RFC 3339 estricto","CA-128;X6;INV-CM-05",ACTIVE
 TEST-CNS-1003,unit,tests/unit/common/json-schema-lite-failclosed.test.ts,"Validador fail-closed: keyword/format/type desconocido lanza; todos los $defs de ledger y security soportados","CA-128;X6;INV-CM-05",ACTIVE
+TEST-CNS-1004,unit,tests/unit/revocation/x6-p2-hardening.test.ts,"X6 P2-1: aprobación RH2 HTTP ATTESTED solo en LOCAL; DEV/STAGING/PRODUCTION = PENDING sin transición","CA-128;X6;GRD-RV-09;GRD-CM-13",ACTIVE
+TEST-CNS-1005,unit,tests/unit/revocation/x6-p2-hardening.test.ts,"X6 P2-3: propuesta RH2 pendiente con otro proposalRef = ERR-CM-06 (sin reemplazo silencioso); misma ref idempotente","CA-128;X6;GRD-RV-09;ERR-CM-06",ACTIVE
+TEST-CNS-1006,unit,tests/unit/revocation/x6-p2-hardening.test.ts,"X6 P2-4: MAC del stub downstream incluye tenant; firma debe ser 64 hex exactos","CA-128;X6;R5-1;ERR-RV-10",ACTIVE
+TEST-CNS-1007,unit,tests/unit/revocation/x6-p2-hardening.test.ts,"X6 P2-5: channelRef de OTP_ISSUED con subclave HKDF distinta del secreto del hash del código","CA-128;X6;SEC-CNS-006",ACTIVE
+TEST-CNS-1008,unit,tests/unit/revocation/x6-p2-hardening.test.ts,"X6 P2-6: roster in-memory rechaza principalRef duplicado entre roles al construirse","CA-128;X6;GRD-RV-09;GRD-RC-15",ACTIVE
+TEST-CNS-1009,integration,tests/integration/postgres/x6-rh2-ref-shape.test.ts,"X6 P2-7 pg: CHECK de proposal_ref/proposed_by_ref/second_approver_ref con patrón UUIDv4/staff; email y RUT rechazados","CA-128;X6;INV-CM-09;DEC-BR-014",ACTIVE

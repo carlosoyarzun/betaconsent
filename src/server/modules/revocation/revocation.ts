@@ -135,6 +135,8 @@ export async function proposeCaseVerificationTx(
     await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
     await assertNominalRosterMinimum(staffIdentity);
     if (found.proposal?.proposalRef === input.proposalRef) return found; // idempotente
+    // X6 P2-3: una propuesta pendiente con otro proposalRef no se reemplaza en silencio.
+    if (found.proposal !== undefined) throw new DomainError("ERR-CM-06");
     if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // RH2 nace en REQUESTED (RH2v fuera de alcance)
     const proposed: RevocationRecord = {
       ...found,
