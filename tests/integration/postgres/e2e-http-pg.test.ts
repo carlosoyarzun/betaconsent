@@ -57,6 +57,15 @@ function cookiesOf(res: Response): Record<string, string> {
 }
 
 async function boot(ctx: PgTestContext) {
+  // SEC-CNS-017 F5: cualquier throw no capturado de una ruta (p. ej. OutsideTransactionError) pasa por el catch global
+  // y deja `request_failed` en el log; close() exige que no haya ninguno en todo el recorrido HTTP del test.
+  const failed: string[] = [];
+  const realConsoleError = console.error;
+  console.error = (...a: unknown[]) => {
+    const line = a.join(" ");
+    if (line.startsWith("request_failed")) failed.push(line);
+    else realConsoleError(...a);
+  };
   const store = await openPostgresStore({
     environment: "LOCAL",
     idempotencyPolicy: loadIdempotencyPolicyConfig(LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY),
@@ -93,8 +102,10 @@ async function boot(ctx: PgTestContext) {
     admin,
     otpSink: bundle.ports.otp.channel as InMemoryOtpChannelSink,
     async close() {
+      console.error = realConsoleError;
       await new Promise((resolve) => server.close(() => resolve(undefined)));
       await store.close();
+      assert.deepEqual(failed, [], "ninguna ruta HTTP debe lanzar (OutsideTransactionError u otro) en Postgres");
     },
   };
 }
@@ -384,6 +395,24 @@ pgTest("TEST-CNS-882 e2e pg: seed RH3 atomico (una tx: si falla no queda nada) e
     assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), true);
     assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), false);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION'", [T2, RH3_DEV_CASE_REF]), 1);
+  } finally {
+    await env.close();
+  }
+});
+
+pgTest("TEST-CNS-886 e2e pg: recorrido de TODAS las rutas HTTP (GET y POST, sin sesion y con basura) no lanza ni responde 500 (OutsideTransactionError)", async (ctx) => {
+  const env = await boot(ctx);
+  try {
+    const gets = ["/welcome", "/verify", "/decision", "/manage", "/manage/verify", "/recovery/confirm", "/i/token-inexistente", "/m/token-inexistente", "/r/token-inexistente", "/__dev/otp-sink", "/__dev/outbox-sink", "/__dev/recovery-sink", "/__dev/invitation-sink"];
+    const posts = ["/invitation/open", "/otp/request", "/otp/resend", "/otp/submit", "/decision/steps", "/decision/submit", "/manage/revocation", "/manage/revocation/verify", "/manage/revocation/confirm", "/manage/revocation/withdraw", "/manage/recovery-link", "/recovery/revoke", "/rights-case/open", "/staff/enrollments", "/staff/invitations", "/staff/invitations/00000000-0000-4000-8000-000000000000/ready", "/staff/invitations/00000000-0000-4000-8000-000000000000/send", "/__dev/staff-login"];
+    for (const path of gets) {
+      const res = await fetch(`${env.baseUrl}${path}`, { redirect: "manual", headers: { cookie: "__Host-cns-session=basura; __Host-cns-i-handle=basura; __Host-cns-m-handle=basura" } });
+      assert.notEqual(res.status, 500, `GET ${path}`);
+    }
+    for (const path of posts) {
+      const res = await post(env, path, { "__Host-cns-session": "basura" }, {});
+      assert.notEqual(res.status, 500, `POST ${path}`);
+    }
   } finally {
     await env.close();
   }

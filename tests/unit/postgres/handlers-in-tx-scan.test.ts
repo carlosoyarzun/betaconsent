@@ -2,6 +2,10 @@
 // estatico de los handlers HTTP (src/server/entrypoints/http/*.ts): todo acceso a un repo, al ledger, al
 // outbox, al catalogo o a la idempotencia debe ocurrir DENTRO del callback de un `inTenant(...)`; un uso
 // fuera de una tx falla este test. Sin Postgres.
+//
+// SEC-CNS-017 F5: este escaneo es un control SECUNDARIO (heuristico, regex). El control PRIMARIO es el Proxy de
+// src/infra/adapters/postgres/store.ts (createForbiddenOutsideTxPorts: OutsideTransactionError en runtime), que
+// ejercitan los e2e de Postgres (TEST-CNS-872..886), donde ninguna ruta HTTP puede registrar request_failed.
 
 import test from "node:test";
 import assert from "node:assert/strict";
