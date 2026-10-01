@@ -27,11 +27,12 @@ test("TEST-CNS-749 parseMigration valida nombre, alcance y calcula sha256", () =
   assert.throws(() => parseMigration("0008_x.sql", "-- scope: superuser\n"), /scope/);
 });
 
-test("TEST-CNS-749 las migraciones del repo: 0000 es cluster, el resto database, versiones únicas y ordenadas", () => {
+test("TEST-CNS-749 las migraciones del repo: 0000 y 0004 son cluster, el resto database, versiones únicas y ordenadas", () => {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   assert.equal(migrations[0]?.version, "0000");
   assert.equal(migrations[0]?.scope, "cluster");
-  assert.ok(migrations.slice(1).every((m) => m.scope === "database"));
+  // Solo 0000 (roles) y 0004 (outbox_claimer) son de alcance cluster; el resto, database.
+  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004"]);
   const versions = migrations.map((m) => m.version);
   assert.deepEqual(versions, [...versions].sort());
   assert.equal(new Set(versions).size, versions.length);

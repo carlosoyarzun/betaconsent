@@ -87,29 +87,48 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
       }
       const next = current + 1;
 
-      // ON CONFLICT DO NOTHING (sin error) para no abortar la transaccion y poder releer la
-      // secuencia real: una unidad concurrente que confirmo antes gana (UNIQUE tenant, aggregate, sequence).
-      const inserted = await tx.query<AuditEventRow>(
-        `INSERT INTO integrity.audit_event
-           (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role,
-            recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
-         ON CONFLICT (tenant_id, aggregate_id, sequence) DO NOTHING
-         RETURNING ${COLUMNS}`,
-        [
-          event.tenantId,
-          event.aggregateType,
-          event.aggregateId,
-          next,
-          event.eventType,
-          event.actorType,
-          event.actorRole ?? null,
-          event.recordedByRef ?? null,
-          event.cosignedByRef ?? null,
-          JSON.stringify(event.payload),
-          keyHash,
-        ],
-      );
+      // ON CONFLICT (secuencia) DO NOTHING (sin error) para no abortar la transaccion y poder releer
+      // la secuencia real: una unidad concurrente que confirmo antes gana. El UNIQUE de idempotencia
+      // si puede lanzar 23505 en una carrera: va en SAVEPOINT; por err.constraint se reintenta como
+      // dedupe (relectura) y cualquier otro 23505 se relanza (diseno rev. 2 §3).
+      await tx.query("SAVEPOINT ledger_append");
+      let inserted;
+      try {
+        inserted = await tx.query<AuditEventRow>(
+          `INSERT INTO integrity.audit_event
+             (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role,
+              recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+           ON CONFLICT (tenant_id, aggregate_id, sequence) DO NOTHING
+           RETURNING ${COLUMNS}`,
+          [
+            event.tenantId,
+            event.aggregateType,
+            event.aggregateId,
+            next,
+            event.eventType,
+            event.actorType,
+            event.actorRole ?? null,
+            event.recordedByRef ?? null,
+            event.cosignedByRef ?? null,
+            JSON.stringify(event.payload),
+            keyHash,
+          ],
+        );
+      } catch (error) {
+        const e = error as { code?: string; constraint?: string };
+        await tx.query("ROLLBACK TO SAVEPOINT ledger_append");
+        if (e.code === "23505" && e.constraint === "audit_event_idempotency_unique" && keyHash !== null) {
+          const again = await tx.query<AuditEventRow>(
+            `SELECT ${COLUMNS} FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND idempotency_key_hash = $3`,
+            [event.tenantId, event.aggregateId, keyHash],
+          );
+          const row = again.rows[0];
+          if (row) return toRecord(row);
+        }
+        throw error;
+      }
+      await tx.query("RELEASE SAVEPOINT ledger_append");
       const row = inserted.rows[0];
       if (!row) {
         throw new LedgerSequenceConflictError(event.expectedSequence ?? current, await currentSequence(event.tenantId, event.aggregateId));

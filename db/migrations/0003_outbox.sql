@@ -7,11 +7,11 @@
 --   * dedupe del productor: UNIQUE (tenant_id, dedupe_key);
 --   * RLS ENABLE + FORCE por app.current_tenant_id(); app_rw solo INSERT (por columnas) y SELECT;
 --   * data_class = 'SYNTHETIC' (CHECK + DEFAULT), environment = default del catalogo;
---   * el claim del worker (cruza tenants, entrega at-least-once) es la UNICA via del worker:
---     funcion SECURITY DEFINER (search_path = pg_catalog, pg_temp) con EXECUTE solo para worker.
---     Nunca BYPASSRLS: la funcion corre como consent_owner (NOLOGIN), sujeto a FORCE RLS, y solo
---     las policies TO consent_owner de abajo le abren las filas PENDING/CLAIMED. El worker no
---     tiene grant alguno sobre la tabla.
+--   * el claim del worker (cruza tenants, at-least-once) es una funcion SECURITY DEFINER que
+--     devuelve SOLO (tenant_id, event_id), sin columnas del sobre (diseno rev. 2 §4 P1-6). Es de un
+--     rol dedicado NOLOGIN/NOBYPASSRLS (outbox_claimer, 0004) con grants por columna y policies
+--     propias; consent_owner no tiene policies de claim. EXECUTE solo para `worker`, que luego lee
+--     el sobre dentro de inTenant (policy por app.current_tenant_id(), nunca cross-tenant).
 
 CREATE TABLE app.outbox (
   event_id       uuid        NOT NULL DEFAULT pg_catalog.gen_random_uuid() CONSTRAINT outbox_pkey PRIMARY KEY,
@@ -59,27 +59,34 @@ CREATE POLICY outbox_tenant_select ON app.outbox FOR SELECT TO app_rw
   USING (tenant_id = app.current_tenant_id());
 CREATE POLICY outbox_tenant_insert ON app.outbox FOR INSERT TO app_rw
   WITH CHECK (tenant_id = app.current_tenant_id() AND status = 'PENDING' AND attempts = 0);
--- Policies del dueno (NOLOGIN, NOBYPASSRLS) solo para la funcion de claim de abajo.
-CREATE POLICY outbox_claim_select ON app.outbox FOR SELECT TO consent_owner
+-- El worker lee el sobre solo del tenant de su unidad de trabajo (inTenant), nunca cross-tenant.
+CREATE POLICY outbox_worker_select ON app.outbox FOR SELECT TO worker
+  USING (tenant_id = app.current_tenant_id());
+-- Policies del claim (cruzan tenants por diseno): solo outbox_claimer y solo filas reclamables.
+CREATE POLICY outbox_claim_select ON app.outbox FOR SELECT TO outbox_claimer
   USING (status IN ('PENDING', 'CLAIMED'));
-CREATE POLICY outbox_claim_update ON app.outbox FOR UPDATE TO consent_owner
+CREATE POLICY outbox_claim_update ON app.outbox FOR UPDATE TO outbox_claimer
   USING (status IN ('PENDING', 'CLAIMED'))
   WITH CHECK (status = 'CLAIMED');
 
 REVOKE ALL ON app.outbox FROM PUBLIC;
-GRANT SELECT ON app.outbox TO app_rw;
+GRANT SELECT ON app.outbox TO app_rw, worker;
 GRANT INSERT (tenant_id, dedupe_key, event_type, schema_version, context_ref, subject_ref, occurred_at, payload)
   ON app.outbox TO app_rw;
+-- outbox_claimer: minimo por columna. SELECT incluye attempts porque `attempts = attempts + 1` lo lee.
+GRANT USAGE ON SCHEMA app TO outbox_claimer;
+GRANT SELECT (event_id, tenant_id, status, claimed_at, created_at, attempts) ON app.outbox TO outbox_claimer;
+GRANT UPDATE (status, claimed_at, attempts) ON app.outbox TO outbox_claimer;
 
--- Claim at-least-once: toma hasta p_limit (1..100) eventos PENDING, o CLAIMED con lease vencido
--- (p_lease_seconds >= 1), con FOR UPDATE SKIP LOCKED, los marca CLAIMED y los devuelve. Solo refs
--- opacas y enums (sin PII, INV-CM-05). La entrega firmada y el ack son R5 (fuera de PR-B).
-CREATE FUNCTION app.outbox_claim(p_limit integer, p_lease_seconds integer)
-  RETURNS TABLE (
-    event_id uuid, tenant_id uuid, dedupe_key text, event_type text, schema_version text,
-    context_ref text, subject_ref text, occurred_at timestamptz, payload jsonb,
-    environment text, data_class text, attempts integer
-  )
+-- Claim at-least-once: toma hasta p_limit (1..100) eventos PENDING, o CLAIMED con lease vencido,
+-- con FOR UPDATE SKIP LOCKED, los marca CLAIMED y devuelve solo (tenant_id, event_id). El lease es
+-- una constante del servidor (60 s): el llamador no puede acortarlo para robar un claim vigente.
+-- La funcion se crea con dueno outbox_claimer: CREATE temporal en el esquema app (el migrador hace
+-- SET ROLE outbox_claimer sin heredar privilegios) y se revoca de inmediato.
+GRANT CREATE ON SCHEMA app TO outbox_claimer;
+SET LOCAL ROLE outbox_claimer;
+CREATE FUNCTION app.outbox_claim(p_limit integer)
+  RETURNS TABLE (tenant_id uuid, event_id uuid)
   LANGUAGE sql VOLATILE SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
   AS $$
@@ -87,7 +94,7 @@ CREATE FUNCTION app.outbox_claim(p_limit integer, p_lease_seconds integer)
     SELECT o.event_id
       FROM app.outbox o
      WHERE o.status = 'PENDING'
-        OR (o.status = 'CLAIMED' AND o.claimed_at < pg_catalog.now() - pg_catalog.make_interval(secs => GREATEST(p_lease_seconds, 1)))
+        OR (o.status = 'CLAIMED' AND o.claimed_at < pg_catalog.now() - pg_catalog.make_interval(secs => 60))
      ORDER BY o.created_at, o.event_id
      LIMIT LEAST(GREATEST(p_limit, 1), 100)
        FOR UPDATE SKIP LOCKED
@@ -96,8 +103,9 @@ CREATE FUNCTION app.outbox_claim(p_limit integer, p_lease_seconds integer)
      SET status = 'CLAIMED', claimed_at = pg_catalog.now(), attempts = u.attempts + 1
     FROM picked
    WHERE u.event_id = picked.event_id
-  RETURNING u.event_id, u.tenant_id, u.dedupe_key, u.event_type, u.schema_version, u.context_ref,
-            u.subject_ref, u.occurred_at, u.payload, u.environment, u.data_class, u.attempts
+  RETURNING u.tenant_id, u.event_id
 $$;
-REVOKE ALL ON FUNCTION app.outbox_claim(integer, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION app.outbox_claim(integer, integer) TO worker;
+REVOKE ALL ON FUNCTION app.outbox_claim(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.outbox_claim(integer) TO worker;
+SET LOCAL ROLE consent_owner;
+REVOKE CREATE ON SCHEMA app FROM outbox_claimer;

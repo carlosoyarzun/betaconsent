@@ -84,21 +84,28 @@ export function createPgOutboxAdapter(tx: TenantTx): OutboxPort {
   };
 }
 
-export interface ClaimedOutboxEvent {
-  readonly envelope: OutboxEnvelope;
-  readonly attempts: number;
+/** Referencia opaca de un evento reclamado: el claim no devuelve el sobre (diseno rev. 2 §4 P1-6). */
+export interface ClaimedOutboxRef {
+  readonly tenantId: string;
+  readonly eventId: string;
 }
 
 /**
- * Claim del worker (rol `worker`, sin tenant): hasta `limit` eventos PENDING o con lease vencido,
- * marcados CLAIMED. Fuera de una unidad de trabajo de tenant (cruza tenants por diseno).
+ * Claim del worker (rol `worker`, sin tenant): hasta `limit` eventos PENDING o con lease vencido
+ * (lease fijo en el servidor), marcados CLAIMED. Devuelve solo (tenantId, eventId); el sobre se
+ * lee despues con `readOutboxEnvelope` dentro de `inTenant` del tenant de cada referencia.
  */
-export async function claimOutbox(db: Queryable, limit: number, leaseSeconds: number): Promise<ClaimedOutboxEvent[]> {
-  const r = await db.query<OutboxRow & { attempts: number }>(
-    `SELECT event_id, tenant_id, dedupe_key, event_type, schema_version, context_ref, subject_ref, ${OCCURRED_AT_SQL},
-            payload, environment, attempts
-       FROM app.outbox_claim($1, $2)`,
-    [limit, leaseSeconds],
+export async function claimOutbox(db: Queryable, limit: number): Promise<ClaimedOutboxRef[]> {
+  const r = await db.query<{ tenant_id: string; event_id: string }>(
+    "SELECT tenant_id, event_id FROM app.outbox_claim($1)",
+    [limit],
   );
-  return r.rows.map((row) => ({ envelope: toEnvelope(row), attempts: row.attempts }));
+  return r.rows.map((row) => ({ tenantId: row.tenant_id, eventId: row.event_id }));
+}
+
+/** Lee el sobre de un evento dentro de la unidad de trabajo del tenant (RLS: otro tenant => null). */
+export async function readOutboxEnvelope(tx: TenantTx, eventId: string): Promise<OutboxEnvelope | null> {
+  const r = await tx.query<OutboxRow>(`SELECT ${SELECT_COLUMNS} FROM app.outbox WHERE event_id = $1`, [eventId]);
+  const row = r.rows[0];
+  return row ? toEnvelope(row) : null;
 }

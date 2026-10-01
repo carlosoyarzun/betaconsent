@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { createPgLedgerAdapter } from "../../../src/infra/adapters/postgres/ledger.adapter.ts";
-import { claimOutbox, createPgOutboxAdapter } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
+import { claimOutbox, createPgOutboxAdapter, readOutboxEnvelope } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest } from "./harness.ts";
@@ -53,10 +53,12 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
         assert.equal(r?.p, false, `${role} ${privilege} ${schema}.${table}`);
       }
     }
+    // worker: SELECT solo del outbox (filtrado por tenant via policy); INSERT nunca. platform_rw: nada.
     for (const role of ["worker", "platform_rw"]) {
       for (const privilege of ["SELECT", "INSERT"]) {
+        const expected = role === "worker" && privilege === "SELECT" && table === "outbox";
         const r = (await admin.query<{ p: boolean }>("SELECT has_table_privilege($1, $2, $3) AS p", [role, `${schema}.${table}`, privilege])).rows[0];
-        assert.equal(r?.p, false, `${role} ${privilege} ${schema}.${table}`);
+        assert.equal(r?.p, expected, `${role} ${privilege} ${schema}.${table}`);
       }
     }
     const sel = (await admin.query<{ p: boolean }>("SELECT has_table_privilege('app_rw', $1, 'SELECT') AS p", [`${schema}.${table}`])).rows[0];
@@ -71,6 +73,25 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
       assert.equal(p?.p, false, `app_rw no debe poder insertar ${schema}.${table}.${column}`);
     }
   }
+
+  // P2-1: TODA policy de tablas con RLS exige app.current_tenant_id(); unica excepcion explicita:
+  // las del claim, solo TO outbox_claimer. Ninguna policy abierta al dueno.
+  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]]]);
+  const all = (await admin.query<{ k: string; roles: string[]; qual: string | null; with_check: string | null }>(
+    `SELECT p.schemaname || '.' || p.tablename || '/' || p.policyname AS k, p.roles::text[] AS roles, p.qual, p.with_check
+       FROM pg_policies p JOIN pg_class c ON c.oid = (p.schemaname || '.' || p.tablename)::regclass
+      WHERE c.relrowsecurity`,
+  )).rows;
+  assert.ok(all.length >= 6);
+  for (const p of all) {
+    const allowed = CLAIM_ALLOWLIST.get(p.k);
+    if (allowed) {
+      assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);
+      continue;
+    }
+    assert.match(`${p.qual ?? ""} ${p.with_check ?? ""}`, /app\.current_tenant_id\(\)/, `${p.k} sin app.current_tenant_id()`);
+  }
+  assert.deepEqual(all.filter((p) => p.roles.includes("consent_owner") || p.roles.includes("public")).map((p) => p.k), [], "ninguna policy para el dueno ni PUBLIC");
 
   // Funcion de entorno por defecto: ejecutable por runtime, no por PUBLIC.
   const fn = (await admin.query<{ p: boolean; c: string[] | null }>(
@@ -201,7 +222,13 @@ pgTest("TEST-CNS-790 pg: sin tenant no hay filas ni escritura, y la conexion reu
   }
 });
 
-pgTest("TEST-CNS-791 pg: claim del worker via SECURITY DEFINER cruza tenants, marca CLAIMED, respeta el lease y no hay acceso directo ni BYPASSRLS", async (ctx) => {
+const ENV_INPUT = (t: string, key: string) => ({
+  tenantId: t, eventType: "consent.revoked" as const, contextRef: "BETA_2026_01", subjectRef: fixtureUuid(`s-${key}`),
+  occurredAt: "2026-09-30T12:00:00.000Z", payload: { revocationRef: fixtureUuid(`r-${key}`), scope: "ALL" as const, effectiveAt: "2026-09-30T12:00:00.000Z" },
+  dedupeKey: key,
+});
+
+pgTest("TEST-CNS-791 pg: claim del worker via SECURITY DEFINER del rol outbox_claimer: cruza tenants, solo (tenant_id, event_id), lease fijo, EXECUTE solo worker", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const ta = fixtureUuid("t791-a");
   const tb = fixtureUuid("t791-b");
@@ -209,44 +236,48 @@ pgTest("TEST-CNS-791 pg: claim del worker via SECURITY DEFINER cruza tenants, ma
   try {
     const uow = new PgUnitOfWork(pool);
     for (const [t, key] of [[ta, "k1"], [tb, "k2"]] as const) {
-      await uow.inTenant(t, (tx) => createPgOutboxAdapter(tx).enqueue({
-        tenantId: t, eventType: "consent.revoked", contextRef: "BETA_2026_01", subjectRef: fixtureUuid(`s791-${key}`),
-        occurredAt: "2026-09-30T12:00:00.000Z", payload: { revocationRef: fixtureUuid(`r791-${key}`), scope: "ALL", effectiveAt: "2026-09-30T12:00:00.000Z" },
-        dedupeKey: key,
-      }));
+      await uow.inTenant(t, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(t, `791-${key}`)));
     }
   } finally {
     await pool.end();
   }
 
-  // Definicion de la funcion: SECURITY DEFINER, search_path fijo, dueno sin BYPASSRLS, sin EXECUTE de PUBLIC.
-  const def = (await admin.query<{ secdef: boolean; cfg: string[] | null; owner: string; bypass: boolean; pub: boolean }>(
+  // Definicion: SECURITY DEFINER, dueno outbox_claimer (NOLOGIN/NOBYPASSRLS), search_path fijo, firma de un solo
+  // parametro (sin lease del llamador), sin EXECUTE de PUBLIC, solo worker.
+  const def = (await admin.query<{ secdef: boolean; cfg: string[] | null; owner: string; bypass: boolean; login: boolean; pub: boolean; args: string; ret: string }>(
     `SELECT p.prosecdef AS secdef, p.proconfig AS cfg, pg_get_userbyid(p.proowner) AS owner,
-            (SELECT rolbypassrls FROM pg_roles WHERE oid = p.proowner) AS bypass,
-            COALESCE((SELECT bool_or(a.grantee = 0) FROM aclexplode(p.proacl) a), false) AS pub
-       FROM pg_proc p WHERE p.oid = 'app.outbox_claim(integer, integer)'::regprocedure`,
+            r.rolbypassrls AS bypass, r.rolcanlogin AS login,
+            COALESCE((SELECT bool_or(a.grantee = 0) FROM aclexplode(p.proacl) a), false) AS pub,
+            pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS ret
+       FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.oid = 'app.outbox_claim(integer)'::regprocedure`,
   )).rows[0];
-  assert.equal(def?.secdef, true);
-  assert.deepEqual(def?.cfg, ["search_path=pg_catalog, pg_temp"]);
-  assert.equal(def?.owner, "consent_owner");
-  assert.equal(def?.bypass, false);
-  assert.equal(def?.pub, false);
+  assert.deepEqual(def, {
+    secdef: true, cfg: ["search_path=pg_catalog, pg_temp"], owner: "outbox_claimer", bypass: false, login: false, pub: false,
+    args: "p_limit integer", ret: "TABLE(tenant_id uuid, event_id uuid)",
+  });
+  const execs = (await admin.query<{ g: string }>(
+    "SELECT pg_get_userbyid(a.grantee) AS g FROM pg_proc p, aclexplode(p.proacl) a WHERE p.oid = 'app.outbox_claim(integer)'::regprocedure AND a.privilege_type = 'EXECUTE'",
+  )).rows.map((r) => r.g).sort();
+  assert.deepEqual(execs, ["outbox_claimer", "worker"]);
 
-  // Solo el worker ejecuta; app_rw y platform_rw no. El worker no toca la tabla.
   for (const role of ["app_rw", "platform_rw"] as const) {
     const c = await ctx.connectAs(role);
-    await assert.rejects(() => claimOutbox(c, 10, 60), (e: unknown) => codeOf(e) === "42501", role);
+    await assert.rejects(() => claimOutbox(c, 10), (e: unknown) => codeOf(e) === "42501", role);
   }
   const worker = await ctx.connectAs("worker");
-  await assert.rejects(() => worker.query("SELECT * FROM app.outbox"), (e: unknown) => codeOf(e) === "42501");
   await assert.rejects(() => worker.query("UPDATE app.outbox SET status = 'DELIVERED'"), (e: unknown) => codeOf(e) === "42501");
+  // Sin tenant el worker no ve filas del outbox (policy por tenant).
+  assert.equal((await worker.query<{ n: number }>("SELECT count(*)::int AS n FROM app.outbox")).rows[0]?.n, 0);
 
-  const first = await claimOutbox(worker, 100, 60);
-  // La base del archivo es compartida con otros tests (789/790 dejan filas PENDING): se filtra por los tenants propios.
-  const mine = (events: Awaited<ReturnType<typeof claimOutbox>>) => events.filter((e) => e.envelope.tenantRef === ta || e.envelope.tenantRef === tb);
-  assert.deepEqual(mine(first).map((e) => e.envelope.tenantRef).sort(), [ta, tb].sort(), "cruza tenants");
-  assert.ok(first.every((e) => e.attempts === 1 && e.envelope.dataClass === "SYNTHETIC"));
-  assert.equal((await claimOutbox(worker, 100, 60)).length, 0, "dentro del lease no se reclama");
+  // La base del archivo es compartida con otros tests (789/790 dejan filas PENDING): se filtra por tenants propios.
+  const mine = (refs: Awaited<ReturnType<typeof claimOutbox>>) => refs.filter((e) => e.tenantId === ta || e.tenantId === tb);
+  const first = await claimOutbox(worker, 100);
+  assert.deepEqual(mine(first).map((e) => e.tenantId).sort(), [ta, tb].sort(), "cruza tenants");
+  assert.ok(first.every((e) => Object.keys(e).sort().join() === "eventId,tenantId"), "solo refs, sin sobre");
+
+  // P2-2: otro worker no puede robar un claim vigente (el lease no es parametro del llamador).
+  const worker2 = await ctx.connectAs("worker");
+  assert.equal((await claimOutbox(worker2, 100)).length, 0, "dentro del lease no se reclama");
 
   const states = (await admin.query<{ status: string }>("SELECT DISTINCT status FROM app.outbox WHERE tenant_id = ANY($1)", [[ta, tb]])).rows;
   assert.deepEqual(states, [{ status: "CLAIMED" }]);
@@ -255,9 +286,80 @@ pgTest("TEST-CNS-791 pg: claim del worker via SECURITY DEFINER cruza tenants, ma
   await admin.query("ALTER TABLE app.outbox DISABLE TRIGGER outbox_envelope_immutable");
   await admin.query("UPDATE app.outbox SET claimed_at = now() - interval '1 hour' WHERE tenant_id = $1", [ta]);
   await admin.query("ALTER TABLE app.outbox ENABLE ALWAYS TRIGGER outbox_envelope_immutable");
-  const again = await claimOutbox(worker, 100, 60);
-  assert.deepEqual(mine(again).map((e) => [e.envelope.tenantRef, e.attempts]), [[ta, 2]]);
+  assert.deepEqual(mine(await claimOutbox(worker2, 100)).map((e) => e.tenantId), [ta]);
+  const attempts = (await admin.query<{ attempts: number }>("SELECT attempts FROM app.outbox WHERE tenant_id = $1 AND dedupe_key = '791-k1'", [ta])).rows[0]?.attempts;
+  assert.equal(attempts, 2);
 
   // El sobre es inmutable incluso para el superusuario.
   await assert.rejects(() => admin.query("UPDATE app.outbox SET payload = '{}'::jsonb"), (e: unknown) => codeOf(e) === "23000");
+});
+
+pgTest("TEST-CNS-792 pg: el worker lee el sobre solo dentro de inTenant de su tenant; refs de otro tenant dan null", async (ctx) => {
+  const ta = fixtureUuid("t792-a");
+  const tb = fixtureUuid("t792-b");
+  const app = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  const workerPool = createPool({ connectionString: ctx.urlFor("worker"), max: 1 });
+  try {
+    const appUow = new PgUnitOfWork(app);
+    await appUow.inTenant(ta, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(ta, "792-a")));
+    await appUow.inTenant(tb, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(tb, "792-b")));
+
+    const workerUow = new PgUnitOfWork(workerPool);
+    const refs = (await claimOutbox(await ctx.connectAs("worker"), 100)).filter((r) => r.tenantId === ta || r.tenantId === tb);
+    assert.equal(refs.length, 2);
+    const refA = refs.find((r) => r.tenantId === ta)!;
+    const refB = refs.find((r) => r.tenantId === tb)!;
+
+    const envA = await workerUow.inTenant(ta, (tx) => readOutboxEnvelope(tx, refA.eventId));
+    assert.equal(envA?.tenantRef, ta);
+    assert.equal(envA?.eventId, refA.eventId);
+    assert.equal(envA?.payload.revocationRef, fixtureUuid("r-792-a"));
+    // Pidiendo la ref del otro tenant desde la unidad de trabajo de A: RLS => null.
+    assert.equal(await workerUow.inTenant(ta, (tx) => readOutboxEnvelope(tx, refB.eventId)), null);
+    assert.equal((await workerUow.inTenant(tb, (tx) => readOutboxEnvelope(tx, refB.eventId)))?.tenantRef, tb);
+    // El worker no puede escribir sobre el outbox ni siquiera con tenant.
+    await assert.rejects(
+      () => workerUow.inTenant(ta, (tx) => tx.query("UPDATE app.outbox SET status = 'DELIVERED'")),
+      (e: unknown) => codeOf(e) === "42501",
+    );
+  } finally {
+    await app.end();
+    await workerPool.end();
+  }
+});
+
+pgTest("TEST-CNS-793 pg: outbox_claimer es NOLOGIN/NOBYPASSRLS, sin membresias, con privilegios minimos por columna y el migrador no hereda", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const role = (await admin.query<{ rolcanlogin: boolean; rolbypassrls: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolreplication: boolean }>(
+    "SELECT rolcanlogin, rolbypassrls, rolsuper, rolcreaterole, rolcreatedb, rolreplication FROM pg_roles WHERE rolname = 'outbox_claimer'",
+  )).rows[0];
+  assert.deepEqual(role, { rolcanlogin: false, rolbypassrls: false, rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false });
+
+  const memberOf = (await admin.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM pg_auth_members m WHERE m.member = 'outbox_claimer'::regrole",
+  )).rows[0]?.n;
+  assert.equal(memberOf, 0, "outbox_claimer no es miembro de ningun rol");
+  const members = (await admin.query<{ m: string; inherit: boolean; set: boolean }>(
+    "SELECT pg_get_userbyid(member) AS m, inherit_option AS inherit, set_option AS set FROM pg_auth_members WHERE roleid = 'outbox_claimer'::regrole",
+  )).rows;
+  assert.deepEqual(members, [{ m: "consent_migrator", inherit: false, set: true }]);
+  // P2-5: consent_owner no hereda los privilegios de tenant_resolve_owner (solo SET).
+  const tro = (await admin.query<{ inherit: boolean; set: boolean }>(
+    "SELECT inherit_option AS inherit, set_option AS set FROM pg_auth_members WHERE roleid = 'tenant_resolve_owner'::regrole AND member = 'consent_owner'::regrole",
+  )).rows[0];
+  assert.deepEqual(tro, { inherit: false, set: true });
+
+  const cols = async (priv: string): Promise<string[]> =>
+    (await admin.query<{ c: string }>(
+      "SELECT attname AS c FROM pg_attribute WHERE attrelid = 'app.outbox'::regclass AND attnum > 0 AND NOT attisdropped AND has_column_privilege('outbox_claimer', 'app.outbox', attname, $1) ORDER BY attname",
+      [priv],
+    )).rows.map((r) => r.c);
+  assert.deepEqual(await cols("SELECT"), ["attempts", "claimed_at", "created_at", "event_id", "status", "tenant_id"]);
+  assert.deepEqual(await cols("UPDATE"), ["attempts", "claimed_at", "status"]);
+  assert.deepEqual(await cols("INSERT"), []);
+  for (const priv of ["DELETE", "TRUNCATE"]) {
+    assert.equal((await admin.query<{ p: boolean }>("SELECT has_table_privilege('outbox_claimer', 'app.outbox', $1) AS p", [priv])).rows[0]?.p, false);
+  }
+  assert.equal((await admin.query<{ p: boolean }>("SELECT has_schema_privilege('outbox_claimer', 'app', 'CREATE') AS p")).rows[0]?.p, false);
+  assert.equal((await admin.query<{ p: boolean }>("SELECT has_table_privilege('outbox_claimer', 'integrity.audit_event', 'SELECT') AS p")).rows[0]?.p, false);
 });

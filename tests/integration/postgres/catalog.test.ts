@@ -72,13 +72,14 @@ pgTest("TEST-CNS-743 pg: EXECUTE por defecto no llega a PUBLIC y tenant_resolve 
     await migrator.query("CREATE FUNCTION app.probe_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");
     await migrator.query("SET LOCAL ROLE tenant_resolve_owner");
     await migrator.query("CREATE FUNCTION tenant_resolve.probe_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");
+    // Sin USAGE sobre tenant_resolve el migrador ya no puede castear a regprocedure (P2-5): se busca por oid.
     await migrator.query("RESET ROLE");
     for (const fn of ["app.probe_fn()", "tenant_resolve.probe_fn()"]) {
       for (const role of [...RUNTIME_ROLES, "public"]) {
         const row = (await migrator.query<{ p: boolean }>(
           role === "public"
-            ? "SELECT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = $1::regprocedure AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS p"
-            : "SELECT has_function_privilege($2, $1::regprocedure, 'EXECUTE') AS p",
+            ? "SELECT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = (SELECT x.oid FROM pg_proc x JOIN pg_namespace n ON n.oid = x.pronamespace WHERE n.nspname || '.' || x.proname || '()' = $1) AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS p"
+            : "SELECT has_function_privilege($2, (SELECT x.oid FROM pg_proc x JOIN pg_namespace n ON n.oid = x.pronamespace WHERE n.nspname || '.' || x.proname || '()' = $1), 'EXECUTE') AS p",
           role === "public" ? [fn] : [fn, role],
         )).rows[0];
         assert.equal(row?.p, false, `${role} puede ejecutar ${fn} por defecto`);
@@ -152,7 +153,7 @@ pgTest("TEST-CNS-745 pg: ops.db_catalog es de fila única, SYNTHETIC/LOCAL, inmu
   await admin.query("ROLLBACK");
 });
 
-pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app e integrity (tablas reales)", async (ctx) => {
+pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app e integrity (tablas reales) y sin vistas sin security_invoker sobre tablas RLS", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const bypass = (await admin.query<{ rolname: string }>(
     "SELECT rolname FROM pg_roles WHERE rolbypassrls AND rolname = ANY($1)",
@@ -180,6 +181,19 @@ pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con 
   // Las policies existen (no vacuo) y ninguna usa current_user/session_user (ya verificado arriba).
   const policyCount = (await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_policies WHERE schemaname IN ('app', 'integrity')")).rows[0]?.n ?? 0;
   assert.ok(policyCount >= 4, "hay policies reales por revisar");
+
+  // P2-1: ninguna vista (ni materializada) sobre tablas con RLS sin security_invoker; si no, la vista
+  // correria con los privilegios de su dueno y esquivaria la policy por tenant.
+  const views = (await admin.query<{ v: string }>(
+    `SELECT DISTINCT v.oid::regclass::text AS v
+       FROM pg_class v
+       JOIN pg_rewrite r ON r.ev_class = v.oid
+       JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+       JOIN pg_class t ON t.oid = d.refobjid AND t.oid <> v.oid
+      WHERE v.relkind IN ('v', 'm') AND t.relrowsecurity
+        AND (v.relkind = 'm' OR NOT COALESCE(v.reloptions @> ARRAY['security_invoker=true'], false))`,
+  )).rows;
+  assert.deepEqual(views, [], "vistas sobre tablas con RLS sin security_invoker");
 });
 
 pgTest("TEST-CNS-747 pg: los chequeos de arranque aceptan app_rw/worker/platform_rw y rechazan migrador y superusuario", async (ctx) => {
