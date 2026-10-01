@@ -95,7 +95,7 @@ async function startDecisionTx(
 ): Promise<ConsentDecisionRecord> {
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-07
 
-  const invitation = await ports.invitation.invitationRepo.findByRef(tenantId, input.invitationRef);
+  const invitation = await ports.invitation.invitationRepo.findByRefForUpdate(tenantId, input.invitationRef); // lock: C1 decide sobre la Invitation (SEC-CNS-016 P2-4)
   if (!invitation) {
     throw new DomainError("ERR-CM-01");
   }

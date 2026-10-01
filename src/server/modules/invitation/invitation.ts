@@ -296,9 +296,14 @@ async function transitionInvitationToOpened(
   ports: InvitationPorts,
   tenantId: TenantId,
   invitationRef: string,
+  expectedTokenHash?: string,
 ): Promise<InvitationRecord> {
   const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
+  if (expectedTokenHash !== undefined && found.tokenHash !== expectedTokenHash) {
+    // Defensa en profundidad (SEC-CNS-015 P2-A, igual que resolveInvitationForRedeemByHash): la ref resuelta debe corresponder al hash.
+    throw new DomainError("ERR-IV-01");
+  }
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) {
     throw new DomainError("ERR-IV-01");
   }
@@ -333,12 +338,13 @@ async function transitionInvitationToOpened(
 export async function openInvitation(ports: InvitationPorts, tenantId: TenantId, token: string): Promise<InvitationRecord> {
   // CA-124 §5: hash -> (tenant, invitationRef) por el TenantResolverPort (sin tenant); la transición
   // corre luego bajo ese tenant, nunca sobre un registro leído sin tenant.
-  const resolved = await ports.tenantResolver.byInvitationTokenHash(hashToken(token));
+  const tokenHash = hashToken(token);
+  const resolved = await ports.tenantResolver.byInvitationTokenHash(tokenHash);
   if (!resolved || resolved.tenantId !== tenantId) {
     // GRD-IV-07: token inexistente, o de otro tenant -> 404 uniforme (ERR-IV-01).
     throw new DomainError("ERR-IV-01");
   }
-  return inTx(ports, tenantId, (p) => transitionInvitationToOpened(p, tenantId, resolved.invitationRef));
+  return inTx(ports, tenantId, (p) => transitionInvitationToOpened(p, tenantId, resolved.invitationRef, tokenHash));
 }
 
 /** I4 vía sesión (P-12): el GET /i/{token} ya resolvió el token (GRD-IV-07), creó la sesión

@@ -270,7 +270,7 @@ export async function requestOtp(
   channelRef: string,
 ): Promise<OtpVerificationRecord> {
   const issued = await inTx(ports, tenantId, async (p): Promise<Issued> => {
-    const invitation = await p.invitation.invitationRepo.findByRef(tenantId, invitationRef);
+    const invitation = await p.invitation.invitationRepo.findByRefForUpdate(tenantId, invitationRef); // lock: V1 decide sobre la Invitation (SEC-CNS-016 P2-4)
     if (!invitation) {
       throw new DomainError("ERR-CM-01");
     }

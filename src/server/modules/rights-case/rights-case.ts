@@ -219,7 +219,8 @@ export async function confirmCaseReturnViaHandle(
       // ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_CONTACTING exige caseRef (P1:
       // faltaba); recoveryRef se omite porque origin es siempre CHANNEL_UNREACHABLE en RC2u.
       payload: { caseRef: rightsCase.caseRef },
-      idempotencyKey: rightsCase.caseRef,
+      // ":contacting": la key plana `caseRef` colisionaba con otros eventos del mismo agregado (SEC-CNS-016 P2-5).
+      idempotencyKey: `${rightsCase.caseRef}:contacting`,
     });
     return updated;
   });

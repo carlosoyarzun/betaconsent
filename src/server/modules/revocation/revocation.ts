@@ -541,7 +541,8 @@ async function applyRevocationTx(
       ...(verifiedAuthPath === "RECOVERY" ? { recoveryMethod: verifiedRecoveryMethod } : {}),
       originPurposeRef: "ALL", // scope ALL en IT0; mismo valor que REVOCATION_REQUESTED.
     },
-    idempotencyKey: revocationRef,
+    // ":r4": la key plana colisionaba con otros eventos del agregado; sigue deduplicando los reintentos de R4 (SEC-CNS-016 P2-5).
+    idempotencyKey: `${revocationRef}:r4`,
   });
   // Recibo de la revocación: receiptRef = revocationRef, el mismo "Comprobante" que muestra la
   // UI de autoservicio/recuperación. managementLinkIssued=false (IT0: sin management_token).

@@ -10,7 +10,7 @@
 //
 // `appendNext` (lee la secuencia justo antes del append) SOLO es valido para emisiones que no deciden
 // estado de un agregado (lista final, SEC-CNS-015 P2-E, PR-D):
-//   unica: RECOVERY_TOKEN_ISSUED (RV0, issueRecoveryLinkBearer).
+//   RECOVERY_TOKEN_ISSUED (RV0, issueRecoveryLinkBearer) y las emisiones de siembra de tenant-context/seed.ts (agregados nuevos de fixtures, sin decision de estado).
 // Todo lo demas (invitation I2-I7, otp-challenge V1-V4/V2r, consent-decision C1-C5, rights-case
 // RC1/RC2u/RC3/RC4-6 y enrollment EN0) corre en `uow.inTenant` con lock de fila + base previa.
 // Transiciones que emiten VARIOS eventos del mismo agregado (consent-decision C3/C5) usan
