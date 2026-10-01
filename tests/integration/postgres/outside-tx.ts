@@ -53,6 +53,7 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       append: (event) => uow.inTenant(event.tenantId, (tx) => tx.ledger.append(event)),
       currentSequence: (t, id) => uow.inTenant(t, (tx) => tx.ledger.currentSequence(t, id)),
       listByAggregate: (t, type, id) => uow.inTenant(t, (tx) => tx.ledger.listByAggregate(t, type, id)),
+      readChain: (t) => uow.inTenant(t, (tx) => tx.ledger.readChain(t)),
     },
     outbox: {
       enqueue: (input) => uow.inTenant(input.tenantId, (tx) => tx.outbox.enqueue(input)),

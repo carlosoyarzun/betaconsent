@@ -7,6 +7,13 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  computeEventHash,
+  computePayloadHash,
+  LEDGER_GENESIS_HASH,
+  type ChainRow,
+} from "../../../server/modules/common/ledger-chain.ts";
+import { assertLedgerEventType } from "../../../server/modules/common/ledger-event-types.ts";
 import type { ActorRole, ActorType, Environment } from "../../../server/modules/common/types.ts";
 import {
   LedgerSequenceConflictError,
@@ -30,11 +37,17 @@ interface AuditEventRow {
   idempotency_key_hash: string | null;
   occurred_at: Date;
   environment: Environment;
+  chain_seq: number;
+  payload_hash: string;
+  previous_event_hash: string;
+  event_hash: string;
 }
 
 const COLUMNS =
   "tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, " +
-  "cosigned_by_ref, payload, idempotency_key_hash, occurred_at, environment";
+  "cosigned_by_ref, payload, idempotency_key_hash, occurred_at, environment, " +
+  // chain_seq es bigint (pg lo entregaria como string); float8 es exacto hasta 2^53 y llega como number.
+  "chain_seq::float8 AS chain_seq, payload_hash, previous_event_hash, event_hash";
 
 /** El ledger guarda solo el hash de la clave de idempotencia (ledgerEnvelope.idempotencyKeyHash). */
 function hashKey(key: string): string {
@@ -57,6 +70,10 @@ function toRecord(row: AuditEventRow): LedgerRecord {
     environment: row.environment,
     evidentiary: false,
     dataClass: "SYNTHETIC",
+    chainSeq: row.chain_seq,
+    payloadHash: row.payload_hash,
+    previousEventHash: row.previous_event_hash,
+    eventHash: row.event_hash,
   };
 }
 
@@ -71,6 +88,7 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
 
   return {
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
+      assertLedgerEventType(event.eventType); // X6: lista blanca (ERR-RV-13); la BD la repite como CHECK
       const keyHash = event.idempotencyKey !== undefined ? hashKey(event.idempotencyKey) : null;
       if (keyHash !== null) {
         const existing = await tx.query<AuditEventRow>(
@@ -81,11 +99,42 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
         if (row) return toRecord(row);
       }
 
+      // X6: lock por tenant (advisory xact, se libera en COMMIT/ROLLBACK) ANTES de leer la secuencia y
+      // la cola de la cadena: dos appends concurrentes del mismo tenant se serializan, el segundo ve
+      // lo que confirmo el primero y encadena sobre el. Los UNIQUE (tenant_id, chain_seq) y
+      // (tenant_id, previous_event_hash) de 0013 son la red de seguridad si alguien se salta el lock.
+      // Un lock que no se obtiene a tiempo falla por lock_timeout de la tx (55P03), no espera sin fin.
+      await tx.query("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))", [`ledger-chain:${event.tenantId}`]);
+
       const current = await currentSequence(event.tenantId, event.aggregateId);
       if (event.expectedSequence !== current) {
         throw new LedgerSequenceConflictError(event.expectedSequence, current);
       }
       const next = event.expectedSequence + 1; // SEC-CNS-013 P2-3: sequence = expectedSequence + 1
+
+      const tailRow = (await tx.query<{ chain_seq: number; event_hash: string }>(
+        `SELECT chain_seq::float8 AS chain_seq, event_hash FROM integrity.audit_event
+          WHERE tenant_id = $1 AND chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1`,
+        [event.tenantId],
+      )).rows[0];
+      const chainSeq = (tailRow?.chain_seq ?? 0) + 1;
+      const previousEventHash = tailRow?.event_hash ?? LEDGER_GENESIS_HASH;
+      const payloadHash = computePayloadHash(event.payload);
+      const eventHash = computeEventHash({
+        tenantId: event.tenantId,
+        chainSeq,
+        aggregateType: event.aggregateType,
+        aggregateId: event.aggregateId,
+        sequence: next,
+        eventType: event.eventType,
+        actorType: event.actorType,
+        actorRole: event.actorRole ?? null,
+        recordedByRef: event.recordedByRef ?? null,
+        cosignedByRef: event.cosignedByRef ?? null,
+        idempotencyKeyHash: keyHash,
+        payloadHash,
+        previousEventHash,
+      });
 
       // ON CONFLICT (secuencia) DO NOTHING (sin error) para no abortar la transaccion y poder releer
       // la secuencia real: una unidad concurrente que confirmo antes gana. El UNIQUE de idempotencia
@@ -97,8 +146,9 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
         inserted = await tx.query<AuditEventRow>(
           `INSERT INTO integrity.audit_event
              (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role,
-              recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+              recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
+              chain_seq, payload_hash, previous_event_hash, event_hash)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)
            ON CONFLICT (tenant_id, aggregate_id, sequence) DO NOTHING
            RETURNING ${COLUMNS}`,
           [
@@ -113,6 +163,10 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
             event.cosignedByRef ?? null,
             JSON.stringify(event.payload),
             keyHash,
+            chainSeq,
+            payloadHash,
+            previousEventHash,
+            eventHash,
           ],
         );
       } catch (error) {
@@ -137,6 +191,30 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
     },
 
     currentSequence: (tenantId, aggregateId) => currentSequence(tenantId, aggregateId),
+
+    async readChain(tenantId): Promise<readonly ChainRow[]> {
+      const r = await tx.query<AuditEventRow>(
+        `SELECT ${COLUMNS} FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq IS NOT NULL ORDER BY chain_seq`,
+        [tenantId],
+      );
+      return r.rows.map((row) => ({
+        tenantId: row.tenant_id,
+        chainSeq: row.chain_seq,
+        aggregateType: row.aggregate_type,
+        aggregateId: row.aggregate_id,
+        sequence: row.sequence,
+        eventType: row.event_type,
+        actorType: row.actor_type,
+        actorRole: row.actor_role,
+        recordedByRef: row.recorded_by_ref,
+        cosignedByRef: row.cosigned_by_ref,
+        idempotencyKeyHash: row.idempotency_key_hash,
+        payload: row.payload,
+        payloadHash: row.payload_hash,
+        previousEventHash: row.previous_event_hash,
+        eventHash: row.event_hash,
+      }));
+    },
 
     async listByAggregate(tenantId, aggregateType, aggregateId) {
       const r = await tx.query<AuditEventRow>(

@@ -19,9 +19,11 @@ const TABLES = [
 
 async function seedAudit(ctx: { connectAsSuperuser(): Promise<import("pg").Client> }, tenant: string, aggregate: string): Promise<void> {
   const admin = await ctx.connectAsSuperuser();
+  // 0013: todo INSERT lleva eslabon (CHECK audit_event_chain_required); la BD no recomputa el hash.
   await admin.query(
-    `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload)
-     VALUES ($1, 'Revocation', $2, 1, 'REVOCATION_REQUESTED', 'HUMAN', '{}'::jsonb)`,
+    `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload,
+                                         chain_seq, payload_hash, previous_event_hash, event_hash)
+     VALUES ($1, 'Revocation', $2, 1, 'REVOCATION_REQUESTED', 'HUMAN', '{}'::jsonb, 1, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '0000000000000000000000000000000000000000000000000000000000000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')`,
     [tenant, aggregate],
   );
 }
@@ -108,7 +110,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   await assert.rejects(
     () => app.query(
       `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, environment)
-       VALUES ($1, 'A', 'b', 1, 'E', 'HUMAN', '{}'::jsonb, 'DEV')`,
+       VALUES ($1, 'A', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 'DEV')`,
       [fixtureUuid("t787")],
     ),
     (e: unknown) => codeOf(e) === "42501",
@@ -147,7 +149,8 @@ pgTest("TEST-CNS-789 pg: CHECK y UNIQUE: data_class SYNTHETIC, FIXTURE solo LOCA
   const admin = await ctx.connectAsSuperuser();
   const t = fixtureUuid("t789");
   const base = (over: Record<string, string>): Promise<unknown> => {
-    const cols = { tenant_id: `'${t}'`, aggregate_type: "'A'", aggregate_id: "'agg789'", sequence: "1", event_type: "'E'", actor_type: "'HUMAN'", payload: "'{}'::jsonb", ...over };
+    const cols = { tenant_id: `'${t}'`, aggregate_type: "'A'", aggregate_id: "'agg789'", sequence: "1", event_type: "'CONSENT_GRANTED'", actor_type: "'HUMAN'", payload: "'{}'::jsonb",
+      chain_seq: "1", payload_hash: "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'", previous_event_hash: "'0000000000000000000000000000000000000000000000000000000000000000'", event_hash: "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'", ...over };
     return admin.query(`INSERT INTO integrity.audit_event (${Object.keys(cols).join(",")}) VALUES (${Object.values(cols).join(",")})`);
   };
   await assert.rejects(() => base({ data_class: "'REAL'" }), (e: unknown) => codeOf(e) === "23514");
@@ -191,7 +194,7 @@ pgTest("TEST-CNS-790 pg: sin tenant no hay filas ni escritura, y la conexion reu
     assert.equal(seen, 0, `tenant ${JSON.stringify(setting)}`);
     await assert.rejects(
       () => app.query(
-        "INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload) VALUES ($1, 'A', 'x', 1, 'E', 'HUMAN', '{}'::jsonb)",
+        "INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload) VALUES ($1, 'A', 'x', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb)",
         [ta],
       ),
       (e: unknown) => codeOf(e) === "42501",

@@ -154,6 +154,7 @@ function scopeLedger(inner: LedgerPort, tenant: TenantId): LedgerPort {
     currentSequence: async (t, aggregateId) => (t === tenant ? inner.currentSequence(t, aggregateId) : 0),
     listByAggregate: async (t, aggregateType, aggregateId) =>
       t === tenant ? inner.listByAggregate(t, aggregateType, aggregateId) : [],
+    readChain: async (t) => (t === tenant ? inner.readChain(t) : []),
   };
 }
 

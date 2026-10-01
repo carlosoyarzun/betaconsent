@@ -5,6 +5,14 @@
 // `expectedSequence`.
 
 import {
+  computeEventHash,
+  computePayloadHash,
+  LEDGER_GENESIS_HASH,
+  sha256Hex,
+  type ChainRow,
+} from "../../server/modules/common/ledger-chain.ts";
+import { assertLedgerEventType } from "../../server/modules/common/ledger-event-types.ts";
+import {
   LedgerSequenceConflictError,
   type LedgerEventInput,
   type LedgerPort,
@@ -19,6 +27,8 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
   const records = new JournaledList<LedgerRecord>();
   const sequenceByAggregate = new JournaledMap<string, number>();
   const byIdempotencyKey = new JournaledMap<string, LedgerRecord>();
+  // X6: cola de la cadena por tenant (ultimo chainSeq y eventHash). Journaled: un rollback la deshace.
+  const chainTail = new JournaledMap<string, { readonly chainSeq: number; readonly eventHash: string }>();
 
   // La numeración es por (tenant, aggregate_id), igual que UNIQUE (tenant_id, aggregate_id, sequence)
   // de integrity.audit_event (common.spec.yaml ledgerEnvelope.checks); aggregateType no entra.
@@ -35,8 +45,10 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
       records.journal = journal;
       sequenceByAggregate.journal = journal;
       byIdempotencyKey.journal = journal;
+      chainTail.journal = journal;
     },
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
+      assertLedgerEventType(event.eventType); // X6: lista blanca (ERR-RV-13), antes de cualquier efecto
       if (event.idempotencyKey) {
         const key = idempotencyStoreKey(event.tenantId, event.aggregateType, event.aggregateId, event.idempotencyKey);
         const existing = byIdempotencyKey.get(key);
@@ -51,9 +63,36 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
       const nextSequence = event.expectedSequence + 1; // SEC-CNS-013 P2-3: sequence = expectedSequence + 1
       sequenceByAggregate.set(aggKey, nextSequence);
 
+      // X6: eslabon de la cadena del tenant. Las unidades in-memory estan serializadas
+      // (in-memory-unit-of-work.adapter.ts), el equivalente al lock por tenant de Postgres.
+      const tail = chainTail.get(event.tenantId);
+      const chainSeq = (tail?.chainSeq ?? 0) + 1;
+      const previousEventHash = tail?.eventHash ?? LEDGER_GENESIS_HASH;
+      const payloadHash = computePayloadHash(event.payload);
+      const eventHash = computeEventHash({
+        tenantId: event.tenantId,
+        chainSeq,
+        aggregateType: event.aggregateType,
+        aggregateId: event.aggregateId,
+        sequence: nextSequence,
+        eventType: event.eventType,
+        actorType: event.actorType,
+        actorRole: event.actorRole ?? null,
+        recordedByRef: event.recordedByRef ?? null,
+        cosignedByRef: event.cosignedByRef ?? null,
+        idempotencyKeyHash: event.idempotencyKey !== undefined ? sha256Hex(event.idempotencyKey) : null,
+        payloadHash,
+        previousEventHash,
+      });
+      chainTail.set(event.tenantId, { chainSeq, eventHash });
+
       const { expectedSequence: _expectedSequence, ...eventFields } = event;
       const record: LedgerRecord = {
         ...eventFields,
+        chainSeq,
+        payloadHash,
+        previousEventHash,
+        eventHash,
         sequence: nextSequence,
         occurredAt: new Date(),
         environment: "LOCAL",
@@ -71,6 +110,28 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
     },
     async currentSequence(tenantId, aggregateId) {
       return sequenceByAggregate.get(aggregateKey(tenantId, aggregateId)) ?? 0;
+    },
+    async readChain(tenantId): Promise<readonly ChainRow[]> {
+      return records.items
+        .filter((r) => r.tenantId === tenantId)
+        .sort((a, b) => a.chainSeq - b.chainSeq)
+        .map((r) => ({
+          tenantId: r.tenantId,
+          chainSeq: r.chainSeq,
+          aggregateType: r.aggregateType,
+          aggregateId: r.aggregateId,
+          sequence: r.sequence,
+          eventType: r.eventType,
+          actorType: r.actorType,
+          actorRole: r.actorRole ?? null,
+          recordedByRef: r.recordedByRef ?? null,
+          cosignedByRef: r.cosignedByRef ?? null,
+          idempotencyKeyHash: r.idempotencyKey !== undefined ? sha256Hex(r.idempotencyKey) : null,
+          payload: r.payload,
+          payloadHash: r.payloadHash,
+          previousEventHash: r.previousEventHash,
+          eventHash: r.eventHash,
+        }));
     },
     async listByAggregate(tenantId, aggregateType, aggregateId) {
       return records.items.filter(
