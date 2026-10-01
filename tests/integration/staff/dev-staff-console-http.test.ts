@@ -16,11 +16,10 @@ import {
 import {
   LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY,
   LOCAL_ONLY_DEV_OTP_POLICY,
-  LOCAL_ONLY_DEV_PARTICIPATION_REF,
   LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG,
   LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF,
   LOCAL_ONLY_DEV_STAFF_ROSTER,
-  LOCAL_ONLY_DEV_STAFF_SUBJECT_REF,
+  LOCAL_ONLY_DEV_STAFF_STUDENTS,
   LOCAL_ONLY_DEV_TENANT_ID,
 } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
@@ -31,6 +30,8 @@ const ORIGIN = "http://consola-dev.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
 const STAFF_CSRF_COOKIE = "__Host-cns-staff-csrf";
 const BASE = "/__dev/staff-console";
+const S1 = LOCAL_ONLY_DEV_STAFF_STUDENTS[0]!.subjectRef;
+const S2 = LOCAL_ONLY_DEV_STAFF_STUDENTS[1]!.subjectRef;
 
 interface Harness {
   readonly baseUrl: string;
@@ -42,13 +43,15 @@ function startServer(environment: "LOCAL" | "DEV"): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
   const staffIdentity = createInMemoryStaffIdentityAdapter([...LOCAL_ONLY_DEV_STAFF_ROSTER]);
   const staff = createDefaultStaffConsolePorts(ports.invitation, staffIdentity, loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY));
-  staff.catalog.seedSubject(LOCAL_ONLY_DEV_TENANT_ID, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF);
-  staff.catalog.seedParticipation(LOCAL_ONLY_DEV_TENANT_ID, {
-    participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
-    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
-    productRef: LECTORPRO_BETA_CONFIG.productRef,
-    status: "ACTIVE",
-  });
+  for (const st of LOCAL_ONLY_DEV_STAFF_STUDENTS) {
+    staff.catalog.seedSubject(LOCAL_ONLY_DEV_TENANT_ID, st.subjectRef);
+    staff.catalog.seedParticipation(LOCAL_ONLY_DEV_TENANT_ID, {
+      participationRef: st.participationRef,
+      contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+      productRef: LECTORPRO_BETA_CONFIG.productRef,
+      status: "ACTIVE",
+    });
+  }
   const server: Server = createConsentFlowHttpServer({
     config: { allowedOrigin: ORIGIN },
     ports,
@@ -58,8 +61,7 @@ function startServer(environment: "LOCAL" | "DEV"): Promise<Harness> {
     staffConsole: staff,
     devStaffConsole: {
       principalRef: LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF,
-      subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF,
-      participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
+      students: LOCAL_ONLY_DEV_STAFF_STUDENTS,
       contextRef: LECTORPRO_BETA_CONFIG.contextRef,
       consentVersion: "v1-dev",
     },
@@ -123,12 +125,13 @@ test("TEST-CNS-1061: flujo feliz en LOCAL (login -> formulario -> EN0/I1/I2/I3) 
     const { cookie, csrf } = await loginViaForm(h);
     const page = await fetch(`${h.baseUrl}${BASE}`, { headers: { cookie } });
     const html = await page.text();
+    assert.match(html, /<select id="student"/);
     assert.match(html, /Correo del apoderado \(inventado\)/);
     assert.match(html, /placeholder="apoderado1@example\.invalid"/);
     assert.ok(html.includes(`name="csrf_token" value="${csrf}"`));
     assert.doesNotMatch(html, /<script/i);
 
-    const res = await form(h, `${BASE}/invite`, { csrf_token: csrf, guardian_email: "apoderado1@example.invalid" }, { cookie });
+    const res = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie });
     assert.equal(res.status, 200);
     const out = await res.text();
     const link = /href="(\/i\/[^"]+)"/.exec(out)?.[1];
@@ -151,7 +154,7 @@ test("TEST-CNS-1062: correo no reservado -> error visible en lenguaje claro, sin
   const h = await startServer("LOCAL");
   try {
     const { cookie, csrf } = await loginViaForm(h);
-    const bad = await form(h, `${BASE}/invite`, { csrf_token: csrf, guardian_email: "padre@gmail.com" }, { cookie });
+    const bad = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "padre@gmail.com" }, { cookie });
     assert.equal(bad.status, 422);
     const html = await bad.text();
     assert.match(html, /role="alert"/);
@@ -159,7 +162,7 @@ test("TEST-CNS-1062: correo no reservado -> error visible en lenguaje claro, sin
     assert.ok(!html.includes("padre@gmail.com"), "el correo no se refleja");
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
 
-    const good = await form(h, `${BASE}/invite`, { csrf_token: csrf, guardian_email: "apoderado1@example.invalid" }, { cookie });
+    const good = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie });
     assert.equal(good.status, 200);
     assert.equal(h.staff.invitationLinkSink.sent.length, 1);
   } finally {
@@ -170,11 +173,11 @@ test("TEST-CNS-1062: correo no reservado -> error visible en lenguaje claro, sin
 test("TEST-CNS-1063: sin sesión STAFF no se puede enviar (cookies ausentes o sesión basura): sin invitación", async () => {
   const h = await startServer("LOCAL");
   try {
-    const noCookie = await form(h, `${BASE}/invite`, { csrf_token: "abc", guardian_email: "apoderado1@example.invalid" });
+    const noCookie = await form(h, `${BASE}/invite`, { csrf_token: "abc", student: S1, guardian_email: "apoderado1@example.invalid" });
     assert.equal(noCookie.status, 403);
     const csrf = "csrf-sin-sesion-0001";
     const cookie = `${STAFF_CSRF_COOKIE}=${csrf}; ${STAFF_COOKIE}=basura.firma`;
-    const garbage = await form(h, `${BASE}/invite`, { csrf_token: csrf, guardian_email: "apoderado1@example.invalid" }, { cookie });
+    const garbage = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie });
     assert.equal(garbage.status, 401);
     assert.match(await garbage.text(), /sesión de administrador/);
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
@@ -188,18 +191,39 @@ test("TEST-CNS-1064: CSRF ausente, distinto de la cookie u Origin ajeno -> recha
   try {
     const { cookie, csrf } = await loginViaForm(h);
     const email = "apoderado1@example.invalid";
-    const missing = await form(h, `${BASE}/invite`, { guardian_email: email }, { cookie });
+    const missing = await form(h, `${BASE}/invite`, { student: S1, guardian_email: email }, { cookie });
     assert.equal(missing.status, 403);
-    const wrong = await form(h, `${BASE}/invite`, { csrf_token: `${csrf}x`, guardian_email: email }, { cookie });
+    const wrong = await form(h, `${BASE}/invite`, { csrf_token: `${csrf}x`, student: S1, guardian_email: email }, { cookie });
     assert.equal(wrong.status, 403);
-    const foreignOrigin = await form(h, `${BASE}/invite`, { csrf_token: csrf, guardian_email: email }, { cookie, origin: "http://evil.test.localhost" });
+    const foreignOrigin = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: email }, { cookie, origin: "http://evil.test.localhost" });
     assert.equal(foreignOrigin.status, 403);
-    const noOrigin = await form(h, `${BASE}/invite`, { csrf_token: csrf, guardian_email: email }, { cookie, origin: null });
+    const noOrigin = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: email }, { cookie, origin: null });
     assert.equal(noOrigin.status, 403);
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
     // el login tampoco acepta un Origin ajeno
     const loginForeign = await form(h, `${BASE}/login`, {}, { origin: "http://evil.test.localhost" });
     assert.equal(loginForeign.status, 403);
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1065: dos invitaciones a alumnos distintos en el mismo arranque funcionan; repetir un alumno da error claro y alumno ajeno al catálogo se rechaza", async () => {
+  const h = await startServer("LOCAL");
+  try {
+    assert.ok(LOCAL_ONLY_DEV_STAFF_STUDENTS.length >= 6);
+    const { cookie, csrf } = await loginViaForm(h);
+    const send = (student: string, email: string): Promise<Response> => form(h, `${BASE}/invite`, { csrf_token: csrf, student, guardian_email: email }, { cookie });
+    assert.equal((await send(S1, "apoderado1@example.invalid")).status, 200);
+    assert.equal((await send(S2, "apoderado2@example.invalid")).status, 200);
+    assert.equal(h.staff.invitationLinkSink.sent.length, 2);
+    assert.notEqual(h.staff.invitationLinkSink.sent[0]?.invitationPath, h.staff.invitationLinkSink.sent[1]?.invitationPath);
+    const again = await send(S1, "apoderado3@example.invalid");
+    assert.equal(again.status, 409);
+    assert.match(await again.text(), /Elige otro alumno/);
+    const unknown = await send("00000000-0000-4000-8000-000000000000", "apoderado4@example.invalid");
+    assert.equal(unknown.status, 422);
+    assert.equal(h.staff.invitationLinkSink.sent.length, 2);
   } finally {
     await h.close();
   }

@@ -36,8 +36,8 @@ export const DEV_STAFF_CONSOLE_PATH = "/__dev/staff-console";
 /** Datos sintéticos precargados (los del banner de dev.ts); inyectados por dev.ts/tests. */
 export interface DevStaffConsoleFixture {
   readonly principalRef: string;
-  readonly subjectRef: string;
-  readonly participationRef: string;
+  /** Alumnos sintéticos seleccionables; subject y participación SIEMPRE salen de aquí, nunca del form. */
+  readonly students: readonly { readonly label: string; readonly subjectRef: string; readonly participationRef: string }[];
   readonly contextRef: string;
   readonly consentVersion: string;
 }
@@ -84,7 +84,7 @@ function describeFailure(step: "EN0" | "I1" | "I2" | "I3", result: HttpResult): 
   if (result.status === 404) return "No hay una sesión de administrador vigente, o el alumno/participación no existe en este colegio. Entra de nuevo e inténtalo otra vez.";
   if (code === "CSRF_REJECTED") return "El formulario no pasó la verificación de seguridad (CSRF/origen). Recarga la página e inténtalo de nuevo.";
   if (code === "ACTOR_NOT_ALLOWED") return "Este usuario no tiene permiso para crear invitaciones (solo administrador del colegio).";
-  if (code === "ENROLLMENT_ALREADY_ACTIVE") return "Este alumno de prueba ya tiene una participación activa creada antes. En esta consola dev solo se puede usar una vez por arranque del servidor (reinicia dev.ts para repetir).";
+  if (code === "ENROLLMENT_ALREADY_ACTIVE") return "Este alumno de prueba ya tiene una participación activa (ya se le creó una invitación). Elige otro alumno de la lista.";
   if (code === "INVITATION_ALREADY_ACTIVE") return "Ya existe una invitación vigente para este alumno de prueba.";
   if (code === "INVITER_NOT_PARTICIPATING" || code === "ENROLLMENT_NOT_ACTIVE" || code === "CONTEXT_NOT_ACTIVE") return "La participación del alumno de prueba no está activa o el contexto del estudio no está vigente.";
   if (step === "I2" && result.status === 422) return "El correo del apoderado fue rechazado: en esta etapa solo se aceptan correos inventados de dominio reservado (por ejemplo apoderado1@example.invalid).";
@@ -109,8 +109,7 @@ export async function handleDevStaffConsole(req: DevStaffConsoleRequest, deps: D
     kind: "form",
     loggedIn,
     csrfToken: loggedIn ? (csrfCookie as string) : "",
-    subjectRef: fixture.subjectRef,
-    participationRef: fixture.participationRef,
+    students: fixture.students.map((st) => ({ label: st.label, subjectRef: st.subjectRef })),
     contextRef: fixture.contextRef,
     ...extra,
   });
@@ -142,25 +141,27 @@ export async function handleDevStaffConsole(req: DevStaffConsoleRequest, deps: D
       }
       throw err;
     }
+    const student = fixture.students.find((st) => st.subjectRef === form.get("student"));
+    if (!student) return page(422, formView({ error: "Elige uno de los alumnos de prueba de la lista." }));
     const email = (form.get("guardian_email") ?? "").trim();
     // Pre-chequeo con la MISMA regla de dominio que I2 (isReservedEmail), para no dejar un enrollment
     // huérfano si el correo es inválido. I2 la vuelve a aplicar de forma autoritativa.
     if (email.length === 0 || email.length > 254 || !isReservedEmail(email)) {
-      return page(422, formView({ error: "El correo del apoderado fue rechazado: en esta etapa solo se aceptan correos inventados de dominio reservado (por ejemplo apoderado1@example.invalid). No se creó ninguna invitación." }));
+      return page(422, formView({ selectedSubjectRef: student.subjectRef, error: "El correo del apoderado fue rechazado: en esta etapa solo se aceptan correos inventados de dominio reservado (por ejemplo apoderado1@example.invalid). No se creó ninguna invitación." }));
     }
 
     const base = { originHeader: req.originHeader, csrfHeaderToken: csrfField, cookieHeader: req.cookieHeader };
     const fail = (step: "EN0" | "I1" | "I2" | "I3", result: HttpResult, completed: string): DevStaffConsoleResponse => {
       const status = result.status === 404 ? 401 : result.status;
-      return page(status, formView({ error: describeFailure(step, result), ...(completed ? { progress: completed } : {}) }));
+      return page(status, formView({ selectedSubjectRef: student.subjectRef, error: describeFailure(step, result), ...(completed ? { progress: completed } : {}) }));
     };
 
-    const en0 = await handleOpenEnrollment({ ...base, body: { subjectRef: fixture.subjectRef, participationRef: fixture.participationRef } }, deps.staffConsole, config, deps.staffSessionKey);
+    const en0 = await handleOpenEnrollment({ ...base, body: { subjectRef: student.subjectRef, participationRef: student.participationRef } }, deps.staffConsole, config, deps.staffSessionKey);
     if (!ok(en0)) return fail("EN0", en0, "");
     const enrollmentRef = (en0.body as { enrollmentRef: string }).enrollmentRef;
 
     const i1 = await handleCreateInvitation(
-      { ...base, idempotencyKeyHeader: `dev-console-${randomUUID()}`, body: { subjectRef: fixture.subjectRef, enrollmentRef, participationRef: fixture.participationRef, contextRef: fixture.contextRef } },
+      { ...base, idempotencyKeyHeader: `dev-console-${randomUUID()}`, body: { subjectRef: student.subjectRef, enrollmentRef, participationRef: student.participationRef, contextRef: fixture.contextRef } },
       deps.staffConsole,
       config,
       deps.staffSessionKey,

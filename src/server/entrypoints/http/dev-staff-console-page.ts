@@ -8,9 +8,9 @@ export interface DevStaffConsoleFormView {
   readonly kind: "form";
   readonly loggedIn: boolean;
   readonly csrfToken: string;
-  readonly subjectRef: string;
-  readonly participationRef: string;
+  readonly students: readonly { readonly label: string; readonly subjectRef: string }[];
   readonly contextRef: string;
+  readonly selectedSubjectRef?: string;
   readonly error?: string;
   readonly progress?: string;
 }
@@ -27,7 +27,7 @@ const HEAD = `<meta charset="utf-8">
   <style>
     main { max-width: 560px; margin: 0 auto; padding: 24px; }
     label { display: block; margin-top: 16px; font-weight: 600; }
-    input[type=email], input[readonly] { display: block; width: 100%; min-height: 44px; box-sizing: border-box; padding: 8px; }
+    input[type=email], select { display: block; width: 100%; min-height: 44px; box-sizing: border-box; padding: 8px; }
     button { min-height: 44px; margin-top: 16px; padding: 0 16px; }
     :focus-visible { outline: 3px solid #1a56db; outline-offset: 2px; }
     .dev-banner { border: 2px dashed #b45309; padding: 8px; }
@@ -82,10 +82,9 @@ export function renderDevStaffConsolePage(view: DevStaffConsoleView): string {
     <p>Paso 2. Crea y envía la invitación para el alumno de prueba.</p>
     <form method="post" action="/__dev/staff-console/invite">
       <input type="hidden" name="csrf_token" value="${escapeHtml(view.csrfToken)}">
-      <label for="subject">Alumno sintético (precargado)</label>
-      <input id="subject" type="text" readonly value="${escapeHtml(view.subjectRef)}">
-      <label for="participation">Participación sintética (precargada)</label>
-      <input id="participation" type="text" readonly value="${escapeHtml(view.participationRef)}">
+      <label for="student">Alumno sintético</label>
+      <select id="student" name="student" required>${view.students.map((st) => `<option value="${escapeHtml(st.subjectRef)}"${st.subjectRef === view.selectedSubjectRef ? " selected" : ""}>${escapeHtml(st.label)}</option>`).join("")}</select>
+      <p id="student-help">Cada alumno admite una sola invitación activa; si ya la tiene, se avisa.</p>
       <label for="guardian_email">Correo del apoderado (inventado)</label>
       <input id="guardian_email" name="guardian_email" type="email" required autocomplete="off" placeholder="apoderado1@example.invalid" aria-describedby="email-help"${view.error ? ` aria-invalid="true"` : ""}>
       <p id="email-help">Solo se aceptan correos inventados de dominio reservado (por ejemplo example.invalid).</p>
