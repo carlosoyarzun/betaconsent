@@ -38,6 +38,7 @@ export class NestedUnitOfWorkError extends Error {
 function scopeRevocationRepo(inner: RevocationRepositoryPort, tenant: TenantId): RevocationRepositoryPort {
   return {
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
+    findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
     findByCase: async (t, caseRef) => (t === tenant ? inner.findByCase(t, caseRef) : null),
     findOpenByChain: async (t, chainRef) => (t === tenant ? inner.findOpenByChain(t, chainRef) : null),
     save: async (record) => {
@@ -50,6 +51,7 @@ function scopeRevocationRepo(inner: RevocationRepositoryPort, tenant: TenantId):
 function scopeConsentDecisionRepo(inner: ConsentDecisionRepositoryPort, tenant: TenantId): ConsentDecisionRepositoryPort {
   return {
     findByConsentId: async (t, id) => (t === tenant ? inner.findByConsentId(t, id) : null),
+    findByConsentIdForUpdate: async (t, id) => (t === tenant ? inner.findByConsentIdForUpdate(t, id) : null),
     findActiveGrantByChain: async (t, chainRef) => (t === tenant ? inner.findActiveGrantByChain(t, chainRef) : null),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("consentDecisionRepo.save");
@@ -78,6 +80,7 @@ function scopeLedger(inner: LedgerPort, tenant: TenantId): LedgerPort {
       if (event.tenantId !== tenant) throw new TenantScopeViolationError("ledger.append");
       return inner.append(event);
     },
+    currentSequence: async (t, aggregateId) => (t === tenant ? inner.currentSequence(t, aggregateId) : 0),
     listByAggregate: async (t, aggregateType, aggregateId) =>
       t === tenant ? inner.listByAggregate(t, aggregateType, aggregateId) : [],
   };

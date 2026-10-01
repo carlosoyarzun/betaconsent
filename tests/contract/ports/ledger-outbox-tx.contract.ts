@@ -88,6 +88,10 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       assert.equal((await ledger.append(event(ta, agg2))).sequence, 1);
       // Mismo aggregateId con otro aggregateType comparte numeracion (UNIQUE tenant_id, aggregate_id, sequence).
       assert.equal((await ledger.append(event(ta, agg1, { aggregateType: "Other", expectedSequence: 2 }))).sequence, 3);
+      // SEC-CNS-015 P2-C: currentSequence usa el mismo criterio que el UNIQUE y expectedSequence (por aggregateId).
+      assert.equal(await ledger.currentSequence(ta, agg1), 3);
+      assert.equal(await ledger.currentSequence(ta, agg2), 1);
+      assert.equal(await ledger.currentSequence(ta, fixtureUuid("agg781-vacio")), 0);
     });
     await h.inTenant(tb, async ({ ledger }) => {
       assert.equal((await ledger.append(event(tb, agg1))).sequence, 1);

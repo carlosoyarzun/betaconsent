@@ -69,6 +69,9 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
 
       return record;
     },
+    async currentSequence(tenantId, aggregateId) {
+      return sequenceByAggregate.get(aggregateKey(tenantId, aggregateId)) ?? 0;
+    },
     async listByAggregate(tenantId, aggregateType, aggregateId) {
       return records.items.filter(
         (r) => r.tenantId === tenantId && r.aggregateType === aggregateType && r.aggregateId === aggregateId,

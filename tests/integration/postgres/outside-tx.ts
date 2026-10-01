@@ -10,12 +10,14 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
   return {
     revocationRepo: {
       findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.revocationRepo.findByRef(t, ref)),
+      findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.revocationRepo.findByRefForUpdate(t, ref)),
       findByCase: (t, caseRef) => uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, caseRef)),
       findOpenByChain: (t, chainRef) => uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByChain(t, chainRef)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.revocationRepo.save(record)),
     },
     consentDecisionRepo: {
       findByConsentId: (t, id) => uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, id)),
+      findByConsentIdForUpdate: (t, id) => uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentIdForUpdate(t, id)),
       findActiveGrantByChain: (t, chainRef) => uow.inTenant(t, (tx) => tx.consentDecisionRepo.findActiveGrantByChain(t, chainRef)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.consentDecisionRepo.save(record)),
     },
@@ -26,6 +28,7 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
     },
     ledger: {
       append: (event) => uow.inTenant(event.tenantId, (tx) => tx.ledger.append(event)),
+      currentSequence: (t, id) => uow.inTenant(t, (tx) => tx.ledger.currentSequence(t, id)),
       listByAggregate: (t, type, id) => uow.inTenant(t, (tx) => tx.ledger.listByAggregate(t, type, id)),
     },
     outbox: {

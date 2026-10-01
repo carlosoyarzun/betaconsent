@@ -14,6 +14,9 @@ import type {
 } from "../../../server/ports/revocation-repository.port.ts";
 import type { TenantTx } from "./unit-of-work.ts";
 
+/** UNIQUE parcial (tenant_id, revoked_decision_ref) WHERE status <> 'FAILED' (0009, GRD-RV-04 IT0). */
+export const OPEN_REVOCATION_UNIQUE = "revocation_open_per_decision_uq";
+
 interface RevocationRow {
   tenant_id: string;
   revocation_ref: string;
@@ -58,6 +61,16 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
     async findByRef(tenantId, revocationRef) {
       const r = await tx.query<RevocationRow>(
         `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2`,
+        [tenantId, revocationRef],
+      );
+      const row = r.rows[0];
+      return row ? toRecord(row) : null;
+    },
+    async findByRefForUpdate(tenantId, revocationRef) {
+      // Lock de fila hasta COMMIT/ROLLBACK: serializa R2/R3/R4/R8/RH* y relee el estado vigente
+      // tras esperar a la unidad ganadora (READ COMMITTED re-evalua la fila bloqueada).
+      const r = await tx.query<RevocationRow>(
+        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 FOR UPDATE`,
         [tenantId, revocationRef],
       );
       const row = r.rows[0];

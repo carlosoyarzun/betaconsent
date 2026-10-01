@@ -30,7 +30,7 @@ export type RegisterReposTest = (name: string, body: (h: TenantReposHarness) => 
 const sha = (label: string): string => fixtureUuid(label).replaceAll("-", "").padEnd(64, "0").slice(0, 64);
 
 function revocation(tenantId: string, ref: string, extra: Partial<RevocationRecord> = {}): RevocationRecord {
-  return { revocationRef: ref, tenantId, chainRef: `chain-${ref}`, status: "REQUESTED", ...extra };
+  return { revocationRef: ref, tenantId, chainRef: `chain-${ref}`, revokedDecisionRef: fixtureUuid(`dec:${ref}`), status: "REQUESTED", ...extra };
 }
 
 function token(tenantId: string, label: string, extra: Partial<RecoveryTokenRecord> = {}): RecoveryTokenRecord {
@@ -54,9 +54,12 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
     const minimal = revocation(t, r1);
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(minimal));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRef(t, r1)), minimal);
+    // findByRefForUpdate: misma lectura (con lock en Postgres); inexistente = null.
+    assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRefForUpdate(t, r1)), minimal);
+    assert.equal(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRefForUpdate(t, fixtureUuid("r800-nope"))), null);
     assert.equal(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRef(t, fixtureUuid("r800-nope"))), null);
 
-    const verified: RevocationRecord = { ...minimal, status: "VERIFIED", verifiedAuthPath: "OTP", revokedDecisionRef: fixtureUuid("d800") };
+    const verified: RevocationRecord = { ...minimal, status: "VERIFIED", verifiedAuthPath: "OTP" };
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(verified));
     const found = await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRef(t, r1));
     assert.equal(found?.status, "VERIFIED");
@@ -105,6 +108,8 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
       await tx.consentDecisionRepo.save(pending);
     });
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, d1.consentId)), d1);
+    assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentIdForUpdate(t, d1.consentId)), d1);
+    assert.equal(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentIdForUpdate(t, fixtureUuid("d801-nope"))), null);
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, pending.consentId)), pending);
     assert.equal(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, fixtureUuid("d801-nope"))), null);
 

@@ -136,6 +136,8 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
       return toRecord(row);
     },
 
+    currentSequence: (tenantId, aggregateId) => currentSequence(tenantId, aggregateId),
+
     async listByAggregate(tenantId, aggregateType, aggregateId) {
       const r = await tx.query<AuditEventRow>(
         `SELECT ${COLUMNS} FROM integrity.audit_event

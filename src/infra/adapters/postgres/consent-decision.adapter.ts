@@ -4,6 +4,7 @@
 //
 // Opera DENTRO de la transaccion de PgUnitOfWork.inTenant (RLS por app.current_tenant_id()).
 
+import { DomainError } from "../../../server/modules/common/errors.ts";
 import type {
   ConsentDecisionRecord,
   ConsentDecisionRepositoryPort,
@@ -11,6 +12,9 @@ import type {
   PurposeDecision,
 } from "../../../server/ports/consent-decision-repository.port.ts";
 import type { TenantTx } from "./unit-of-work.ts";
+
+/** UNIQUE parcial (tenant_id, chain_ref) WHERE state IN ('GRANTED','PARTIALLY_GRANTED') (0009, GRD-CD-08). */
+export const SINGLE_ACTIVE_GRANT_UNIQUE = "consent_decision_single_active_grant_uq";
 
 interface ConsentDecisionRow {
   tenant_id: string;
@@ -62,6 +66,14 @@ export function createPgConsentDecisionRepository(tx: TenantTx): ConsentDecision
       const row = r.rows[0];
       return row ? toRecord(row) : null;
     },
+    async findByConsentIdForUpdate(tenantId, consentId) {
+      const r = await tx.query<ConsentDecisionRow>(
+        `SELECT ${COLUMNS} FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2 FOR UPDATE`,
+        [tenantId, consentId],
+      );
+      const row = r.rows[0];
+      return row ? toRecord(row) : null;
+    },
     async findActiveGrantByChain(tenantId, chainRef) {
       const r = await tx.query<ConsentDecisionRow>(
         `SELECT ${COLUMNS} FROM app.consent_decision
@@ -73,6 +85,7 @@ export function createPgConsentDecisionRepository(tx: TenantTx): ConsentDecision
       return row ? toRecord(row) : null;
     },
     async save(record) {
+      try {
       // Upsert. Las columnas de identidad/vinculo (context, product, subject, decision maker,
       // invitation, verification, chain) se fijan al crear y no son actualizables (sin grant).
       await tx.query(
@@ -103,6 +116,13 @@ export function createPgConsentDecisionRepository(tx: TenantTx): ConsentDecision
           record.receiptRef ?? null,
         ],
       );
+      } catch (error) {
+        // GRD-CD-08 (single_active_grant_per_chain, INV-1): dos GRANTED concurrentes en la cadena =>
+        // la segunda recibe ERR-CD-01 (ALREADY_DECIDED), el mismo error del guard del dominio.
+        const e = error as { code?: string; constraint?: string };
+        if (e.code === "23505" && e.constraint === SINGLE_ACTIVE_GRANT_UNIQUE) throw new DomainError("ERR-CD-01");
+        throw error;
+      }
     },
   };
 }

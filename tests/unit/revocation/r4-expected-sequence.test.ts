@@ -10,7 +10,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { appendNext } from "../../../src/server/modules/common/ledger-append.ts";
-import { confirmRevocation, requestRevocation, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
+import {
+  confirmRevocation,
+  evaluateRecoveryTokenEligibility,
+  evaluateRecoveryTokenEligibilityByHash,
+  hashRecoveryToken,
+  issueRecoveryLinkBearer,
+  requestRevocation,
+  verifyRevocationOtp,
+  type RevocationPorts,
+} from "../../../src/server/modules/revocation/revocation.ts";
 import { LedgerSequenceConflictError, type LedgerEventInput, type LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
@@ -97,4 +106,20 @@ test("TEST-CNS-820: appendNext declara la secuencia vigente del agregado; el led
   await assert.rejects(() => ledger.append({ ...base, expectedSequence: 1 }), (e: unknown) => e instanceof LedgerSequenceConflictError);
   assert.equal((await ledger.append({ ...base, expectedSequence: 2 })).sequence, 3);
   assert.deepEqual((await ledger.listByAggregate(T, "Revocation", base.aggregateId)).map((r) => r.sequence), [1, 2, 3]);
+});
+
+test("TEST-CNS-826: SEC-CNS-015 P2-A: un token cuyo hash no coincide con el hash pedido no es elegible aunque el resolver lo apunte (defensa en profundidad)", async () => {
+  const D = fixtureUuid("decision-826");
+  const { ports } = await makePorts(D);
+  const sink = ports.recoveryLinkChannel as ReturnType<typeof createInMemoryRecoveryLinkChannelSink>;
+  await issueRecoveryLinkBearer(ports, T, "chain-819", D, "REQUESTER_ASKED");
+  const hash = hashRecoveryToken(sink.sent[0]!.recoveryPath.replace("/r/", ""));
+  assert.ok(await evaluateRecoveryTokenEligibilityByHash(ports, hash), "control: el hash correcto es elegible");
+  // Resolver erroneo: cualquier hash "resuelve" a la ref del token real.
+  const real = await ports.tenantResolver.byRecoveryTokenHash(hash);
+  assert.ok(real);
+  const lying = { ...ports, tenantResolver: { ...ports.tenantResolver, byRecoveryTokenHash: async () => real } };
+  const otherHash = hashRecoveryToken("otro-token");
+  assert.equal(await evaluateRecoveryTokenEligibility(lying, T, "chain-819", D, otherHash), null);
+  assert.equal(await evaluateRecoveryTokenEligibilityByHash(lying, otherHash), null);
 });

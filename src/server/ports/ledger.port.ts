@@ -57,5 +57,9 @@ export interface LedgerPort {
    * mismo agregado, devuelve el registro existente sin duplicar (GRD-CM-08).
    */
   append(event: LedgerEventInput): Promise<LedgerRecord>;
+  /** Última `sequence` del agregado (0 = vacío), con el MISMO criterio que el UNIQUE
+   * (tenant_id, aggregate_id, sequence) y que `expectedSequence`: por (tenant, aggregateId), sin
+   * distinguir aggregateType (SEC-CNS-015 P2-C). */
+  currentSequence(tenantId: TenantId, aggregateId: string): Promise<number>;
   listByAggregate(tenantId: TenantId, aggregateType: string, aggregateId: string): Promise<readonly LedgerRecord[]>;
 }

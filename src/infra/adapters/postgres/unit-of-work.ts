@@ -22,7 +22,8 @@ import { createPgOutboxAdapter } from "./outbox.adapter.ts";
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
 import { createPgRecoveryTokenRepository } from "./recovery-token.adapter.ts";
-import { createPgRevocationRepository } from "./revocation.adapter.ts";
+import { createPgRevocationRepository, OPEN_REVOCATION_UNIQUE } from "./revocation.adapter.ts";
+import { DomainError } from "../../../server/modules/common/errors.ts";
 
 export interface TenantTx {
   query<R = Record<string, unknown>>(text: string, values?: readonly unknown[]): Promise<QueryResult<R>>;
@@ -33,6 +34,14 @@ const RETRYABLE_SQLSTATES = new Set(["40001", "40P01"]);
 
 export interface UnitOfWorkOptions {
   maxAttempts?: number;
+}
+
+/** GRD-RV-04: "una sola crea, las demas se adjuntan". El perdedor de la carrera por la revocacion
+ * abierta de una decision reejecuta `work`: ahora ve la ganadora (la adjunta, o ve la decision ya
+ * REVOKED y falla con ERR-RV-02). Es un reintento de dominio, no un error. */
+function isOpenRevocationRace(error: unknown): boolean {
+  const e = error as { code?: unknown; constraint?: unknown };
+  return e?.code === "23505" && e?.constraint === OPEN_REVOCATION_UNIQUE;
 }
 
 function sqlState(error: unknown): string | undefined {
@@ -64,7 +73,12 @@ export class PgUnitOfWork implements UnitOfWorkPort {
   }
 
   inTenant<T>(tenantId: string, work: (tx: TenantTxPorts) => Promise<T>): Promise<T> {
-    return this.withTenantTx(tenantId, (tx) => work(createPgTenantTxPorts(tx)));
+    return this.withTenantTx(tenantId, (tx) => work(createPgTenantTxPorts(tx))).catch((error: unknown) => {
+      // Reintentos agotados sobre la carrera de revocacion abierta (GRD-RV-04): transicion invalida,
+      // sin codigo nuevo. withTenantTx (infraestructura) propaga el 23505 crudo.
+      if (isOpenRevocationRace(error)) throw new DomainError("ERR-CM-06");
+      throw error;
+    });
   }
 
   /** Igual que `inTenant` pero con la transacción cruda (infraestructura y tests; el dominio no la ve). */
@@ -77,7 +91,8 @@ export class PgUnitOfWork implements UnitOfWorkPort {
         return await this.runOnce(tenantId, work);
       } catch (error) {
         const state = sqlState(error);
-        if (state !== undefined && RETRYABLE_SQLSTATES.has(state) && attempt < this.maxAttempts) continue;
+        const retryable = (state !== undefined && RETRYABLE_SQLSTATES.has(state)) || isOpenRevocationRace(error);
+        if (retryable && attempt < this.maxAttempts) continue;
         throw error;
       }
     }

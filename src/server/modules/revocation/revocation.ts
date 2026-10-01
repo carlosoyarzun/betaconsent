@@ -57,8 +57,14 @@ function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: Revocat
   return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, ...tx }));
 }
 
+/** Secuencia vigente de la Revocation: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P1-1). */
+const revocationSequence = (ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<number> =>
+  lastLedgerSequence(ports.ledger, tenantId, revocationRef);
+
+/** Relee la Revocation CON lock de fila (revocation.spec R4 "una tx con lock", SEC-CNS-015 P1-1): solo
+ * se usa dentro de la unidad de trabajo; la decision de transicion se toma sobre el estado bloqueado. */
 async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
-  const found = await ports.revocationRepo.findByRef(tenantId, revocationRef);
+  const found = await ports.revocationRepo.findByRefForUpdate(tenantId, revocationRef);
   if (!found) {
     // GRD-CM-01/06: revocationRef de otro tenant (o inexistente) -> 404 uniforme (TEST-CNS-464).
     throw new DomainError("ERR-CM-01");
@@ -86,6 +92,7 @@ async function attestHumanAssistedVerificationTx(
   revocationRef: string,
   caseRef: string,
 ): Promise<RevocationRecord> {
+  const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
@@ -98,7 +105,8 @@ async function attestHumanAssistedVerificationTx(
     verifiedRecoveryMethod: "HUMAN_ASSISTED",
   };
   await ports.revocationRepo.save(verified);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -239,6 +247,7 @@ async function cosignCaseConfirmationTx(
   caseRef: string,
   ctx: CaseConfirmationCosignContext,
 ): Promise<RevocationRecord> {
+  const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
@@ -248,7 +257,7 @@ async function cosignCaseConfirmationTx(
   }
   if (found.status === "CONFIRMED" && found.cosignedByRef) {
     // CONFIRMED sin aplicar (R4 falló antes): reintenta R4, sin reemitir REVOCATION_CONFIRMED.
-    return applyRevocationTx(ports, tenantId, revocationRef);
+    return applyRevocationTx(ports, tenantId, revocationRef, base);
   }
 
   const attested = found.attestedVerification;
@@ -271,7 +280,8 @@ async function cosignCaseConfirmationTx(
 
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
   await ports.revocationRepo.save(confirmed);
-  await appendNext(ports.ledger, {
+  const confirmedEvent = await ports.ledger.append({
+    expectedSequence: base,
     eventType: "REVOCATION_CONFIRMED",
     tenantId,
     aggregateType: "Revocation",
@@ -288,7 +298,7 @@ async function cosignCaseConfirmationTx(
   // que confirmRevocation (R3 -> R4). CA-124: RH3 cosign + R4 corren en UNA unidad de trabajo; si
   // R4 falla el error se propaga y NO queda ninguna escritura (la Revocation sigue VERIFIED con su
   // recordedByRef, sin REVOCATION_CONFIRMED) y el reintento de cosign converge hasta APPLIED.
-  return applyRevocationTx(ports, tenantId, revocationRef);
+  return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, confirmedEvent.sequence));
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +356,8 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
     status: "REQUESTED",
   };
   await ports.revocationRepo.save(record);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: 0,
     eventType: "REVOCATION_REQUESTED",
     tenantId,
     aggregateType: "Revocation",
@@ -379,6 +390,7 @@ async function verifyRevocationOtpTx(
   revocationRef: string,
   verificationRef: string,
 ): Promise<RevocationRecord> {
+  const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status === "VERIFIED" || found.status === "CONFIRMED") {
     // Idempotente: un R2 repetido con el mismo resultado no reemite el evento.
@@ -389,7 +401,8 @@ async function verifyRevocationOtpTx(
   }
   const verified: RevocationRecord = { ...found, status: "VERIFIED", verifiedAuthPath: "OTP", verifiedRecoveryMethod: undefined };
   await ports.revocationRepo.save(verified);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -411,6 +424,7 @@ export function confirmRevocation(ports: RevocationPorts, tenantId: string, revo
 }
 
 async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status === "CONFIRMED" || found.status === "APPLIED") {
     return found;
@@ -420,7 +434,8 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
   }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED" };
   await ports.revocationRepo.save(confirmed);
-  await appendNext(ports.ledger, {
+  const confirmedEvent = await ports.ledger.append({
+    expectedSequence: base,
     eventType: "REVOCATION_CONFIRMED",
     tenantId,
     aggregateType: "Revocation",
@@ -436,7 +451,7 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
   });
   // CA-124: R3 + R4 en la misma unidad de trabajo (P2 de lampone-security): si R4 falla, la
   // Revocation vuelve a VERIFIED (no queda CONFIRMED huérfana) y el reintento de R3 llega a APPLIED.
-  return applyRevocationTx(ports, tenantId, revocationRef);
+  return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, confirmedEvent.sequence));
 }
 
 /** R8: REQUESTED|VERIFIED|CONFIRMED -> FAILED (WITHDRAWN_BY_REQUESTER). No admite retiro sobre
@@ -446,6 +461,7 @@ export function withdrawRevocation(ports: RevocationPorts, tenantId: string, rev
 }
 
 async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status === "FAILED") {
     return found;
@@ -456,7 +472,8 @@ async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, re
   }
   const failed: RevocationRecord = { ...found, status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" };
   await ports.revocationRepo.save(failed);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "REVOCATION_FAILED",
     tenantId,
     aggregateType: "Revocation",
@@ -478,7 +495,15 @@ export function applyRevocation(ports: RevocationPorts, tenantId: string, revoca
   return inTx(ports, tenantId, (p) => applyRevocationTx(p, tenantId, revocationRef));
 }
 
-async function applyRevocationTx(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+/** `knownSequence`: secuencia del agregado ya capturada por el llamador en la misma unidad de trabajo
+ * (R3/RH3 que acaban de apendizar); si falta, se lee ANTES de bloquear la Revocation. */
+async function applyRevocationTx(
+  ports: RevocationPorts,
+  tenantId: string,
+  revocationRef: string,
+  knownSequence?: number,
+): Promise<RevocationRecord> {
+  const lastSequence = knownSequence ?? (await revocationSequence(ports, tenantId, revocationRef));
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.status !== "CONFIRMED") {
     throw new DomainError("ERR-CM-06");
@@ -492,14 +517,13 @@ async function applyRevocationTx(ports: RevocationPorts, tenantId: string, revoc
   }
   // CA-127: todo lo que puede fallar va antes de la primera escritura. contextRef y subjectRef
   // del sobre salen de la decisión revocada; si no existe, falla cerrado sin escrituras.
-  const decision = await ports.consentDecisionRepo.findByConsentId(tenantId, revokedDecisionRef);
+  const decision = await ports.consentDecisionRepo.findByConsentIdForUpdate(tenantId, revokedDecisionRef);
   // C6 (GRD-CD-09): solo una decisión GRANTED se revoca; REVOKED = reintento de R4 (converge).
   if (!decision || (decision.state !== "GRANTED" && decision.state !== "REVOKED")) {
     throw new DomainError("ERR-CM-06");
   }
-  // SEC-CNS-013 P2-3 / R4 (una tx con lock y expectedSequence): la secuencia esperada se lee del
-  // agregado dentro de la misma unidad de trabajo y se pasa explícita al ledger.
-  const lastSequence = await lastLedgerSequence(ports.ledger, tenantId, "Revocation", revocationRef);
+  // SEC-CNS-013 P2-3 / SEC-CNS-015 P1-1: `lastSequence` se capturo ANTES del lock y de la decision de
+  // estado; si el agregado avanzo desde entonces el append falla con LedgerSequenceConflictError.
   const rev = await ports.ledger.append({
     expectedSequence: lastSequence,
     eventType: "CONSENT_REVOKED",
@@ -636,7 +660,9 @@ async function findRecoveryTokenByHash(
 ): Promise<RecoveryTokenRecord | null> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved) return null;
-  return ports.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+  const record = await ports.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+  // SEC-CNS-015 P2-A: la ref resuelta debe corresponder al hash pedido (defensa en profundidad).
+  return record && record.tokenHash === tokenHash ? record : null;
 }
 
 /** SEC-CNS-014 (P1): ya NO la usa el handler HTTP de GET /r/{token} (revocation-flow.handler.ts
@@ -674,7 +700,8 @@ async function requestRevocationRecovery(
   const revocationRef = randomUUID();
   const record: RevocationRecord = { revocationRef, tenantId, chainRef, revokedDecisionRef, status: "REQUESTED" };
   await ports.revocationRepo.save(record);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: 0,
     eventType: "REVOCATION_REQUESTED",
     tenantId,
     aggregateType: "Revocation",
@@ -692,7 +719,14 @@ async function requestRevocationRecovery(
  * aquí) y emiten REVOCATION_VERIFIED authPath RECOVERY (revocation.spec.yaml:255-271,489-497).
  * El idempotencyKey incluye recoveryRef porque R10 puede repetirse con un token distinto sobre
  * la misma revocationRef (cada re-verificación es un hecho nuevo, no un replay). */
-async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string, found: RevocationRecord, recoveryRef: string): Promise<RevocationRecord> {
+async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string, stale: RevocationRecord, recoveryRef: string): Promise<RevocationRecord> {
+  // SEC-CNS-015 P1-1: secuencia antes del lock; `stale` vino de una lectura sin lock (findOpenByChain),
+  // asi que se relee con lock y solo se transiciona si sigue REQUESTED/VERIFIED (nunca se pisa FAILED/APPLIED).
+  const base = await revocationSequence(ports, tenantId, stale.revocationRef);
+  const found = await requireRevocation(ports, tenantId, stale.revocationRef);
+  if (found.status !== "REQUESTED" && found.status !== "VERIFIED") {
+    throw new DomainError("ERR-CM-06");
+  }
   const verified: RevocationRecord = {
     ...found,
     status: "VERIFIED",
@@ -700,7 +734,8 @@ async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string
     verifiedRecoveryMethod: "CHANNEL_LINK",
   };
   await ports.revocationRepo.save(verified);
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: "REVOCATION_VERIFIED",
     tenantId,
     aggregateType: "Revocation",
@@ -755,6 +790,7 @@ export async function evaluateRecoveryTokenEligibility(
     resolved && resolved.tenantId === tenantId ? await ports.recoveryTokenRepo.findByRef(tenantId, resolved.recoveryRef) : null;
   if (
     !tokenRecord ||
+    tokenRecord.tokenHash !== tokenHash || // SEC-CNS-015 P2-A
     tokenRecord.tenantId !== tenantId ||
     tokenRecord.chainRef !== chainRef ||
     tokenRecord.revokedDecisionRef !== revokedDecisionRef ||
