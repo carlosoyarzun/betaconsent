@@ -370,7 +370,9 @@ export async function handleWithdrawCaseVerificationProposal(
       ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, proposalRefFromPath,
       { principalRef: session.principalRef },
     );
-    return { status: 200, body: { proposalState: "WITHDRAWN", revocationState: record.status === "REQUESTED" ? "REQUESTED" : "VERIFIED" } };
+    // ProposalWithdrawalAck.revocationState es la constante REQUESTED (schema): cualquier otro estado falla cerrado, sin reflejarlo.
+    if (record.status !== "REQUESTED") return problem(409, "ERR-CM-06");
+    return { status: 200, body: { proposalState: "WITHDRAWN", revocationState: "REQUESTED" } };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();
