@@ -183,3 +183,31 @@ pgTest("TEST-CNS-915 pg: los triggers de inmutabilidad bloquean UPDATE/DELETE/TR
   assert.equal(await count(), 2, "las filas siguen");
   assert.equal(await hashes(), before, "y sin cambios");
 });
+
+pgTest("TEST-CNS-916 pg: el CLI ledger-verify-cli sale 0 con la cadena integra, 2 con un eslabon roto y 1 sin entorno LOCAL o con tenant invalido; sin PII en la salida", async (ctx) => {
+  const { spawnSync } = await import("node:child_process");
+  const t = fixtureUuid("t916");
+  await withUow(ctx, (uow) => seedChain(uow, t, 3));
+  const run = (args: string[], env: Record<string, string>) =>
+    spawnSync(process.execPath, ["src/infra/adapters/postgres/ledger-verify-cli.ts", ...args], { env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" });
+  const good = { CNS_ENVIRONMENT: "LOCAL", CNS_DATABASE_URL: ctx.urlFor("app_rw") };
+
+  const ok = run([t], good);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /3 eslabones integros/);
+  assert.equal(run([t], { ...good, CNS_ENVIRONMENT: "STAGING" }).status, 1);
+  assert.equal(run(["no-es-uuid"], good).status, 1);
+
+  const admin = await ctx.connectAsSuperuser();
+  await admin.query("ALTER TABLE integrity.audit_event DISABLE TRIGGER USER");
+  try {
+    await admin.query("UPDATE integrity.audit_event SET payload = '{\"step\": 77}'::jsonb WHERE tenant_id = $1 AND chain_seq = 3", [t]);
+  } finally {
+    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_update_delete");
+    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_truncate");
+  }
+  const broken = run([t], good);
+  assert.equal(broken.status, 2);
+  assert.match(broken.stderr, /chainSeq=3.*PAYLOAD_HASH_MISMATCH.*2 eslabones previos/);
+  assert.ok(!broken.stderr.includes(t) && !broken.stdout.includes(t), "la salida no repite el tenant ni payloads");
+});
