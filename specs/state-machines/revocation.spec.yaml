@@ -1,11 +1,12 @@
 # Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 4 (SM-CNS-001 v7 + R14).
+# rev. 4h (2026-10-01, CA-128, Carlos OPEN-RV-14 (a), revisión de seguridad): RH2w (API-CNS-140) exige stepUpAssertion igual que RH2 (guards += GRD-RC-12, errors += ERR-RC-05, testIds += TEST-CNS-1023/1024); OPEN-RV-14 RESUELTO; OPEN-RV-15 registra la divergencia ERR-RC-05 vs ERR-CM-06 (422) de los handlers 136/137/140. Sin cambio de semántica de consentimiento/revocación/elegibilidad.
 # rev. 4g (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra OPEN-RV-12 en los 15 huecos que la nota de rev. 4d daba por "corregidos puntualmente" sin estarlo — RC3 (GRD-RV-19/23/25), RH2 (GRD-RV-23), RH2v (GRD-RV-23), RH3 (GRD-RV-23, GRD-RV-28), R12 (GRD-RV-19/23/25/28, GRD-RC-08, GRD-RC-14): errors += ERR-RV-13, ERR-RV-15, ERR-RV-04, ERR-RC-09 según corresponda a cada guard (onFail exacto de esta spec/rights-case.spec.yaml). OPEN-RV-12 se corrige para reflejar el estado real. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 # rev. 4f (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en R1/R2/R3/R8 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica.
 # rev. 4e (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — OPEN-RV-11 pasa a DECIDED (A-57, A-58, cosignedByRef); P-02 (A-50) en REVOCATION_REQUESTED. Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # rev. 4d (2026-09-27): SEC-CNS-013 (lampone-security, propuesta re-evaluada contra rev. 4c) — RC3
 # (lado Revocation), R12, RH2, RH2v y RH3 suman GRD-CM-01/06/07 según corresponda, con sus errors;
 # RV0 pasa de guardsByTrigger a guardsBySource (BEARER/SYSTEM, N-4c-01), alineado con la convención
-# de common.spec.yaml (guardsBySource). ERR-RC-05 huérfano en RH2/RH2v/RH3: se anota, no se borra
+# de common.spec.yaml (guardsBySource). ERR-RC-05 huérfano solo en RH3 (su GRD-RC-12 se quitó, OPEN-RV-10); RH2/RH2v/RH2w conservan GRD-RC-12 y ERR-RC-05: se anota, no se borra
 # (OPEN-RV-10). Sin cambio de semántica de consentimiento/revocación/elegibilidad.
 # rev. 4c (2026-09-27): F-R14-04 (co-firmante de RH3 en el ledger: cosignedByRef en REVOCATION_CONFIRMED, INV-RV-11; derivado pendiente OPEN-RV-11).
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (lado R9), N2-02 (GRD-RV-29 en R4), N2-04 (recovery token ligado a la decisión); AUDIT-H01-rev4 M-04.
@@ -316,8 +317,8 @@ transitions:
     idempotencyKey: "(revocationRef, proposal_ref)"
     errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13, ERR-RC-05]
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09", "SEC-CNS-013"]
-    testIds: [TEST-CNS-235]
-    changeNote: "CA-128 X6 P2 (2026-10-01): transición nueva, sin cambiar RH2. Los tests propios son TEST-CNS-1013..1020 (traceability/test-matrix.csv); el h01-sm-checker limita los testIds de transición a 100-499, por eso aquí se cita TEST-CNS-235 (FINDING P2: ampliar el rango del checker, CODEOWNERS no lo cubre pero es herramienta de guardrail de specs)."
+    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020, TEST-CNS-1021, TEST-CNS-1022, TEST-CNS-1023, TEST-CNS-1024]
+    changeNote: "CA-128 X6 P2 (2026-10-01): transición nueva, sin cambiar RH2; tests propios TEST-CNS-1013..1022. CA-128 (2026-10-01, Carlos, OPEN-RV-14 (a)): RH2w exige stepUpAssertion igual que RH2 (guards += GRD-RC-12, errors += ERR-RC-05, stepUp reemplazado); tests propios += TEST-CNS-1023, TEST-CNS-1024. Divergencia de código de error registrada en OPEN-RV-15."
   - id: R3
     from: VERIFIED
     to: CONFIRMED
@@ -1132,4 +1133,10 @@ openItems:
     status: RESOLVED
     resolution: "Carlos, 2026-10-01: (a) exige stepUpAssertion"
     refs: ["P-36", "OPEN-RV-10", "API-CNS-140"]
+    blocksDataReal: false
+  - id: OPEN-RV-15
+    item: "CA-128 X6 P2 (revisión de seguridad P2-1): GRD-RC-12 declara onFail ERR-RC-05, pero los handlers de API-CNS-136, 137 y 140 devuelven ERR-CM-06 (422, INVALID_TRANSITION) cuando stepUpAssertion falta o es inválida. Divergencia contract↔implementation interina (APR-IDP PENDING); se resuelve con APR-IDP, p. ej. un código dedicado STEP_UP_OR_ASSERTION_INVALID."
+    owner: "Carlos"
+    status: OPEN
+    refs: ["GRD-RC-12", "ERR-RC-05", "ERR-CM-06", "API-CNS-136", "API-CNS-137", "API-CNS-140", "OPEN-RV-14"]
     blocksDataReal: false
