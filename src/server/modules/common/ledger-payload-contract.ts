@@ -22,18 +22,14 @@ export class LedgerPayloadViolationError extends LedgerVocabularyViolationError 
 }
 
 /**
- * Tipos sin $def en ningun contrato: seed sintetico LOCAL (actor FIXTURE, seed.ts). Se aceptan con un
- * payload de solo refs/enums planos; ver FINDING en el reporte de CA-128 (el contrato no los declara).
+ * Tipos sin $def en ningun contrato: seed sintetico LOCAL (actor FIXTURE, seed.ts). X6 P1: su forma minima
+ * es el objeto VACIO (seed.ts emite `{}`); cualquier campo, de cualquier valor, se rechaza (antes se
+ * aceptaba cualquier string). FINDING: el contrato no declara su $def.
  */
-const SEED_PAYLOAD_KEY = /^[A-Za-z][A-Za-z0-9]*$/;
-
 export function assertLedgerPayload(eventType: string, payload: Readonly<Record<string, unknown>>): void {
   const result = validateLedgerOrSecurityPayload(eventType, payload);
   if (result === null) {
-    const flat = Object.entries(payload).every(
-      ([k, v]) => SEED_PAYLOAD_KEY.test(k) && (typeof v === "string" || typeof v === "number" || typeof v === "boolean" || v === null),
-    );
-    if (!flat) throw new LedgerPayloadViolationError(eventType, 1);
+    if (Object.keys(payload).length !== 0) throw new LedgerPayloadViolationError(eventType, 1);
     return;
   }
   if (!result.ok) throw new LedgerPayloadViolationError(eventType, result.errors.length);
