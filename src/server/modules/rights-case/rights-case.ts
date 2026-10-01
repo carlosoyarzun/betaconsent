@@ -310,7 +310,9 @@ export function closeCase(
       // ledger-event-payloads.schema.json#/$defs/RIGHTS_CASE_CLOSED exige también caseRef (P1:
       // faltaba).
       payload: { caseRef, outcome },
-      idempotencyKey: caseRef,
+      // ":closed": con la key plana `caseRef` (la misma de RIGHTS_CASE_CONTACTING, mismo aggregateId) el ledger
+      // dedupea y RIGHTS_CASE_CLOSED no se escribia tras RC2u (FINDING P1, CA-124 PR-D).
+      idempotencyKey: `${caseRef}:closed`,
     });
     return closed;
   });

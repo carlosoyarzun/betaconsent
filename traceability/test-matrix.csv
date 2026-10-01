@@ -351,3 +351,6 @@ TEST-CNS-838,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: FOR
 TEST-CNS-839,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: CHECK SYNTHETIC/enums/formas y email reservado en columnas de contacto o destino","CA-124;PR-D;SEC-CNS-015 P2-B",ACTIVE
 TEST-CNS-840,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: tenant_resolve invitation_token/handle SECURITY DEFINER, tenant desde la tx","CA-124;PR-D;SEC-CNS-012 P1-2",ACTIVE
 TEST-CNS-841,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: unicos parciales GRD-IV-01/OT-08/RC-02/TC-03 y reintento del UoW","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-842,unit,tests/unit/common/p2e-expected-sequence.test.ts,"otp V3: expectedSequence capturada antes del lock; si el agregado avanza, conflicto y nada queda VERIFIED","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-843,unit,tests/unit/common/p2e-expected-sequence.test.ts,"decision C3/C5: appends base+k (sequencedAppender) y conflicto si el agregado avanza tras la base","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-844,unit,tests/unit/common/p2e-expected-sequence.test.ts,"rights-case RC2u/RC4-6: expectedSequence previa al lock y conflicto si el caso avanza; RIGHTS_CASE_CLOSED tras RC2u","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
