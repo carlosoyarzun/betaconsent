@@ -18,6 +18,7 @@
 // de este archivo y se reportan como finding, no se fuerza un valor inventado.
 // TEST-CNS-525..TEST-CNS-531 (traceability/test-matrix.csv).
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -98,6 +99,7 @@ function buildPorts(): Ports {
     config: LECTORPRO_BETA_CONFIG,
     // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
     relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
+    chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
   };
   return { ledger, invitation, otp, decision };
 }

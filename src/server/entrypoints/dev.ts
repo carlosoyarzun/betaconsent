@@ -6,6 +6,7 @@
 // Uso: `node src/server/entrypoints/dev.ts` (PORT opcional, default 3000). Documentado en
 // src/README.md.
 
+import { deriveChainRefKey, loadChainRefSecret } from "../modules/consent-decision/chain-ref.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
@@ -103,6 +104,8 @@ const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVER
 const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
 const staffIssuancePolicy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY);
 
+// SEC-CNS-017 F2: clave HMAC del chainRef opaco (CNS_CHAIN_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
+const chainRefKey = deriveChainRefKey(loadChainRefSecret(process.env, environment));
 let ports: ConsentFlowPorts;
 let pgBundle: ReturnType<typeof createPostgresFlowPorts> | undefined;
 if (pgStore) {
@@ -111,11 +114,12 @@ if (pgStore) {
     relationshipConfig,
     recoveryTokenPolicy,
     staffIdentity,
+    chainRefKey,
     invitationIssuancePolicy: staffIssuancePolicy,
   });
   ports = pgBundle.ports;
 } else {
-  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig);
+  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig, chainRefKey);
 }
 const sessionSecret = randomBytes(32);
 

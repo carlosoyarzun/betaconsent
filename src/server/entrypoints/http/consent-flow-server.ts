@@ -5,6 +5,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 
+import { deriveChainRefKey } from "../../modules/consent-decision/chain-ref.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryInvitationRepository } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
@@ -182,7 +183,11 @@ export function createDefaultStaffConsolePorts(
 /** `relationshipConfig` es obligatorio, mismo patrón fail-closed que `otpPolicy` (D4,
  * decision-relationship.config.ts): sin default de producción en esta función; el caller
  * (dev.ts LOCAL, o tests) siempre pasa un override explícito. */
-export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationshipConfig: DecisionRelationshipConfig): ConsentFlowPorts {
+export function createDefaultConsentFlowPorts(
+  otpPolicy: OtpPolicy,
+  relationshipConfig: DecisionRelationshipConfig,
+  chainRefKey: Buffer = deriveChainRefKey(randomBytes(32)),
+): ConsentFlowPorts {
   const ledger = createInMemoryLedgerAdapter();
   const invitationRepo = createInMemoryInvitationRepository();
   const otpRepo = createInMemoryOtpVerificationRepository();
@@ -211,6 +216,7 @@ export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationship
     uow: tenancy.uow,
     config: LECTORPRO_BETA_CONFIG,
     relationships: relationshipConfig,
+    chainRefKey,
   };
   return { invitation, otp, decision };
 }
@@ -301,6 +307,8 @@ export interface PostgresFlowConfig {
   readonly relationshipConfig: DecisionRelationshipConfig;
   readonly recoveryTokenPolicy: RecoveryTokenPolicy;
   readonly staffIdentity: StaffIdentityPort;
+  /** SEC-CNS-017 F2: clave HMAC del chainRef (chain-ref.ts), derivada de CNS_CHAIN_REF_SECRET. */
+  readonly chainRefKey: Buffer;
   readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
 }
 
@@ -339,6 +347,7 @@ export function createPostgresFlowPorts(
     uow: store.uow,
     config: LECTORPRO_BETA_CONFIG,
     relationships: cfg.relationshipConfig,
+    chainRefKey: cfg.chainRefKey,
   };
   const revocationPorts: RevocationFlowPorts = {
     tenantHandle: store.tenantHandle,

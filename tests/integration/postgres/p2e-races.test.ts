@@ -5,6 +5,7 @@
 // perdedora espera, relee el estado ya cambiado y falla con el error de dominio del guard (nunca con un conflicto
 // de secuencia). Requiere Postgres real (harness.ts). SYNTHETIC DATA ONLY.
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
@@ -75,6 +76,7 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
       invitation,
       config: LECTORPRO_BETA_CONFIG,
       relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
+      chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
     };
     const count = async (sql: string, values: unknown[]): Promise<number> => (await admin.query<{ n: number }>(sql, values)).rows[0]?.n ?? -1;
     return await body({ uow, outside, invitation, otp, decision, count, pool });

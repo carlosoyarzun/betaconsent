@@ -26,6 +26,7 @@ import type { InvitationPorts } from "../invitation/invitation.ts";
 import { invitationPortsInTx, markInvitationCompletedTx, markInvitationDeclinedTx } from "../invitation/invitation.ts";
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "./decision-relationship.config.ts";
+import { deriveChainRef } from "./chain-ref.ts";
 import { lastLedgerSequence, sequencedAppender } from "../common/ledger-append.ts";
 
 export interface ConsentDecisionPorts {
@@ -39,14 +40,11 @@ export interface ConsentDecisionPorts {
   readonly config: LectorProBetaConfig;
   /** GRD-CD-04: relationshipRef, opción (b) de Carlos (decision-relationship.config.ts). */
   readonly relationships: DecisionRelationshipConfig;
+  /** SEC-CNS-017 F2: clave HMAC del chainRef opaco (chain-ref.ts deriveChainRefKey), por entorno. */
+  readonly chainRefKey: Buffer;
 }
 
 const DECISION_MAKER_ROLE: readonly ActorRole[] = ["DECISION_MAKER"];
-
-function deriveChainRef(tenantId: TenantId, contextRef: string, subjectRef: string, decisionMakerRef: string): string {
-  // decisionChainKey = (tenantRef, contextRef, subjectRef, decisionMakerRef); opaco (ADR-002 §10).
-  return `chain:${tenantId}:${contextRef}:${subjectRef}:${decisionMakerRef}`;
-}
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, `repo`, `ledger` e `invitation` son los de la
  * tx (SEC-CNS-015 P2-E). No se anida `inTenant`; `fn` puede reejecutarse si la unidad se reintenta. */
@@ -118,7 +116,7 @@ async function startDecisionTx(
     decisionMakerRef: input.decisionMakerRef,
     invitationRef: input.invitationRef,
     verificationRef: input.verificationRef,
-    chainRef: deriveChainRef(tenantId, invitation.contextRef, invitation.subjectRef, input.decisionMakerRef),
+    chainRef: deriveChainRef(ports.chainRefKey, tenantId, invitation.contextRef, invitation.subjectRef, input.decisionMakerRef),
     state: "PENDING",
     purposes: [],
     priorStepsComplete: false,

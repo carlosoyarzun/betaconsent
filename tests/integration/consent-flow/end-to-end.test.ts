@@ -4,6 +4,7 @@
 // memoria y verifica que la cadena del ledger (sequence consecutivo por agregado) y
 // tenant_id están presentes en cada evento de los tres agregados. TEST-CNS-497.
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -61,6 +62,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
     config: LECTORPRO_BETA_CONFIG,
     // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
     relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
+    chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
   };
 
   // Invitation: I1 -> I2 -> I3 -> I4.

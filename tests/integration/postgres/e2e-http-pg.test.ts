@@ -5,6 +5,7 @@
 // decision; /m -> verificacion -> retiro -> recibo; recuperacion /r; RH3 confirmacion + co-firma. El estado
 // final se verifica en la base. SYNTHETIC DATA ONLY. Requiere Postgres real (harness.ts).
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
@@ -63,6 +64,7 @@ async function boot(ctx: PgTestContext) {
     relationshipConfig: loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG),
     recoveryTokenPolicy: loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY),
     staffIdentity,
+    chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
   const server = createConsentFlowHttpServer({
