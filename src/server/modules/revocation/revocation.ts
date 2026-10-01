@@ -25,6 +25,7 @@ import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { TenantResolverPort } from "../../ports/tenant-resolver.port.ts";
+import type { DownstreamStubPort } from "../../ports/downstream-stub.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 import { appendNext, lastLedgerSequence } from "../common/ledger-append.ts";
@@ -48,22 +49,25 @@ export interface RevocationPorts {
   readonly uow: UnitOfWorkPort;
   /** CA-124 §3/§5: lookup SIN tenant por hash del token de recuperación (GRD-CM-01). */
   readonly tenantResolver: TenantResolverPort;
+  /** X6 / R5-1 (CA-128): stub interno del consumidor downstream (único EventSubscription de IT0).
+   * Opcional: sin él, R5/R6/R7 (downstream.ts) fallan cerrado con ERR-CM-12. */
+  readonly downstreamStub?: DownstreamStubPort;
 }
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, los repos/ledger/outbox del bag se
  * sustituyen por los puertos de la tx. Las funciones `...Tx` de este módulo solo llaman a otras
  * `...Tx` (inTenant no se anida). */
-function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: RevocationPorts) => Promise<T>): Promise<T> {
+export function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: RevocationPorts) => Promise<T>): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, ...tx }));
 }
 
 /** Secuencia vigente de la Revocation: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P1-1). */
-const revocationSequence = (ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<number> =>
+export const revocationSequence = (ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<number> =>
   lastLedgerSequence(ports.ledger, tenantId, revocationRef);
 
 /** Relee la Revocation CON lock de fila (revocation.spec R4 "una tx con lock", SEC-CNS-015 P1-1): solo
  * se usa dentro de la unidad de trabajo; la decision de transicion se toma sobre el estado bloqueado. */
-async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+export async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
   const found = await ports.revocationRepo.findByRefForUpdate(tenantId, revocationRef);
   if (!found) {
     // GRD-CM-01/06: revocationRef de otro tenant (o inexistente) -> 404 uniforme (TEST-CNS-464).
