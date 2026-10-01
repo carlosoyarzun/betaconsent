@@ -13,7 +13,9 @@ test("TEST-CNS-871 resolveConsentStoreMode: LOCAL sin valor = memory; fuera de L
   assert.equal(resolveConsentStoreMode(undefined, "LOCAL"), "memory");
   assert.equal(resolveConsentStoreMode("", "LOCAL"), "memory");
   assert.equal(resolveConsentStoreMode("postgres", "LOCAL"), "postgres");
-  assert.equal(resolveConsentStoreMode("memory", "STAGING"), "memory");
+  assert.throws(() => resolveConsentStoreMode("memory", "STAGING"), /solo se admite en LOCAL/);
+  assert.throws(() => resolveConsentStoreMode("memory", undefined), /solo se admite en LOCAL/);
+  assert.equal(resolveConsentStoreMode("postgres", "STAGING"), "postgres");
   assert.throws(() => resolveConsentStoreMode(undefined, "STAGING"), /obligatorio/);
   assert.throws(() => resolveConsentStoreMode(undefined, undefined), /obligatorio/);
   assert.throws(() => resolveConsentStoreMode("", "PRODUCTION"), /obligatorio/);

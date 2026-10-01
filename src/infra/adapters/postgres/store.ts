@@ -98,7 +98,7 @@ export async function openPostgresStore(options: OpenPostgresStoreOptions): Prom
   try {
     const client = await pool.connect();
     try {
-      await assertStartupChecks(client, { expectedEnvironment: options.environment });
+      await assertStartupChecks(client, { expectedEnvironment: options.environment, expectedRole: "app_rw" });
     } finally {
       client.release();
     }

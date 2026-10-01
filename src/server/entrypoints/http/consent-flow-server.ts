@@ -25,7 +25,7 @@ import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-m
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import { createInMemoryEnrollmentRepository } from "../../../infra/adapters/in-memory-enrollment-repository.adapter.ts";
-import { createInMemoryIdempotencyAdapter } from "../../../infra/adapters/in-memory-idempotency.adapter.ts";
+import { createInMemoryIdempotencyAdapter, LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS } from "../../../infra/adapters/in-memory-idempotency.adapter.ts";
 import {
   createInMemoryInvitationLinkChannelSink,
   type InMemoryInvitationLinkChannelSink,
@@ -173,7 +173,7 @@ export function createDefaultStaffConsolePorts(
   const enrollmentRepo = createInMemoryEnrollmentRepository();
   // CA-124: UoW de EN0 sobre el MISMO enrollmentRepo (y el ledger/invitationRepo compartidos).
   const tenantCatalog = createInMemoryTenantCatalogAdapter();
-  const idempotency = createInMemoryIdempotencyAdapter(idempotencyPolicy ? { ttlMs: idempotencyPolicy.ttlMs } : {});
+  const idempotency = createInMemoryIdempotencyAdapter({ ttlMs: idempotencyPolicy ? idempotencyPolicy.ttlMs : LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS });
   const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo, tenantCatalog, idempotency });
   const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
   return {
@@ -304,7 +304,12 @@ export function resolveConsentStoreMode(raw: string | undefined, environment: st
     if (environment === "LOCAL") return "memory";
     throw new Error("CONSENT_STORE es obligatorio fuera de LOCAL (memory|postgres). Abortando (fail-closed).");
   }
-  if (raw === "memory" || raw === "postgres") return raw;
+  if (raw === "memory") {
+    // SEC-CNS-017 F7: el almacen en memoria es solo LOCAL (dev/tests); fuera de LOCAL no arranca.
+    if (environment !== "LOCAL") throw new Error("CONSENT_STORE=memory solo se admite en LOCAL. Abortando (fail-closed).");
+    return raw;
+  }
+  if (raw === "postgres") return raw;
   throw new Error(`CONSENT_STORE inválido ("${raw.slice(0, 20)}"): solo memory|postgres. Abortando (fail-closed).`);
 }
 

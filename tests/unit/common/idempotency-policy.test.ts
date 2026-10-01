@@ -61,3 +61,9 @@ test("TEST-CNS-869 in-memory IdempotencyPort: dentro de la UoW find + ejecutar +
   );
   assert.equal(await tenancy.uow.inTenant(A, (tx) => tx.idempotency.find(A, KEY)), null);
 });
+
+test("TEST-CNS-883: idempotencia in-memory sin ttlMs (o <= 0) no se crea (fail-closed, sin TTL infinito); CONSENT_STORE=memory fuera de LOCAL no arranca", () => {
+  assert.throws(() => createInMemoryIdempotencyAdapter(), /fail-closed/);
+  assert.throws(() => createInMemoryIdempotencyAdapter({}), /fail-closed/);
+  assert.throws(() => createInMemoryIdempotencyAdapter({ ttlMs: 0 }), /fail-closed/);
+});

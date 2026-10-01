@@ -219,3 +219,13 @@ pgTest("TEST-CNS-747 pg: los chequeos de arranque aceptan app_rw/worker/platform
   assert.equal(mismatch.ok, false);
   assert.ok(mismatch.failures.some((f) => /difiere del catálogo/.test(f)));
 });
+
+pgTest("TEST-CNS-884 pg: el arranque web exige current_user = app_rw (worker/platform_rw no pasan con expectedRole)", async (ctx) => {
+  const app = await ctx.connectAs("app_rw");
+  assert.equal((await runStartupChecks(app, { expectedEnvironment: "LOCAL", expectedRole: "app_rw" })).ok, true);
+  for (const role of ["worker", "platform_rw"] as const) {
+    const c = await ctx.connectAs(role);
+    const r = await runStartupChecks(c, { expectedEnvironment: "LOCAL", expectedRole: "app_rw" });
+    assert.ok(r.failures.some((f) => f.includes("no es app_rw")), role);
+  }
+});
