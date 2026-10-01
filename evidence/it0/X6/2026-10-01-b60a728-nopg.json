@@ -1,0 +1,24 @@
+{
+  "condition": "X6",
+  "commit": "b60a72870c7a3bf9f601f1a84cac101255cc1714",
+  "branch": "chore/CA-128-evidence-manifests",
+  "runAt": "2026-10-01T21:42:40.336Z",
+  "environment": "LOCAL",
+  "postgres": {
+    "imageDigest": null
+  },
+  "tests": [
+    {
+      "id": "TEST-CNS-100",
+      "title": "X6 SOLO PARTE BD: ledger append-only con triggers ENABLE ALWAYS (788), UNIQUE(tenant,aggregate,sequence) (789), append+proyeccion+outbox en una tx (786, 773). Resto en rama feat/CA-128-x6-revocation: D6 segun DEC-BR-014 §3, Carlos 2026-10-01",
+      "file": "tests/integration/postgres/ledger-outbox-schema.test.ts",
+      "status": "skip"
+    }
+  ],
+  "summary": {
+    "pass": 0,
+    "fail": 0,
+    "skip": 1
+  },
+  "exitCode": 0
+}
