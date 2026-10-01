@@ -354,3 +354,7 @@ TEST-CNS-841,integration,tests/integration/postgres/pr-d-schema.test.ts,"pg: uni
 TEST-CNS-842,unit,tests/unit/common/p2e-expected-sequence.test.ts,"otp V3: expectedSequence capturada antes del lock; si el agregado avanza, conflicto y nada queda VERIFIED","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
 TEST-CNS-843,unit,tests/unit/common/p2e-expected-sequence.test.ts,"decision C3/C5: appends base+k (sequencedAppender) y conflicto si el agregado avanza tras la base","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
 TEST-CNS-844,unit,tests/unit/common/p2e-expected-sequence.test.ts,"rights-case RC2u/RC4-6: expectedSequence previa al lock y conflicto si el caso avanza; RIGHTS_CASE_CLOSED tras RC2u","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-845,integration,tests/integration/postgres/p2e-races.test.ts,"pg: OTP verify ∥ verify: una gana, la otra ERR-OT-03, sin conflicto de secuencia (FOR UPDATE + base previa)","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-846,integration,tests/integration/postgres/p2e-races.test.ts,"pg: submit de decision ∥ submit: una decide, la otra ERR-CD-08, secuencia contigua e I6 atomica","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-847,integration,tests/integration/postgres/p2e-races.test.ts,"pg: RC2u ∥ RC2u: un solo RIGHTS_CASE_CONTACTING, ambas ven CONTACTING","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
+TEST-CNS-848,integration,tests/integration/postgres/p2e-races.test.ts,"pg: dos POST con el mismo token de recuperacion: uno gana, el otro UNIFORM sin efectos (P2-D)","CA-124;PR-D;SEC-CNS-015 P2-D",ACTIVE
