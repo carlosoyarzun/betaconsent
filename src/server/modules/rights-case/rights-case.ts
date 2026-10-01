@@ -58,15 +58,14 @@ async function lockCase(ports: Pick<RightsCasePorts, "rightsCaseRepo">, tenantId
  * porque este método nunca lo consulta (TEST-CNS-459).
  */
 export async function resolveCaseForHandle(
-  ports: Pick<RightsCasePorts, "tenantHandle" | "rightsCaseRepo">,
+  ports: Pick<RightsCasePorts, "tenantHandle" | "uow">,
   handle: string,
   _clientSuppliedCaseRef?: string,
 ): Promise<RightsCaseRecord> {
+  // Resolver (sin tenant) -> inTenant (SEC-CNS-016): el caso se lee SIEMPRE bajo el tenant del handle.
   const resolved = await resolveHandleOrReject(ports.tenantHandle, handle);
-  const found = await ports.rightsCaseRepo.findOpenByChain(
-    resolved.tenantId,
-    resolved.chainRef,
-    resolved.revokedDecisionRef,
+  const found = await ports.uow.inTenant(resolved.tenantId, (tx) =>
+    tx.rightsCaseRepo.findOpenByChain(resolved.tenantId, resolved.chainRef, resolved.revokedDecisionRef),
   );
   if (!found) {
     // GRD-RC-14 onFail: respuesta uniforme sin efecto (ERR-RC-09), tratada aquí como

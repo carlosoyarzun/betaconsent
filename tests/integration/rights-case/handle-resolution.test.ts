@@ -9,6 +9,8 @@ import { resolveCaseForHandle } from "../../../src/server/modules/rights-case/ri
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
+import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
+import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 import type { RightsCaseRecord } from "../../../src/server/ports/rights-case-repository.port.ts";
 
 async function seedCase(repo: ReturnType<typeof createInMemoryRightsCaseRepository>, record: RightsCaseRecord): Promise<void> {
@@ -32,7 +34,7 @@ test("TEST-CNS-458: handle rotado en /m/ -> 404 uniforme (ERR-CM-01), sin resolv
   tenantHandle.rotate("handle-A");
 
   await assert.rejects(
-    () => resolveCaseForHandle({ tenantHandle, rightsCaseRepo }, "handle-A"),
+    () => resolveCaseForHandle({ tenantHandle, uow: createInMemoryTenancy({ ledger: createInMemoryLedgerAdapter(), rightsCaseRepo }).uow }, "handle-A"),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-CM-01",
   );
 });
@@ -58,7 +60,7 @@ test("TEST-CNS-459: un caseRef de otro tenant enviado por el cliente se ignora; 
     status: "OPEN",
   });
 
-  const resolved = await resolveCaseForHandle({ tenantHandle, rightsCaseRepo }, "handle-tenant-1", "case-tenant-2-victim");
+  const resolved = await resolveCaseForHandle({ tenantHandle, uow: createInMemoryTenancy({ ledger: createInMemoryLedgerAdapter(), rightsCaseRepo }).uow }, "handle-tenant-1", "case-tenant-2-victim");
 
   assert.equal(resolved.caseRef, "case-tenant-1");
   assert.equal(resolved.tenantId, "tenant-1");

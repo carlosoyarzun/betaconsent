@@ -431,7 +431,6 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffConsolePorts: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
   const caseConfirmationPorts: CaseConfirmationPorts = {
     revocation: revocationPorts.revocation,
-    rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo,
     staffIdentity,
   };
 
@@ -585,10 +584,13 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Set-Cookie", cookiesToSet);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
+      // SEC-CNS-016: la lectura de la decisión corre BAJO el tenant de la sesión (inTenant).
+      const revokedDecisionRef = view.session.revokedDecisionRef;
       const decisionRevoked =
-        view.session.revokedDecisionRef !== undefined &&
-        (await revocationPorts.revocation.consentDecisionRepo.findByConsentId(view.session.tenantId, view.session.revokedDecisionRef))?.state ===
-          "REVOKED";
+        revokedDecisionRef !== undefined &&
+        (await revocationPorts.revocation.uow.inTenant(view.session.tenantId, (tx) =>
+          tx.consentDecisionRepo.findByConsentId(view.session!.tenantId, revokedDecisionRef),
+        ))?.state === "REVOKED";
       res.end(
         !view.session.manageDecisionMakerRef
           ? renderManageEntryPage()
@@ -779,7 +781,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const result = await handleDevStaffLogin(
         request,
         options.environment ?? "DEV",
-        { staffIdentity, rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo },
+        { staffIdentity, uow: revocationPorts.revocation.uow },
         config,
         caseSessionKey,
       );

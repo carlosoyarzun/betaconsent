@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../modules/revocation/revocation.ts";
-import type { RightsCaseRepositoryPort } from "../../ports/rights-case-repository.port.ts";
+import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { Environment } from "../../modules/common/types.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
@@ -33,8 +33,8 @@ import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 
 export interface CaseConfirmationPorts {
+  /** SEC-CNS-016: el caso se lee por `revocation.uow.inTenant` (nunca un repo suelto fuera de una tx). */
   readonly revocation: RevocationPorts;
-  readonly rightsCaseRepo: Pick<RightsCaseRepositoryPort, "findByRef">;
   readonly staffIdentity: StaffIdentityPort;
 }
 
@@ -136,7 +136,7 @@ export async function handleRecordCaseConfirmation(
     return problem(422, "ERR-CM-06");
   }
 
-  const rightsCase = await ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
+  const rightsCase = await ports.revocation.uow.inTenant(session.tenantId, (tx) => tx.rightsCaseRepo.findByRef(session.tenantId, session.caseRef));
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
     return uniformNotFound();
   }
@@ -192,7 +192,7 @@ export async function handleCosignCaseConfirmation(
     return problem(422, "ERR-CM-06");
   }
 
-  const rightsCase = await ports.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
+  const rightsCase = await ports.revocation.uow.inTenant(session.tenantId, (tx) => tx.rightsCaseRepo.findByRef(session.tenantId, session.caseRef));
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
     return uniformNotFound();
   }
@@ -222,7 +222,8 @@ export async function handleCosignCaseConfirmation(
 // ---------------------------------------------------------------------------
 export interface DevStaffLoginPorts {
   readonly staffIdentity: StaffIdentityPort;
-  readonly rightsCaseRepo: Pick<RightsCaseRepositoryPort, "findByRef">;
+  /** SEC-CNS-016: lectura del caso bajo el tenant (inTenant). */
+  readonly uow: UnitOfWorkPort;
 }
 
 export async function handleDevStaffLogin(
@@ -251,7 +252,7 @@ export async function handleDevStaffLogin(
     return { status: 422, body: { status: 422 } };
   }
 
-  const rightsCase = await ports.rightsCaseRepo.findByRef(tenantId, caseRef);
+  const rightsCase = await ports.uow.inTenant(tenantId, (tx) => tx.rightsCaseRepo.findByRef(tenantId, caseRef));
   if (!rightsCase || rightsCase.caseRef !== caseRef) {
     return { status: 422, body: { status: 422 } };
   }
