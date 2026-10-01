@@ -36,7 +36,7 @@ import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revoc
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { applyLocalFixtures, loadLocalFixtures } from "../../../src/infra/adapters/postgres/local-fixtures.ts";
-import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
+import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { listOutboxEnvelopes } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
@@ -373,6 +373,50 @@ pgTest("TEST-CNS-880 e2e pg: consola STAFF (EN0 enrolar, I1 invitar, ready, send
     const sent = await staffPost(`/staff/invitations/${invitationRef}/send`, {});
     assert.equal(sent.status, 200, await sent.clone().text());
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND subject_ref = $2", [T, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF]), 1);
+  } finally {
+    await env.close();
+  }
+});
+
+pgTest("TEST-CNS-889 e2e pg: /ready con RECIPIENT_CHANNEL responde 422 uniforme (CHECK 23514 de recipient_channel_ref), sin 500 ni request_failed; la invitacion sigue DRAFT y UNBOUND funciona", async (ctx) => {
+  const migrator = await ctx.connectAs("consent_migrator");
+  await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
+  const env = await boot(ctx);
+  try {
+    const login = await fetch(`${env.baseUrl}/__dev/staff-login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ principalRef: "staff-synthetic-05" }),
+    });
+    assert.equal(login.status, 200);
+    const c = cookiesOf(login);
+    const jar = `__Host-cns-staff=${c["__Host-cns-staff"]}; __Host-cns-staff-csrf=${c["__Host-cns-staff-csrf"]}`;
+    const staffPost = (path: string, body: unknown, extra: Record<string, string> = {}): Promise<Response> =>
+      fetch(`${env.baseUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": c["__Host-cns-staff-csrf"]!, cookie: jar, ...extra },
+        body: JSON.stringify(body),
+      });
+    const enrolled = await staffPost("/staff/enrollments", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF });
+    assert.equal(enrolled.status, 201, await enrolled.clone().text());
+    const { enrollmentRef } = (await enrolled.json()) as { enrollmentRef: string };
+    const invited = await staffPost("/staff/invitations", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef }, { "idempotency-key": "pg-889-idem-key-0001" });
+    assert.equal(invited.status, 201, await invited.clone().text());
+    const { invitationRef } = (await invited.json()) as { invitationRef: string };
+
+    // FINDING contrato<->BD (EXT-B/LD-21 pendiente de Carlos): el contrato admite un UUIDv4 como recipientChannelRef; la
+    // BD (0010) solo email reservado. No se relaja el CHECK ni el contrato: 422 uniforme con codigo existente del enum.
+    const ready = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: LOCAL_ONLY_DEV_STAFF_CHANNEL_REF });
+    assert.equal(ready.status, 422);
+    const problem = (await ready.json()) as { code: string; status: number };
+    assert.equal(problem.code, "INVALID_TRANSITION");
+    assert.equal(problem.status, 422);
+    assert.ok(!JSON.stringify(problem).includes(LOCAL_ONLY_DEV_STAFF_CHANNEL_REF), "el error no refleja el valor");
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'DRAFT'", [T, invitationRef]), 1, "rollback: sigue DRAFT");
+
+    // La tx abortada no dejo la conexion ni el agregado inutilizables: UNBOUND pasa a READY.
+    const unbound = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "UNBOUND" });
+    assert.equal(unbound.status, 200, await unbound.clone().text());
   } finally {
     await env.close();
   }

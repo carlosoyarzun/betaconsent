@@ -5,6 +5,16 @@
 
 import type { TenantId } from "../modules/common/types.ts";
 
+/** El adaptador de persistencia no admite el valor de `recipientChannelRef` (p.ej. el CHECK de Postgres solo admite
+ * email reservado hasta que EXT-B/LD-21 defina el canal esperado). El borde HTTP lo traduce a 422 uniforme.
+ * No lleva el valor rechazado (cero PII en errores). */
+export class InvalidRecipientChannelRefError extends Error {
+  constructor() {
+    super("recipientChannelRef no admitido por la persistencia");
+    this.name = "InvalidRecipientChannelRefError";
+  }
+}
+
 export type InvitationState = "DRAFT" | "READY" | "SENT" | "OPENED" | "VERIFIED" | "COMPLETED" | "DECLINED";
 
 export interface InvitationRecord {
