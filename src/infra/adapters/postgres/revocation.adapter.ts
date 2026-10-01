@@ -14,7 +14,7 @@ import type {
 } from "../../../server/ports/revocation-repository.port.ts";
 import type { TenantTx } from "./unit-of-work.ts";
 
-/** UNIQUE parcial (tenant_id, revoked_decision_ref) WHERE status <> 'FAILED' (0009, GRD-RV-04 IT0). */
+/** UNIQUE parcial (tenant_id, revoked_decision_ref) WHERE status NOT IN ('FAILED','COMPLETED') (0015; 0009 era status <> 'FAILED', GRD-RV-04). */
 export const OPEN_REVOCATION_UNIQUE = "revocation_open_per_decision_uq";
 
 interface RevocationRow {
@@ -87,9 +87,19 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
     async findOpenByChain(tenantId, chainRef) {
       const r = await tx.query<RevocationRow>(
         `SELECT ${COLUMNS} FROM app.revocation
-          WHERE tenant_id = $1 AND chain_ref = $2 AND status <> 'FAILED'
+          WHERE tenant_id = $1 AND chain_ref = $2 AND status NOT IN ('FAILED', 'COMPLETED')
           ORDER BY created_at, revocation_ref LIMIT 1`,
         [tenantId, chainRef],
+      );
+      const row = r.rows[0];
+      return row ? toRecord(row) : null;
+    },
+    async findOpenByDecision(tenantId, revokedDecisionRef) {
+      const r = await tx.query<RevocationRow>(
+        `SELECT ${COLUMNS} FROM app.revocation
+          WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status NOT IN ('FAILED', 'COMPLETED')
+          ORDER BY created_at, revocation_ref LIMIT 1`,
+        [tenantId, revokedDecisionRef],
       );
       const row = r.rows[0];
       return row ? toRecord(row) : null;

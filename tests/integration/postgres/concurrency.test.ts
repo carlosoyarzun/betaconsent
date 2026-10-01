@@ -120,7 +120,7 @@ pgTest("TEST-CNS-823 pg: GRD-CD-08: dos GRANTED concurrentes en la misma cadena 
   });
 });
 
-pgTest("TEST-CNS-824 pg: GRD-RV-04: una sola Revocation no terminal por decision (UNIQUE parcial); FAILED libera; revoked_decision_ref NOT NULL; el perdedor concurrente falla con ERR-CM-06", async (ctx) => {
+pgTest("TEST-CNS-824 pg: GRD-RV-04: una sola Revocation no terminal por decision (UNIQUE parcial); FAILED libera; revoked_decision_ref NOT NULL; el perdedor concurrente se ADJUNTA a la ganadora (Carlos 2026-10-01, GRD-RV-04 opcion a)", async (ctx) => {
   const T = fixtureUuid("t824");
   const admin = await ctx.connectAsSuperuser();
   await withEnv(ctx, async ({ ports, uow, outside }) => {
@@ -144,17 +144,18 @@ pgTest("TEST-CNS-824 pg: GRD-RV-04: una sola Revocation no terminal por decision
     await outside.revocationRepo.save({ ...base, revocationRef: fixtureUuid("r824-1"), status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" });
     await outside.revocationRepo.save({ ...base, revocationRef: fixtureUuid("r824-5") });
 
-    // Dos R1 concurrentes (refs distintas, misma decision): una crea; la otra reintenta, sigue en conflicto y
-    // termina con ERR-CM-06 (transicion invalida), sin dejar ni fila ni evento.
+    // Dos R1 concurrentes (refs distintas, misma decision): una crea; la otra pierde el UNIQUE, reintenta, ve a la
+    // ganadora y se ADJUNTA (misma revocationRef, sin fila ni evento propios; GRD-RV-04 "una crea, las demas se adjuntan").
     const D2 = fixtureUuid("d824-2");
     await outside.consentDecisionRepo.save({ ...syntheticDecision(T, D2), chainRef: "chain-824-2" });
     const results = await Promise.allSettled([
       requestRevocation(ports, T, { revocationRef: fixtureUuid("r824-a"), chainRef: "chain-824-2", revokedDecisionRef: D2 }),
       requestRevocation(ports, T, { revocationRef: fixtureUuid("r824-b"), chainRef: "chain-824-2", revokedDecisionRef: D2 }),
     ]);
-    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
-    const loser = results.find((r) => r.status === "rejected");
-    assert.ok(loser?.status === "rejected" && loser.reason instanceof DomainError && loser.reason.code === "ERR-CM-06");
+    assert.deepEqual(results.map((r) => r.status), ["fulfilled", "fulfilled"]);
+    const refs = results.map((r) => (r.status === "fulfilled" ? r.value.revocationRef : ""));
+    assert.equal(refs[0], refs[1], "ambas devuelven la misma revocationRef (la ganadora)");
+    assert.ok([fixtureUuid("r824-a"), fixtureUuid("r824-b")].includes(refs[0]!));
     const open = (await admin.query("SELECT 1 FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D2])).rows;
     assert.equal(open.length, 1);
     const events = (await admin.query("SELECT 1 FROM integrity.audit_event WHERE tenant_id = $1 AND event_type = 'REVOCATION_REQUESTED' AND aggregate_id = ANY($2)", [T, [fixtureUuid("r824-a"), fixtureUuid("r824-b")]])).rows;

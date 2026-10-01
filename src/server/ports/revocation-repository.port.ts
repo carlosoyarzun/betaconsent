@@ -4,7 +4,7 @@
 
 import type { ChainRef, TenantId } from "../modules/common/types.ts";
 
-export type RevocationStatus = "REQUESTED" | "VERIFIED" | "CONFIRMED" | "APPLIED" | "FAILED";
+export type RevocationStatus = "REQUESTED" | "VERIFIED" | "CONFIRMED" | "APPLIED" | "DOWNSTREAM_PENDING" | "DELIVERED" | "COMPLETED" | "FAILED";
 
 export interface AttestedVerification {
   readonly revocationRef: string;
@@ -50,5 +50,9 @@ export interface RevocationRepositoryPort {
    * por revocationRef. El llamador decide el tratamiento por status (GRD-RV-27: desde APPLIED
    * respuesta uniforme, sin crear otra). */
   findOpenByChain(tenantId: TenantId, chainRef: ChainRef): Promise<RevocationRecord | null>;
+  /** GRD-RV-04 (R14-C): la única Revocation no terminal (status NOT IN COMPLETED/FAILED) que revoca esta
+   * decisión, o null. "Una crea, las demás se adjuntan": R1 con otro revocationRef sobre la misma
+   * decisión devuelve esta en vez de crear (Carlos, 2026-10-01, GRD-RV-04 opción a). */
+  findOpenByDecision(tenantId: TenantId, revokedDecisionRef: string): Promise<RevocationRecord | null>;
   save(record: RevocationRecord): Promise<void>;
 }

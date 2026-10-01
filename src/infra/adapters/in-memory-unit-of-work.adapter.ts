@@ -48,6 +48,7 @@ function scopeRevocationRepo(inner: RevocationRepositoryPort, tenant: TenantId):
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
     findByCase: async (t, caseRef) => (t === tenant ? inner.findByCase(t, caseRef) : null),
     findOpenByChain: async (t, chainRef) => (t === tenant ? inner.findOpenByChain(t, chainRef) : null),
+    findOpenByDecision: async (t, decisionRef) => (t === tenant ? inner.findOpenByDecision(t, decisionRef) : null),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("revocationRepo.save");
       return inner.save(record);

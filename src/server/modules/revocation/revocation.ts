@@ -348,6 +348,13 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
     throw new DomainError("ERR-RV-02");
   }
 
+  // GRD-RV-04 (single_open_revocation_per_chain, onFail null; Carlos 2026-10-01 opción a), evaluado
+  // DESPUÉS de GRD-RV-02 (orden de la spec: decisión REVOKED = ERR-RV-02, no adjunto): si la
+  // decisión ya tiene una Revocation no terminal, esta petición (R1 con otro revocationRef) se
+  // ADJUNTA a ella: misma revocationRef y mismo estado, sin evento nuevo, sin escrituras.
+  const open = await ports.revocationRepo.findOpenByDecision(tenantId, input.revokedDecisionRef);
+  if (open) return open;
+
   const record: RevocationRecord = {
     revocationRef: input.revocationRef,
     tenantId,
