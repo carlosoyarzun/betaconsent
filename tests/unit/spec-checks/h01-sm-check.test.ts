@@ -190,11 +190,22 @@ test("TEST-CNS-906 h01-sm-check: PII (email) en el texto crudo de una spec", () 
   assert.ok(errors.some((e) => e.includes("posible PII (email)")), errors.join("\n"));
 });
 
-test("TEST-CNS-906 h01-sm-check: testId fuera de rango 100-499", () => {
-  const specs = clone(loadSpecs(SPEC_DIR));
-  (tr(specs, "invitation", "I2").testIds as string[]).push("TEST-CNS-905");
-  const { errors } = checkSpecs(specs);
-  assert.ok(errors.some((e) => e.includes("fuera de rango 100-499")), errors.join("\n"));
+test("TEST-CNS-1040 h01-sm-check: testId fuera de rango 100-1999 (2000 y 99 rechazados)", () => {
+  for (const bad of ["TEST-CNS-2000", "TEST-CNS-099"]) {
+    const specs = clone(loadSpecs(SPEC_DIR));
+    (tr(specs, "invitation", "I2").testIds as string[]).push(bad);
+    const { errors } = checkSpecs(specs);
+    assert.ok(errors.some((e) => e.includes("fuera de rango 100-1999")), `${bad}: ${errors.join("\n")}`);
+  }
+});
+
+test("TEST-CNS-1041 h01-sm-check: testId en los bordes del rango (100 y 1999 aceptados)", () => {
+  for (const ok of ["TEST-CNS-100", "TEST-CNS-1999"]) {
+    const specs = clone(loadSpecs(SPEC_DIR));
+    (tr(specs, "invitation", "I2").testIds as string[]).push(ok);
+    const { errors } = checkSpecs(specs);
+    assert.ok(!errors.some((e) => e.includes("fuera de rango")), `${ok}: ${errors.join("\n")}`);
+  }
 });
 
 test("TEST-CNS-906 h01-sm-check: dos estados iniciales", () => {

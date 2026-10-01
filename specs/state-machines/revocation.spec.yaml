@@ -316,8 +316,7 @@ transitions:
     idempotencyKey: "(revocationRef, proposal_ref)"
     errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13]
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09", "SEC-CNS-013"]
-    testIds: [TEST-CNS-235]
-    changeNote: "CA-128 X6 P2 (2026-10-01): transición nueva, sin cambiar RH2. Los tests propios son TEST-CNS-1013..1020 (traceability/test-matrix.csv); el h01-sm-checker limita los testIds de transición a 100-499, por eso aquí se cita TEST-CNS-235 (FINDING P2: ampliar el rango del checker, CODEOWNERS no lo cubre pero es herramienta de guardrail de specs)."
+    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020, TEST-CNS-1021, TEST-CNS-1022]
   - id: R3
     from: VERIFIED
     to: CONFIRMED

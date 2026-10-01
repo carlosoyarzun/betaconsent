@@ -23,7 +23,7 @@
 //     (known-onfail-exceptions.ts, OPEN-RV-12): fail-closed para huecos NUEVOS
 //   - forbiddenKeys de tenancy.forbiddenKeys (organization_*, etc.) ausentes del texto crudo
 //   - RC2u (rights-case) con actor {ref: UNVERIFIED_BEARER} (F-CT-10)
-//   - formato y rango (100-499) de TEST-CNS-### en testIds
+//   - formato y rango (100-1999) de TEST-CNS-### en testIds
 //   - escaneo de PII (email, RUT) en el texto crudo de las specs
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -55,7 +55,7 @@ function asStr(v: YamlValue | undefined): string | null {
 const HANDLE_OR_POST_GUARDS = new Set(["GRD-CM-01", "GRD-CM-10", "GRD-RC-14", "GRD-RV-06", "GRD-RV-18", "GRD-RV-20"]);
 const SOURCE_IDENTITY_GUARD = "GRD-CM-15";
 const FIXTURE_SEED_GUARD = "GRD-CM-14";
-const TEST_ID_RE = /^TEST-CNS-(\d{3})$/;
+const TEST_ID_RE = /^TEST-CNS-(\d{3,4})$/;
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const RUT_RE = /\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/;
 
@@ -249,7 +249,7 @@ export function checkSpecs(specs: SpecFile[]): CheckResult {
         for (const tst of testIds) {
           const m = TEST_ID_RE.exec(tst);
           if (!m) err(`${u.unitName}: transition ${tid} testId mal formado ${tst}`);
-          else if (Number(m[1]) < 100 || Number(m[1]) > 499) err(`${u.unitName}: transition ${tid} testId fuera de rango 100-499: ${tst}`);
+          else if (Number(m[1]) < 100 || Number(m[1]) > 1999) err(`${u.unitName}: transition ${tid} testId fuera de rango 100-1999: ${tst}`);
         }
 
         // from/to referencian estados existentes; nunca sale de un terminal salvo self-loop
