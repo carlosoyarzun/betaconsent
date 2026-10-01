@@ -30,6 +30,7 @@ import {
   staffSendInvitationTx,
   type StaffIssuancePorts,
 } from "../../modules/invitation/staff-issuance.ts";
+import { InvalidRecipientChannelRefError } from "../../ports/invitation-repository.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
@@ -99,6 +100,8 @@ function csrfRejected(): HttpResult {
 
 /** DomainError -> HttpResult de la consola STAFF (403/404/409/422 del contrato). */
 function domainFailure(err: unknown): HttpResult {
+  // La persistencia no admite ese recipientChannelRef (EXT-B/LD-21 pendiente): 422 uniforme, no 500.
+  if (err instanceof InvalidRecipientChannelRefError) return invalidRequest();
   if (err instanceof DomainError) {
     if (err.code === "ERR-CM-01" || err.code === "ERR-CM-02") return uniformNotFound();
     if (err.code === "ERR-CM-10") return problem(403, err.code);

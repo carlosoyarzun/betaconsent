@@ -36,6 +36,9 @@ declare module "pg" {
     query<R = Record<string, unknown>>(text: string, values?: readonly unknown[]): Promise<QueryResult<R>>;
     /** `true` (o un Error) destruye la conexión en vez de devolverla al pool. */
     release(destroy?: Error | boolean): void;
+    /** pg-pool quita su listener de error al prestar el cliente; ver guardBorrowedClient (pool.ts). */
+    on(event: "error", listener: (error: Error) => void): this;
+    removeListener(event: "error", listener: (error: Error) => void): this;
   }
 
   export class Pool {
