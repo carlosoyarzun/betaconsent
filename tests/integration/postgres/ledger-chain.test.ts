@@ -41,6 +41,23 @@ async function withUow<T>(ctx: PgTestContext, work: (uow: PgUnitOfWork) => Promi
   }
 }
 
+/**
+ * Mutacion "como atacante con privilegios": triggers de inmutabilidad desactivados y, ademas, el CHECK
+ * `occurred_at = now()` (que se reevalua en todo UPDATE) retirado. Restaura ambos (triggers ENABLE ALWAYS y
+ * el CHECK como NOT VALID, igual que en 0013).
+ */
+async function withMutationsAllowed(admin: import("pg").Client, mutate: () => Promise<void>): Promise<void> {
+  await admin.query("ALTER TABLE integrity.audit_event DISABLE TRIGGER USER");
+  await admin.query("ALTER TABLE integrity.audit_event DROP CONSTRAINT audit_event_occurred_at_is_now");
+  try {
+    await mutate();
+  } finally {
+    await admin.query("ALTER TABLE integrity.audit_event ADD CONSTRAINT audit_event_occurred_at_is_now CHECK (occurred_at = pg_catalog.now()) NOT VALID");
+    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_update_delete");
+    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_truncate");
+  }
+}
+
 async function seedChain(uow: PgUnitOfWork, tenant: string, n: number): Promise<void> {
   const agg = fixtureUuid(`agg-${tenant}`);
   await uow.inTenant(tenant, async ({ ledger }) => {
@@ -63,15 +80,11 @@ pgTest("TEST-CNS-913 pg: verifyLedgerChain detecta la mutacion de una fila hecha
     // Sin desactivar los triggers la mutacion es imposible incluso para el superusuario (INV-CM-01).
     await assert.rejects(() => admin.query("UPDATE integrity.audit_event SET payload = '{}'::jsonb WHERE tenant_id = $1", [tPayload]), (e: unknown) => codeOf(e) === "23000");
 
-    await admin.query("ALTER TABLE integrity.audit_event DISABLE TRIGGER USER");
-    try {
+    await withMutationsAllowed(admin, async () => {
       await admin.query("UPDATE integrity.audit_event SET payload = '{\"step\": 99}'::jsonb WHERE tenant_id = $1 AND chain_seq = 2", [tPayload]);
       await admin.query("DELETE FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq = 2", [tGap]);
       await admin.query("UPDATE integrity.audit_event SET event_hash = $2 WHERE tenant_id = $1 AND chain_seq = 3", [tHash, H]);
-    } finally {
-      await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_update_delete");
-      await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_truncate");
-    }
+    });
     const triggers = (await admin.query<{ tgenabled: string }>("SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'integrity.audit_event'::regclass AND NOT tgisinternal")).rows;
     assert.ok(triggers.length === 2 && triggers.every((t) => t.tgenabled === "A"), "triggers restaurados ENABLE ALWAYS");
 
@@ -112,7 +125,7 @@ pgTest("TEST-CNS-913 pg: verifyLedgerChain detecta la mutacion de una fila hecha
   assert.deepEqual(inDb, [...LEDGER_EVENT_TYPES].sort());
 
   // El runtime no puede fijar eventId/environment pero si las 4 columnas de la cadena (grants por columna).
-  for (const [column, expected] of [["chain_seq", true], ["payload_hash", true], ["previous_event_hash", true], ["event_hash", true], ["event_id", false], ["environment", false]] as const) {
+  for (const [column, expected] of [["chain_seq", true], ["payload_hash", true], ["previous_event_hash", true], ["event_hash", true], ["event_id", false], ["environment", true], ["occurred_at", true], ["data_class", false]] as const) {
     const r = (await admin.query<{ p: boolean }>("SELECT has_column_privilege('app_rw', 'integrity.audit_event', $1, 'INSERT') AS p", [column])).rows[0];
     assert.equal(r?.p, expected, `INSERT(${column})`);
   }
@@ -199,13 +212,9 @@ pgTest("TEST-CNS-916 pg: el CLI ledger-verify-cli sale 0 con la cadena integra, 
   assert.equal(run(["no-es-uuid"], good).status, 1);
 
   const admin = await ctx.connectAsSuperuser();
-  await admin.query("ALTER TABLE integrity.audit_event DISABLE TRIGGER USER");
-  try {
+  await withMutationsAllowed(admin, async () => {
     await admin.query("UPDATE integrity.audit_event SET payload = '{\"step\": 77}'::jsonb WHERE tenant_id = $1 AND chain_seq = 3", [t]);
-  } finally {
-    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_update_delete");
-    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_truncate");
-  }
+  });
   const broken = run([t], good);
   assert.equal(broken.status, 2);
   assert.match(broken.stderr, /chainSeq=3.*PAYLOAD_HASH_MISMATCH.*2 eslabones previos/);

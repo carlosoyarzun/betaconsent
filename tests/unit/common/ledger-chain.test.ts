@@ -16,7 +16,13 @@ import {
   verifyChainRows,
   type ChainRow,
 } from "../../../src/server/modules/common/ledger-chain.ts";
-import { isLedgerEventType, LEDGER_EVENT_TYPES } from "../../../src/server/modules/common/ledger-event-types.ts";
+import { contractLedgerEventTypes, contractSecurityEventTypes } from "../../../src/server/modules/common/json-schema-lite.ts";
+import {
+  isLedgerEventType,
+  LEDGER_EVENT_TYPES,
+  LEDGER_LOCAL_SEED_EVENT_TYPES,
+  LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES,
+} from "../../../src/server/modules/common/ledger-event-types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const T = "11111111-1111-4111-8111-111111111111";
@@ -38,6 +44,8 @@ function buildChain(n: number): ChainRow[] {
       recordedByRef: null,
       cosignedByRef: null,
       idempotencyKeyHash: null,
+      occurredAt: `2026-10-01T12:00:${String(i).padStart(2, "0")}.000000Z`,
+      environment: "LOCAL",
       payloadHash: computePayloadHash(payload),
       previousEventHash: previous,
     };
@@ -67,6 +75,8 @@ test("TEST-CNS-912 verifyChainRows: cadena integra y primer eslabon roto por cad
 
   const cases: Array<[string, (rows: ChainRow[]) => ChainRow[], number, string, number]> = [
     ["payload mutado", (r) => r.map((x, i) => (i === 2 ? { ...x, payload: { step: 99, kind: "SYNTHETIC" } } : x)), 3, "PAYLOAD_HASH_MISMATCH", 2],
+    ["occurredAt mutado (P2-1)", (r) => r.map((x, i) => (i === 2 ? { ...x, occurredAt: "2026-10-01T12:59:59.000000Z" } : x)), 3, "EVENT_HASH_MISMATCH", 2],
+    ["environment mutado (P2-1)", (r) => r.map((x, i) => (i === 1 ? { ...x, environment: "STAGING" } : x)), 2, "EVENT_HASH_MISMATCH", 1],
     ["campo del sobre mutado", (r) => r.map((x, i) => (i === 1 ? { ...x, aggregateId: "otro" } : x)), 2, "EVENT_HASH_MISMATCH", 1],
     ["actor mutado", (r) => r.map((x, i) => (i === 3 ? { ...x, actorType: "FIXTURE" } : x)), 4, "EVENT_HASH_MISMATCH", 3],
     ["fila borrada (hueco)", (r) => r.filter((_, i) => i !== 2), 4, "CHAIN_SEQ_GAP", 2],
@@ -93,24 +103,24 @@ test("TEST-CNS-912 verifyChainRows: cadena integra y primer eslabon roto por cad
   assert.deepEqual(report.ok === false && report.brokenAt.reason, "EVENT_TYPE_NOT_ALLOWED");
 });
 
-test("TEST-CNS-912 lista blanca: sin duplicados, solo MAYUSCULAS_Y_GUION, igual al CHECK de 0013_ledger_chain.sql y cubre los eventos de las specs", () => {
+test("TEST-CNS-912 lista blanca derivada del contrato (ledger-event-payloads.schema.json sin x-disabled-in-it0 + transitorios SECURITY + seed LOCAL) = TS = CHECK de 0013", () => {
   assert.equal(new Set(LEDGER_EVENT_TYPES).size, LEDGER_EVENT_TYPES.length);
   for (const t of LEDGER_EVENT_TYPES) assert.match(t, /^[A-Z][A-Z_]+$/);
   assert.equal(isLedgerEventType("OTP_ISSUED"), true);
   assert.equal(isLedgerEventType("otp_issued"), false);
 
   const sql = readFileSync(join(HERE, "..", "..", "..", "db", "migrations", "0013_ledger_chain.sql"), "utf8");
-  const block = /audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\);/.exec(sql)?.[1] ?? "";
+  const block = /audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\)[,;]/.exec(sql)?.[1] ?? "";
   const inSql = [...block.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1] as string);
   assert.deepEqual([...inSql].sort(), [...LEDGER_EVENT_TYPES].sort());
 
-  // Todo evento `- id: NOMBRE_EN_MAYUSCULAS` de la seccion `events:` de las specs esta en la lista.
-  const specsDir = join(HERE, "..", "..", "..", "specs", "state-machines");
-  for (const file of ["consent-decision", "invitation", "otp-challenge", "revocation", "rights-case", "tenant-context"]) {
-    const text = readFileSync(join(specsDir, `${file}.spec.yaml`), "utf8");
-    const events = /^events:\n([\s\S]*?)(?=^\S)/m.exec(text)?.[1] ?? "";
-    for (const m of events.matchAll(/^\s+- id: ([A-Z][A-Z_]+)\s*$/gm)) {
-      assert.equal(isLedgerEventType(m[1] as string), true, `${file}: ${m[1]} falta en la lista blanca`);
-    }
+  // P1-B: la lista se DERIVA del contrato: $defs de ledger-event-payloads.schema.json menos x-disabled-in-it0,
+  // mas los transitorios del stream SECURITY (security-event-payloads.schema.json) y el seed LOCAL declarado.
+  const derived = [...contractLedgerEventTypes(), ...contractSecurityEventTypes(), ...LEDGER_LOCAL_SEED_EVENT_TYPES];
+  assert.deepEqual([...LEDGER_EVENT_TYPES].sort(), [...derived].sort(), "LEDGER_EVENT_TYPES diverge del contrato");
+  assert.deepEqual([...LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES].sort(), contractSecurityEventTypes().sort());
+  for (const removed of ["CONSENT_EXPIRED", "CONSENT_SUPERSEDED", "DECISION_CONTESTED", "CONSENT_CONTEXT_STATUS_CHANGED"]) {
+    assert.equal(isLedgerEventType(removed), false, `${removed} no debe estar en la lista`);
   }
+  assert.ok(sql.includes("TRANSITORIOS") && sql.includes("common.spec.yaml:141"), "la migracion documenta los transitorios");
 });
