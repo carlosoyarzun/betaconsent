@@ -358,3 +358,5 @@ TEST-CNS-845,integration,tests/integration/postgres/p2e-races.test.ts,"pg: OTP v
 TEST-CNS-846,integration,tests/integration/postgres/p2e-races.test.ts,"pg: submit de decision ∥ submit: una decide, la otra ERR-CD-08, secuencia contigua e I6 atomica","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
 TEST-CNS-847,integration,tests/integration/postgres/p2e-races.test.ts,"pg: RC2u ∥ RC2u: un solo RIGHTS_CASE_CONTACTING, ambas ven CONTACTING","CA-124;PR-D;SEC-CNS-015 P2-E",ACTIVE
 TEST-CNS-848,integration,tests/integration/postgres/p2e-races.test.ts,"pg: dos POST con el mismo token de recuperacion: uno gana, el otro UNIFORM sin efectos (P2-D)","CA-124;PR-D;SEC-CNS-015 P2-D",ACTIVE
+TEST-CNS-849,integration,tests/integration/postgres/p2e-races.test.ts,"pg: N submits OTP incorrectos concurrentes: attempts=N, LOCKED en maxAttempts, un solo OTP_LOCKED (GRD-OT-04)","CA-124;PR-D;SEC-CNS-016 C2",ACTIVE
+TEST-CNS-850,unit,tests/unit/otp-challenge/otp-expired-reissue.test.ts,"V1 con el challenge activo expirado lo vence y emite uno nuevo con ref fresca","CA-124;PR-D;SEC-CNS-016 P2-3;otp-challenge.spec V5",ACTIVE

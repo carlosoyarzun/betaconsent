@@ -46,11 +46,11 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
   decision: ConsentDecisionPorts;
   count: (sql: string, values: unknown[]) => Promise<number>;
   pool: ReturnType<typeof createPool>;
-}) => Promise<T>): Promise<T> {
+}) => Promise<T>, maxAttempts = 1): Promise<T> {
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 8 });
   const admin = await ctx.connectAsSuperuser();
   try {
-    const uow = new PgUnitOfWork(pool, { maxAttempts: 1 });
+    const uow = new PgUnitOfWork(pool, { maxAttempts });
     const outside = pgOutsideTxPorts(uow);
     const invitation: InvitationPorts = {
       invitationRepo: outside.invitationRepo,
@@ -146,6 +146,32 @@ pgTest("TEST-CNS-846 pg: submit de decision ∥ submit: exactamente una decide (
       assert.equal(await count("SELECT max(sequence)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2", [T, consent]), 3 + GRANT_ALL.length + 2, "secuencia contigua sin huecos");
     }
   });
+});
+
+pgTest("TEST-CNS-849 pg: N submits incorrectos concurrentes sobre el mismo challenge: attempts = N, LOCKED exactamente en maxAttempts y un solo OTP_LOCKED (GRD-OT-04)", async (ctx) => {
+  const T = fixtureUuid("t849");
+  await withEnv(ctx, async ({ outside, otp, count }) => {
+    const sink = otp.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
+    for (let round = 0; round < 8; round += 1) {
+      const inv = fixtureUuid(`inv849-${round}`);
+      const ver = fixtureUuid(`ver849-${round}`);
+      await seedOpenedInvitation(outside, T, inv, `test+s849-${round}@example.invalid`);
+      await requestOtp(otp, T, ver, inv, CHANNEL);
+      const good = sink.sent[sink.sent.length - 1]!.code;
+      const wrong = good === "000000" ? "111111" : "000000";
+      const N = otp.policy.maxAttempts; // 3 incorrectos concurrentes: el ultimo bloquea
+      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, "dm-849")));
+      const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
+      assert.deepEqual([...codes].sort(), ["ERR-OT-02", "ERR-OT-02", "ERR-OT-04"], `ronda ${round}: ${codes.join(",")}`);
+      const rec = await outside.otpRepo.findByRef(T, ver);
+      assert.equal(rec?.attempts, N, "ningun intento se pierde");
+      assert.equal(rec?.state, "LOCKED");
+      assert.equal(await eventCount(count, T, ver, "OTP_LOCKED"), 1);
+      assert.equal(await eventCount(count, T, ver, "OTP_FAILED"), N - 1);
+      // Tras LOCKED, ni el codigo correcto verifica (GRD-OT-04).
+      await assert.rejects(() => submitOtp(otp, T, ver, good, "dm-849"), (e: unknown) => e instanceof DomainError && e.code === "ERR-OT-04");
+    }
+  }, 8); // reintentos del UoW: la perdedora con base vieja relee y reintenta (el intento no se pierde)
 });
 
 // Nota de sensibilidad: RC2u es idempotente por idempotencyKey (caseRef), asi que sin FOR UPDATE el ledger deduplica y el

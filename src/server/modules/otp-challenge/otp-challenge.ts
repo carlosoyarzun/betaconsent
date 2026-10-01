@@ -16,7 +16,7 @@
 // implementa GRD-OT-13 (challenge_bound_to_request_handle: sin infraestructura de handles HTTP
 // en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
 
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { DomainError, type DomainErrorCode } from "../common/errors.ts";
 import { assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
@@ -253,6 +253,26 @@ async function issueChallengeTx(
   return { record, code };
 }
 
+/** Challenge activo vigente del padre, bajo lock. Si el activo ya expiro (hora de servidor >= expiresAt, P-02),
+ * pasa a EXPIRED y deja de ser activo: otp-challenge.spec V5 ("se puede crear un challenge nuevo") y estado EXPIRED terminal;
+ * devuelve null para que V1 emita uno nuevo. SEC-CNS-016 P2-3 (disponibilidad). No emite OTP_EXPIRED (igual
+ * que la expiracion perezosa de V3). */
+async function activeUnexpired(ports: RightsOtpPorts, tenantId: TenantId, parentRef: string, scope: OtpScope): Promise<OtpVerificationRecord | null> {
+  const active = await ports.otpRepo.findActiveByParent(tenantId, parentRef, scope);
+  if (!active) return null;
+  if (active.expiresAt.getTime() > Date.now()) return active;
+  const locked = await ports.otpRepo.findByRefForUpdate(tenantId, active.verificationRef);
+  if (!locked || (locked.state !== "CODE_SENT" && locked.state !== "NOT_STARTED")) return null;
+  await ports.otpRepo.save({ ...locked, state: "EXPIRED" });
+  return null;
+}
+
+/** Ref para un challenge nuevo: si la pedida ya existe (p.ej. la de un challenge expirado guardada en la sesion), se
+ * usa una fresca; un challenge terminal nunca se reutiliza (INV-OT-07) y la key `:issued` dedupearia el evento. */
+async function freshRef(ports: RightsOtpPorts, tenantId: TenantId, requested: string): Promise<string> {
+  return (await ports.otpRepo.findByRef(tenantId, requested)) ? randomUUID() : requested;
+}
+
 /** Envia el codigo tras el commit (INV-OT-02: el codigo en claro no sale de aqui). */
 async function deliver(ports: RightsOtpPorts, issued: Issued, verificationRef: string, channelRef: string): Promise<OtpVerificationRecord> {
   if (issued.code !== undefined) {
@@ -288,14 +308,14 @@ export async function requestOtp(
       await p.invitation.eligibility.isEligibleForIssuance(tenantId, invitation.contextRef, invitation.productRef),
     ); // GRD-CM-05 (guardsByScope.DECISION)
 
-    const active = await p.otpRepo.findActiveByParent(tenantId, invitationRef, "DECISION");
+    const active = await activeUnexpired(p, tenantId, invitationRef, "DECISION");
     if (active) {
       // GRD-OT-08 (subconjunto): V1 repetido sobre el mismo padre es idempotente (mismo challenge activo).
       return { record: active };
     }
-    return issueChallengeTx(p, tenantId, verificationRef, "DECISION", invitationRef, channelRef);
+    return issueChallengeTx(p, tenantId, await freshRef(p, tenantId, verificationRef), "DECISION", invitationRef, channelRef);
   });
-  return deliver(ports, issued, verificationRef, channelRef);
+  return deliver(ports, issued, issued.record.verificationRef, channelRef);
 }
 
 /** V3/V2/V4: intenta verificar el código. Correcto -> VERIFIED (dispara I5 en la misma tx). Incorrecto -> V2/V4. */
@@ -343,14 +363,14 @@ export async function requestRightsOtp(
   channelRef: string,
 ): Promise<OtpVerificationRecord> {
   const issued = await inTx(ports, tenantId, async (p): Promise<Issued> => {
-    const active = await p.otpRepo.findActiveByParent(tenantId, chainRef, scope);
+    const active = await activeUnexpired(p, tenantId, chainRef, scope);
     if (active) {
       // GRD-OT-08 (subconjunto): idempotente, mismo challenge activo.
       return { record: active };
     }
-    return issueChallengeTx(p, tenantId, verificationRef, scope, chainRef, channelRef);
+    return issueChallengeTx(p, tenantId, await freshRef(p, tenantId, verificationRef), scope, chainRef, channelRef);
   });
-  return deliver(ports, issued, verificationRef, channelRef);
+  return deliver(ports, issued, issued.record.verificationRef, channelRef);
 }
 
 /**
