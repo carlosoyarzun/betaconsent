@@ -34,6 +34,8 @@ const SCHEMA_FILES: Readonly<Record<string, JsonSchema>> = {
   "ledger-event-payloads.schema.json": loadSchemaFile("ledger-event-payloads.schema.json"),
   "outbox-events.schema.json": loadSchemaFile("outbox-events.schema.json"),
   "security-event-payloads.schema.json": loadSchemaFile("security-event-payloads.schema.json"),
+  "invitation.schema.json": loadSchemaFile("invitation.schema.json"),
+  "consent-decision.schema.json": loadSchemaFile("consent-decision.schema.json"),
 };
 
 function getByPointer(doc: JsonSchema, pointer: string): JsonSchema {
@@ -355,6 +357,16 @@ export function validateApiPayload(defName: string, value: unknown): ValidationR
 /** Valida contra contracts/schemas/common.schema.json#/$defs/<defName>. */
 export function validateCommon(defName: string, value: unknown): ValidationResult {
   return validateAgainstDef("common.schema.json", defName, value);
+}
+
+/** Valida contra contracts/schemas/invitation.schema.json#/$defs/Invitation (proyección IT0, API-CNS-186). */
+export function validateInvitationProjection(value: unknown): ValidationResult {
+  return validateAgainstDef("invitation.schema.json", "Invitation", value);
+}
+
+/** Valida contra contracts/schemas/consent-decision.schema.json#/$defs/ConsentDecision (proyección IT0, API-CNS-188). */
+export function validateConsentDecisionProjection(value: unknown): ValidationResult {
+  return validateAgainstDef("consent-decision.schema.json", "ConsentDecision", value);
 }
 
 /** Valida un sobre contra contracts/schemas/outbox-events.schema.json#/$defs/OutboxEvent

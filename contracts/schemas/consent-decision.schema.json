@@ -148,6 +148,35 @@
         "authorityDeclaration": {
           "type": "boolean"
         },
+        "invitationRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "description": "Invitation que originó la decisión (ConsentDecisionRecord.invitationRef)."
+        },
+        "verificationRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "description": "DecisionMakerVerification que habilitó la decisión (ConsentDecisionRecord.verificationRef)."
+        },
+        "receiptRef": {
+          "$ref": "common.schema.json#/$defs/Ref",
+          "description": "Ref opaca del recibo; solo en GRANTED/DECLINED (C3/C5), ausente en PENDING (DecisionRecorded.receiptRef)."
+        },
+        "priorStepsComplete": {
+          "type": "boolean",
+          "description": "GRD-CD-05: pasos previos registrados por C2."
+        },
+        "stepsRecorded": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "CONTEXT_INFORMATION_VIEWED",
+              "CONSENT_VERSION_VIEWED",
+              "DECISION_MAKER_AUTHORITY_DECLARED",
+              "SUBJECT_CONFIRMED"
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 4
+        },
         "decidedAt": {
           "$ref": "common.schema.json#/$defs/Timestamp"
         },
