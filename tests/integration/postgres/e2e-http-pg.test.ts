@@ -14,6 +14,7 @@ import { createConsentFlowHttpServer, createPostgresFlowPorts } from "../../../s
 import {
   LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY,
   LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY,
+  LOCAL_ONLY_DEV_OTHER_TENANT_ID,
   LOCAL_ONLY_DEV_OTP_POLICY,
   LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY,
   LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG,
@@ -361,6 +362,28 @@ pgTest("TEST-CNS-880 e2e pg: consola STAFF (EN0 enrolar, I1 invitar, ready, send
     const sent = await staffPost(`/staff/invitations/${invitationRef}/send`, {});
     assert.equal(sent.status, 200, await sent.clone().text());
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND subject_ref = $2", [T, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF]), 1);
+  } finally {
+    await env.close();
+  }
+});
+
+pgTest("TEST-CNS-882 e2e pg: seed RH3 atomico (una tx: si falla no queda nada) e idempotente por consulta (segunda corrida false, sin captura de errores)", async (ctx) => {
+  const env = await boot(ctx);
+  const T2 = LOCAL_ONLY_DEV_OTHER_TENANT_ID; // tenant propio: la base se comparte con los tests anteriores del archivo
+  try {
+    const rp = env.bundle.revocationPorts;
+    const realUow = rp.revocation.uow;
+    const failing = {
+      ...rp,
+      revocation: { ...rp.revocation, uow: { ...realUow, inTenant: async <R>(t: string, work: (tx: never) => Promise<R>): Promise<R> => realUow.inTenant(t, async (tx) => { await work(tx as never); throw new Error("boom"); }) } },
+    } as typeof rp;
+    await assert.rejects(() => seedRh3DevCase(env.bundle.ports, failing, T2), /boom/);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND chain_ref = 'chain-dev-rh3'", [T2]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T2, RH3_DEV_CASE_REF]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [T2, RH3_DEV_REVOCATION_REF]), 0);
+    assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), true);
+    assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), false);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION'", [T2, RH3_DEV_CASE_REF]), 1);
   } finally {
     await env.close();
   }

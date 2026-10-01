@@ -201,12 +201,9 @@ if (pgStore) {
 // mano sin repetir HTTP para RC1/RH2 (fuera de alcance de este slice). Cadena/decisión propias
 // (RH3_*), separadas de MGMT_* de arriba, para no interferir con el flujo de gestión.
 const RH3_CASE_REF = RH3_DEV_CASE_REF;
-try {
-  await seedRh3DevCase(ports, revocationPorts, TENANT_ID);
-} catch (error) {
-  // En Postgres el caso RH3 persiste entre arranques: si ya avanzó, no se re-siembra.
-  if (!pgStore) throw error;
-  console.log(`RH3 dev ya sembrado en la base (${(error as Error).name}); se conserva.`);
+// SEC-CNS-017 F4: siembra atomica (una tx) e idempotente por consulta; ya no se traga ningun error.
+if (!(await seedRh3DevCase(ports, revocationPorts, TENANT_ID))) {
+  console.log("RH3 dev ya sembrado en la base; se conserva.");
 }
 // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos 2026-09-28 opción (ii)).
 

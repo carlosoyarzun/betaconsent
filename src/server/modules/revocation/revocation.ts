@@ -86,7 +86,7 @@ export function attestHumanAssistedVerification(
   return inTx(ports, tenantId, (p) => attestHumanAssistedVerificationTx(p, tenantId, revocationRef, caseRef));
 }
 
-async function attestHumanAssistedVerificationTx(
+export async function attestHumanAssistedVerificationTx(
   ports: RevocationPorts,
   tenantId: string,
   revocationRef: string,
