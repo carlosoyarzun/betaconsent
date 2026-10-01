@@ -30,6 +30,11 @@ import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 import { appendNext, lastLedgerSequence } from "../common/ledger-append.ts";
 
+/** LEGAL DECISION LD-02 / OPEN-RV-01 (revocation.spec `assuranceLevel`): el valor "suficiente" lo decide
+ * Carlos; hasta entonces el contrato (ledger-event-payloads REVOCATION_VERIFIED, x-pending) admite solo un
+ * placeholder versionado. El código no fija un valor "suficiente" ni decide con él. */
+export const ASSURANCE_LEVEL_PLACEHOLDER_LD02 = "LD-02-PLACEHOLDER-V1";
+
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
   readonly ledger: LedgerPort;
@@ -117,7 +122,9 @@ export async function attestHumanAssistedVerificationTx(
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { caseRef, recoveryMethod: "HUMAN_ASSISTED" },
+    // FINDING P1 (X6): el $def exige además verifiedByRef y secondApproverRef (RH2 con doble control,
+    // GRD-RV-09), que este RH2 simplificado a un paso no tiene: el payload queda incompleto hasta implementar RH2 completo.
+    payload: { revocationRef, caseRef, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED", assuranceLevel: ASSURANCE_LEVEL_PLACEHOLDER_LD02 },
     idempotencyKey: `${revocationRef}:rh2`,
   });
   return verified;
@@ -375,7 +382,14 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
     aggregateId: input.revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { scope: "ALL", authPath: "OTP", originPurposeRef: "ALL" },
+    payload: {
+      revocationRef: input.revocationRef,
+      revokedDecisionRef: input.revokedDecisionRef,
+      scope: "ALL",
+      authPath: "OTP",
+      originPurposeRef: "ALL",
+      initiatedVia: "DECISION_MAKER", // GRD-RV-25: sin caso SCHOOL_REPORTED abierto
+    },
     // ":r1" (mismo motivo que ":r3" en confirmRevocation más abajo): evita colisionar con otro
     // idempotencyKey plano `revocationRef` del mismo agregado.
     idempotencyKey: `${input.revocationRef}:r1`,
@@ -420,7 +434,7 @@ async function verifyRevocationOtpTx(
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { authPath: "OTP", verificationRef },
+    payload: { revocationRef, authPath: "OTP", verificationRef, assuranceLevel: ASSURANCE_LEVEL_PLACEHOLDER_LD02 },
     idempotencyKey: `${revocationRef}:r2`,
   });
   return verified;
@@ -453,7 +467,7 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: {},
+    payload: { revocationRef },
     // ":r3" evita colisionar con el idempotencyKey plano `revocationRef` de R4/applyRevocation
     // más abajo (mismo aggregateId "Revocation"/revocationRef): dos idempotencyKey iguales en el
     // mismo agregado deduplicarían CONSENT_REVOKED contra REVOCATION_CONFIRMED (ledger dedupe es
@@ -491,7 +505,7 @@ async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, re
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { reasonCode: "WITHDRAWN_BY_REQUESTER" },
+    payload: { revocationRef, reasonCode: "WITHDRAWN_BY_REQUESTER" },
     idempotencyKey: `${revocationRef}:r8`,
   });
   return failed;
@@ -629,7 +643,7 @@ export async function issueRecoveryLinkBearer(
 ): Promise<Rv0BearerResult> {
   const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashRecoveryToken(token);
-  const recoveryRef = `rec-${randomUUID()}`;
+  const recoveryRef = randomUUID(); // Ref UUIDv4 opaco (common.schema.json Ref); el prefijo "rec-" incumplía el contrato (FINDING P1, X6)
   const expiresAt = new Date(Date.now() + ports.recoveryTokenPolicy.ttlMs);
   // CA-124: precondición + token + evento de ledger en una sola unidad de trabajo (SEC-CNS-016: la
   // lectura de la decisión corre BAJO el tenant, nunca fuera de `inTenant`). El envío al canal (efecto
@@ -646,7 +660,7 @@ export async function issueRecoveryLinkBearer(
       aggregateId: chainRef,
       actorType: "HUMAN",
       actorRole: "UNVERIFIED_BEARER",
-      payload: { chainRef, revokedDecisionRef, trigger, recoveryRef },
+      payload: { recoveryRef, trigger }, // security-event-payloads RECOVERY_TOKEN_ISSUED: solo {recoveryRef, trigger}
       // Sin idempotencyKey: cada emisión es un token nuevo (K vigentes por cadena, revocation.spec
       // RV0 effects); una emisión nueva no invalida ni dedupea las vigentes.
     });
@@ -722,7 +736,16 @@ async function requestRevocationRecovery(
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { scope: "ALL", authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", originPurposeRef: "ALL", recoveryRef },
+    payload: {
+      revocationRef,
+      revokedDecisionRef,
+      scope: "ALL",
+      authPath: "RECOVERY",
+      recoveryMethod: "CHANNEL_LINK",
+      originPurposeRef: "ALL",
+      initiatedVia: "DECISION_MAKER", // GRD-RV-25: sin caso SCHOOL_REPORTED abierto
+      recoveryRef,
+    },
     idempotencyKey: `${revocationRef}:r1r`,
   });
   return record;
@@ -756,7 +779,13 @@ async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string
     aggregateId: found.revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", recoveryRef },
+    payload: {
+      revocationRef: found.revocationRef,
+      authPath: "RECOVERY",
+      recoveryMethod: "CHANNEL_LINK",
+      recoveryRef,
+      assuranceLevel: ASSURANCE_LEVEL_PLACEHOLDER_LD02,
+    },
     idempotencyKey: `${found.revocationRef}:r2r:${recoveryRef}`,
   });
   return verified;

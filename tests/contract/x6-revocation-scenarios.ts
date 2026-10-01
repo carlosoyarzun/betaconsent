@@ -29,17 +29,21 @@ import { createInMemoryLedgerAdapter } from "../../src/infra/adapters/in-memory-
 import { createInMemoryRecoveryTokenRepository } from "../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryOutboxAdapter } from "../../src/infra/adapters/in-memory-outbox.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
-import { withInMemoryTenancy } from "../../src/infra/adapters/in-memory-tenancy.ts";
+import { withInMemoryTenancy, type InMemoryTenancySources } from "../../src/infra/adapters/in-memory-tenancy.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { DownstreamEvidence } from "../../src/server/ports/downstream-stub.port.ts";
 import { syntheticDecision } from "./synthetic-decision.ts";
 import { fixtureUuid } from "./uuid-fixture.ts";
 
+export const STAFF_01 = fixtureUuid("x6-staff-01");
+export const STAFF_02 = fixtureUuid("x6-staff-02");
+const STAFF_03 = fixtureUuid("x6-staff-03");
+const STAFF_04 = fixtureUuid("x6-staff-04");
 export const X6_STAFF = createInMemoryStaffIdentityAdapter([
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+  { principalRef: STAFF_01, role: "RIGHTS_OPERATOR" },
+  { principalRef: STAFF_02, role: "RIGHTS_OPERATOR" },
+  { principalRef: STAFF_03, role: "APPROVER" },
+  { principalRef: STAFF_04, role: "APPROVER" },
 ]);
 
 export type RevocationPath = "OTP" | "LINK" | "CASE";
@@ -70,11 +74,11 @@ export async function revokeVia(env: X6Env, T: string, label: string, path: Revo
     revocationRef = (outcome as { revocationRef: string }).revocationRef;
     assert.equal((await ports.revocationRepo.findByRef(T, revocationRef))?.status, "APPLIED");
   } else {
-    const caseRef = `case-${label}`;
+    const caseRef = fixtureUuid(`case-${label}`);
     await ports.revocationRepo.save({ revocationRef, tenantId: T, chainRef: chain, caseRef, revokedDecisionRef: D, status: "REQUESTED" });
     await attestHumanAssistedVerification(ports, T, revocationRef, caseRef);
-    await recordCaseConfirmationPendingCosign(ports, X6_STAFF, T, revocationRef, caseRef, { recordedByPrincipalRef: "staff-synthetic-01" });
-    const done = await cosignCaseConfirmation(ports, X6_STAFF, T, revocationRef, caseRef, { cosignedByPrincipalRef: "staff-synthetic-02" });
+    await recordCaseConfirmationPendingCosign(ports, X6_STAFF, T, revocationRef, caseRef, { recordedByPrincipalRef: STAFF_01 });
+    const done = await cosignCaseConfirmation(ports, X6_STAFF, T, revocationRef, caseRef, { cosignedByPrincipalRef: STAFF_02 });
     assert.equal(done.status, "APPLIED");
   }
   return { revocationRef, decisionRef: D, chainRef: chain };
@@ -103,7 +107,7 @@ export async function completeDownstream(env: X6Env, T: string, revocationRef: s
 }
 
 /** Puertos in-memory completos (IT0 LOCAL/CI) con el stub interno de R5-1. */
-export function makeX6Env(opts: { withStub?: boolean; stubRefs?: readonly string[] } = {}): X6Env {
+export function makeX6Env(opts: { withStub?: boolean; stubRefs?: readonly string[]; extra?: Partial<InMemoryTenancySources>; recoveryTtlMs?: number } = {}): X6Env {
   const stub = createInMemoryDownstreamStub(opts.stubRefs);
   const sink = createInMemoryRecoveryLinkChannelSink();
   const ports: RevocationPorts = withInMemoryTenancy({
@@ -112,8 +116,9 @@ export function makeX6Env(opts: { withStub?: boolean; stubRefs?: readonly string
     outbox: createInMemoryOutboxAdapter(),
     recoveryTokenRepo: createInMemoryRecoveryTokenRepository(),
     recoveryLinkChannel: sink,
-    recoveryTokenPolicy: { ttlMs: 60_000 },
+    recoveryTokenPolicy: { ttlMs: opts.recoveryTtlMs ?? 60_000 },
     consentDecisionRepo: createInMemoryConsentDecisionRepository(),
+    ...(opts.extra ?? {}),
     ...(opts.withStub === false ? {} : { downstreamStub: stub }),
   });
   return { ports, stub, sink };
