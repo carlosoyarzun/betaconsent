@@ -23,10 +23,10 @@ import type {
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
-import { markInvitationCompleted, markInvitationDeclined } from "../invitation/invitation.ts";
+import { invitationPortsInTx, markInvitationCompletedTx, markInvitationDeclinedTx } from "../invitation/invitation.ts";
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "./decision-relationship.config.ts";
-import { appendNext } from "../common/ledger-append.ts";
+import { lastLedgerSequence, sequencedAppender } from "../common/ledger-append.ts";
 
 export interface ConsentDecisionPorts {
   readonly repo: ConsentDecisionRepositoryPort;
@@ -48,8 +48,21 @@ function deriveChainRef(tenantId: TenantId, contextRef: string, subjectRef: stri
   return `chain:${tenantId}:${contextRef}:${subjectRef}:${decisionMakerRef}`;
 }
 
+/** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, `repo`, `ledger` e `invitation` son los de la
+ * tx (SEC-CNS-015 P2-E). No se anida `inTenant`; `fn` puede reejecutarse si la unidad se reintenta. */
+function inTx<T>(ports: ConsentDecisionPorts, tenantId: TenantId, fn: (txPorts: ConsentDecisionPorts) => Promise<T>): Promise<T> {
+  return ports.uow.inTenant(tenantId, (tx) =>
+    fn({ ...ports, repo: tx.consentDecisionRepo, ledger: tx.ledger, invitation: invitationPortsInTx(ports.invitation, tx) }),
+  );
+}
+
+/** Secuencia vigente de la decision: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P2-E). */
+const decisionSequence = (ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): Promise<number> =>
+  lastLedgerSequence(ports.ledger, tenantId, consentId);
+
+/** Relee la decision CON lock de fila (SEC-CNS-015 P2-E): la transicion se decide sobre el estado bloqueado. */
 async function requireDecision(ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): Promise<ConsentDecisionRecord> {
-  const found = await ports.repo.findByConsentId(tenantId, consentId);
+  const found = await ports.repo.findByConsentIdForUpdate(tenantId, consentId);
   if (!found) {
     throw new DomainError("ERR-CM-01");
   }
@@ -65,7 +78,16 @@ export interface StartDecisionInput {
 }
 
 /** C1: null -> PENDING. Guards: GRD-CM-02, GRD-CM-05, GRD-CM-07, GRD-CD-01, GRD-CD-02. */
-export async function startDecision(
+export function startDecision(
+  ports: ConsentDecisionPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  input: StartDecisionInput,
+): Promise<ConsentDecisionRecord> {
+  return inTx(ports, tenantId, (p) => startDecisionTx(p, tenantId, actorRole, input));
+}
+
+async function startDecisionTx(
   ports: ConsentDecisionPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -137,7 +159,7 @@ function isStepsComplete(stepsRecorded: readonly string[]): boolean {
  * GRD-CD-01, GRD-CD-03, GRD-CD-04. Reemplaza el antiguo `recordRequiredSteps` (que marcaba los
  * 4 pasos como completos sin ninguna entrada real del usuario, violando GRD-CD-04): ahora cada
  * paso se registra uno a uno con los datos reales que exige DecisionStepRequest. */
-export async function recordDecisionStep(
+export function recordDecisionStep(
   ports: ConsentDecisionPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -145,6 +167,18 @@ export async function recordDecisionStep(
   consentId: string,
   step: DecisionStepInput,
 ): Promise<ConsentDecisionRecord> {
+  return inTx(ports, tenantId, (p) => recordDecisionStepTx(p, tenantId, actorRole, decisionMakerRef, consentId, step));
+}
+
+async function recordDecisionStepTx(
+  ports: ConsentDecisionPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  decisionMakerRef: string,
+  consentId: string,
+  step: DecisionStepInput,
+): Promise<ConsentDecisionRecord> {
+  const base = await decisionSequence(ports, tenantId, consentId);
   const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
   if (found.decisionMakerRef !== decisionMakerRef) {
@@ -175,7 +209,8 @@ export async function recordDecisionStep(
     payload.subjectRef = found.subjectRef;
   }
 
-  await appendNext(ports.ledger, {
+  await ports.ledger.append({
+    expectedSequence: base,
     eventType: step.stepKind,
     tenantId,
     aggregateType: "ConsentDecision",
@@ -226,7 +261,7 @@ function validatePurposes(config: LectorProBetaConfig, purposes: readonly Purpos
 }
 
 /** C3 (all_required_granted) / C5 (required_declined): PENDING -> GRANTED | DECLINED. */
-export async function submitDecision(
+export function submitDecision(
   ports: ConsentDecisionPorts,
   tenantId: TenantId,
   actorRole: ActorRole,
@@ -234,6 +269,20 @@ export async function submitDecision(
   consentId: string,
   purposes: readonly PurposeDecision[],
 ): Promise<ConsentDecisionRecord> {
+  return inTx(ports, tenantId, (p) => submitDecisionTx(p, tenantId, actorRole, decisionMakerRef, consentId, purposes));
+}
+
+/** C3/C5 en UNA tx con lock de fila y base previa: los k eventos de la decision declaran base + k
+ * (sequencedAppender) y I6/I7 corre en la misma tx con su propio lock y base de la Invitation. */
+async function submitDecisionTx(
+  ports: ConsentDecisionPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  decisionMakerRef: string,
+  consentId: string,
+  purposes: readonly PurposeDecision[],
+): Promise<ConsentDecisionRecord> {
+  const base = await decisionSequence(ports, tenantId, consentId);
   const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
   if (found.decisionMakerRef !== decisionMakerRef) {
@@ -276,8 +325,9 @@ export async function submitDecision(
   const decided: ConsentDecisionRecord = { ...found, state: nextState, purposes, receiptRef };
   await ports.repo.save(decided);
 
+  const seq = sequencedAppender(ports.ledger, base);
   for (const p of purposes) {
-    await appendNext(ports.ledger, {
+    await seq.append({
       eventType: "PURPOSE_DECISION_RECORDED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -290,7 +340,7 @@ export async function submitDecision(
   }
 
   if (allGranted) {
-    await appendNext(ports.ledger, {
+    await seq.append({
       eventType: "CONSENT_GRANTED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -300,7 +350,7 @@ export async function submitDecision(
       payload: { consentId, chainRef: found.chainRef },
       idempotencyKey: `${consentId}:granted`,
     });
-    await appendNext(ports.ledger, {
+    await seq.append({
       eventType: "RECEIPT_CREATED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -312,9 +362,9 @@ export async function submitDecision(
       payload: { receiptRef, managementLinkIssued: false },
       idempotencyKey: `${consentId}:receipt`,
     });
-    await markInvitationCompleted(ports.invitation, tenantId, found.invitationRef, consentId); // I6
+    await markInvitationCompletedTx(ports.invitation, tenantId, found.invitationRef, consentId); // I6
   } else {
-    await appendNext(ports.ledger, {
+    await seq.append({
       eventType: "CONSENT_DECLINED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -324,7 +374,7 @@ export async function submitDecision(
       payload: { consentId, chainRef: found.chainRef },
       idempotencyKey: `${consentId}:declined`,
     });
-    await appendNext(ports.ledger, {
+    await seq.append({
       eventType: "RECEIPT_CREATED",
       tenantId,
       aggregateType: "ConsentDecision",
@@ -336,7 +386,7 @@ export async function submitDecision(
       payload: { receiptRef, managementLinkIssued: false },
       idempotencyKey: `${consentId}:receipt`,
     });
-    await markInvitationDeclined(ports.invitation, tenantId, found.invitationRef, consentId); // I7
+    await markInvitationDeclinedTx(ports.invitation, tenantId, found.invitationRef, consentId); // I7
   }
 
   return decided;
