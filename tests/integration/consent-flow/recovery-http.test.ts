@@ -16,6 +16,7 @@
 // TEST-CNS-592..600,604,605 (unidad complementaria del dominio: TEST-CNS-589..591,598 en
 // tests/unit/revocation/revocation-self-service.test.ts).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import assert from "node:assert/strict";
@@ -110,7 +111,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
-    subjectRef: "subject-recovery@example.invalid",
+    subjectRef: fixtureUuid("subject-recovery"),
     decisionMakerRef: "dm:recovery-seed",
     invitationRef: "inv-recovery-seed",
     verificationRef: "ver-recovery-seed",
@@ -186,7 +187,7 @@ function stripHtmlComments(html: string): string {
 const CONSENT_592 = "592a3c52-8d4e-4a7b-9c21-0e5a7d3b9f92";
 
 test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token} -> /recovery/confirm -> POST /recovery/revoke llega a CONFIRMED (R1r+R2r+R3r)", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-589", CONSENT_592, "mgmt-token-589");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-589"), CONSENT_592, "mgmt-token-589");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-589");
 
@@ -228,7 +229,7 @@ test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token
 });
 
 test("TEST-CNS-593: reutilizar el mismo token de recuperación tras confirmarlo responde la uniforme de ERR-RV-05 (202), sin duplicar el evento", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-590", "consent-590", "mgmt-token-590");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-590"), fixtureUuid("consent-590"), "mgmt-token-590");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-590");
     const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
@@ -250,7 +251,7 @@ test("TEST-CNS-593: reutilizar el mismo token de recuperación tras confirmarlo 
 });
 
 test("TEST-CNS-594: GET /r/{token} con un token inválido responde 303 uniforme (Location /recovery/confirm, Set-Cookie presente), nunca 404 ni 200 con cuerpo", async () => {
-  const { server, baseUrl } = await setUp("chain-591", "consent-591", "mgmt-token-591");
+  const { server, baseUrl } = await setUp(fixtureUuid("chain-591"), fixtureUuid("consent-591"), "mgmt-token-591");
   try {
     const res = await fetch(`${baseUrl}/r/no-existe-este-token`, { redirect: "manual" });
     assert.equal(res.status, 303);
@@ -271,7 +272,7 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
   // la Revocation ya APPLIED, no CONFIRMED: GRD-RV-27 ("desde APPLIED+ respuesta uniforme"), no
   // R11. R11 (CONFIRMED sin APPLIED) se prueba a nivel de dominio en revocation-self-service.test.ts
   // (TEST-CNS-591), donde sí es observable construir ese estado intermedio directamente.
-  const { revocationPorts, server, baseUrl } = await setUp("chain-592", "consent-592", "mgmt-token-592");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-592"), fixtureUuid("consent-592"), "mgmt-token-592");
   try {
     const firstToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-592");
     const { recoveryCookie: firstCookie } = await redeemRecoveryToken(baseUrl, firstToken);
@@ -313,7 +314,7 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
 });
 
 test("TEST-CNS-596: GET /recovery/confirm sin cookie de recuperación (sin canjear /r/{token} antes) muestra el error uniforme (33:106), nunca un 404 JSON crudo", async () => {
-  const { server, baseUrl } = await setUp("chain-593", "consent-593", "mgmt-token-593");
+  const { server, baseUrl } = await setUp(fixtureUuid("chain-593"), fixtureUuid("consent-593"), "mgmt-token-593");
   try {
     const res = await fetch(`${baseUrl}/recovery/confirm`, { redirect: "manual" });
     assert.equal(res.status, 404);
@@ -328,7 +329,7 @@ test("TEST-CNS-596: GET /recovery/confirm sin cookie de recuperación (sin canje
 });
 
 test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [LEGAL DECISION] (efecto sobre los datos, y alcance/irreversibilidad), nunca solo dentro de un comentario HTML", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-594", "consent-594", "mgmt-token-594");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-594"), fixtureUuid("consent-594"), "mgmt-token-594");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-594");
     const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
@@ -344,7 +345,7 @@ test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [L
 });
 
 test("TEST-CNS-600: GET /r/{token} responde idéntico (status, headers, Location, atributos y largo del Set-Cookie) para un token válido, inexistente, consumido, expirado y demasiado largo; findByTokenHash nunca se llama en este GET", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-600", "consent-600", "mgmt-token-600");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-600"), fixtureUuid("consent-600"), "mgmt-token-600");
   try {
     // CA-124: la resolución por hash ya no es `recoveryTokenRepo.findByTokenHash` sino
     // `tenantResolver.byRecoveryTokenHash` (+ `recoveryTokenRepo.findByRef`); GET /r/{token} no
@@ -407,7 +408,7 @@ test("TEST-CNS-600: GET /r/{token} responde idéntico (status, headers, Location
 });
 
 test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) para un token inválido, uno consumido y uno expirado; ningún GET emite eventos ni consume el token", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-601", "consent-601", "mgmt-token-601");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-601"), fixtureUuid("consent-601"), "mgmt-token-601");
   try {
     // Inválido: nunca existió.
     const { recoveryCookie: invalidCookie } = await redeemRecoveryToken(baseUrl, "token-que-nunca-existio-601");
@@ -424,7 +425,7 @@ test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) p
     const consumedRes = await fetch(`${baseUrl}/recovery/confirm`, { headers: { cookie: `${RECOVERY_COOKIE_NAME}=${consumedCookie}` } });
 
     // Expirado: TTL del handle (P-18) vencido -> decodeRecoveryHandle ya lo trata como ausente.
-    const expiringServer = await setUp("chain-601b", "consent-601b", "mgmt-token-601b");
+    const expiringServer = await setUp(fixtureUuid("chain-601b"), fixtureUuid("consent-601b"), "mgmt-token-601b");
     try {
       const almostExpiredServer = createConsentFlowHttpServer({
         config: { allowedOrigin: ALLOWED_ORIGIN },
@@ -468,7 +469,7 @@ test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) p
 });
 
 test("TEST-CNS-604: fijación de la cookie de recuperación entre el render de 33:87 y el POST — si __Host-cns-recovery cambia, el POST /recovery/revoke se rechaza (CSRF ligado al hash, P2)", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-604", "consent-604", "mgmt-token-604");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-604"), fixtureUuid("consent-604"), "mgmt-token-604");
   try {
     const victimToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-604");
     const { recoveryCookie: victimCookie } = await redeemRecoveryToken(baseUrl, victimToken);
@@ -496,7 +497,7 @@ test("TEST-CNS-604: fijación de la cookie de recuperación entre el render de 3
 });
 
 test("TEST-CNS-605: aislamiento de cookies — una sesión MANAGE/DECISION no sirve para POST /recovery/revoke, y la cookie de recuperación no sirve para /manage ni /decision", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-605", "consent-605", "mgmt-token-605");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-605"), fixtureUuid("consent-605"), "mgmt-token-605");
   try {
     // Sesión MANAGE (GET /m/{token}) usada donde se espera la cookie de recuperación: 404, no
     // consume ningún token de recuperación real.
@@ -531,7 +532,7 @@ test("TEST-CNS-605: aislamiento de cookies — una sesión MANAGE/DECISION no si
 const CONSENT_704 = "704a3c52-8d4e-4a7b-9c21-0e5a7d3b9f04";
 
 test("TEST-CNS-704: tras revocar por enlace (C6/REVOKED), el enlace viejo da el error uniforme (render 404 sin CSRF) y pedir otro enlace (RV0) responde 202 sin emitir token nuevo", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp("chain-704", CONSENT_704, "mgmt-token-704");
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-704"), CONSENT_704, "mgmt-token-704");
   try {
     const oldToken = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-704");
     const { recoveryCookie: cookie } = await redeemRecoveryToken(baseUrl, oldToken);

@@ -10,6 +10,7 @@
 // propio de tests/contract/http/schema-lite.ts (sin dependencias nuevas).
 // TEST-CNS-512..TEST-CNS-524 (traceability/test-matrix.csv).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -122,7 +123,7 @@ async function post(baseUrl: string, opts: PostOpts): Promise<Response> {
 const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh" };
 
 async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string, subjectRef: string): Promise<string> {
-  await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -133,7 +134,7 @@ async function seedSentInvitation(ports: ConsentFlowPorts, invitationRef: string
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
   return token;
 }
 
@@ -197,7 +198,7 @@ async function completeDecisionSteps(harness: ConsentFlowHarness, sessionCookie:
 test("TEST-CNS-512: GET /i/{token} válido responde 303 con Location sin token (RedeemSeeOther, contracts/openapi headers.Location)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-512", "subject-512@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-512"), fixtureUuid("subject-512"));
     const res = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
     assert.equal(res.status, 303);
     const location = res.headers.get("location") ?? "";
@@ -226,7 +227,7 @@ test("TEST-CNS-513: GET /i/{token} inexistente responde el mismo 303 uniforme qu
 test("TEST-CNS-514: POST /invitation/open válido responde InvitationOpenedAck ({result: OPENED}), no {invitationRef, state} (P1, api-payloads.schema.json:303-315)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-514", "subject-514@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-514"), fixtureUuid("subject-514"));
     const landingSession = await redeem(harness.baseUrl, token);
     const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     assert.equal(res.status, 200);
@@ -240,7 +241,7 @@ test("TEST-CNS-514: POST /invitation/open válido responde InvitationOpenedAck (
 test("TEST-CNS-515: POST /invitation/open sin CSRF responde Problem (403, common.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-515", "subject-515@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-515"), fixtureUuid("subject-515"));
     const landingSession = await redeem(harness.baseUrl, token);
     const res = await post(harness.baseUrl, { path: "/invitation/open", sessionCookie: landingSession });
     assert.equal(res.status, 403);
@@ -270,7 +271,7 @@ test("TEST-CNS-516: POST /invitation/open sin sesión LANDING responde 404 Unifo
 test("TEST-CNS-517: POST /otp/request responde UniformAccepted ({result: RECEIVED}), no {result: ACCEPTED} (P1, common.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-517", "subject-517@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-517"), fixtureUuid("subject-517"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -290,7 +291,7 @@ test("TEST-CNS-517: POST /otp/request responde UniformAccepted ({result: RECEIVE
 test("TEST-CNS-551: POST /otp/resend responde UniformAccepted ({result: RECEIVED}), mismo esquema que /otp/request (common.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-551", "subject-551@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-551"), fixtureUuid("subject-551"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -309,7 +310,7 @@ test("TEST-CNS-551: POST /otp/resend responde UniformAccepted ({result: RECEIVED
 test("TEST-CNS-552: POST /otp/resend agotado el límite (P-06) responde Problem (409, common.schema.json) con content-type application/problem+json", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-552", "subject-552@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-552"), fixtureUuid("subject-552"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -336,7 +337,7 @@ test("TEST-CNS-552: POST /otp/resend agotado el límite (P-06) responde Problem 
 test("TEST-CNS-518: POST /otp/submit con código correcto responde OtpVerified ({result, scope}) (P1: faltaba scope, api-payloads.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-518", "subject-518@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-518"), fixtureUuid("subject-518"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -357,7 +358,7 @@ test("TEST-CNS-518: POST /otp/submit con código correcto responde OtpVerified (
 test("TEST-CNS-519: POST /otp/submit con código incorrecto responde OtpRejected (422) con un code del enum del contrato, no \"OTP_REJECTED\" (P1, api-payloads.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-519", "subject-519@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-519"), fixtureUuid("subject-519"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -386,7 +387,7 @@ test("TEST-CNS-519: POST /otp/submit con código incorrecto responde OtpRejected
 test("TEST-CNS-565: POST /decision/steps CONSENT_VERSION_VIEWED responde DecisionStepRecorded con servedVersion (api-payloads.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-565", "subject-565@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-565"), fixtureUuid("subject-565"));
     const res = await post(harness.baseUrl, {
       path: "/decision/steps",
       ...VALID_CSRF,
@@ -404,7 +405,7 @@ test("TEST-CNS-565: POST /decision/steps CONSENT_VERSION_VIEWED responde Decisio
 test("TEST-CNS-520: POST /decision/submit GRANTED responde DecisionRecorded con receiptRef (P1: faltaba, api-payloads.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-520", "subject-520@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-520"), fixtureUuid("subject-520"));
     const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const res = await post(harness.baseUrl, {
       path: "/decision/submit",
@@ -435,7 +436,7 @@ test("TEST-CNS-521: POST /decision/submit sin sesión verificada responde 404 Un
 test("TEST-CNS-522: POST /decision/submit con finalidad requerida faltante responde Problem (422) con code PURPOSE_SELECTION_INVALID, no el ID interno ERR-CD-02 (P1, common.schema.json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-522", "subject-522@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-522"), fixtureUuid("subject-522"));
     const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const incompletePurposes = GRANT_ALL.slice(1); // falta una finalidad requerida (GRD-CD-06/07).
     const res = await post(harness.baseUrl, {
@@ -479,12 +480,12 @@ function startRightsCaseServer(): Promise<RightsCaseHarness> {
 }
 
 async function seedOpenChannelUnreachableCase(ports: RightsCaseInMemoryPorts, handle: string): Promise<void> {
-  ports.tenantHandle.issue({ handle, tenantId: "tenant-1", chainRef: "chain-1", revokedDecisionRef: "decision-1" });
+  ports.tenantHandle.issue({ handle, tenantId: "tenant-1", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") });
   await ports.rightsCaseRepo.save({
-    caseRef: "case-1",
+    caseRef: fixtureUuid("case-1"),
     tenantId: "tenant-1",
-    chainRef: "chain-1",
-    revokedDecisionRef: "decision-1",
+    chainRef: fixtureUuid("chain-1"),
+    revokedDecisionRef: fixtureUuid("decision-1"),
     status: "OPEN",
     origin: "CHANNEL_UNREACHABLE",
   });
@@ -547,7 +548,7 @@ test("TEST-CNS-524: POST /rights-case/resume sin CSRF responde Problem (403, com
 test("TEST-CNS-532: POST /invitation/open sin CSRF responde con content-type application/problem+json (CsrfRejected)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-532", "subject-532@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-532"), fixtureUuid("subject-532"));
     const landingSession = await redeem(harness.baseUrl, token);
     const res = await post(harness.baseUrl, { path: "/invitation/open", sessionCookie: landingSession });
     assert.equal(res.status, 403);
@@ -560,7 +561,7 @@ test("TEST-CNS-532: POST /invitation/open sin CSRF responde con content-type app
 test("TEST-CNS-533: POST /otp/submit con código incorrecto responde con content-type application/problem+json (OtpRejected)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-533", "subject-533@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-533"), fixtureUuid("subject-533"));
     const landingSession = await redeem(harness.baseUrl, token);
     const opened = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     const sessionAfterOpen = parseSetCookie(opened)[SESSION_COOKIE_NAME];
@@ -583,7 +584,7 @@ test("TEST-CNS-533: POST /otp/submit con código incorrecto responde con content
 test("TEST-CNS-534: POST /decision/submit con finalidad requerida faltante responde con content-type application/problem+json (Problem)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-534", "subject-534@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-534"), fixtureUuid("subject-534"));
     const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const incompletePurposes = GRANT_ALL.slice(1);
     const res = await post(harness.baseUrl, {
@@ -614,7 +615,7 @@ test("TEST-CNS-535: POST /rights-case/resume sin CSRF responde con content-type 
 test("TEST-CNS-536: POST /invitation/open válido sigue respondiendo application/json (regresión: no todo pasó a problem+json)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-536", "subject-536@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-536"), fixtureUuid("subject-536"));
     const landingSession = await redeem(harness.baseUrl, token);
     const res = await post(harness.baseUrl, { path: "/invitation/open", ...VALID_CSRF, sessionCookie: landingSession });
     assert.equal(res.status, 200);
@@ -627,7 +628,7 @@ test("TEST-CNS-536: POST /invitation/open válido sigue respondiendo application
 test("TEST-CNS-537: GET /i/{token} inexistente responde 303 (RedeemSeeOther) con content-type application/json, idéntico byte a byte al de un token válido salvo el cuerpo vacío común a ambos (SEC-CNS-014, Carlos 2026-09-28: cierra el oráculo 303 válido / 404 inválido)", async () => {
   const harness = await startConsentFlowServer();
   try {
-    const token = await seedSentInvitation(harness.ports, "inv-537", "subject-537@example.invalid");
+    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-537"), fixtureUuid("subject-537"));
     const valid = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
     const invalid = await fetch(`${harness.baseUrl}/i/this-token-does-not-exist`, { redirect: "manual" });
     assert.equal(valid.status, 303);
@@ -649,15 +650,15 @@ test("TEST-CNS-603: GET /r/{token} responde 303 con Location que valida contra e
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
   const CONTRACT_TENANT_ID = "tenant-contract-603";
   await ports.decision.repo.save({
-    consentId: "consent-603",
+    consentId: fixtureUuid("consent-603"),
     tenantId: CONTRACT_TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
-    subjectRef: "subject-603@example.invalid",
+    subjectRef: fixtureUuid("subject-603"),
     decisionMakerRef: "dm:603",
-    invitationRef: "inv-603-seed",
-    verificationRef: "ver-603-seed",
-    chainRef: "chain-603",
+    invitationRef: fixtureUuid("inv-603-seed"),
+    verificationRef: fixtureUuid("ver-603-seed"),
+    chainRef: fixtureUuid("chain-603"),
     state: "GRANTED",
     purposes: GRANT_ALL,
     priorStepsComplete: true,
@@ -668,8 +669,8 @@ test("TEST-CNS-603: GET /r/{token} responde 303 con Location que valida contra e
   (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
     handle: "mgmt-token-603",
     tenantId: CONTRACT_TENANT_ID,
-    chainRef: "chain-603",
-    revokedDecisionRef: "consent-603",
+    chainRef: fixtureUuid("chain-603"),
+    revokedDecisionRef: fixtureUuid("consent-603"),
   });
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   const baseUrl = await new Promise<string>((resolve) => {

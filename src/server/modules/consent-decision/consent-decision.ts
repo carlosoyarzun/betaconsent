@@ -9,6 +9,7 @@
 // Idempotency-Key e integridad de claves) ni GRD-CD-10 (expectedSequence, carrera con
 // revocación). Ver reporte de la tarea para el detalle de lo diferido.
 
+import { getServedConsentVersion } from "./served-consent-version.ts";
 import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
@@ -200,6 +201,14 @@ async function recordDecisionStepTx(
   }
 
   const payload: Record<string, unknown> = { consentId };
+  if (step.stepKind === "CONSENT_VERSION_VIEWED") {
+    // Contrato: consentVersion, consentTextHash y privacyNoticeVersion = lo SERVIDO (GRD-CD-03). El texto legal real
+    // es LEGAL DECISION (LD-06) y vive en served-consent-version.ts como placeholder.
+    const served = getServedConsentVersion();
+    payload.consentVersion = served.consentVersion;
+    payload.consentTextHash = served.consentTextHash;
+    payload.privacyNoticeVersion = served.privacyNoticeVersion;
+  }
   if (step.stepKind === "DECISION_MAKER_AUTHORITY_DECLARED") {
     payload.relationshipRef = step.relationshipRef;
   }
@@ -314,6 +323,7 @@ async function submitDecisionTx(
   }
 
   const nextState = allGranted ? "GRANTED" : "DECLINED";
+  const served = getServedConsentVersion(); // versión/hash del texto servido (LEGAL DECISION LD-06: placeholder)
   // receiptRef (contracts/api-payloads.schema.json DecisionRecorded, common.schema.json Ref):
   // opaco UUIDv4. El MISMO valor se usa en el evento RECEIPT_CREATED del ledger (P1: antes
   // usaba `receipt:${consentId}`, con un formato distinto del Ref que exige
@@ -345,7 +355,7 @@ async function submitDecisionTx(
       aggregateId: consentId,
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
-      payload: { consentId, chainRef: found.chainRef },
+      payload: { consentId, chainRef: found.chainRef, consentVersion: served.consentVersion, consentTextHash: served.consentTextHash },
       idempotencyKey: `${consentId}:granted`,
     });
     await seq.append({
@@ -369,7 +379,7 @@ async function submitDecisionTx(
       aggregateId: consentId,
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
-      payload: { consentId, chainRef: found.chainRef },
+      payload: { consentId, chainRef: found.chainRef, consentVersion: served.consentVersion, consentTextHash: served.consentTextHash },
       idempotencyKey: `${consentId}:declined`,
     });
     await seq.append({

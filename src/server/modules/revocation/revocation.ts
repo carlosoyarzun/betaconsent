@@ -25,9 +25,15 @@ import type { RecoveryLinkChannelPort } from "../../ports/recovery-link-channel.
 import type { ConsentDecisionRepositoryPort } from "../../ports/consent-decision-repository.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { TenantResolverPort } from "../../ports/tenant-resolver.port.ts";
+import type { DownstreamStubPort } from "../../ports/downstream-stub.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 import { appendNext, lastLedgerSequence } from "../common/ledger-append.ts";
+
+/** LEGAL DECISION LD-02 / OPEN-RV-01 (revocation.spec `assuranceLevel`): el valor "suficiente" lo decide
+ * Carlos; hasta entonces el contrato (ledger-event-payloads REVOCATION_VERIFIED, x-pending) admite solo un
+ * placeholder versionado. El código no fija un valor "suficiente" ni decide con él. */
+export const ASSURANCE_LEVEL_PLACEHOLDER_LD02 = "LD-02-PLACEHOLDER-V1";
 
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
@@ -48,22 +54,25 @@ export interface RevocationPorts {
   readonly uow: UnitOfWorkPort;
   /** CA-124 §3/§5: lookup SIN tenant por hash del token de recuperación (GRD-CM-01). */
   readonly tenantResolver: TenantResolverPort;
+  /** X6 / R5-1 (CA-128): stub interno del consumidor downstream (único EventSubscription de IT0).
+   * Opcional: sin él, R5/R6/R7 (downstream.ts) fallan cerrado con ERR-CM-12. */
+  readonly downstreamStub?: DownstreamStubPort;
 }
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, los repos/ledger/outbox del bag se
  * sustituyen por los puertos de la tx. Las funciones `...Tx` de este módulo solo llaman a otras
  * `...Tx` (inTenant no se anida). */
-function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: RevocationPorts) => Promise<T>): Promise<T> {
+export function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: RevocationPorts) => Promise<T>): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, ...tx }));
 }
 
 /** Secuencia vigente de la Revocation: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P1-1). */
-const revocationSequence = (ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<number> =>
+export const revocationSequence = (ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<number> =>
   lastLedgerSequence(ports.ledger, tenantId, revocationRef);
 
 /** Relee la Revocation CON lock de fila (revocation.spec R4 "una tx con lock", SEC-CNS-015 P1-1): solo
  * se usa dentro de la unidad de trabajo; la decision de transicion se toma sobre el estado bloqueado. */
-async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+export async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
   const found = await ports.revocationRepo.findByRefForUpdate(tenantId, revocationRef);
   if (!found) {
     // GRD-CM-01/06: revocationRef de otro tenant (o inexistente) -> 404 uniforme (TEST-CNS-464).
@@ -72,51 +81,154 @@ async function requireRevocation(ports: RevocationPorts, tenantId: string, revoc
   return found;
 }
 
-/**
- * RH2/RH2v (verificación humana atestada), simplificada a un solo registro de atestación
- * para este slice. Deja constancia de (revocationRef, caseRef) ATTESTED para que RH3
- * (GRD-RV-10) pueda exigirla.
- */
-export function attestHumanAssistedVerification(
-  ports: RevocationPorts,
-  tenantId: string,
-  revocationRef: string,
-  caseRef: string,
-): Promise<RevocationRecord> {
-  return inTx(ports, tenantId, (p) => attestHumanAssistedVerificationTx(p, tenantId, revocationRef, caseRef));
+/** Principal de staff desde su sesión (nunca de parámetros, GRD-RV-09): rol y ref ya resueltos por el llamador HTTP. */
+export interface Rh2Actor {
+  readonly principalRef: string;
 }
 
-export async function attestHumanAssistedVerificationTx(
+export interface ProposeCaseVerificationInput {
+  /** Ref UUIDv4 de la propuesta (idempotencia (revocationRef, proposalRef)); la genera el servidor. */
+  readonly proposalRef: string;
+  /** Guion versionado (LD-02: el sistema lo registra, no evalúa su suficiencia). */
+  readonly verificationScriptVersion: string;
+}
+
+/** Resuelve el principal contra el roster atestado y exige el rol (GRD-CM-07 / GRD-RV-09: rol inválido = ERR-RV-07). */
+async function requireRosterRole(staffIdentity: StaffIdentityPort, principalRef: string, role: "RIGHTS_OPERATOR" | "APPROVER"): Promise<void> {
+  const principal = await staffIdentity.findByPrincipalRef(principalRef);
+  if (!principal || principal.role !== role) throw new DomainError("ERR-RV-07");
+}
+
+/**
+ * RH2 paso 1 (propose_case_verification, API-CNS-136; revocation.spec RH2, GRD-RV-09): el RIGHTS_OPERATOR con sesión CASE
+ * del caso propone la verificación HUMAN_ASSISTED con un guion versionado. Efecto: registra la propuesta (verifiedByRef =
+ * proponente); NO transiciona ni emite evento (x-state-transition step: propose, effect: none). Guards de este slice:
+ * GRD-CM-01/06 (tenant/caseRef), GRD-CM-07 (rol RIGHTS_OPERATOR, ERR-RV-07), GRD-RC-15 (dotación, ERR-RC-10). Idempotente por
+ * (revocationRef, proposalRef). Step-up/aserción del IdP (GRD-RC-12, ERR-RC-05) lo resuelve el llamador HTTP (APR-IDP PENDING).
+ * NO implementa: "aprobador/receptor de grant del caso" (P-38: no existen grants en IT0), RH2v (VERIFIED -> VERIFIED).
+ */
+export function proposeCaseVerification(
   ports: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
   tenantId: string,
   revocationRef: string,
   caseRef: string,
+  actor: Rh2Actor,
+  input: ProposeCaseVerificationInput,
 ): Promise<RevocationRecord> {
-  const base = await revocationSequence(ports, tenantId, revocationRef);
-  const found = await requireRevocation(ports, tenantId, revocationRef);
-  if (found.caseRef !== caseRef) {
-    throw new DomainError("ERR-CM-01");
+  return inTx(ports, tenantId, (p) => proposeCaseVerificationTx(p, staffIdentity, tenantId, revocationRef, caseRef, actor, input));
+}
+
+/** Variante para una unidad de trabajo ya abierta (siembra LOCAL de dev). */
+export async function proposeCaseVerificationTx(
+  p: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  actor: Rh2Actor,
+  input: ProposeCaseVerificationInput,
+): Promise<RevocationRecord> {
+  {
+    const found = await requireRevocation(p, tenantId, revocationRef);
+    if (found.caseRef !== caseRef) throw new DomainError("ERR-CM-01");
+    await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
+    await assertNominalRosterMinimum(staffIdentity);
+    if (found.proposal?.proposalRef === input.proposalRef) return found; // idempotente
+    // X6 P2-3: una propuesta pendiente con otro proposalRef no se reemplaza en silencio.
+    if (found.proposal !== undefined) throw new DomainError("ERR-CM-06");
+    if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // RH2 nace en REQUESTED (RH2v fuera de alcance)
+    const proposed: RevocationRecord = {
+      ...found,
+      proposal: { proposalRef: input.proposalRef, proposedByRef: actor.principalRef, verificationScriptVersion: input.verificationScriptVersion },
+    };
+    await p.revocationRepo.save(proposed);
+    return proposed;
   }
-  const verified: RevocationRecord = {
-    ...found,
-    status: "VERIFIED",
-    attestedVerification: { revocationRef, caseRef },
-    verifiedAuthPath: "RECOVERY",
-    verifiedRecoveryMethod: "HUMAN_ASSISTED",
-  };
-  await ports.revocationRepo.save(verified);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "REVOCATION_VERIFIED",
-    tenantId,
-    aggregateType: "Revocation",
-    aggregateId: revocationRef,
-    actorType: "HUMAN",
-    actorRole: "DECISION_MAKER",
-    payload: { caseRef, recoveryMethod: "HUMAN_ASSISTED" },
-    idempotencyKey: `${revocationRef}:rh2`,
-  });
-  return verified;
+}
+
+export interface ApproveCaseVerificationResult {
+  readonly record: RevocationRecord;
+  /** PENDING = la aserción del IdP no está ATTESTED: sin efecto (revocation.spec RH2 effects, INV-13). */
+  readonly attestation: "PENDING" | "ATTESTED";
+}
+
+/**
+ * RH2 paso 2 (approve_case_verification, API-CNS-137): un principal APPROVER (PRIVACY_LEGAL/SECURITY en la spec; OPEN-TC-06:
+ * en IT0 el roster los modela como APPROVER) distinto del proponente aprueba la propuesta: REQUESTED -> VERIFIED y emite
+ * REVOCATION_VERIFIED {authPath RECOVERY, recoveryMethod HUMAN_ASSISTED, caseRef, verifiedByRef, secondApproverRef,
+ * assuranceLevel placeholder LD-02}. GRD-RV-09: aprobador != proponente (ERR-RV-07); rol inválido (ERR-RV-07). Sin ambos
+ * refs el emisor falla cerrado (ERR-RV-13): el validador de esquema no evalúa el if/then HUMAN_ASSISTED, se exige aquí.
+ * `attested` = ambas aserciones ATTESTED (el llamador HTTP, APR-IDP PENDING): false -> PENDING, sin efecto ni evento.
+ */
+export function approveCaseVerification(
+  ports: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  proposalRef: string,
+  actor: Rh2Actor,
+  attested: boolean,
+): Promise<ApproveCaseVerificationResult> {
+  return inTx(ports, tenantId, (p) => approveCaseVerificationTx(p, staffIdentity, tenantId, revocationRef, caseRef, proposalRef, actor, attested));
+}
+
+/** Variante para una unidad de trabajo ya abierta (siembra LOCAL de dev). */
+export async function approveCaseVerificationTx(
+  p: RevocationPorts,
+  staffIdentity: StaffIdentityPort,
+  tenantId: string,
+  revocationRef: string,
+  caseRef: string,
+  proposalRef: string,
+  actor: Rh2Actor,
+  attested: boolean,
+): Promise<ApproveCaseVerificationResult> {
+  {
+    const base = await revocationSequence(p, tenantId, revocationRef);
+    const found = await requireRevocation(p, tenantId, revocationRef);
+    if (found.caseRef !== caseRef) throw new DomainError("ERR-CM-01");
+    if (!found.proposal || found.proposal.proposalRef !== proposalRef) throw new DomainError("ERR-CM-01"); // propuesta de otro caso/inexistente: uniforme
+    await requireRosterRole(staffIdentity, actor.principalRef, "APPROVER");
+    if (actor.principalRef === found.proposal.proposedByRef) throw new DomainError("ERR-RV-07"); // GRD-RV-09: aprobador != proponente
+    await assertNominalRosterMinimum(staffIdentity);
+    if (found.status === "VERIFIED" && found.secondApproverRef === actor.principalRef) return { record: found, attestation: "ATTESTED" }; // idempotente
+    if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06");
+    if (!attested) return { record: found, attestation: "PENDING" };
+    const verifiedByRef = found.proposal.proposedByRef;
+    const secondApproverRef = actor.principalRef;
+    if (!verifiedByRef || !secondApproverRef) throw new DomainError("ERR-RV-13"); // HUMAN_ASSISTED exige ambos refs
+    const verified: RevocationRecord = {
+      ...found,
+      status: "VERIFIED",
+      attestedVerification: { revocationRef, caseRef },
+      verifiedAuthPath: "RECOVERY",
+      verifiedRecoveryMethod: "HUMAN_ASSISTED",
+      secondApproverRef,
+    };
+    await p.revocationRepo.save(verified);
+    await p.ledger.append({
+      expectedSequence: base,
+      eventType: "REVOCATION_VERIFIED",
+      tenantId,
+      aggregateType: "Revocation",
+      aggregateId: revocationRef,
+      actorType: "HUMAN",
+      actorRole: "DECISION_MAKER", // recordedActor fijado por la spec; el ejecutor va en verifiedByRef/secondApproverRef
+      payload: {
+        revocationRef,
+        authPath: "RECOVERY",
+        recoveryMethod: "HUMAN_ASSISTED",
+        caseRef,
+        verifiedByRef,
+        secondApproverRef,
+        assuranceLevel: ASSURANCE_LEVEL_PLACEHOLDER_LD02,
+      },
+      idempotencyKey: `${revocationRef}:rh2:${proposalRef}`,
+    });
+    return { record: verified, attestation: "ATTESTED" };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +460,13 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
     throw new DomainError("ERR-RV-02");
   }
 
+  // GRD-RV-04 (single_open_revocation_per_chain, onFail null; Carlos 2026-10-01 opción a), evaluado
+  // DESPUÉS de GRD-RV-02 (orden de la spec: decisión REVOKED = ERR-RV-02, no adjunto): si la
+  // decisión ya tiene una Revocation no terminal, esta petición (R1 con otro revocationRef) se
+  // ADJUNTA a ella: misma revocationRef y mismo estado, sin evento nuevo, sin escrituras.
+  const open = await ports.revocationRepo.findOpenByDecision(tenantId, input.revokedDecisionRef);
+  if (open) return open;
+
   const record: RevocationRecord = {
     revocationRef: input.revocationRef,
     tenantId,
@@ -364,7 +483,14 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
     aggregateId: input.revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { scope: "ALL", authPath: "OTP", originPurposeRef: "ALL" },
+    payload: {
+      revocationRef: input.revocationRef,
+      revokedDecisionRef: input.revokedDecisionRef,
+      scope: "ALL",
+      authPath: "OTP",
+      originPurposeRef: "ALL",
+      initiatedVia: "DECISION_MAKER", // GRD-RV-25: sin caso SCHOOL_REPORTED abierto
+    },
     // ":r1" (mismo motivo que ":r3" en confirmRevocation más abajo): evita colisionar con otro
     // idempotencyKey plano `revocationRef` del mismo agregado.
     idempotencyKey: `${input.revocationRef}:r1`,
@@ -409,7 +535,7 @@ async function verifyRevocationOtpTx(
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { authPath: "OTP", verificationRef },
+    payload: { revocationRef, authPath: "OTP", verificationRef, assuranceLevel: ASSURANCE_LEVEL_PLACEHOLDER_LD02 },
     idempotencyKey: `${revocationRef}:r2`,
   });
   return verified;
@@ -442,7 +568,7 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: {},
+    payload: { revocationRef },
     // ":r3" evita colisionar con el idempotencyKey plano `revocationRef` de R4/applyRevocation
     // más abajo (mismo aggregateId "Revocation"/revocationRef): dos idempotencyKey iguales en el
     // mismo agregado deduplicarían CONSENT_REVOKED contra REVOCATION_CONFIRMED (ledger dedupe es
@@ -480,7 +606,7 @@ async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, re
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { reasonCode: "WITHDRAWN_BY_REQUESTER" },
+    payload: { revocationRef, reasonCode: "WITHDRAWN_BY_REQUESTER" },
     idempotencyKey: `${revocationRef}:r8`,
   });
   return failed;
@@ -618,7 +744,7 @@ export async function issueRecoveryLinkBearer(
 ): Promise<Rv0BearerResult> {
   const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashRecoveryToken(token);
-  const recoveryRef = `rec-${randomUUID()}`;
+  const recoveryRef = randomUUID(); // Ref UUIDv4 opaco (common.schema.json Ref); el prefijo "rec-" incumplía el contrato (FINDING P1, X6)
   const expiresAt = new Date(Date.now() + ports.recoveryTokenPolicy.ttlMs);
   // CA-124: precondición + token + evento de ledger en una sola unidad de trabajo (SEC-CNS-016: la
   // lectura de la decisión corre BAJO el tenant, nunca fuera de `inTenant`). El envío al canal (efecto
@@ -635,7 +761,7 @@ export async function issueRecoveryLinkBearer(
       aggregateId: chainRef,
       actorType: "HUMAN",
       actorRole: "UNVERIFIED_BEARER",
-      payload: { chainRef, revokedDecisionRef, trigger, recoveryRef },
+      payload: { recoveryRef, trigger }, // security-event-payloads RECOVERY_TOKEN_ISSUED: solo {recoveryRef, trigger}
       // Sin idempotencyKey: cada emisión es un token nuevo (K vigentes por cadena, revocation.spec
       // RV0 effects); una emisión nueva no invalida ni dedupea las vigentes.
     });
@@ -711,7 +837,16 @@ async function requestRevocationRecovery(
     aggregateId: revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { scope: "ALL", authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", originPurposeRef: "ALL", recoveryRef },
+    payload: {
+      revocationRef,
+      revokedDecisionRef,
+      scope: "ALL",
+      authPath: "RECOVERY",
+      recoveryMethod: "CHANNEL_LINK",
+      originPurposeRef: "ALL",
+      initiatedVia: "DECISION_MAKER", // GRD-RV-25: sin caso SCHOOL_REPORTED abierto
+      recoveryRef,
+    },
     idempotencyKey: `${revocationRef}:r1r`,
   });
   return record;
@@ -745,7 +880,13 @@ async function verifyRevocationRecovery(ports: RevocationPorts, tenantId: string
     aggregateId: found.revocationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { authPath: "RECOVERY", recoveryMethod: "CHANNEL_LINK", recoveryRef },
+    payload: {
+      revocationRef: found.revocationRef,
+      authPath: "RECOVERY",
+      recoveryMethod: "CHANNEL_LINK",
+      recoveryRef,
+      assuranceLevel: ASSURANCE_LEVEL_PLACEHOLDER_LD02,
+    },
     idempotencyKey: `${found.revocationRef}:r2r:${recoveryRef}`,
   });
   return verified;

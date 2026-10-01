@@ -5,16 +5,12 @@
 // contracts/openapi/consent-it0.openapi.yaml API-CNS-139. CA-128.
 // TEST-CNS-660..666.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
-import {
-  attestHumanAssistedVerification,
-  cosignCaseConfirmation,
-  recordCaseConfirmationPendingCosign,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
@@ -45,10 +41,10 @@ function makePorts(revocationRepo: RevocationRepositoryPort, ledger: LedgerPort)
 
 /** SYNTHETIC DATA ONLY: 4 personas ficticias, sin reutilización entre roles (GRD-RC-15). */
 const FULL_ROSTER: readonly StaffPrincipal[] = [
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-04"), role: "APPROVER" },
 ];
 const staff = createInMemoryStaffIdentityAdapter(FULL_ROSTER);
 
@@ -59,10 +55,10 @@ async function seed(ref: string, opts: { record?: boolean } = {}) {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
   const ports = makePorts(revocationRepo, ledger);
-  await revocationRepo.save({ revocationRef: ref, tenantId: "tenant-1", chainRef: `chain-${ref}`, caseRef: `case-${ref}`, revokedDecisionRef: DECISION_UUID, status: "REQUESTED" });
-  await attestHumanAssistedVerification(ports, "tenant-1", ref, `case-${ref}`);
+  await revocationRepo.save({ revocationRef: ref, tenantId: "tenant-1", chainRef: `chain-${ref}`, caseRef: fixtureUuid(`case-${ref}`), revokedDecisionRef: DECISION_UUID, status: "REQUESTED" });
+  await attestHumanAssistedVerification(ports, "tenant-1", ref, fixtureUuid(`case-${ref}`));
   if (opts.record !== false) {
-    await recordCaseConfirmationPendingCosign(ports, staff, "tenant-1", ref, `case-${ref}`, { recordedByPrincipalRef: "staff-synthetic-01" });
+    await recordCaseConfirmationPendingCosign(ports, staff, "tenant-1", ref, fixtureUuid(`case-${ref}`), { recordedByPrincipalRef: fixtureUuid("staff-synthetic-01") });
   }
   return { revocationRepo, ledger, ports };
 }
@@ -88,27 +84,27 @@ async function revokedEvents(ledger: LedgerPort, ref: string) {
 test("TEST-CNS-660: cosign sin RH2/RH2v ATTESTED previa -> ERR-RV-20 (GRD-RV-10)", async () => {
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
-  await revocationRepo.save({ revocationRef: fixtureUuid("rv-660"), tenantId: "tenant-1", chainRef: "chain-660", caseRef: "case-660", status: "REQUESTED" });
-  const code = await errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", fixtureUuid("rv-660"), "case-660", { cosignedByPrincipalRef: "staff-synthetic-02" }));
+  await revocationRepo.save({ revocationRef: fixtureUuid("rv-660"), tenantId: "tenant-1", chainRef: fixtureUuid("chain-660"), caseRef: fixtureUuid("case-660"), status: "REQUESTED" });
+  const code = await errCode(() => cosignCaseConfirmation(makePorts(revocationRepo, ledger), staff, "tenant-1", fixtureUuid("rv-660"), fixtureUuid("case-660"), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") }));
   assert.equal(code, "ERR-RV-20");
 });
 
 test("TEST-CNS-661: cosign con revocationRef de otro tenant o caseRef distinto -> ERR-CM-01 (GRD-CM-01, tenant_id)", async () => {
   const { ports } = await seed(fixtureUuid("rv-661"));
-  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", fixtureUuid("rv-661"), `case-${fixtureUuid("rv-661")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
-  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-661"), "case-otro", { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-CM-01");
+  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-b", fixtureUuid("rv-661"), fixtureUuid(`case-${fixtureUuid("rv-661")}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") })), "ERR-CM-01");
+  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-661"), fixtureUuid("case-otro"), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") })), "ERR-CM-01");
 });
 
 test("TEST-CNS-662: cosign sin confirmación previa registrada (paso 1) -> ERR-RV-18, sin efecto", async () => {
   const { ports, revocationRepo, ledger } = await seed(fixtureUuid("rv-662"), { record: false });
-  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-662"), `case-${fixtureUuid("rv-662")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RV-18");
+  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-662"), fixtureUuid(`case-${fixtureUuid("rv-662")}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") })), "ERR-RV-18");
   assert.equal((await revocationRepo.findByRef("tenant-1", fixtureUuid("rv-662")))?.status, "VERIFIED");
   assert.equal((await confirmedEvents(ledger, fixtureUuid("rv-662"))).length, 0);
 });
 
 test("TEST-CNS-663: cosign por la misma persona que registró -> ERR-RV-18 (cosignedByRef <> recordedByRef), sin efecto", async () => {
   const { ports, revocationRepo, ledger } = await seed(fixtureUuid("rv-663"));
-  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-663"), `case-${fixtureUuid("rv-663")}`, { cosignedByPrincipalRef: "staff-synthetic-01" })), "ERR-RV-18");
+  assert.equal(await errCode(() => cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-663"), fixtureUuid(`case-${fixtureUuid("rv-663")}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-01") })), "ERR-RV-18");
   const stored = await revocationRepo.findByRef("tenant-1", fixtureUuid("rv-663"));
   assert.equal(stored?.status, "VERIFIED");
   assert.equal(stored?.cosignedByRef, undefined);
@@ -118,11 +114,11 @@ test("TEST-CNS-663: cosign por la misma persona que registró -> ERR-RV-18 (cosi
 test("TEST-CNS-664: dotación insuficiente -> ERR-RC-10 (GRD-RC-15), fail-closed", async () => {
   const { ports } = await seed(fixtureUuid("rv-664"));
   const shortStaff = createInMemoryStaffIdentityAdapter([
-    { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-    { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-    { principalRef: "staff-synthetic-03", role: "APPROVER" },
+    { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+    { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
+    { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
   ]);
-  assert.equal(await errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", fixtureUuid("rv-664"), `case-${fixtureUuid("rv-664")}`, { cosignedByPrincipalRef: "staff-synthetic-02" })), "ERR-RC-10");
+  assert.equal(await errCode(() => cosignCaseConfirmation(ports, shortStaff, "tenant-1", fixtureUuid("rv-664"), fixtureUuid(`case-${fixtureUuid("rv-664")}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") })), "ERR-RC-10");
 });
 
 /** Refs UUIDv4 sintéticas: el schema exige Ref = UUIDv4 opaco (common.schema.json). Las refs
@@ -143,11 +139,11 @@ test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recor
   const revocationRepo = createInMemoryRevocationRepository();
   const ledger = createInMemoryLedgerAdapter();
   const ports = makePorts(revocationRepo, ledger);
-  await revocationRepo.save({ revocationRef: REV_UUID, tenantId: "tenant-1", chainRef: "chain-665", caseRef: "case-665", revokedDecisionRef: DECISION_UUID, status: "REQUESTED" });
-  await attestHumanAssistedVerification(ports, "tenant-1", REV_UUID, "case-665");
-  await recordCaseConfirmationPendingCosign(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { recordedByPrincipalRef: OP_A_UUID });
+  await revocationRepo.save({ revocationRef: REV_UUID, tenantId: "tenant-1", chainRef: fixtureUuid("chain-665"), caseRef: fixtureUuid("case-665"), revokedDecisionRef: DECISION_UUID, status: "REQUESTED" });
+  await attestHumanAssistedVerification(ports, "tenant-1", REV_UUID, fixtureUuid("case-665"));
+  await recordCaseConfirmationPendingCosign(ports, uuidStaff, "tenant-1", REV_UUID, fixtureUuid("case-665"), { recordedByPrincipalRef: OP_A_UUID });
 
-  const confirmed = await cosignCaseConfirmation(ports, uuidStaff, "tenant-1", REV_UUID, "case-665", { cosignedByPrincipalRef: OP_B_UUID });
+  const confirmed = await cosignCaseConfirmation(ports, uuidStaff, "tenant-1", REV_UUID, fixtureUuid("case-665"), { cosignedByPrincipalRef: OP_B_UUID });
   assert.equal(confirmed.status, "APPLIED"); // R4 síncrono en IT0 (Carlos 2026-09-28)
   assert.equal(confirmed.recordedByRef, OP_A_UUID);
   assert.equal(confirmed.cosignedByRef, OP_B_UUID);
@@ -164,8 +160,8 @@ test("TEST-CNS-665: cosign válido -> CONFIRMED y REVOCATION_CONFIRMED con recor
 
 test("TEST-CNS-666: cosign idempotente por revocationRef — repetir no duplica REVOCATION_CONFIRMED", async () => {
   const { ports, ledger } = await seed(fixtureUuid("rv-666"));
-  await cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), `case-${fixtureUuid("rv-666")}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
-  const again = await cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), `case-${fixtureUuid("rv-666")}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  await cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), fixtureUuid(`case-${fixtureUuid("rv-666")}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
+  const again = await cosignCaseConfirmation(ports, staff, "tenant-1", fixtureUuid("rv-666"), fixtureUuid(`case-${fixtureUuid("rv-666")}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
   assert.equal(again.status, "APPLIED");
   assert.equal((await confirmedEvents(ledger, fixtureUuid("rv-666"))).length, 1);
   assert.equal((await revokedEvents(ledger, fixtureUuid("rv-666"))).length, 1);
@@ -177,7 +173,7 @@ const REV_677B = "7a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f13";
 
 test("TEST-CNS-676: cosign exitoso aplica R4 síncrono -> APPLIED con un único CONSENT_REVOKED tras REVOCATION_CONFIRMED (IT0, Carlos 2026-09-28)", async () => {
   const { ports, revocationRepo, ledger } = await seed(REV_676);
-  const applied = await cosignCaseConfirmation(ports, staff, "tenant-1", REV_676, `case-${REV_676}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  const applied = await cosignCaseConfirmation(ports, staff, "tenant-1", REV_676, fixtureUuid(`case-${REV_676}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
   assert.equal(applied.status, "APPLIED");
   assert.equal((await revocationRepo.findByRef("tenant-1", REV_676))?.status, "APPLIED");
   const events = await ledger.listByAggregate("tenant-1", "Revocation", REV_676);
@@ -189,9 +185,9 @@ test("TEST-CNS-676: cosign exitoso aplica R4 síncrono -> APPLIED con un único 
 
 test("TEST-CNS-677: repetir cosign tras APPLIED no reaplica ni duplica eventos; CONFIRMED sin aplicar se reintenta sin reemitir REVOCATION_CONFIRMED", async () => {
   const { ports, ledger } = await seed(REV_677);
-  await cosignCaseConfirmation(ports, staff, "tenant-1", REV_677, `case-${REV_677}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  await cosignCaseConfirmation(ports, staff, "tenant-1", REV_677, fixtureUuid(`case-${REV_677}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
   const before = (await ledger.listByAggregate("tenant-1", "Revocation", REV_677)).length;
-  await cosignCaseConfirmation(ports, staff, "tenant-1", REV_677, `case-${REV_677}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  await cosignCaseConfirmation(ports, staff, "tenant-1", REV_677, fixtureUuid(`case-${REV_677}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
   assert.equal((await ledger.listByAggregate("tenant-1", "Revocation", REV_677)).length, before);
   assertRevocationEvidence(await ledger.listByAggregate("tenant-1", "Revocation", REV_677), { revocationRef: REV_677, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });
 
@@ -199,8 +195,8 @@ test("TEST-CNS-677: repetir cosign tras APPLIED no reaplica ni duplica eventos; 
   const { ports: p2, revocationRepo: repo2, ledger: l2 } = await seed(REV_677B);
   const rec = await repo2.findByRef("tenant-1", REV_677B);
   assert.ok(rec);
-  await repo2.save({ ...rec, status: "CONFIRMED", cosignedByRef: "staff-synthetic-02" });
-  const retried = await cosignCaseConfirmation(p2, staff, "tenant-1", REV_677B, `case-${REV_677B}`, { cosignedByPrincipalRef: "staff-synthetic-02" });
+  await repo2.save({ ...rec, status: "CONFIRMED", cosignedByRef: fixtureUuid("staff-synthetic-02") });
+  const retried = await cosignCaseConfirmation(p2, staff, "tenant-1", REV_677B, fixtureUuid(`case-${REV_677B}`), { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
   assert.equal(retried.status, "APPLIED");
   assert.equal((await confirmedEvents(l2, REV_677B)).length, 0);
   assertRevocationEvidence(await l2.listByAggregate("tenant-1", "Revocation", REV_677B), { revocationRef: REV_677B, authPath: "RECOVERY", recoveryMethod: "HUMAN_ASSISTED" });

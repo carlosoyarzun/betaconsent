@@ -13,6 +13,7 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.revocationRepo.findByRefForUpdate(t, ref)),
       findByCase: (t, caseRef) => uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, caseRef)),
       findOpenByChain: (t, chainRef) => uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByChain(t, chainRef)),
+      findOpenByDecision: (t, d) => uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByDecision(t, d)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.revocationRepo.save(record)),
     },
     consentDecisionRepo: {
@@ -53,6 +54,7 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       append: (event) => uow.inTenant(event.tenantId, (tx) => tx.ledger.append(event)),
       currentSequence: (t, id) => uow.inTenant(t, (tx) => tx.ledger.currentSequence(t, id)),
       listByAggregate: (t, type, id) => uow.inTenant(t, (tx) => tx.ledger.listByAggregate(t, type, id)),
+      readChain: (t) => uow.inTenant(t, (tx) => tx.ledger.readChain(t)),
     },
     outbox: {
       enqueue: (input) => uow.inTenant(input.tenantId, (tx) => tx.outbox.enqueue(input)),
@@ -60,6 +62,10 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
     tenantCatalog: {
       subjectBelongsToTenant: (t, subject) => uow.inTenant(t, (tx) => tx.tenantCatalog.subjectBelongsToTenant(t, subject)),
       findParticipation: (t, participation) => uow.inTenant(t, (tx) => tx.tenantCatalog.findParticipation(t, participation)),
+    },
+    accessLog: {
+      record: (entry) => uow.inTenant(entry.tenantId, (tx) => tx.accessLog.record(entry)),
+      listByTenant: (t) => uow.inTenant(t, (tx) => tx.accessLog.listByTenant(t)),
     },
     idempotency: {
       find: (t, hash) => uow.inTenant(t, (tx) => tx.idempotency.find(t, hash)),

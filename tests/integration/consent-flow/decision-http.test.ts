@@ -5,6 +5,7 @@
 // (API-CNS-101, P-12) -> POST /invitation/open -> V1 -> V3.
 // TEST-CNS-504..TEST-CNS-506 (traceability/test-matrix.csv).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -107,7 +108,7 @@ const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", 
 /** Recorre invitación -> OTP hasta dejar una sesión verificada (post-V3), lista para
  * /decision/submit. Devuelve la cookie de sesión verificada. */
 async function bringToVerifiedSession(harness: Harness, invitationRef: string, subjectRef: string): Promise<string> {
-  await createInvitation(harness.ports.invitation, TENANT_ID, "INVITER", {
+  await createInvitation(harness.ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -118,7 +119,7 @@ async function bringToVerifiedSession(harness: Harness, invitationRef: string, s
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef);
+  const { token } = await sendInvitation(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
 
   const redeemed = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
   const handleCookie = parseSetCookie(redeemed)[INVITATION_HANDLE_COOKIE_NAME];
@@ -179,7 +180,7 @@ test("TEST-CNS-504: sin sesión verificada (sin pasar por V3), /decision/submit 
 test("TEST-CNS-564: /decision/submit sin haber completado los pasos de C2 (incluido DECISION_MAKER_AUTHORITY_DECLARED) -> 409 DECISION_STEPS_INCOMPLETE (ERR-CD-04, GRD-CD-05)", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-564", "subject-564@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-564"), fixtureUuid("subject-564"));
 
     // Ningún POST /decision/steps previo: la sesión no tiene consentId todavía, así que el
     // servidor ni siquiera puede resolver una decisión PENDING (404 uniforme, mismo patrón que
@@ -222,7 +223,7 @@ test("TEST-CNS-564: /decision/submit sin haber completado los pasos de C2 (inclu
 test("TEST-CNS-505: /decision/submit ignora decisionMakerRef del body; el actor se deriva de la sesión (C1/C2/C3 -> GRANTED, dispara I6)", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-505", "subject-505@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-505"), fixtureUuid("subject-505"));
     const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
 
     const res = await post(harness.baseUrl, {
@@ -238,27 +239,27 @@ test("TEST-CNS-505: /decision/submit ignora decisionMakerRef del body; el actor 
     const decision = await harness.ports.decision.repo.findByConsentId(TENANT_ID, body.consentId);
     // El decisionMakerRef persistido nunca es el valor "attacker-supplied-dm" del body.
     assert.notEqual(decision?.decisionMakerRef, "attacker-supplied-dm");
-    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-505"))?.state, "COMPLETED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, fixtureUuid("inv-505")))?.state, "COMPLETED");
   } finally {
     await harness.close();
   }
 });
 
-test("TEST-CNS-933: el decisionMakerRef persistido es dm:v1: + HMAC con clave (no sha256 del canal), determinista y cumple los CHECK de BD (CA-128, LEGAL DECISION Carlos 2026-10-01)", async () => {
+test("TEST-CNS-933: el decisionMakerRef persistido es UUIDv4 desde HMAC con clave (no sha256 del canal), determinista y cumple los CHECK de BD (CA-128, LEGAL DECISION Carlos 2026-10-01)", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-933", "subject-933@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-933"), fixtureUuid("subject-933"));
     const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const res = await post(harness.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: sessionAfterSteps, body: { purposes: GRANT_ALL } });
     assert.equal(res.status, 200);
     const { consentId } = (await res.json()) as { consentId: string };
     const record = await harness.ports.decision.repo.findByConsentId(TENANT_ID, consentId);
     const dm = record?.decisionMakerRef ?? "";
-    assert.match(dm, /^dm:v1:[0-9a-f]{64}$/);
+    assert.match(dm, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.ok(dm.length >= 1 && dm.length <= 100 && !dm.includes("@"));
     assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, CHANNEL_REF), "determinista: mismo canal -> mismo ref");
     const sha = createHash("sha256").update(CHANNEL_REF).digest("hex");
-    assert.ok(!dm.includes(sha) && !dm.includes(sha.slice(0, 32)), "no recuperable por SHA-256 simple");
+    assert.ok(!dm.replaceAll("-", "").includes(sha.slice(0, 16)), "no recuperable por SHA-256 simple");
     assert.ok((record?.chainRef ?? "").length > 0 && (record?.chainRef ?? "").length <= 100);
   } finally {
     await harness.close();
@@ -268,7 +269,7 @@ test("TEST-CNS-933: el decisionMakerRef persistido es dm:v1: + HMAC con clave (n
 test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> DECLINED, dispara I7", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-506", "subject-506@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-506"), fixtureUuid("subject-506"));
     const sessionAfterSteps = await completeDecisionSteps(harness, verifiedSession);
     const purposes = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose, i) => ({
       purpose,
@@ -284,7 +285,7 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string };
     assert.equal(body.state, "DECLINED");
-    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, "inv-506"))?.state, "DECLINED");
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, fixtureUuid("inv-506")))?.state, "DECLINED");
   } finally {
     await harness.close();
   }
@@ -297,7 +298,7 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
 test("TEST-CNS-567: GET /decision sirve el texto de consentimiento y la versión YA resueltos, sin esperar ningún POST /decision/steps (GRD-CD-03 servido; INV-CM-08 un GET nunca transiciona)", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-567", "subject-567@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-567"), fixtureUuid("subject-567"));
     const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
     assert.equal(res.status, 200);
     const html = await res.text();
@@ -313,7 +314,7 @@ test("TEST-CNS-567: GET /decision sirve el texto de consentimiento y la versión
 test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL DECISION] de los frames 24:2/24:64 (no solo en un comentario HTML)", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-568", "subject-568@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-568"), fixtureUuid("subject-568"));
     const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
     const html = await res.text();
     assert.match(
@@ -360,7 +361,7 @@ function stripHtmlComments(html: string): string {
 test("TEST-CNS-584: los marcadores [LEGAL DECISION] de /decision (finalidad, enum de relación, enunciado de autoridad) son texto visible, nunca solo un comentario HTML", async () => {
   const harness = await startServer();
   try {
-    const verifiedSession = await bringToVerifiedSession(harness, "inv-584", "subject-584@example.invalid");
+    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-584"), fixtureUuid("subject-584"));
     const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
     const html = await res.text();
     const visible = stripHtmlComments(html);

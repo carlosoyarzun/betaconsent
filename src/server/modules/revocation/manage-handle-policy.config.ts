@@ -6,6 +6,11 @@
 // sobrevivir el 303 inmediato a GET /manage, no la vigencia real del handle MANAGE_ENTRY (esa la
 // resuelve TenantHandlePort.resolveByHash, en GET /manage mismo).
 
+import { APPROVED_LINK_HANDLE_TTL_MS } from "../common/approved-parameters.ts";
+
+/** TTL de los handles /i y /m = 10 min (Carlos, 2026-10-01): valor aprobado de approved-parameters.ts. */
+export const DEFAULT_MANAGE_HANDLE_TTL_MS = APPROVED_LINK_HANDLE_TTL_MS;
+
 export interface ManageHandlePolicy {
   readonly ttlMs: number;
 }
@@ -26,18 +31,12 @@ function readIntEnv(name: string): number | undefined {
 
 /**
  * Construye la política del handle MANAGE_ENTRY (la de link-handle.ts, no la del TenantHandlePort
- * en sí). Sin default de producción: si ninguna fuente (override explícito o variable de
- * entorno) provee un valor, lanza (fail-closed). `overrides` es la única vía LOCAL-only para
+ * en sí). Si ninguna fuente (override explícito o variable de
+ * entorno) provee un valor se usa el aprobado (10 min, Carlos 2026-10-01). `overrides` es la vía LOCAL para
  * tests/dev.ts.
  */
 export function loadManageHandlePolicyConfig(overrides: ManageHandlePolicyOverrides = {}): ManageHandlePolicy {
-  const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_MANAGE_HANDLE_TTL_MS");
-  if (ttlMs === undefined) {
-    throw new Error(
-      "Política del handle de gestión incompleta: CNS_MANAGE_HANDLE_TTL_MS no tiene un valor " +
-        "fijado en este entorno. No hay default de producción; dev.ts y los tests pueden pasar " +
-        "un override explícito marcado LOCAL-only.",
-    );
-  }
+  // Precedencia: override explícito > variable de entorno > valor aprobado por Carlos (2026-10-01).
+  const ttlMs = overrides.ttlMs ?? readIntEnv("CNS_MANAGE_HANDLE_TTL_MS") ?? DEFAULT_MANAGE_HANDLE_TTL_MS;
   return { ttlMs };
 }

@@ -67,24 +67,27 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
 
     const r2 = fixtureUuid("r800-2");
     const full = revocation(t, r2, {
-      chainRef: "chain-800-full",
-      caseRef: "case-800",
+      chainRef: fixtureUuid("chain-800-full"),
+      caseRef: fixtureUuid("case-800"),
       status: "CONFIRMED",
-      attestedVerification: { revocationRef: r2, caseRef: "case-800" },
+      attestedVerification: { revocationRef: r2, caseRef: fixtureUuid("case-800") },
       recordedByRef: fixtureUuid("rec800"),
       cosignedByRef: fixtureUuid("cos800"),
       revokedDecisionRef: fixtureUuid("d800-2"),
       verifiedAuthPath: "RECOVERY",
       verifiedRecoveryMethod: "HUMAN_ASSISTED",
       reasonCode: "WITHDRAWN_BY_REQUESTER",
+      // RH2 (0016): propuesta del paso 1 y aprobador distinto del paso 2.
+      proposal: { proposalRef: fixtureUuid("prop800"), proposedByRef: fixtureUuid("op800"), verificationScriptVersion: "guion-1" },
+      secondApproverRef: fixtureUuid("appr800"),
     });
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(full));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRef(t, r2)), full);
-    assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, "case-800")), full);
-    assert.equal(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, "case-otro")), null);
+    assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, fixtureUuid("case-800"))), full);
+    assert.equal(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, fixtureUuid("case-otro"))), null);
 
     // findOpenByChain: FAILED no cuenta; APPLIED si (GRD-RV-04 / GRD-RV-27).
-    const chain = "chain-800-open";
+    const chain = fixtureUuid("chain-800-open");
     const failed = revocation(t, fixtureUuid("r800-f"), { chainRef: chain, status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" });
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(failed));
     assert.equal(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByChain(t, chain)), null);
@@ -198,14 +201,14 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
     const decision = syntheticDecision(ta, fixtureUuid("d805"));
     const rec = token(ta, "805");
     await h.uow.inTenant(ta, async (tx) => {
-      await tx.revocationRepo.save(revocation(ta, ref, { caseRef: "case-805" }));
+      await tx.revocationRepo.save(revocation(ta, ref, { caseRef: fixtureUuid("case-805") }));
       await tx.consentDecisionRepo.save(decision);
       await tx.recoveryTokenRepo.save(rec);
     });
     await h.uow.inTenant(tb, async (tx) => {
       for (const t of [ta, tb]) {
         assert.equal(await tx.revocationRepo.findByRef(t, ref), null);
-        assert.equal(await tx.revocationRepo.findByCase(t, "case-805"), null);
+        assert.equal(await tx.revocationRepo.findByCase(t, fixtureUuid("case-805")), null);
         assert.equal(await tx.revocationRepo.findOpenByChain(t, `chain-${ref}`), null);
         assert.equal(await tx.consentDecisionRepo.findByConsentId(t, decision.consentId), null);
         assert.equal(await tx.consentDecisionRepo.findActiveGrantByChain(t, decision.chainRef), null);

@@ -7,6 +7,7 @@
 // stdout/stderr y todas las URLs observadas (request, Location, href/src/action del HTML, Link).
 // SYNTHETIC DATA ONLY. Este archivo no es un test (no termina en .test.ts).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
 import { RH3_DEV_CASE_REF } from "../../../src/server/entrypoints/dev-rh3-seed.ts";
@@ -262,10 +263,10 @@ async function flowRh3(env: ScanEnv, corpus: Corpus, tenantId: string): Promise<
     assert.equal(res.status, 200);
     return jar;
   };
-  const op1 = await login("staff-synthetic-01");
+  const op1 = await login(fixtureUuid("staff-synthetic-01"));
   const first = await call(env, corpus, op1, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { method: "POST", csrfCookie: "__Host-cns-case-csrf", body: { confirmationGivenOnCasePage: true } });
   assert.equal(first.status, 200);
-  const op2 = await login("staff-synthetic-02");
+  const op2 = await login(fixtureUuid("staff-synthetic-02"));
   const second = await call(env, corpus, op2, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, { method: "POST", csrfCookie: "__Host-cns-case-csrf", body: {} });
   assert.equal(second.status, 200);
 }
@@ -273,7 +274,7 @@ async function flowRh3(env: ScanEnv, corpus: Corpus, tenantId: string): Promise<
 /** Flujo 5: consola STAFF (TENANT_ADMIN): enrolar, invitar, ready, send, enlace del sink -> /i/{token}. */
 async function flowStaff(env: ScanEnv, corpus: Corpus): Promise<void> {
   const jar = new Jar();
-  const login = await call(env, corpus, jar, "/__dev/staff-login", { method: "POST", body: { principalRef: "staff-synthetic-05" } });
+  const login = await call(env, corpus, jar, "/__dev/staff-login", { method: "POST", body: { principalRef: fixtureUuid("staff-synthetic-05") } });
   assert.equal(login.status, 200);
   const post = (path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> =>
     call(env, corpus, jar, path, { method: "POST", csrfCookie: "__Host-cns-staff-csrf", body, headers });

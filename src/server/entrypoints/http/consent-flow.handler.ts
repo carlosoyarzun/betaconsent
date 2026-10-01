@@ -177,7 +177,7 @@ function checkCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): Ht
 }
 
 /** decisionMakerRef derivado del canal ya ligado a la invitación (nunca del cliente, GRD-OT-02
- * + D5). Es una ref opaca `dm:v1:` + HMAC con clave de entorno (decision-maker-ref.ts; Carlos,
+ * + D5). Es una ref opaca UUIDv4 derivado de un HMAC con clave de entorno (decision-maker-ref.ts; Carlos,
  * 2026-10-01), no el canal en claro ni un hash sin sal. */
 function deriveDecisionMakerRef(key: Buffer, channelRef: string): string {
   return deriveKeyedDecisionMakerRef(key, channelRef);
@@ -450,7 +450,7 @@ export async function handleSubmitOtp(
     const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
     if (!verificationRef) return uniformNotFound();
     try {
-      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code);
+      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(ports.decisionMakerRefKey, manageChannelRef(session.chainRef ?? "")));
       const verifiedSession: ConsentSessionPayload =
         scope === "MANAGE"
           ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(ports.decisionMakerRefKey, manageChannelRef(session.chainRef ?? "")) }

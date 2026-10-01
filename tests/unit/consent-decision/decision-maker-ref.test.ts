@@ -15,15 +15,15 @@ import { deriveChainRef, deriveChainRefKey } from "../../../src/server/modules/c
 const KEY = deriveDecisionMakerRefKey(Buffer.alloc(32, 1));
 const EMAIL = "persona.sintetica@example.invalid";
 
-test("TEST-CNS-930 decisionMakerRef: dm:v1: + HMAC, determinista con email normalizado, sin '@', <=100, no coincide con sha256(email) y cambia con la clave", () => {
+test("TEST-CNS-930 decisionMakerRef: UUIDv4 desde HMAC, determinista con email normalizado, sin '@', <=100, no coincide con sha256(email) y cambia con la clave", () => {
   const ref = deriveDecisionMakerRef(KEY, EMAIL);
-  assert.match(ref, /^dm:v1:[0-9a-f]{64}$/);
+  assert.match(ref, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, "Ref UUIDv4 del contrato");
   assert.ok(ref.length <= 100 && !ref.includes("@"));
   assert.equal(ref, deriveDecisionMakerRef(KEY, `  ${EMAIL.toUpperCase()} `), "mismo email normalizado -> mismo ref");
   assert.notEqual(ref, deriveDecisionMakerRef(KEY, "otra.persona@example.invalid"));
   const sha = createHash("sha256").update(EMAIL).digest("hex");
-  assert.notEqual(ref, `dm:v1:${sha}`);
-  assert.ok(!ref.includes(sha.slice(0, 32)), "el ref no coincide con sha256(email), ni truncado");
+  assert.ok(!ref.replaceAll("-", "").includes(sha.slice(0, 16)), "el ref no coincide con sha256(email), ni truncado");
+  assert.notEqual(ref, deriveDecisionMakerRef(KEY, "persona.sintetica@example.invalid.x"), "sin colision trivial");
   assert.notEqual(ref, deriveDecisionMakerRef(deriveDecisionMakerRefKey(Buffer.alloc(32, 2)), EMAIL), "otra clave -> otro ref");
   // chainRef sigue cumpliendo el CHECK de largo con el nuevo decisionMakerRef (semantica de cadena intacta).
   const chainKey = deriveChainRefKey(Buffer.alloc(32, 1));

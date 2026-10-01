@@ -7,6 +7,7 @@
 // adapters in-memory de src/infra/adapters/**, y hace requests HTTP de verdad (fetch de
 // Node) contra él. Cero PII, todo localhost.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -51,14 +52,14 @@ async function seedOpenChannelUnreachableCase(ports: Harness["ports"], handle: s
   ports.tenantHandle.issue({
     handle,
     tenantId: "tenant-1",
-    chainRef: "chain-1",
-    revokedDecisionRef: "decision-1",
+    chainRef: fixtureUuid("chain-1"),
+    revokedDecisionRef: fixtureUuid("decision-1"),
   });
   await ports.rightsCaseRepo.save({
-    caseRef: "case-1",
+    caseRef: fixtureUuid("case-1"),
     tenantId: "tenant-1",
-    chainRef: "chain-1",
-    revokedDecisionRef: "decision-1",
+    chainRef: fixtureUuid("chain-1"),
+    revokedDecisionRef: fixtureUuid("decision-1"),
     status: "OPEN",
     origin: "CHANNEL_UNREACHABLE",
   });
@@ -90,9 +91,9 @@ test("TEST-CNS-468: RC2u sin CSRF (Origin ausente) -> ERR-CM-09 (403), sin trans
     const body = (await res.json()) as { code: string };
     assert.equal(body.code, "CSRF_REJECTED");
 
-    const stored = await harness.ports.rightsCaseRepo.findByRef("tenant-1", "case-1");
+    const stored = await harness.ports.rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-1"));
     assert.equal(stored?.status, "OPEN");
-    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", "case-1")).length, 0);
+    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", fixtureUuid("case-1"))).length, 0);
   } finally {
     await harness.close();
   }
@@ -106,7 +107,7 @@ test("TEST-CNS-468b: RC2u con Origin correcto pero sin token CSRF -> ERR-CM-09 (
     const res = await postResume(harness.baseUrl, { origin: ALLOWED_ORIGIN, manageHandle: "handle-A" });
     assert.equal(res.status, 403);
 
-    const stored = await harness.ports.rightsCaseRepo.findByRef("tenant-1", "case-1");
+    const stored = await harness.ports.rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-1"));
     assert.equal(stored?.status, "OPEN");
   } finally {
     await harness.close();
@@ -137,9 +138,9 @@ test("TEST-CNS-469: RC2u con Origin de otra consola o sufijo parecido -> ERR-CM-
     });
     assert.equal(lookalike.status, 403);
 
-    const stored = await harness.ports.rightsCaseRepo.findByRef("tenant-1", "case-1");
+    const stored = await harness.ports.rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-1"));
     assert.equal(stored?.status, "OPEN");
-    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", "case-1")).length, 0);
+    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", fixtureUuid("case-1"))).length, 0);
   } finally {
     await harness.close();
   }
@@ -162,9 +163,9 @@ test("TEST-CNS-470: RC2u no consume el handle de /m/; un reintento no duplica RI
     const firstBody = (await first.json()) as { result: string };
     assert.equal(firstBody.result, "IN_REVIEW");
 
-    const afterFirst = await harness.ports.rightsCaseRepo.findByRef("tenant-1", "case-1");
+    const afterFirst = await harness.ports.rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-1"));
     assert.equal(afterFirst?.status, "CONTACTING");
-    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", "case-1")).length, 1);
+    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", fixtureUuid("case-1"))).length, 1);
 
     // El handle sigue resolviendo: RC2u no lo consume ni lo rota.
     assert.ok(await harness.ports.tenantHandle.resolve("handle-A"));
@@ -175,9 +176,9 @@ test("TEST-CNS-470: RC2u no consume el handle de /m/; un reintento no duplica RI
     const secondBody = (await second.json()) as { result: string };
     assert.equal(secondBody.result, "IN_REVIEW");
 
-    const afterSecond = await harness.ports.rightsCaseRepo.findByRef("tenant-1", "case-1");
+    const afterSecond = await harness.ports.rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-1"));
     assert.equal(afterSecond?.status, "CONTACTING");
-    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", "case-1")).length, 1);
+    assert.equal((await harness.ports.ledger.listByAggregate("tenant-1", "RightsCase", fixtureUuid("case-1"))).length, 1);
   } finally {
     await harness.close();
   }

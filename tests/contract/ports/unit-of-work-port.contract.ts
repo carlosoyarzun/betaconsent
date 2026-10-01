@@ -2,6 +2,7 @@
 // INV-CM-01 (append + proyección + outbox en una tx), INV-CM-02/INV-3 (aislamiento por tenant).
 // Suite de contrato de UnitOfWorkPort: se registra contra cada adaptador. TEST-CNS-770, 771, 772.
 
+import { revocationRequestedPayload } from "../ledger-payload-fixtures.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -27,7 +28,7 @@ export function runUnitOfWorkPortContract(adapterName: string, makeAdapter: () =
   const revocation = (tenantId: string, revocationRef = REV) => ({
     revocationRef,
     tenantId,
-    chainRef: "chain-770",
+    chainRef: fixtureUuid("chain-770"),
     status: "REQUESTED" as const,
   });
   const event = (tenantId: string, aggregateId = REV) => ({
@@ -36,7 +37,7 @@ export function runUnitOfWorkPortContract(adapterName: string, makeAdapter: () =
     aggregateType: "Revocation",
     aggregateId,
     actorType: "HUMAN" as const,
-    payload: {},
+    payload: revocationRequestedPayload("770"),
     expectedSequence: 0,
   });
   const outboxInput = (tenantId: string) => ({

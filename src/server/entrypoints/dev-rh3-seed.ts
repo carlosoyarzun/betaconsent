@@ -2,18 +2,23 @@
 // caso RH3 de dev.ts, extraída a un archivo sin efectos secundarios para que un test de
 // integración (TEST-CNS-687) ejecute el mismo seed que dev.ts sin arrancar el proceso.
 // SYNTHETIC DATA ONLY. La Revocation pasa por el mismo camino de dominio que fija RH2
-// (attestHumanAssistedVerification: verifiedAuthPath=RECOVERY, verifiedRecoveryMethod=
-// HUMAN_ASSISTED), nunca se guarda ya "atestada" a mano.
+// RH2 con doble control (proposeCaseVerificationTx por el RIGHTS_OPERATOR 01 y approveCaseVerificationTx por el APPROVER 03
+// del roster sintético LOCAL; verifiedAuthPath=RECOVERY, verifiedRecoveryMethod=HUMAN_ASSISTED), nunca se guarda ya
+// "atestada" a mano. La aserción de step-up es un stub LOCAL-only (APR-IDP PENDING): aquí se da por ATTESTED.
 
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
-import { attestHumanAssistedVerificationTx } from "../modules/revocation/revocation.ts";
+import { randomUUID } from "node:crypto";
+
+import { approveCaseVerificationTx, proposeCaseVerificationTx } from "../modules/revocation/revocation.ts";
+import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
+import { LOCAL_ONLY_DEV_STAFF_ROSTER } from "./dev-local-config.ts";
 import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
 
 /** Refs opacas UUIDv4 (common.schema.json Ref) para que los eventos del ledger validen. */
 export const RH3_DEV_CHAIN_REF = "chain-dev-rh3";
 export const RH3_DEV_CONSENT_ID = "3d9b7c1e-2a4f-4b6d-8e10-5f7a9c3b1d20";
-export const RH3_DEV_CASE_REF = "case-dev-rh3-001";
+export const RH3_DEV_CASE_REF = "4b1d7e9a-2c3f-4a68-8d5e-6f0a1b2c3d4e";
 export const RH3_DEV_REVOCATION_REF = "8e2c4a6b-1d3f-4a5c-9b7e-0f2d4c6a8b10";
 
 /** Siembra atomica (UNA tx del tenant, SEC-CNS-017 F4): o queda todo el caso o nada. Idempotente por consulta, no por
@@ -55,7 +60,15 @@ export async function seedRh3DevCase(_ports: ConsentFlowPorts, revocationPorts: 
       revokedDecisionRef: RH3_DEV_CONSENT_ID,
       status: "REQUESTED",
     });
-    await attestHumanAssistedVerificationTx({ ...rv, ...tx }, tenantId, RH3_DEV_REVOCATION_REF, RH3_DEV_CASE_REF);
+    const staff = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
+    const op1 = LOCAL_ONLY_DEV_STAFF_ROSTER[0]!.principalRef; // RIGHTS_OPERATOR (propone)
+    const approver = LOCAL_ONLY_DEV_STAFF_ROSTER[2]!.principalRef; // APPROVER (aprueba, distinto de quienes confirman RH3)
+    const proposalRef = randomUUID();
+    await proposeCaseVerificationTx({ ...rv, ...tx }, staff, tenantId, RH3_DEV_REVOCATION_REF, RH3_DEV_CASE_REF, { principalRef: op1 }, {
+      proposalRef,
+      verificationScriptVersion: "dev-script-1",
+    });
+    await approveCaseVerificationTx({ ...rv, ...tx }, staff, tenantId, RH3_DEV_REVOCATION_REF, RH3_DEV_CASE_REF, proposalRef, { principalRef: approver }, true);
     await tx.rightsCaseRepo.save({
       caseRef: RH3_DEV_CASE_REF,
       tenantId,

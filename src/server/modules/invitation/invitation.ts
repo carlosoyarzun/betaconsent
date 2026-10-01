@@ -9,6 +9,7 @@
 // rotación/reemisión) ni GRD-IV-13 (cascada de cancelación pendiente, requiere
 // tenant-context). Ver reporte de la tarea para el detalle de lo diferido.
 
+import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03 } from "../common/opaque-ref.ts";
 import { createHash, randomBytes } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
@@ -70,8 +71,8 @@ export interface CreateInvitationInput {
   readonly subjectRef: string;
   /** CA-125: refs que el contrato exige en I1 (CreateInvitationRequest); opcionales para los
    * llamadores legacy (fixtures) que no pasan por la API de staff. */
-  readonly enrollmentRef?: string;
-  readonly participationRef?: string;
+  readonly enrollmentRef: string;
+  readonly participationRef: string;
   readonly reissueOfRef?: string;
 }
 
@@ -107,8 +108,8 @@ export async function createInvitationTx(
     productRef: input.productRef,
     subjectRef: input.subjectRef,
     state: "DRAFT",
-    ...(input.enrollmentRef !== undefined ? { enrollmentRef: input.enrollmentRef } : {}),
-    ...(input.participationRef !== undefined ? { participationRef: input.participationRef } : {}),
+    enrollmentRef: input.enrollmentRef,
+    participationRef: input.participationRef,
     ...(input.reissueOfRef !== undefined ? { reissueOfRef: input.reissueOfRef } : {}),
   };
   await ports.invitationRepo.save(record);
@@ -124,16 +125,13 @@ export async function createInvitationTx(
     // enrollmentRef y reissueOfRef (nullable). Con la API de staff (CA-125) el payload es completo;
     // los llamadores legacy sin esas refs conservan el payload anterior (discrepancia previa,
     // documentada en tests/contract/ledger/ledger-event-payloads-contract.test.ts).
-    payload:
-      input.participationRef !== undefined && input.enrollmentRef !== undefined
-        ? {
-            invitationRef: record.invitationRef,
-            participationRef: input.participationRef,
-            enrollmentRef: input.enrollmentRef,
-            subjectRef: record.subjectRef,
-            reissueOfRef: input.reissueOfRef ?? null,
-          }
-        : { invitationRef: record.invitationRef, subjectRef: record.subjectRef },
+    payload: {
+      invitationRef: record.invitationRef,
+      participationRef: input.participationRef,
+      enrollmentRef: input.enrollmentRef,
+      subjectRef: record.subjectRef,
+      reissueOfRef: input.reissueOfRef ?? null,
+    },
     idempotencyKey: record.invitationRef,
   });
   return record;
@@ -231,7 +229,7 @@ export function hashInvitationToken(token: string): string {
 export interface SendInvitationOptions {
   /** CA-125: INVITATION_SENT.deliveryChannel (EXT-B, sin fijar): lo inyecta la política del
    * entrypoint. Sin él, el payload legacy (sin deliveryChannel) se conserva para fixtures. */
-  readonly deliveryChannel?: "SCHOOL_CHANNEL" | "CONSENT_APP_EMAIL";
+  readonly deliveryChannel: "SCHOOL_CHANNEL" | "CONSENT_APP_EMAIL";
   /** CA-125 (GRD-IV-12): expiresAt = SENT + P-10, calculado por el servidor; reemplaza el de I2. */
   readonly expiresAt?: Date;
 }
@@ -242,7 +240,7 @@ export function sendInvitation(
   tenantId: TenantId,
   actorRole: ActorRole,
   invitationRef: string,
-  options: SendInvitationOptions = {},
+  options: SendInvitationOptions,
 ): Promise<SendInvitationResult> {
   return inTx(ports, tenantId, (p) => sendInvitationTx(p, tenantId, actorRole, invitationRef, options));
 }
@@ -281,8 +279,8 @@ export async function sendInvitationTx(
     actorRole: "INVITER",
     payload: {
       invitationRef,
-      ...(options.deliveryChannel !== undefined ? { deliveryChannel: options.deliveryChannel } : {}),
-      expiresAt: expiresAt?.toISOString(),
+      deliveryChannel: options.deliveryChannel,
+      expiresAt: expiresAt?.toISOString(), // I2 lo fija siempre (READY exige expiresAt, ver arriba)
     },
     idempotencyKey: `${invitationRef}:sent`,
   });
@@ -414,7 +412,7 @@ export async function markInvitationVerifiedTx(
     aggregateId: invitationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { invitationRef, verificationRef, decisionMakerRef },
+    payload: { invitationRef, verificationRef, decisionMakerRef, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
     idempotencyKey: `${invitationRef}:${verificationRef}`,
   });
   return verified;

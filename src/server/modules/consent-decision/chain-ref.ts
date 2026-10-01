@@ -1,13 +1,15 @@
 // Gobierna: ADR-002 §10 (chainRef opaco), consent-decision.spec.yaml (decisionChainKey = tenantRef,
 // contextRef, subjectRef, decisionMakerRef), SEC-CNS-017 F2 (P1).
 //
-// chainRef = `chain:` + HMAC-SHA256(hex) con clave por entorno sobre la tupla decisionChainKey. Es
+// chainRef = UUIDv4 derivado de HMAC-SHA256 (antes `chain:` + hex; el contrato exige Ref UUIDv4) con clave por entorno sobre la tupla decisionChainKey. Es
 // determinista (misma tupla -> mismo chainRef: findActiveGrantByChain y la unicidad de grant activo
 // por cadena no cambian) pero opaco y de largo fijo (70 caracteres): ya no expone tenantId,
 // subjectRef ni el hash sin sal de decisionMakerRef. NO decide nada sobre decisionMakerRef en si
 // (LEGAL DECISION de Carlos).
 
 import { createHmac, hkdfSync } from "node:crypto";
+
+import { uuidV4FromDigest } from "../common/opaque-ref.ts";
 
 /** `info` HKDF propio y separado del de las firmas de sesion, handles y OTP. */
 export const CHAIN_REF_HKDF_INFO = "consent-app/chain-ref/v1";
@@ -20,7 +22,8 @@ export function deriveChainRefKey(secret: Buffer): Buffer {
 export function deriveChainRef(key: Buffer, tenantId: string, contextRef: string, subjectRef: string, decisionMakerRef: string): string {
   // Cada componente va con prefijo de longitud: la tupla es inambigua (sin colision por concatenacion).
   const message = [tenantId, contextRef, subjectRef, decisionMakerRef].map((p) => `${Buffer.byteLength(p)}:${p}`).join("|");
-  return `chain:${createHmac("sha256", key).update(message).digest("hex")}`;
+  // Ref UUIDv4 opaco (common.schema.json Ref): CONSENT_GRANTED.chainRef / *.parentRef lo exigen en el ledger (X6 P1-A).
+  return uuidV4FromDigest(createHmac("sha256", key).update(message).digest());
 }
 
 /** Secreto raiz del chainRef. `CNS_CHAIN_REF_SECRET` (base64, >=32 bytes). Fuera de LOCAL, sin el: aborta

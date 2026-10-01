@@ -137,7 +137,17 @@ export async function expressRevocationIntentInCase(
         aggregateId: revocationRef,
         actorType: UNVERIFIED_BEARER_ACTOR.actorType,
         actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
-        payload: { caseRef: rightsCase.caseRef },
+        payload: {
+          revocationRef,
+          revokedDecisionRef: rightsCase.revokedDecisionRef,
+          scope: "ALL",
+          authPath: "RECOVERY",
+          recoveryMethod: "HUMAN_ASSISTED",
+          originPurposeRef: "ALL",
+          // GRD-RV-25: SCHOOL_REPORT si y solo si el caso nace con origin SCHOOL_REPORTED.
+          initiatedVia: rightsCase.origin === "SCHOOL_REPORTED" ? "SCHOOL_REPORT" : "DECISION_MAKER",
+          caseRef: rightsCase.caseRef,
+        },
         // ":rc3" evita colisionar con el idempotencyKey plano `revocationRef` de R4 (CONSENT_REVOKED,
         // mismo aggregateId): el ledger dedupea por (tenant, aggregateType, aggregateId, key), no por
         // eventType, y con la key plana R4 devolvía este REQUESTED en vez de emitir CONSENT_REVOKED
@@ -161,7 +171,16 @@ export async function expressRevocationIntentInCase(
       aggregateId: existing.revocationRef,
       actorType: UNVERIFIED_BEARER_ACTOR.actorType,
       actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
-      payload: { caseRef: rightsCase.caseRef, attached: true },
+      payload: {
+        revocationRef: existing.revocationRef,
+        revokedDecisionRef: rightsCase.revokedDecisionRef,
+        scope: "ALL",
+        authPath: "RECOVERY",
+        recoveryMethod: "HUMAN_ASSISTED",
+        originPurposeRef: "ALL",
+        initiatedVia: rightsCase.origin === "SCHOOL_REPORTED" ? "SCHOOL_REPORT" : "DECISION_MAKER",
+        caseRef: rightsCase.caseRef,
+      },
       idempotencyKey: `${existing.revocationRef}:r12:${rightsCase.caseRef}`,
     });
     return { rightsCase, revocation: existing };
@@ -268,7 +287,7 @@ export function openRightsCase(
       aggregateId: input.caseRef,
       actorType: UNVERIFIED_BEARER_ACTOR.actorType,
       actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
-      payload: { reasonCode: input.origin, initiatedVia: "DECISION_MAKER" },
+      payload: { caseRef: input.caseRef, reasonCode: input.origin, initiatedVia: "DECISION_MAKER" },
       idempotencyKey: `${tenantId}:${input.chainRef}:${input.revokedDecisionRef}`,
     });
     return record;

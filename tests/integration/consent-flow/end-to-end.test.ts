@@ -4,6 +4,7 @@
 // memoria y verifica que la cadena del ledger (sequence consecutivo por agregado) y
 // tenant_id están presentes en cada evento de los tres agregados. TEST-CNS-497.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -66,50 +67,50 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
   };
 
   // Invitation: I1 -> I2 -> I3 -> I4.
-  await createInvitation(invitationPorts, TENANT_ID, "INVITER", {
-    invitationRef: "inv-1",
+  await createInvitation(invitationPorts, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
+    invitationRef: fixtureUuid("inv-1"),
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
-    subjectRef: "test+subject-1@example.invalid",
+    subjectRef: fixtureUuid("subject-1"),
   });
-  await markInvitationReady(invitationPorts, TENANT_ID, "INVITER", "inv-1", {
+  await markInvitationReady(invitationPorts, TENANT_ID, "INVITER", fixtureUuid("inv-1"), {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(invitationPorts, TENANT_ID, "INVITER", "inv-1");
+  const { token } = await sendInvitation(invitationPorts, TENANT_ID, "INVITER", fixtureUuid("inv-1"), { deliveryChannel: "CONSENT_APP_EMAIL" });
   await openInvitation(invitationPorts, TENANT_ID, token);
 
   // otp-challenge: V1 -> V3 (dispara I5 sobre Invitation).
-  await requestOtp(otpPorts, TENANT_ID, "ver-1", "inv-1", CHANNEL_REF);
+  await requestOtp(otpPorts, TENANT_ID, fixtureUuid("ver-1"), fixtureUuid("inv-1"), CHANNEL_REF);
   const sink = otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
   const code = sink.sent[0]?.code ?? "";
-  await submitOtp(otpPorts, TENANT_ID, "ver-1", code, "dm-1");
+  await submitOtp(otpPorts, TENANT_ID, fixtureUuid("ver-1"), code, fixtureUuid("dm-1"));
 
   // consent-decision: C1 -> C2 -> C3 (dispara I6 sobre Invitation).
   await startDecision(consentPorts, TENANT_ID, "DECISION_MAKER", {
-    consentId: "consent-1",
-    invitationRef: "inv-1",
-    verificationRef: "ver-1",
-    decisionMakerRef: "dm-1",
+    consentId: fixtureUuid("consent-1"),
+    invitationRef: fixtureUuid("inv-1"),
+    verificationRef: fixtureUuid("ver-1"),
+    decisionMakerRef: fixtureUuid("dm-1"),
   });
-  await recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", { stepKind: "CONSENT_VERSION_VIEWED" });
-  await recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", {
+  await recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", fixtureUuid("dm-1"), fixtureUuid("consent-1"), { stepKind: "CONSENT_VERSION_VIEWED" });
+  await recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", fixtureUuid("dm-1"), fixtureUuid("consent-1"), {
     stepKind: "DECISION_MAKER_AUTHORITY_DECLARED",
     relationshipRef: "SYNTHETIC_GUARDIAN",
     authorityDeclared: true,
   });
-  await recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true });
-  const decision = await submitDecision(consentPorts, TENANT_ID, "DECISION_MAKER", "dm-1", "consent-1", GRANT_ALL);
+  await recordDecisionStep(consentPorts, TENANT_ID, "DECISION_MAKER", fixtureUuid("dm-1"), fixtureUuid("consent-1"), { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true });
+  const decision = await submitDecision(consentPorts, TENANT_ID, "DECISION_MAKER", fixtureUuid("dm-1"), fixtureUuid("consent-1"), GRANT_ALL);
 
   assert.equal(decision.state, "GRANTED");
-  assert.equal((await invitationPorts.invitationRepo.findByRef(TENANT_ID, "inv-1"))?.state, "COMPLETED");
-  assert.equal((await otpPorts.otpRepo.findByRef(TENANT_ID, "ver-1"))?.state, "VERIFIED");
+  assert.equal((await invitationPorts.invitationRepo.findByRef(TENANT_ID, fixtureUuid("inv-1")))?.state, "COMPLETED");
+  assert.equal((await otpPorts.otpRepo.findByRef(TENANT_ID, fixtureUuid("ver-1")))?.state, "VERIFIED");
 
   for (const [aggregateType, aggregateId] of [
-    ["Invitation", "inv-1"],
-    ["DecisionMakerVerification", "ver-1"],
-    ["ConsentDecision", "consent-1"],
+    ["Invitation", fixtureUuid("inv-1")],
+    ["DecisionMakerVerification", fixtureUuid("ver-1")],
+    ["ConsentDecision", fixtureUuid("consent-1")],
   ] as const) {
     const events = await ledger.listByAggregate(TENANT_ID, aggregateType, aggregateId);
     assert.ok(events.length > 0, `${aggregateType} debía tener eventos en el ledger`);
@@ -122,7 +123,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
     assert.deepEqual(sequences, Array.from({ length: sequences.length }, (_, i) => i + 1));
   }
 
-  const invitationEventTypes = (await ledger.listByAggregate(TENANT_ID, "Invitation", "inv-1")).map((e) => e.eventType);
+  const invitationEventTypes = (await ledger.listByAggregate(TENANT_ID, "Invitation", fixtureUuid("inv-1"))).map((e) => e.eventType);
   assert.deepEqual(invitationEventTypes, [
     "INVITATION_CREATED",
     "INVITATION_READY",

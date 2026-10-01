@@ -16,6 +16,7 @@
 
 import type { QueryResult } from "pg";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../../server/ports/unit-of-work.port.ts";
+import { createPgAccessLogAdapter } from "./access-log.adapter.ts";
 import { createPgConsentDecisionRepository } from "./consent-decision.adapter.ts";
 import { createPgIdempotencyAdapter } from "./idempotency.adapter.ts";
 import { createPgTenantCatalogAdapter } from "./tenant-catalog.adapter.ts";
@@ -115,6 +116,7 @@ export function createPgTenantTxPorts(tx: TenantTx, idempotencyPolicy?: Idempote
     outbox: createPgOutboxAdapter(tx),
     tenantCatalog: createPgTenantCatalogAdapter(tx),
     idempotency: createPgIdempotencyAdapter(tx, idempotencyPolicy),
+    accessLog: createPgAccessLogAdapter(tx),
   };
 }
 

@@ -1,6 +1,7 @@
 // Gobierna: otp-challenge.spec V1/V5 (EXPIRED terminal; "se puede crear un challenge nuevo"), GRD-OT-08, SEC-CNS-016 P2-3.
 // TEST-CNS-850: V1 con el challenge activo ya expirado lo vence y emite uno nuevo (ref fresca); con uno vigente es idempotente.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -25,18 +26,19 @@ test("TEST-CNS-850: V1 con el activo expirado: pasa a EXPIRED y se emite uno nue
   const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo });
   const invitation: InvitationPorts = { invitationRepo, eligibility: createInMemoryEligibilityAdapter(), ledger, ...tenancy };
   const channel = createInMemoryOtpChannelSink();
-  const otp: OtpChallengePorts = { otpRepo, channel, ledger, uow: tenancy.uow, invitation, policy: { codeLength: 6, maxAttempts: 3, ttlMs: 30, maxResends: 3 }, secret: randomBytes(32) };
-  await createInvitation(invitation, T, "INVITER", { invitationRef: "inv-850", contextRef: "BETA_2026_01", productRef: "LECTORPRO", subjectRef: "test+s850@example.invalid" });
-  await markInvitationReady(invitation, T, "INVITER", "inv-850", { consentVersion: "v1", expiresAt: new Date(Date.now() + 60_000), recipientChannelRef: CH });
-  const { token } = await sendInvitation(invitation, T, "INVITER", "inv-850");
+  let clock = 1_800_000_000_000; // reloj inyectado: sin setTimeout ni dependencia de la carga de la máquina
+  const otp: OtpChallengePorts = { now: () => clock, otpRepo, channel, ledger, uow: tenancy.uow, invitation, policy: { codeLength: 6, maxAttempts: 3, ttlMs: 30, maxResends: 3 }, secret: randomBytes(32) };
+  await createInvitation(invitation, T, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"), invitationRef: fixtureUuid("inv-850"), contextRef: "BETA_2026_01", productRef: "LECTORPRO", subjectRef: fixtureUuid("s850") });
+  await markInvitationReady(invitation, T, "INVITER", fixtureUuid("inv-850"), { consentVersion: "v1", expiresAt: new Date(Date.now() + 60_000), recipientChannelRef: CH });
+  const { token } = await sendInvitation(invitation, T, "INVITER", fixtureUuid("inv-850"), { deliveryChannel: "CONSENT_APP_EMAIL" });
   await openInvitation(invitation, T, token);
 
-  const first = await requestOtp(otp, T, "ver-850", "inv-850", CH);
-  assert.equal((await requestOtp(otp, T, "ver-850", "inv-850", CH)).verificationRef, first.verificationRef, "vigente: idempotente");
+  const first = await requestOtp(otp, T, fixtureUuid("ver-850"), fixtureUuid("inv-850"), CH);
+  assert.equal((await requestOtp(otp, T, fixtureUuid("ver-850"), fixtureUuid("inv-850"), CH)).verificationRef, first.verificationRef, "vigente: idempotente");
   assert.equal(channel.sent.length, 1);
 
-  await new Promise((r) => setTimeout(r, 60));
-  const second = await requestOtp(otp, T, "ver-850", "inv-850", CH);
+  clock += 60; // > ttlMs (30 ms): el activo expira
+  const second = await requestOtp(otp, T, fixtureUuid("ver-850"), fixtureUuid("inv-850"), CH);
   assert.notEqual(second.verificationRef, first.verificationRef, "ref fresca (la expirada no se reutiliza)");
   assert.equal(second.state, "CODE_SENT");
   assert.equal((await otpRepo.findByRef(T, first.verificationRef))?.state, "EXPIRED");

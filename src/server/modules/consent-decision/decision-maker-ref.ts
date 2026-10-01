@@ -1,24 +1,27 @@
 // Gobierna: LEGAL DECISION decisionMakerRef (Carlos, 2026-10-01, "confirmo el paquete con D6 segun
 // DEC-BR-014"), CA-128. Patron: chain-ref.ts (HKDF con `info` propio + HMAC-SHA256 por entorno).
 //
-// decisionMakerRef = `dm:v1:` + HMAC-SHA256(hex, 64) del canal normalizado, con clave propia derivada
-// por HKDF de un secreto de entorno separado (CNS_DECISION_MAKER_REF_SECRET), distinta de las claves de
-// cookies/handles y de chainRef. Reemplaza `dm:` + SHA-256 sin sal (los correos plausibles eran
-// enumerables offline). Determinista: mismo canal normalizado -> mismo ref (la cadena de consentimiento,
-// chainRef y la unicidad de grant activo no cambian de semantica). Largo 70 <= 100 y sin '@'
-// (CHECK consent_decision_dm_len / invitation_dm_len).
+// decisionMakerRef = UUIDv4 derivado de HMAC-SHA256 del canal normalizado, con clave propia derivada por
+// HKDF de un secreto de entorno separado (CNS_DECISION_MAKER_REF_SECRET), distinta de las claves de
+// cookies/handles y de chainRef. El contrato exige `Ref` UUIDv4 (common.schema.json; ledger
+// DECISION_MAKER_CHANNEL_VERIFIED.decisionMakerRef), asi que los primeros 128 bits del HMAC se mapean a
+// UUIDv4 fijando version y variante (X6 P1-A). No queda ninguna derivacion sin clave. Determinista: mismo
+// canal normalizado -> mismo ref (chainRef y unicidad de grant activo no cambian de semantica).
 //
-// ROTACION (futura, no implementada): el segmento `v1` identifica la version de la clave. Para rotar se
-// agrega `v2` (nuevo secreto + nuevo `info` `.../v2`); los refs nuevos salen como `dm:v2:`; el ledger NO
-// se re-escribe (es append-only): los `dm:v1:` ya persistidos siguen siendo validos y el verificador
-// mantiene la clave v1 para recomputar y comparar refs historicos. Nunca se re-deriva un ref v1 con
-// clave v2. NO decide nada sobre quien es el decisionMaker (LEGAL DECISION de Carlos).
+// ROTACION (futura, no implementada): la version de clave `DECISION_MAKER_REF_KEY_VERSION` entra en el `info` de
+// HKDF y YA NO viaja en el valor. Rotar = subir la constante (nuevo secreto + nuevo `info`): los refs nuevos son
+// distintos; el ledger NO se re-escribe (append-only) y los refs historicos siguen siendo validos (el verificador
+// conserva la clave vieja para recomputarlos). Nunca se re-deriva un ref viejo con la clave nueva. NO decide nada
+// sobre quien es el decisionMaker (LEGAL DECISION de Carlos).
 
 import { createHmac, hkdfSync } from "node:crypto";
 
-export const DECISION_MAKER_REF_VERSION = "v1";
+import { uuidV4FromDigest } from "../common/opaque-ref.ts";
+
+/** Version de la clave: entra en el `info` de HKDF (rotar = subirla). */
+export const DECISION_MAKER_REF_KEY_VERSION = 1;
 /** `info` HKDF propio y separado del de chainRef, sesiones, handles y OTP. */
-export const DECISION_MAKER_REF_HKDF_INFO = "consent-app/decision-maker-ref/v1";
+export const DECISION_MAKER_REF_HKDF_INFO = `consent-app/decision-maker-ref/v${DECISION_MAKER_REF_KEY_VERSION}`;
 
 export function deriveDecisionMakerRefKey(secret: Buffer): Buffer {
   if (secret.length < 32) throw new Error("decisionMakerRef: el secreto raiz debe tener al menos 32 bytes (fail-closed).");
@@ -31,8 +34,7 @@ export function normalizeChannelForRef(channel: string): string {
 }
 
 export function deriveDecisionMakerRef(key: Buffer, channel: string): string {
-  const mac = createHmac("sha256", key).update(normalizeChannelForRef(channel)).digest("hex");
-  return `dm:${DECISION_MAKER_REF_VERSION}:${mac}`;
+  return uuidV4FromDigest(createHmac("sha256", key).update(normalizeChannelForRef(channel)).digest());
 }
 
 /** Secreto raiz. `CNS_DECISION_MAKER_REF_SECRET` (base64, >=32 bytes). Fuera de LOCAL, sin el: aborta

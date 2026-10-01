@@ -16,7 +16,8 @@
 // implementa GRD-OT-13 (challenge_bound_to_request_handle: sin infraestructura de handles HTTP
 // en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
 
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03, opaqueUuidV4 } from "../common/opaque-ref.ts";
+import { createHmac, hkdfSync, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { DomainError, type DomainErrorCode } from "../common/errors.ts";
 import { assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
@@ -53,7 +54,25 @@ export interface OtpChallengePorts {
   readonly policy: OtpPolicy;
   /** Análogo de K_otp_env (P-08); IT0 in-memory, inyectado por el llamador. */
   readonly secret: Buffer;
+  /** Reloj inyectable (ms epoch) para tests deterministas de expiración; por defecto Date.now (hora de servidor, GRD-CM-12). */
+  readonly now?: () => number;
 }
+
+/** OTP_ISSUED.channelRef (security-event-payloads: Ref opaco): el canal real (email) nunca va al ledger; HMAC con el
+ * secreto del módulo, determinista por (tenant, canal). */
+// X6 P2-5: subclave HKDF con info propio, distinta de la clave con que se hashea el código OTP (hashCode usa
+// el secreto directo): una colisión de uso entre ambos HMAC no puede revelar el canal ni el código.
+const OTP_CHANNEL_REF_HKDF_INFO = "lampone-cns/otp-channel-ref/v1";
+
+export function deriveOtpChannelRefKey(secret: Buffer): Buffer {
+  return Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), OTP_CHANNEL_REF_HKDF_INFO, 32));
+}
+
+export function opaqueChannelRef(secret: Buffer, tenantId: TenantId, channelRef: string): string {
+  return opaqueUuidV4("otp-channel", `${tenantId}\u0000${channelRef}`, deriveOtpChannelRefKey(secret));
+}
+
+const clockMs = (ports: { readonly now?: () => number }): number => (ports.now ?? Date.now)();
 
 function hashCode(secret: Buffer, verificationRef: string, code: string): Buffer {
   return createHmac("sha256", secret).update(`${verificationRef}\u0000${code}`).digest();
@@ -145,7 +164,7 @@ async function submitCore(
     // Replay de un challenge ya consumido (INV-OT-07).
     return { fail: "ERR-OT-03" };
   }
-  if (found.expiresAt.getTime() <= Date.now()) {
+  if (found.expiresAt.getTime() <= clockMs(ports)) {
     // V5 (expiracion perezosa) + GRD-OT-05.
     await ports.otpRepo.save({ ...found, state: "EXPIRED" });
     return { fail: "ERR-OT-03" };
@@ -234,7 +253,7 @@ async function issueChallengeTx(
     channelRef,
     codeHash,
     attempts: 0,
-    expiresAt: new Date(Date.now() + ports.policy.ttlMs),
+    expiresAt: new Date(clockMs(ports) + ports.policy.ttlMs),
     state: "CODE_SENT",
     resendCount: 0,
   };
@@ -247,7 +266,7 @@ async function issueChallengeTx(
     aggregateId: verificationRef,
     actorType: "HUMAN",
     actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope },
+    payload: { verificationRef, scope, channelRef: opaqueChannelRef(ports.secret, tenantId, channelRef) },
     idempotencyKey: `${verificationRef}:issued`,
   });
   return { record, code };
@@ -260,7 +279,7 @@ async function issueChallengeTx(
 async function activeUnexpired(ports: RightsOtpPorts, tenantId: TenantId, parentRef: string, scope: OtpScope): Promise<OtpVerificationRecord | null> {
   const active = await ports.otpRepo.findActiveByParent(tenantId, parentRef, scope);
   if (!active) return null;
-  if (active.expiresAt.getTime() > Date.now()) return active;
+  if (active.expiresAt.getTime() > clockMs(ports)) return active;
   const locked = await ports.otpRepo.findByRefForUpdate(tenantId, active.verificationRef);
   if (!locked || (locked.state !== "CODE_SENT" && locked.state !== "NOT_STARTED")) return null;
   await ports.otpRepo.save({ ...locked, state: "EXPIRED" });
@@ -330,7 +349,7 @@ export async function submitOtp(
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: null,
       eventScope: "DECISION",
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, scope: "DECISION", method: "EMAIL_OTP" }),
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, scope: "DECISION", method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
       onVerified: async (found) => {
         await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, verificationRef); // I5
       },
@@ -385,12 +404,13 @@ export async function submitRightsOtp(
   verificationRef: string,
   scope: "REVOCATION" | "MANAGE",
   code: string,
+  decisionMakerRef: string,
 ): Promise<OtpVerificationRecord> {
   const outcome = await inTx(ports, tenantId, (p) =>
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: scope,
       eventScope: scope,
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, scope, method: "EMAIL_OTP" }),
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, scope, method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
     }),
   );
   return settle(outcome);
@@ -415,7 +435,7 @@ export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, ve
       // VERIFIED (ya consumido) o EXPIRED: replay de un challenge terminal (INV-OT-07 análogo).
       return { fail: "ERR-OT-03" };
     }
-    if (found.expiresAt.getTime() <= Date.now()) {
+    if (found.expiresAt.getTime() <= clockMs(p)) {
       await p.otpRepo.save({ ...found, state: "EXPIRED" });
       return { fail: "ERR-OT-03" };
     }
@@ -436,7 +456,7 @@ export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, ve
       aggregateId: verificationRef,
       actorType: "HUMAN",
       actorRole: "UNVERIFIED_BEARER",
-      payload: { verificationRef, scope: "DECISION" },
+      payload: { verificationRef, scope: "DECISION", channelRef: opaqueChannelRef(p.secret, tenantId, found.channelRef) },
       idempotencyKey: `${verificationRef}:resend:${resent.resendCount}`,
     });
     return { ok: { record: resent, code } };

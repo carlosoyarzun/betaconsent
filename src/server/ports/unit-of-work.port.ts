@@ -8,6 +8,7 @@
 // da la misma semántica todo-o-nada con un journal de deshacer.
 
 import type { TenantId } from "../modules/common/types.ts";
+import type { AccessLogPort } from "./access-log.port.ts";
 import type { ConsentDecisionRepositoryPort } from "./consent-decision-repository.port.ts";
 import type { EnrollmentRepositoryPort } from "./enrollment-repository.port.ts";
 import type { IdempotencyPort } from "./idempotency.port.ts";
@@ -39,6 +40,8 @@ export interface TenantTxPorts {
   readonly tenantCatalog: TenantCatalogPort;
   /** CA-124 PR-E (GRD-CM-08): find + ejecutar + store de una Idempotency-Key en la misma tx. */
   readonly idempotency: IdempotencyPort;
+  /** CA-128 (X6): log de acceso del operador en `ops` (append-only, sin PII), no el ledger (INV-RC-04). */
+  readonly accessLog: AccessLogPort;
 }
 
 export interface UnitOfWorkPort {

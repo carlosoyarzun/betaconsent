@@ -9,6 +9,7 @@
 // FAILED de la Revocation).
 // TEST-CNS-581..TEST-CNS-585.
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import assert from "node:assert/strict";
@@ -109,7 +110,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
-    subjectRef: "subject-mgmt@example.invalid",
+    subjectRef: fixtureUuid("subject-mgmt"),
     decisionMakerRef: "dm:mgmt-seed",
     invitationRef: "inv-mgmt-seed",
     verificationRef: "ver-mgmt-seed",
@@ -141,7 +142,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
 const CONSENT_581 = "581a3c52-8d4e-4a7b-9c21-0e5a7d3b9f81";
 
 test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> verificación REVOCATION -> R2 -> R3 llega a APPLIED; cadena del ledger consecutiva", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-581", CONSENT_581, "mgmt-token-581");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-581"), CONSENT_581, "mgmt-token-581");
   try {
     const redeemed = await fetch(`${baseUrl}/m/mgmt-token-581`, { redirect: "manual" });
     assert.equal(redeemed.status, 303);
@@ -215,7 +216,7 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
 });
 
 test("TEST-CNS-582: R8 (cancelar solicitud de retiro) desde REQUESTED responde FAILED; el consentimiento sigue vigente (no llega a APPLIED)", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-582", "consent-582", "mgmt-token-582");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-582"), fixtureUuid("consent-582"), "mgmt-token-582");
   try {
     let sessionCookie = await redeemManage(baseUrl, "mgmt-token-582");
 
@@ -239,7 +240,7 @@ test("TEST-CNS-582: R8 (cancelar solicitud de retiro) desde REQUESTED responde F
 });
 
 test("TEST-CNS-583: bloqueo por intentos incorrectos en scope REVOCATION (V4, LOCKED) nunca falla la Revocation (INV-OT-06); RV0 y RC1 fuente BEARER siguen respondiendo", async () => {
-  const { ports, revocationPorts, server, baseUrl } = await setUp("chain-583", "consent-583", "mgmt-token-583");
+  const { ports, revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-583"), fixtureUuid("consent-583"), "mgmt-token-583");
   try {
     let sessionCookie = await redeemManage(baseUrl, "mgmt-token-583");
 
@@ -314,7 +315,7 @@ async function bringToRevocationConfirmSession(baseUrl: string, ports: ConsentFl
 }
 
 test("TEST-CNS-585: GET /manage (estado) muestra como texto visible el marcador [LEGAL DECISION] de alcance del retiro (33:21), nunca solo dentro de un comentario HTML", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-585", "consent-585", "mgmt-token-585");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-585"), fixtureUuid("consent-585"), "mgmt-token-585");
   try {
     let sessionCookie = await redeemManage(baseUrl, "mgmt-token-585");
     const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
@@ -333,7 +334,7 @@ test("TEST-CNS-585: GET /manage (estado) muestra como texto visible el marcador 
 });
 
 test("TEST-CNS-586: GET /manage/revocation/confirm muestra visibles los dos marcadores [LEGAL DECISION] (efecto sobre los datos, y alcance/irreversibilidad) y el del comprobante (33:45/33:54)", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-586", "consent-586", "mgmt-token-586");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-586"), fixtureUuid("consent-586"), "mgmt-token-586");
   try {
     const sessionCookie = await bringToRevocationConfirmSession(baseUrl, ports, "mgmt-token-586");
     const confirmPage = await fetch(`${baseUrl}/manage/revocation/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
@@ -354,7 +355,7 @@ test("TEST-CNS-586: GET /manage/revocation/confirm muestra visibles los dos marc
 });
 
 test("TEST-CNS-587: el estado bloqueado REVOCATION/MANAGE (33:11) oculta el formulario (#verify-form) y mueve el foco a la alerta; el formulario vuelve a mostrarse en cualquier otro estado", async () => {
-  const { server, baseUrl } = await setUp("chain-587", "consent-587", "mgmt-token-587");
+  const { server, baseUrl } = await setUp(fixtureUuid("chain-587"), fixtureUuid("consent-587"), "mgmt-token-587");
   try {
     const verifyJs = await (await fetch(`${baseUrl}/assets/verify.js`)).text();
     assert.match(verifyJs, /function showLocked\(\) \{\s*hideStates\(\);/);
@@ -370,7 +371,7 @@ test("TEST-CNS-587: el estado bloqueado REVOCATION/MANAGE (33:11) oculta el form
 });
 
 test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma línea) en /manage (entrada y estado) y en confirmar-retiro, que además ahora incluye el enlace de ayuda", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-588", "consent-588", "mgmt-token-588");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-588"), fixtureUuid("consent-588"), "mgmt-token-588");
   try {
     let sessionCookie = await redeemManage(baseUrl, "mgmt-token-588");
 
@@ -401,7 +402,7 @@ test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma 
 });
 
 test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dice GRANTED ni ofrece retirar; R1 sobre esa cadena es uniforme (ERR-RV-02) y no crea revocación", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-703", "consent-703", "mgmt-token-703");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-703"), fixtureUuid("consent-703"), "mgmt-token-703");
   try {
     const sink = ports.otp.channel as InMemoryOtpChannelSink;
     async function verifyManage(): Promise<string> {
@@ -426,7 +427,7 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
     await post(baseUrl, { path: "/manage/revocation/verify", ...VALID_CSRF, sessionCookie });
     const r3 = await post(baseUrl, { path: "/manage/revocation/confirm", ...VALID_CSRF, sessionCookie });
     assert.equal(((await r3.json()) as { status: string }).status, "APPLIED");
-    assert.equal((await ports.decision.repo.findByConsentId(TENANT_ID, "consent-703"))?.state, "REVOKED");
+    assert.equal((await ports.decision.repo.findByConsentId(TENANT_ID, fixtureUuid("consent-703")))?.state, "REVOKED");
 
     // Reproducción del FINDING: volver a /m/<token>, verificar con OTP y abrir /manage.
     const again = await verifyManage();
@@ -449,9 +450,9 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
 });
 
 test("TEST-CNS-706: /manage con la decisión REVOKED pero sin sesión MANAGE verificada muestra la entrada, no el estado ya-retirado", async () => {
-  const { ports, server, baseUrl } = await setUp("chain-706", "consent-706", "mgmt-token-706");
+  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-706"), fixtureUuid("consent-706"), "mgmt-token-706");
   try {
-    const seeded = await ports.decision.repo.findByConsentId(TENANT_ID, "consent-706");
+    const seeded = await ports.decision.repo.findByConsentId(TENANT_ID, fixtureUuid("consent-706"));
     assert.ok(seeded);
     await ports.decision.repo.save({ ...seeded, state: "REVOKED" });
     const sessionCookie = await redeemManage(baseUrl, "mgmt-token-706");

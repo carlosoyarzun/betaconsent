@@ -82,7 +82,7 @@ test("TEST-CNS-952 PII scan e2e (memoria): /i -> OTP -> decision, /m -> retiro, 
     envSecrets: [sessionSecret.toString("hex"), sessionSecret.toString("base64"), chainSecret.toString("hex"), chainSecret.toString("base64")],
     async seedInvitation(label) {
       const inv = fixtureUuid(`inv-${label}`);
-      await createInvitation(ports.invitation, T, "INVITER", {
+      await createInvitation(ports.invitation, T, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
         invitationRef: inv,
         contextRef: LECTORPRO_BETA_CONFIG.contextRef,
         productRef: LECTORPRO_BETA_CONFIG.productRef,
@@ -93,11 +93,11 @@ test("TEST-CNS-952 PII scan e2e (memoria): /i -> OTP -> decision, /m -> retiro, 
         expiresAt: new Date(Date.now() + 3_600_000),
         recipientChannelRef: `${label}@example.invalid`,
       });
-      return sendInvitation(ports.invitation, T, "INVITER", inv);
+      return sendInvitation(ports.invitation, T, "INVITER", inv, { deliveryChannel: "CONSENT_APP_EMAIL" });
     },
     async seedManage(label) {
       const consentId = fixtureUuid(`consent-${label}`);
-      const chainRef = `chain-${label}`;
+      const chainRef = fixtureUuid(`chain-${label}`);
       const handleToken = `mgmt-token-${label}-${randomBytes(6).toString("hex")}`;
       await ports.decision.uow.inTenant(T, (tx) =>
         tx.consentDecisionRepo.save({

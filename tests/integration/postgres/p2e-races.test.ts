@@ -108,10 +108,10 @@ pgTest("TEST-CNS-845 pg: OTP verify ∥ verify en dos conexiones: exactamente un
     for (let round = 0; round < 12; round += 1) {
       const inv = fixtureUuid(`inv845-${round}`);
       const ver = fixtureUuid(`ver845-${round}`);
-      await seedOpenedInvitation(outside, T, inv, `test+s845-${round}@example.invalid`);
+      await seedOpenedInvitation(outside, T, inv, fixtureUuid(`s845-${round}`));
       await requestOtp(otp, T, ver, inv, CHANNEL);
       const code = sink.sent[sink.sent.length - 1]!.code;
-      const results = await Promise.allSettled([submitOtp(otp, T, ver, code, "dm-845"), submitOtp(otp, T, ver, code, "dm-845")]);
+      const results = await Promise.allSettled([submitOtp(otp, T, ver, code, fixtureUuid("dm-845")), submitOtp(otp, T, ver, code, fixtureUuid("dm-845"))]);
       assert.equal(results.filter((r) => r.status === "fulfilled").length, 1, `ronda ${round}: exactamente una gana`);
       assert.ok(results.some((r) => isDomain(r, "ERR-OT-03")), `ronda ${round}: la perdedora falla con ERR-OT-03 (no con conflicto de secuencia): ${JSON.stringify(results.map((r) => r.status === "rejected" ? String(r.reason) : "ok"))}`);
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.state, "VERIFIED");
@@ -128,14 +128,14 @@ pgTest("TEST-CNS-846 pg: submit de decision ∥ submit: exactamente una decide (
     for (let round = 0; round < 12; round += 1) {
       const inv = fixtureUuid(`inv846-${round}`);
       const consent = fixtureUuid(`consent846-${round}`);
-      await seedOpenedInvitation(outside, T, inv, `test+s846-${round}@example.invalid`, "VERIFIED", "dm-846");
-      await startDecision(decision, T, "DECISION_MAKER", { consentId: consent, invitationRef: inv, verificationRef: fixtureUuid(`ver846-${round}`), decisionMakerRef: "dm-846" });
-      await recordDecisionStep(decision, T, "DECISION_MAKER", "dm-846", consent, { stepKind: "CONSENT_VERSION_VIEWED" });
-      await recordDecisionStep(decision, T, "DECISION_MAKER", "dm-846", consent, { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true });
-      await recordDecisionStep(decision, T, "DECISION_MAKER", "dm-846", consent, { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true });
+      await seedOpenedInvitation(outside, T, inv, fixtureUuid(`s846-${round}`), "VERIFIED", fixtureUuid("dm-846"));
+      await startDecision(decision, T, "DECISION_MAKER", { consentId: consent, invitationRef: inv, verificationRef: fixtureUuid(`ver846-${round}`), decisionMakerRef: fixtureUuid("dm-846") });
+      await recordDecisionStep(decision, T, "DECISION_MAKER", fixtureUuid("dm-846"), consent, { stepKind: "CONSENT_VERSION_VIEWED" });
+      await recordDecisionStep(decision, T, "DECISION_MAKER", fixtureUuid("dm-846"), consent, { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true });
+      await recordDecisionStep(decision, T, "DECISION_MAKER", fixtureUuid("dm-846"), consent, { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true });
       const results = await Promise.allSettled([
-        submitDecision(decision, T, "DECISION_MAKER", "dm-846", consent, GRANT_ALL),
-        submitDecision(decision, T, "DECISION_MAKER", "dm-846", consent, GRANT_ALL),
+        submitDecision(decision, T, "DECISION_MAKER", fixtureUuid("dm-846"), consent, GRANT_ALL),
+        submitDecision(decision, T, "DECISION_MAKER", fixtureUuid("dm-846"), consent, GRANT_ALL),
       ]);
       assert.equal(results.filter((r) => r.status === "fulfilled").length, 1, `ronda ${round}: exactamente una gana`);
       assert.ok(results.some((r) => isDomain(r, "ERR-CD-08")), `ronda ${round}: ${JSON.stringify(results.map((r) => r.status === "rejected" ? String(r.reason) : "ok"))}`);
@@ -157,12 +157,12 @@ pgTest("TEST-CNS-849 pg: N submits incorrectos concurrentes sobre el mismo chall
     for (let round = 0; round < 8; round += 1) {
       const inv = fixtureUuid(`inv849-${round}`);
       const ver = fixtureUuid(`ver849-${round}`);
-      await seedOpenedInvitation(outside, T, inv, `test+s849-${round}@example.invalid`);
+      await seedOpenedInvitation(outside, T, inv, fixtureUuid(`s849-${round}`));
       await requestOtp(otp, T, ver, inv, CHANNEL);
       const good = sink.sent[sink.sent.length - 1]!.code;
       const wrong = good === "000000" ? "111111" : "000000";
       const N = otp.policy.maxAttempts; // 3 incorrectos concurrentes: el ultimo bloquea
-      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, "dm-849")));
+      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, fixtureUuid("dm-849"))));
       const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
       assert.deepEqual([...codes].sort(), ["ERR-OT-02", "ERR-OT-02", "ERR-OT-04"], `ronda ${round}: ${codes.join(",")}`);
       const rec = await outside.otpRepo.findByRef(T, ver);
@@ -171,7 +171,7 @@ pgTest("TEST-CNS-849 pg: N submits incorrectos concurrentes sobre el mismo chall
       assert.equal(await eventCount(count, T, ver, "OTP_LOCKED"), 1);
       assert.equal(await eventCount(count, T, ver, "OTP_FAILED"), N - 1);
       // Tras LOCKED, ni el codigo correcto verifica (GRD-OT-04).
-      await assert.rejects(() => submitOtp(otp, T, ver, good, "dm-849"), (e: unknown) => e instanceof DomainError && e.code === "ERR-OT-04");
+      await assert.rejects(() => submitOtp(otp, T, ver, good, fixtureUuid("dm-849")), (e: unknown) => e instanceof DomainError && e.code === "ERR-OT-04");
     }
   }, 8); // reintentos del UoW: la perdedora con base vieja relee y reintenta (el intento no se pierde)
 });
@@ -239,11 +239,11 @@ pgTest("TEST-CNS-861 pg: 10 submits incorrectos concurrentes sobre el mismo chal
     for (let round = 0; round < 5; round += 1) {
       const inv = fixtureUuid(`inv861-${round}`);
       const ver = fixtureUuid(`ver861-${round}`);
-      await seedOpenedInvitation(outside, T, inv, `test+s861-${round}@example.invalid`);
+      await seedOpenedInvitation(outside, T, inv, fixtureUuid(`s861-${round}`));
       await requestOtp(otp, T, ver, inv, CHANNEL);
       const good = sink.sent[sink.sent.length - 1]!.code;
       const wrong = good === "000000" ? "111111" : "000000";
-      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, "dm-861")));
+      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, fixtureUuid("dm-861"))));
       const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
       assert.ok(codes.every((c) => c === "ERR-OT-02"), `ronda ${round}: todos rechazados por codigo incorrecto, ninguno por reintentos agotados: ${codes.join(",")}`);
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.attempts, N, "ningun intento se pierde");

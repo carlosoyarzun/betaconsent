@@ -138,7 +138,7 @@ pgTest("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, enum
     }
     // En scope de derechos el canal puede ser una ref opaca 'mgmt:', pero NO en DECISION ni otro valor libre.
     await expectFail(otpIns("DECISION", "mgmt:chain-1"), [t], "otp_channel_reserved");
-    await expectFail(otpIns("REVOCATION", "chain-1"), [t], "otp_channel_reserved");
+    await expectFail(otpIns("REVOCATION", fixtureUuid("chain-1")), [t], "otp_channel_reserved");
     await expectFail(otpIns("MANAGE", "persona@gmail.com"), [t], "otp_channel_reserved");
     // SEC-CNS-016 C1: un email real no entra disfrazado de ref opaca 'mgmt:'.
     await expectFail(otpIns("MANAGE", "mgmt:persona@gmail.com"), [t], "otp_channel_reserved");

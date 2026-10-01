@@ -14,7 +14,7 @@ import type {
 } from "../../../server/ports/revocation-repository.port.ts";
 import type { TenantTx } from "./unit-of-work.ts";
 
-/** UNIQUE parcial (tenant_id, revoked_decision_ref) WHERE status <> 'FAILED' (0009, GRD-RV-04 IT0). */
+/** UNIQUE parcial (tenant_id, revoked_decision_ref) WHERE status NOT IN ('FAILED','COMPLETED') (0015; 0009 era status <> 'FAILED', GRD-RV-04). */
 export const OPEN_REVOCATION_UNIQUE = "revocation_open_per_decision_uq";
 
 interface RevocationRow {
@@ -31,11 +31,15 @@ interface RevocationRow {
   verified_auth_path: "OTP" | "RECOVERY" | null;
   verified_recovery_method: "CHANNEL_LINK" | "HUMAN_ASSISTED" | null;
   reason_code: "WITHDRAWN_BY_REQUESTER" | null;
+  proposal_ref: string | null;
+  proposed_by_ref: string | null;
+  verification_script_version: string | null;
+  second_approver_ref: string | null;
 }
 
 const COLUMNS =
   "tenant_id, revocation_ref, chain_ref, case_ref, status, attested_revocation_ref, attested_case_ref, " +
-  "recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code";
+  "recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref";
 
 function toRecord(row: RevocationRow): RevocationRecord {
   return {
@@ -53,6 +57,10 @@ function toRecord(row: RevocationRow): RevocationRecord {
     ...(row.verified_auth_path !== null ? { verifiedAuthPath: row.verified_auth_path } : {}),
     ...(row.verified_recovery_method !== null ? { verifiedRecoveryMethod: row.verified_recovery_method } : {}),
     ...(row.reason_code !== null ? { reasonCode: row.reason_code } : {}),
+    ...(row.proposal_ref !== null && row.proposed_by_ref !== null && row.verification_script_version !== null
+      ? { proposal: { proposalRef: row.proposal_ref, proposedByRef: row.proposed_by_ref, verificationScriptVersion: row.verification_script_version } }
+      : {}),
+    ...(row.second_approver_ref !== null ? { secondApproverRef: row.second_approver_ref } : {}),
   };
 }
 
@@ -87,9 +95,19 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
     async findOpenByChain(tenantId, chainRef) {
       const r = await tx.query<RevocationRow>(
         `SELECT ${COLUMNS} FROM app.revocation
-          WHERE tenant_id = $1 AND chain_ref = $2 AND status <> 'FAILED'
+          WHERE tenant_id = $1 AND chain_ref = $2 AND status NOT IN ('FAILED', 'COMPLETED')
           ORDER BY created_at, revocation_ref LIMIT 1`,
         [tenantId, chainRef],
+      );
+      const row = r.rows[0];
+      return row ? toRecord(row) : null;
+    },
+    async findOpenByDecision(tenantId, revokedDecisionRef) {
+      const r = await tx.query<RevocationRow>(
+        `SELECT ${COLUMNS} FROM app.revocation
+          WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status NOT IN ('FAILED', 'COMPLETED')
+          ORDER BY created_at, revocation_ref LIMIT 1`,
+        [tenantId, revokedDecisionRef],
       );
       const row = r.rows[0];
       return row ? toRecord(row) : null;
@@ -100,8 +118,9 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
       await tx.query(
         `INSERT INTO app.revocation
            (tenant_id, revocation_ref, chain_ref, case_ref, status, attested_revocation_ref, attested_case_ref,
-            recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code,
+            proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          ON CONFLICT (tenant_id, revocation_ref) DO UPDATE SET
            case_ref = EXCLUDED.case_ref,
            status = EXCLUDED.status,
@@ -111,7 +130,11 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
            cosigned_by_ref = EXCLUDED.cosigned_by_ref,
            verified_auth_path = EXCLUDED.verified_auth_path,
            verified_recovery_method = EXCLUDED.verified_recovery_method,
-           reason_code = EXCLUDED.reason_code`,
+           reason_code = EXCLUDED.reason_code,
+           proposal_ref = EXCLUDED.proposal_ref,
+           proposed_by_ref = EXCLUDED.proposed_by_ref,
+           verification_script_version = EXCLUDED.verification_script_version,
+           second_approver_ref = EXCLUDED.second_approver_ref`,
         [
           record.tenantId,
           record.revocationRef,
@@ -126,6 +149,10 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
           record.verifiedAuthPath ?? null,
           record.verifiedRecoveryMethod ?? null,
           record.reasonCode ?? null,
+          record.proposal?.proposalRef ?? null,
+          record.proposal?.proposedByRef ?? null,
+          record.proposal?.verificationScriptVersion ?? null,
+          record.secondApproverRef ?? null,
         ],
       );
     },

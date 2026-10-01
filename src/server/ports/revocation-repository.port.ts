@@ -4,7 +4,7 @@
 
 import type { ChainRef, TenantId } from "../modules/common/types.ts";
 
-export type RevocationStatus = "REQUESTED" | "VERIFIED" | "CONFIRMED" | "APPLIED" | "FAILED";
+export type RevocationStatus = "REQUESTED" | "VERIFIED" | "CONFIRMED" | "APPLIED" | "DOWNSTREAM_PENDING" | "DELIVERED" | "COMPLETED" | "FAILED";
 
 export interface AttestedVerification {
   readonly revocationRef: string;
@@ -29,6 +29,11 @@ export interface RevocationRecord {
    * para CONSENT_REVOKED.authPath/recoveryMethod. recoveryMethod solo si authPath = RECOVERY. */
   verifiedAuthPath?: "OTP" | "RECOVERY";
   verifiedRecoveryMethod?: "CHANNEL_LINK" | "HUMAN_ASSISTED";
+  /** RH2 paso 1 (propose_case_verification, API-CNS-136): propuesta del RIGHTS_OPERATOR (verifiedByRef) con el guion
+   * versionado; sin efecto sobre el estado hasta la aprobación. */
+  proposal?: { readonly proposalRef: string; readonly proposedByRef: string; readonly verificationScriptVersion: string };
+  /** RH2 paso 2 (approve_case_verification, API-CNS-137): secondApproverRef (distinto de proposedByRef, GRD-RV-09). */
+  secondApproverRef?: string;
   /** R8 (WithdrawRevocationRequest): único reasonCode del vocabulario IT0 (DEC-BR-017 §6). */
   reasonCode?: "WITHDRAWN_BY_REQUESTER";
 }
@@ -50,5 +55,9 @@ export interface RevocationRepositoryPort {
    * por revocationRef. El llamador decide el tratamiento por status (GRD-RV-27: desde APPLIED
    * respuesta uniforme, sin crear otra). */
   findOpenByChain(tenantId: TenantId, chainRef: ChainRef): Promise<RevocationRecord | null>;
+  /** GRD-RV-04 (R14-C): la única Revocation no terminal (status NOT IN COMPLETED/FAILED) que revoca esta
+   * decisión, o null. "Una crea, las demás se adjuntan": R1 con otro revocationRef sobre la misma
+   * decisión devuelve esta en vez de crear (Carlos, 2026-10-01, GRD-RV-04 opción a). */
+  findOpenByDecision(tenantId: TenantId, revokedDecisionRef: string): Promise<RevocationRecord | null>;
   save(record: RevocationRecord): Promise<void>;
 }

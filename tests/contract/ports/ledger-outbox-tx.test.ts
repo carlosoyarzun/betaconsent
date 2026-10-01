@@ -9,6 +9,7 @@ import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
+import { runLedgerChainContract } from "./ledger-chain.contract.ts";
 import { runLedgerOutboxContract } from "./ledger-outbox-tx.contract.ts";
 import type { LedgerOutboxHarness } from "./ledger-outbox-tx.contract.ts";
 
@@ -24,5 +25,9 @@ function makeInMemoryHarness(): LedgerOutboxHarness {
 }
 
 runLedgerOutboxContract("in-memory", (name, body) => {
+  test(name, () => body(makeInMemoryHarness()));
+});
+
+runLedgerChainContract("in-memory", (name, body) => {
   test(name, () => body(makeInMemoryHarness()));
 });

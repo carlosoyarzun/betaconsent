@@ -9,6 +9,7 @@
 // contrato (schema-lite).
 // TEST-CNS-637..644.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
@@ -19,7 +20,7 @@ import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefau
 import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "../../../src/server/entrypoints/http/revocation-flow.handler.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
-import { attestHumanAssistedVerification } from "../../../src/server/modules/revocation/revocation.ts";
+
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { StaffIdentityPort, StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import type { Environment } from "../../../src/server/modules/common/types.ts";
@@ -38,10 +39,10 @@ const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 /** LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos, 2026-09-28 opción (ii)): 4
  * personas ficticias distintas, sin reutilización entre roles (NF-19, GRD-RC-15). */
 const FULL_ROSTER: readonly StaffPrincipal[] = [
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
+  { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
+  { principalRef: fixtureUuid("staff-synthetic-04"), role: "APPROVER" },
 ];
 
 function assertValid(result: ValidationResult): void {
@@ -94,10 +95,10 @@ async function setUp(
     tenantId: TENANT_ID,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
-    subjectRef: "subject-rh3@example.invalid",
+    subjectRef: fixtureUuid("subject-rh3"),
     decisionMakerRef: "dm:rh3-seed",
-    invitationRef: "inv-rh3-seed",
-    verificationRef: "ver-rh3-seed",
+    invitationRef: fixtureUuid("inv-rh3-seed"),
+    verificationRef: fixtureUuid("ver-rh3-seed"),
     chainRef: opts.chainRef,
     state: "GRANTED",
     purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
@@ -200,7 +201,7 @@ function postConfirmation(baseUrl: string, opts: ConfirmOpts): Promise<Response>
 }
 
 test("TEST-CNS-637: sin sesión CASE (cookie ausente, CSRF válido) -> 404 uniforme (GRD-CM-01)", async () => {
-  const fx = await setUp({ chainRef: "chain-637", caseRef: "case-637", revocationRef: fixtureUuid("rv-637") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-637"), caseRef: fixtureUuid("case-637"), revocationRef: fixtureUuid("rv-637") });
   try {
     // CSRF double-submit válido (cookie == header) pero SIN __Host-cns-case: GRD-CM-10 pasa,
     // GRD-CM-01 (sin sesión CASE) es lo que se está probando aquí.
@@ -213,9 +214,9 @@ test("TEST-CNS-637: sin sesión CASE (cookie ausente, CSRF válido) -> 404 unifo
 });
 
 test("TEST-CNS-638: sesión CASE con rol APPROVER (no RIGHTS_OPERATOR) -> ERR-CM-10 (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-638", caseRef: "case-638", revocationRef: fixtureUuid("rv-638") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-638"), caseRef: fixtureUuid("case-638"), revocationRef: fixtureUuid("rv-638") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-03" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-03") });
     assert.equal(login.res.status, 200);
     const res = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
@@ -234,9 +235,9 @@ test("TEST-CNS-638: sesión CASE con rol APPROVER (no RIGHTS_OPERATOR) -> ERR-CM
 });
 
 test("TEST-CNS-639: /__dev/staff-login ausente fuera de LOCAL -> 404 (GRD-CM-13)", async () => {
-  const fx = await setUp({ chainRef: "chain-639", caseRef: "case-639", revocationRef: fixtureUuid("rv-639"), environment: "DEV" });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-639"), caseRef: fixtureUuid("case-639"), revocationRef: fixtureUuid("rv-639"), environment: "DEV" });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
     assert.equal(login.res.status, 404);
   } finally {
     await fx.close();
@@ -244,9 +245,9 @@ test("TEST-CNS-639: /__dev/staff-login ausente fuera de LOCAL -> 404 (GRD-CM-13)
 });
 
 test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de RecordCaseConfirmationRequest -> 422 rechazado, NUNCA persistido ni usado (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-640", caseRef: "case-640", revocationRef: fixtureUuid("rv-640") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-640"), caseRef: fixtureUuid("case-640"), revocationRef: fixtureUuid("rv-640") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
     const res = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
       caseSessionCookie: login.caseSessionCookie,
@@ -259,7 +260,7 @@ test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de
       // confirmationGivenOnCasePage (additionalProperties: false); un campo extra, sea cual sea
       // su valor, viola el schema del contrato y se rechaza — nunca se acepta "ignorando" el
       // campo.
-      body: { confirmationGivenOnCasePage: true, recordedByRef: "staff-synthetic-02" },
+      body: { confirmationGivenOnCasePage: true, recordedByRef: fixtureUuid("staff-synthetic-02") },
     });
     assert.equal(res.status, 422);
     const problemBody = (await res.json()) as { code: string; status: number };
@@ -275,9 +276,9 @@ test("TEST-CNS-640: recordedByRef en el body viola additionalProperties:false de
 });
 
 test("TEST-CNS-645: body limpio (sin recordedByRef) -> recordedByRef persistido es SIEMPRE el de la sesión CASE, nunca uno del cliente (GRD-CM-07)", async () => {
-  const fx = await setUp({ chainRef: "chain-645", caseRef: "case-645", revocationRef: fixtureUuid("rv-645") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-645"), caseRef: fixtureUuid("case-645"), revocationRef: fixtureUuid("rv-645") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
     const res = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
       caseSessionCookie: login.caseSessionCookie,
@@ -292,16 +293,16 @@ test("TEST-CNS-645: body limpio (sin recordedByRef) -> recordedByRef persistido 
     // derivado exclusivamente de handleRecordCaseConfirmation -> session.principalRef
     // (case-confirmation.handler.ts) -> recordCaseConfirmationPendingCosign ctx.recordedByPrincipalRef
     // (revocation.ts), nunca de un campo del body (que aquí ni siquiera lo lleva).
-    assert.equal(stored?.recordedByRef, "staff-synthetic-01");
+    assert.equal(stored?.recordedByRef, fixtureUuid("staff-synthetic-01"));
   } finally {
     await fx.close();
   }
 });
 
 test("TEST-CNS-646: repetir la misma confirmación (mismo operador, mismo caso) es idempotente — no duplica el registro ni emite un segundo evento", async () => {
-  const fx = await setUp({ chainRef: "chain-646", caseRef: "case-646", revocationRef: fixtureUuid("rv-646") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-646"), caseRef: fixtureUuid("case-646"), revocationRef: fixtureUuid("rv-646") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
 
     const first = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
@@ -337,16 +338,16 @@ test("TEST-CNS-646: repetir la misma confirmación (mismo operador, mismo caso) 
     assert.equal(confirmedEvents.length, 0);
     const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     assert.equal(stored?.status, "VERIFIED");
-    assert.equal(stored?.recordedByRef, "staff-synthetic-01");
+    assert.equal(stored?.recordedByRef, fixtureUuid("staff-synthetic-01"));
   } finally {
     await fx.close();
   }
 });
 
 test("TEST-CNS-641: CSRF/Origin incorrecto -> 403 CSRF_REJECTED (GRD-CM-10)", async () => {
-  const fx = await setUp({ chainRef: "chain-641", caseRef: "case-641", revocationRef: fixtureUuid("rv-641") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-641"), caseRef: fixtureUuid("case-641"), revocationRef: fixtureUuid("rv-641") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
     const res = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
       caseSessionCookie: login.caseSessionCookie,
@@ -362,11 +363,11 @@ test("TEST-CNS-641: CSRF/Origin incorrecto -> 403 CSRF_REJECTED (GRD-CM-10)", as
 });
 
 test("TEST-CNS-642: caseRef del path que no coincide con la sesión CASE -> 404 uniforme (contracts/openapi CaseRef)", async () => {
-  const fx = await setUp({ chainRef: "chain-642", caseRef: "case-642", revocationRef: fixtureUuid("rv-642") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-642"), caseRef: fixtureUuid("case-642"), revocationRef: fixtureUuid("rv-642") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
     const res = await postConfirmation(fx.baseUrl, {
-      caseRef: "case-otro-distinto",
+      caseRef: fixtureUuid("case-otro-distinto"),
       caseSessionCookie: login.caseSessionCookie,
       caseCsrfCookie: login.caseCsrfCookie,
       origin: ALLOWED_ORIGIN,
@@ -380,12 +381,12 @@ test("TEST-CNS-642: caseRef del path que no coincide con la sesión CASE -> 404 
 
 test("TEST-CNS-643: dotación insuficiente (<4 personas) -> ERR-RC-10 (GRD-RC-15), 409, caso sigue abierto", async () => {
   const shortRoster: readonly StaffPrincipal[] = [
-    { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" },
-    { principalRef: "staff-synthetic-03", role: "APPROVER" },
+    { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
+    { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
   ];
-  const fx = await setUp({ chainRef: "chain-643", caseRef: "case-643", revocationRef: fixtureUuid("rv-643"), roster: shortRoster });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-643"), caseRef: fixtureUuid("case-643"), revocationRef: fixtureUuid("rv-643"), roster: shortRoster });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
     const res = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
       caseSessionCookie: login.caseSessionCookie,
@@ -403,11 +404,11 @@ test("TEST-CNS-643: dotación insuficiente (<4 personas) -> ERR-RC-10 (GRD-RC-15
 });
 
 test("TEST-CNS-644: camino feliz — RC1 abierto -> RH2 atestado -> RH3 paso 1 registrado por HTTP; respuesta válida contra CaseConfirmationAck", async () => {
-  const fx = await setUp({ chainRef: "chain-644", caseRef: "case-644", revocationRef: fixtureUuid("rv-644") });
+  const fx = await setUp({ chainRef: fixtureUuid("chain-644"), caseRef: fixtureUuid("case-644"), revocationRef: fixtureUuid("rv-644") });
   try {
-    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-02" });
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-02") });
     assert.equal(login.res.status, 200);
-    assert.deepEqual(await login.res.json(), { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" });
+    assert.deepEqual(await login.res.json(), { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" });
 
     const res = await postConfirmation(fx.baseUrl, {
       caseRef: fx.caseRef,
@@ -424,7 +425,7 @@ test("TEST-CNS-644: camino feliz — RC1 abierto -> RH2 atestado -> RH3 paso 1 r
     // Sin efecto sobre la Revocation (RH3 paso 1: effect none) — el caso "sigue abierto".
     const stored = await fx.revocationPorts.revocation.revocationRepo.findByRef(TENANT_ID, fx.revocationRef);
     assert.equal(stored?.status, "VERIFIED");
-    assert.equal(stored?.recordedByRef, "staff-synthetic-02");
+    assert.equal(stored?.recordedByRef, fixtureUuid("staff-synthetic-02"));
     assert.equal(stored?.cosignedByRef, undefined);
 
     // Idempotente (x-idempotency: revocationRef): un segundo POST no falla ni cambia el estado.
@@ -437,6 +438,43 @@ test("TEST-CNS-644: camino feliz — RC1 abierto -> RH2 atestado -> RH3 paso 1 r
     });
     assert.equal(again.status, 200);
     assert.deepEqual(await again.json(), { cosign: "AWAITING_COSIGN", revocationState: "VERIFIED" });
+  } finally {
+    await fx.close();
+  }
+});
+
+test("TEST-CNS-919: X6 (INV-RC-04): la lectura del caso por el operador queda en ops.access_log (refs opacas, sin PII), no en el ledger; sin lectura (403/404) no hay registro", async () => {
+  const fx = await setUp({ chainRef: fixtureUuid("chain-919"), caseRef: fixtureUuid("case-919"), revocationRef: fixtureUuid("rv-919") });
+  const uow = fx.revocationPorts.revocation.uow;
+  const logOf = () => uow.inTenant(TENANT_ID, (tx) => tx.accessLog.listByTenant(TENANT_ID));
+  try {
+    const approver = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-03") });
+    const denied = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef, caseSessionCookie: approver.caseSessionCookie, caseCsrfCookie: approver.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN, csrfHeader: approver.caseCsrfCookie,
+    });
+    assert.equal(denied.status, 403);
+    assert.deepEqual(await logOf(), [], "403 por rol: el caso no se leyo, nada que registrar");
+
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: fixtureUuid("staff-synthetic-01") });
+    const res = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef, caseSessionCookie: login.caseSessionCookie, caseCsrfCookie: login.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN, csrfHeader: login.caseCsrfCookie,
+    });
+    assert.equal(res.status, 200);
+
+    const entries = await logOf();
+    assert.equal(entries.length, 1);
+    const [entry] = entries;
+    assert.deepEqual(
+      { tenantId: entry?.tenantId, actorRef: entry?.actorRef, actorRole: entry?.actorRole, action: entry?.action, resourceType: entry?.resourceType, resourceRef: entry?.resourceRef },
+      { tenantId: TENANT_ID, actorRef: fixtureUuid("staff-synthetic-01"), actorRole: "RIGHTS_OPERATOR", action: "RIGHTS_CASE_READ", resourceType: "RIGHTS_CASE", resourceRef: fx.caseRef },
+    );
+    assert.ok(entry?.accessedAt instanceof Date);
+    assert.ok(!/@|example/.test(JSON.stringify(entry)), "sin PII en el registro");
+    // No es evento de ledger: ningun eventType de acceso/lectura en la cadena.
+    const chain = await uow.inTenant(TENANT_ID, (tx) => tx.ledger.readChain(TENANT_ID));
+    assert.ok(chain.every((r) => !/READ|ACCESS/.test(r.eventType)), "las lecturas no van al ledger");
   } finally {
     await fx.close();
   }

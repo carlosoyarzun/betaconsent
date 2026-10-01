@@ -33,7 +33,20 @@ export function createInMemoryRevocationRepository(): InMemoryRevocationReposito
     },
     async findOpenByChain(tenantId, chainRef) {
       for (const record of byKey.values()) {
-        if (record.tenantId === tenantId && record.chainRef === chainRef && record.status !== "FAILED") {
+        if (record.tenantId === tenantId && record.chainRef === chainRef && record.status !== "FAILED" && record.status !== "COMPLETED") {
+          return record;
+        }
+      }
+      return null;
+    },
+    async findOpenByDecision(tenantId, revokedDecisionRef) {
+      for (const record of byKey.values()) {
+        if (
+          record.tenantId === tenantId &&
+          record.revokedDecisionRef === revokedDecisionRef &&
+          record.status !== "FAILED" &&
+          record.status !== "COMPLETED"
+        ) {
           return record;
         }
       }

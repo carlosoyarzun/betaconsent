@@ -2,6 +2,7 @@
 // Puerto (ADR-001 §11): el dominio solo conoce esta interfaz; la tabla real
 // integrity.audit_event vive detrás de un adaptador en src/infra/adapters/**.
 
+import type { ChainRow } from "../modules/common/ledger-chain.ts";
 import type { ActorRole, ActorType, Environment, TenantId } from "../modules/common/types.ts";
 
 /** Evento a registrar. El dominio nunca pasa PII (INV-CM-05); solo refs opacas y enums. */
@@ -49,11 +50,18 @@ export interface LedgerRecord extends Omit<LedgerEventInput, "expectedSequence">
   readonly environment: Environment;
   readonly evidentiary: false;
   readonly dataClass: "SYNTHETIC";
+  /** X6 (DEC-BR-014 §3, subconjunto IT0 de ADR-011): eslabon de la cadena SHA-256 del tenant. */
+  readonly chainSeq: number;
+  readonly payloadHash: string;
+  readonly previousEventHash: string;
+  readonly eventHash: string;
 }
 
 export interface LedgerPort {
   /**
-   * Append-only (INV-CM-01). Si `idempotencyKey` coincide con un evento ya registrado del
+   * Append-only (INV-CM-01). `eventType` fuera de la lista blanca (ledger-event-types.ts) lanza
+   * `LedgerVocabularyViolationError` sin escribir (ERR-RV-13). Calcula payloadHash/previousEventHash/
+   * eventHash de la cadena del tenant dentro de la misma tx (ledger-chain.ts). Si `idempotencyKey` coincide con un evento ya registrado del
    * mismo agregado, devuelve el registro existente sin duplicar (GRD-CM-08).
    */
   append(event: LedgerEventInput): Promise<LedgerRecord>;
@@ -62,4 +70,9 @@ export interface LedgerPort {
    * distinguir aggregateType (SEC-CNS-015 P2-C). */
   currentSequence(tenantId: TenantId, aggregateId: string): Promise<number>;
   listByAggregate(tenantId: TenantId, aggregateType: string, aggregateId: string): Promise<readonly LedgerRecord[]>;
+  /**
+   * X6: eslabones de la cadena del tenant ordenados por `chainSeq` (para `verifyLedgerChain`,
+   * ledger-chain.ts). Lectura bajo el tenant de la unidad de trabajo; no pasa PII.
+   */
+  readChain(tenantId: TenantId): Promise<readonly ChainRow[]>;
 }

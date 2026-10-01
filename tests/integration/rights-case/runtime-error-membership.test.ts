@@ -7,6 +7,7 @@
 // en ningún punto real de ejecución, un DomainError que la spec no haya declarado para esa
 // transición (OPEN-RV-12).
 
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
@@ -51,7 +52,7 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
 
   const tenantHandle = createInMemoryTenantHandleAdapter([
     { handle: "handle-A", tenantId: "tenant-1", chainRef: "chain-A", revokedDecisionRef: "decision-A" },
-    { handle: "handle-B", tenantId: "tenant-1", chainRef: "chain-B", revokedDecisionRef: "decision-B" },
+    { handle: "handle-B", tenantId: "tenant-1", chainRef: fixtureUuid("chain-B"), revokedDecisionRef: fixtureUuid("decision-B") },
     // Resuelve a un (tenant,chain) sin caso guardado: dispara ERR-RC-09 (GRD-RC-14 onFail).
     { handle: "handle-orphan", tenantId: "tenant-1", chainRef: "chain-orphan", revokedDecisionRef: "decision-orphan" },
   ]);
@@ -62,7 +63,7 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
 
   // Caso A: origin != CHANNEL_UNREACHABLE (GRD-RC-07 no se cumple).
   await rightsCaseRepo.save({
-    caseRef: "case-A",
+    caseRef: fixtureUuid("case-A"),
     tenantId: "tenant-1",
     chainRef: "chain-A",
     revokedDecisionRef: "decision-A",
@@ -71,10 +72,10 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
   });
   // Caso B: origin = CHANNEL_UNREACHABLE (RC2u sí aplica).
   await rightsCaseRepo.save({
-    caseRef: "case-B",
+    caseRef: fixtureUuid("case-B"),
     tenantId: "tenant-1",
-    chainRef: "chain-B",
-    revokedDecisionRef: "decision-B",
+    chainRef: fixtureUuid("chain-B"),
+    revokedDecisionRef: fixtureUuid("decision-B"),
     status: "OPEN",
     origin: "CHANNEL_UNREACHABLE",
   });
@@ -89,10 +90,10 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
   await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-A"), observed);
   // RC2u: camino feliz, sin error -> transiciona case-B a CONTACTING.
   await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-B"), observed);
-  assert.equal((await rightsCaseRepo.findByRef("tenant-1", "case-B"))?.status, "CONTACTING");
+  assert.equal((await rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-B")))?.status, "CONTACTING");
   // RC2u: reintento idempotente (caso ya CONTACTING) -> sin error, sin nuevo evento.
   await observe("RC2u", () => confirmCaseReturnViaHandle(ports, "handle-B"), observed);
-  assert.equal((await ledger.listByAggregate("tenant-1", "RightsCase", "case-B")).length, 1);
+  assert.equal((await ledger.listByAggregate("tenant-1", "RightsCase", fixtureUuid("case-B"))).length, 1);
 
   // RC3: handle desconocido -> ERR-CM-01.
   await observe("RC3", () => expressRevocationIntentInCase(ports, "handle-desconocido"), observed);
@@ -100,7 +101,7 @@ test("TEST-CNS-474: todo error observado en un flujo RIGHTS end-to-end pertenece
   await observe("RC3", () => expressRevocationIntentInCase(ports, "handle-orphan"), observed);
   // RC3: camino feliz (case-B ya en CONTACTING) -> sin error; crea Revocation REQUESTED.
   await observe("RC3", () => expressRevocationIntentInCase(ports, "handle-B"), observed);
-  assert.equal((await rightsCaseRepo.findByRef("tenant-1", "case-B"))?.status, "IN_VERIFICATION");
+  assert.equal((await rightsCaseRepo.findByRef("tenant-1", fixtureUuid("case-B")))?.status, "IN_VERIFICATION");
 
   assert.equal(observed.length, 5, `se esperaban 5 observaciones de error, hubo ${observed.length}`);
 

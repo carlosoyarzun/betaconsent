@@ -76,7 +76,13 @@ import {
   resolveRecoveryConfirmView,
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
-import { handleCosignCaseConfirmation, handleDevStaffLogin, handleRecordCaseConfirmation, type CaseConfirmationPorts } from "./case-confirmation.handler.ts";
+import {
+  handleApproveCaseVerification,
+  handleCosignCaseConfirmation,
+  handleDevStaffLogin,
+  handleProposeCaseVerification,
+  handleRecordCaseConfirmation,
+  type CaseConfirmationPorts } from "./case-confirmation.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { deriveCaseSessionKey } from "./case-session.ts";
@@ -915,6 +921,20 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       );
       writeResult(res, config, result);
       return;
+    }
+
+    if (path.startsWith("/platform/rights-cases/") && path.includes("/verification-proposals")) {
+      // API-CNS-136/137: .../{caseRef}/verification-proposals y .../{caseRef}/verification-proposals/{proposalRef}/approval.
+      const rest = path.slice("/platform/rights-cases/".length);
+      const parts = rest.split("/");
+      if (parts.length === 2 && parts[0] && parts[1] === "verification-proposals") {
+        writeResult(res, config, await handleProposeCaseVerification(request, parts[0], caseConfirmationPorts, config, caseSessionKey));
+        return;
+      }
+      if (parts.length === 4 && parts[0] && parts[1] === "verification-proposals" && parts[2] && parts[3] === "approval") {
+        writeResult(res, config, await handleApproveCaseVerification(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey, options.environment ?? "DEV"));
+        return;
+      }
     }
 
     if (path.startsWith("/platform/rights-cases/") && path.endsWith("/confirmation/cosign")) {

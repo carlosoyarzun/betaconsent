@@ -12,6 +12,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { TenantId } from "../../server/modules/common/types.ts";
+import type { AccessLogPort } from "../../server/ports/access-log.port.ts";
 import type { ConsentDecisionRepositoryPort } from "../../server/ports/consent-decision-repository.port.ts";
 import type { EnrollmentRepositoryPort } from "../../server/ports/enrollment-repository.port.ts";
 import type { InvitationRepositoryPort } from "../../server/ports/invitation-repository.port.ts";
@@ -47,6 +48,7 @@ function scopeRevocationRepo(inner: RevocationRepositoryPort, tenant: TenantId):
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
     findByCase: async (t, caseRef) => (t === tenant ? inner.findByCase(t, caseRef) : null),
     findOpenByChain: async (t, chainRef) => (t === tenant ? inner.findOpenByChain(t, chainRef) : null),
+    findOpenByDecision: async (t, decisionRef) => (t === tenant ? inner.findOpenByDecision(t, decisionRef) : null),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("revocationRepo.save");
       return inner.save(record);
@@ -154,6 +156,17 @@ function scopeLedger(inner: LedgerPort, tenant: TenantId): LedgerPort {
     currentSequence: async (t, aggregateId) => (t === tenant ? inner.currentSequence(t, aggregateId) : 0),
     listByAggregate: async (t, aggregateType, aggregateId) =>
       t === tenant ? inner.listByAggregate(t, aggregateType, aggregateId) : [],
+    readChain: async (t) => (t === tenant ? inner.readChain(t) : []),
+  };
+}
+
+function scopeAccessLog(inner: AccessLogPort, tenant: TenantId): AccessLogPort {
+  return {
+    record: async (entry) => {
+      if (entry.tenantId !== tenant) throw new TenantScopeViolationError("accessLog.record");
+      return inner.record(entry);
+    },
+    listByTenant: async (t) => (t === tenant ? inner.listByTenant(t) : []),
   };
 }
 
@@ -192,6 +205,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     "ledger",
     "outbox",
     "idempotency",
+    "accessLog",
   ] as const;
   for (const name of keys) {
     const port: unknown = ports[name];
@@ -217,6 +231,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
         outbox: scopeOutbox(ports.outbox, tenantId),
         tenantCatalog: scopeTenantCatalog(ports.tenantCatalog, tenantId),
         idempotency: scopeIdempotency(ports.idempotency, tenantId),
+        accessLog: scopeAccessLog(ports.accessLog, tenantId),
       });
     } catch (error) {
       for (let i = journal.length - 1; i >= 0; i--) journal[i]?.();

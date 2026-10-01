@@ -131,7 +131,7 @@ const sessionSecret = randomBytes(32);
 const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 // En Postgres el seed persiste entre arranques: ref y sujeto nuevos por proceso (GRD-IV-01: una sola
 // invitación no terminal por sujeto), sintéticos y sin PII.
-const INVITATION_REF = pgStore ? `inv-dev-${randomBytes(4).toString("hex")}` : "inv-dev-001";
+const INVITATION_REF = pgStore ? randomUUID() : "7e1d0c52-8d4e-4a7b-9c21-0e5a7d3b9f77";
 const SUBJECT_REF = pgStore ? randomUUID() : LOCAL_ONLY_DEV_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
@@ -140,13 +140,17 @@ await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
   productRef: LECTORPRO_BETA_CONFIG.productRef,
   subjectRef: SUBJECT_REF,
+  enrollmentRef: randomUUID(),
+  participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
 });
 await markInvitationReady(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF, {
   consentVersion: "v1-dev",
   expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
   recipientChannelRef: CHANNEL_REF,
 });
-const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF);
+const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", INVITATION_REF, {
+  deliveryChannel: LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY.deliveryChannel,
+});
 
 // CA-116 (revocación IT0, UX-CNS-004): además del enlace /i/<token>, siembra un enlace
 // /m/<token> sintético sobre una decisión GRANTED ya existente (sin pasar por el flujo HTTP de
@@ -267,19 +271,19 @@ server.listen(port, "127.0.0.1", () => {
   // CA-127: R4 encola consent.revoked en el outbox in-memory; se lee aquí (solo LOCAL, sin entrega: R5).
   console.log(`Leer los eventos del outbox: GET ${baseUrl}/__dev/outbox-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
-  // (RH3_CASE_REF). Cuatro ojos: registra staff-synthetic-01 y co-firma otro RIGHTS_OPERATOR
-  // distinto (staff-synthetic-02; un APPROVER no co-firma, revocation.spec RH3). Cada persona
+  // (RH3_CASE_REF). Cuatro ojos: registra 7647258d-b4b5-41c0-b8f1-34030bb08f80 y co-firma otro RIGHTS_OPERATOR
+  // distinto (d0c8c95a-8a9b-400d-b5ad-009a4bc46fe9; un APPROVER no co-firma, revocation.spec RH3). Cada persona
   // usa su propio cookie jar.
   const staffLogin = (principalRef: string, jar: string): string =>
     `  curl -i -c ${jar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"tenantId":"${TENANT_ID}","caseRef":"${RH3_CASE_REF}","principalRef":"${principalRef}"}'`;
   console.log(`RH3 paso 1 (API-CNS-138, sin efecto hasta co-firma): caso ${RH3_CASE_REF}. Probar con curl:`);
-  console.log(staffLogin("staff-synthetic-01", "/tmp/cns-case-op1.txt"));
+  console.log(staffLogin("7647258d-b4b5-41c0-b8f1-34030bb08f80", "/tmp/cns-case-op1.txt"));
   console.log(`  # copia el valor de __Host-cns-case-csrf del Set-Cookie de arriba en <CSRF1>, luego:`);
   console.log(
     `  curl -i -b /tmp/cns-case-op1.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF1>" -H 'content-type: application/json' -d '{"confirmationGivenOnCasePage":true}'`,
   );
   console.log(`RH3 paso 2 (API-CNS-139, co-firma por un segundo RIGHTS_OPERATOR distinto -> CONFIRMED):`);
-  console.log(staffLogin("staff-synthetic-02", "/tmp/cns-case-op2.txt"));
+  console.log(staffLogin("d0c8c95a-8a9b-400d-b5ad-009a4bc46fe9", "/tmp/cns-case-op2.txt"));
   console.log(`  # copia el valor de __Host-cns-case-csrf de este segundo login en <CSRF2>, luego:`);
   console.log(
     `  curl -i -b /tmp/cns-case-op2.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation/cosign -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF2>" -H 'content-type: application/json' -d '{}'`,
@@ -291,10 +295,10 @@ server.listen(port, "127.0.0.1", () => {
   const staffJar = "/tmp/cns-staff-admin.txt";
   const staffPost = (route: string, extraHeaders: string, payload: string): string =>
     `  curl -i -b ${staffJar} -X POST ${baseUrl}${route} -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF>" -H 'content-type: application/json'${extraHeaders} -d '${payload}'`;
-  console.log(`Flujo STAFF (CA-125, TENANT_ADMIN sintético staff-synthetic-05, colegio de dev):`);
+  console.log(`Flujo STAFF (CA-125, TENANT_ADMIN sintético 18c54cb1-9df4-4d4d-b371-b606e4c3b8e6, colegio de dev):`);
   console.log(`  1) login (solo LOCAL; el tenant sale del roster, no del body):`);
   console.log(
-    `  curl -i -c ${staffJar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"principalRef":"staff-synthetic-05"}'`,
+    `  curl -i -c ${staffJar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"principalRef":"18c54cb1-9df4-4d4d-b371-b606e4c3b8e6"}'`,
   );
   console.log(`  2) crear enrollment (EN0):`);
   console.log(staffPost("/staff/enrollments", "", `{"subjectRef":"${LOCAL_ONLY_DEV_STAFF_SUBJECT_REF}","participationRef":"${LOCAL_ONLY_DEV_PARTICIPATION_REF}"}`));
