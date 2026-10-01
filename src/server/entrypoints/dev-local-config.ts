@@ -76,13 +76,13 @@ export const LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY = {
  * GRD-CM-13). Cero PII: solo refs opacas sintéticas, nunca email, nombre ni RUT. LEGAL DECISION
  * LD-03 (quién tiene autoridad legal para registrar/co-firmar RH3) no se decide aquí. */
 export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
-  { principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" as const },
-  { principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR" as const },
-  { principalRef: "staff-synthetic-03", role: "APPROVER" as const },
-  { principalRef: "staff-synthetic-04", role: "APPROVER" as const },
+  { principalRef: "7647258d-b4b5-41c0-b8f1-34030bb08f80", role: "RIGHTS_OPERATOR" as const },
+  { principalRef: "d0c8c95a-8a9b-400d-b5ad-009a4bc46fe9", role: "RIGHTS_OPERATOR" as const },
+  { principalRef: "82778997-6214-4de1-8539-9332c05acae1", role: "APPROVER" as const },
+  { principalRef: "af2dad82-e964-4233-9227-59d6fd506ecf", role: "APPROVER" as const },
   // CA-125 (contracts/openapi /staff/*, staffSession): miembros TENANT_ADMIN de la consola STAFF,
   // cada uno con su membership de tenant (GRD-CM-01) y sin reutilizar personas entre roles
   // (GRD-RC-15). 05 = colegio de dev; 06 = OTRO colegio, para probar el aislamiento por tenant.
-  { principalRef: "staff-synthetic-05", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
-  { principalRef: "staff-synthetic-06", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_OTHER_TENANT_ID },
+  { principalRef: "18c54cb1-9df4-4d4d-b371-b606e4c3b8e6", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
+  { principalRef: "905ea2ae-b8ed-4681-a1ae-36767a4b0f0e", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_OTHER_TENANT_ID },
 ];

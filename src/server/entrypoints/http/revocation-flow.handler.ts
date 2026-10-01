@@ -345,7 +345,7 @@ export async function handleOpenRightsCase(
   if (!session || !session.chainRef || !session.revokedDecisionRef) return uniformNotFound();
 
   const rightsCase = await openRightsCase(ports.rightsCase, session.tenantId, {
-    caseRef: `case-${session.chainRef}`,
+    caseRef: randomUUID(), // Ref UUIDv4 opaco (RIGHTS_CASE_OPENED.caseRef); openRightsCase es idempotente por (chain, decisión) y devuelve el caso abierto
     chainRef: session.chainRef,
     revokedDecisionRef: session.revokedDecisionRef,
     origin: "LIMIT_REACHED",

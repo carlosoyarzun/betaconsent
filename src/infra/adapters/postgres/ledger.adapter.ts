@@ -18,6 +18,7 @@ import {
   LEDGER_GENESIS_HASH,
   type ChainRow,
 } from "../../../server/modules/common/ledger-chain.ts";
+import { assertLedgerPayload } from "../../../server/modules/common/ledger-payload-contract.ts";
 import { assertLedgerEventType } from "../../../server/modules/common/ledger-event-types.ts";
 import type { ActorRole, ActorType, Environment } from "../../../server/modules/common/types.ts";
 import {
@@ -96,6 +97,7 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
   return {
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
       assertLedgerEventType(event.eventType);
+      assertLedgerPayload(event.eventType, event.payload); // ERR-RV-13 fail-closed, antes de cualquier efecto (X6 P1-A)
       const keyHash = event.idempotencyKey !== undefined ? hashKey(event.idempotencyKey) : null;
       if (keyHash !== null) {
         const existing = await tx.query<AuditEventRow>(

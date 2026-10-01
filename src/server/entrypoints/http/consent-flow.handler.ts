@@ -23,6 +23,7 @@
 // /decision/submit o /decision/steps se ignora por completo (nunca se lee del payload, SM R0.2;
 // DecisionStepRequest tampoco define ese campo en el contrato).
 
+import { opaqueUuidV4 } from "../../modules/common/opaque-ref.ts";
 import { randomUUID, createHash } from "node:crypto";
 
 import { DomainError } from "../../modules/common/errors.ts";
@@ -177,7 +178,8 @@ function checkCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): Ht
  * + D5). Es una ref opaca, no el canal en claro (cero PII en ledger/sesión más allá de lo que
  * ya persiste el propio canal de la invitación). */
 function deriveDecisionMakerRef(channelRef: string): string {
-  return `dm:${createHash("sha256").update(channelRef).digest("hex").slice(0, 32)}`;
+  // Ref UUIDv4 opaco (common.schema.json Ref): el ledger lo exige (DECISION_MAKER_CHANNEL_VERIFIED.decisionMakerRef).
+  return opaqueUuidV4("decision-maker", channelRef);
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +447,7 @@ export async function handleSubmitOtp(
     const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
     if (!verificationRef) return uniformNotFound();
     try {
-      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code);
+      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(manageChannelRef(session.chainRef ?? "")));
       const verifiedSession: ConsentSessionPayload =
         scope === "MANAGE"
           ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(manageChannelRef(session.chainRef ?? "")) }

@@ -12,6 +12,7 @@ import {
   sha256Hex,
   type ChainRow,
 } from "../../server/modules/common/ledger-chain.ts";
+import { assertLedgerPayload } from "../../server/modules/common/ledger-payload-contract.ts";
 import { assertLedgerEventType } from "../../server/modules/common/ledger-event-types.ts";
 import {
   LedgerSequenceConflictError,
@@ -50,6 +51,7 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
     },
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
       assertLedgerEventType(event.eventType);
+      assertLedgerPayload(event.eventType, event.payload); // ERR-RV-13 fail-closed, antes de cualquier efecto (X6 P1-A)
       if (event.idempotencyKey) {
         const key = idempotencyStoreKey(event.tenantId, event.aggregateType, event.aggregateId, event.idempotencyKey);
         const existing = byIdempotencyKey.get(key);

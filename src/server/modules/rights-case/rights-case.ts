@@ -287,7 +287,7 @@ export function openRightsCase(
       aggregateId: input.caseRef,
       actorType: UNVERIFIED_BEARER_ACTOR.actorType,
       actorRole: UNVERIFIED_BEARER_ACTOR.actorRole,
-      payload: { reasonCode: input.origin, initiatedVia: "DECISION_MAKER" },
+      payload: { caseRef: input.caseRef, reasonCode: input.origin, initiatedVia: "DECISION_MAKER" },
       idempotencyKey: `${tenantId}:${input.chainRef}:${input.revokedDecisionRef}`,
     });
     return record;
