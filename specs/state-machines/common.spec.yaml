@@ -378,8 +378,8 @@ invariants:
     testIds: [TEST-CNS-109]
   - id: INV-CM-09
     statement: "Todas las refs (subjectRef, decisionMakerRef, invitationRef, chainRef, revocationRef, caseRef, channelRef, ...) son UUIDv4 aleatorios; channelHmac = HMAC(K, tenant_id ‖ email normalizado) vive solo en pii.channel, de modo que la misma dirección en dos tenants no coincide; decisionMakerRef (excepción: derivado, no aleatorio) = UUIDv4 de HMAC(K_dmref, dominio ‖ len(tenant_id) ‖ tenant_id ‖ canal normalizado), KEY_VERSION 2 (LEGAL DECISION, Carlos 2026-10-01, (a) por tenant: refs distintos y no correlacionables entre colegios, mismo ref dentro del mismo colegio; resuelto); integrity no tiene FKs a pii/app."
-    governedBy: ["SM-CNS-001 §1", "ADR-002 §3", "DEC-BR-016 §2", "DR2 D8", "REQ-CNS-TBD-02 AC-02.2"]
-    testIds: [TEST-CNS-110, TEST-CNS-314]
+    governedBy: ["SM-CNS-001 §1", "ADR-002 §3", "DEC-BR-016 §2", "DR2 D8", "REQ-CNS-TBD-02 AC-02.2", "LEGAL DECISION, Carlos 2026-10-01, (a) por tenant"]
+    testIds: [TEST-CNS-110, TEST-CNS-314, TEST-CNS-933, TEST-CNS-1050, TEST-CNS-1051, TEST-CNS-1052, TEST-CNS-1053, TEST-CNS-1054, TEST-CNS-1055, TEST-CNS-1056, TEST-CNS-1057]
   - id: INV-CM-10
     statement: "Ningún portador no verificado queda registrado como DECISION_MAKER; su actorRole es UNVERIFIED_BEARER y solo ejecuta las transiciones de actorModel.unverifiedBearer.may (= SM v7 INV-19)."
     governedBy: ["SM-CNS-001 v7 R0.2, §7 INV-19", "DEC-BR-018 R13-5", "AUDIT F-A03"]
@@ -429,3 +429,7 @@ openItems:
     owner: Carlos
     status: "DECIDED (DEC-BR-018)"
     blocksDataReal: false
+  - id: OPEN-CM-09
+    item: "keyVersion de decisionMakerRef (hoy 2, solo en el info de HKDF) no viaja en el valor ni en el ledger; definir como se identifica la version de clave de un ref historico antes de la primera rotacion (LEGAL DECISION Carlos 2026-10-01, (a) por tenant; rotacion no implementada)."
+    owner: Carlos
+    status: OPEN

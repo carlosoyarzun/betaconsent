@@ -58,9 +58,9 @@ test("TEST-CNS-1050 decisionMakerRef por tenant: mismo sujeto y mismo tenant -> 
   assert.match(a, UUID_V4);
 });
 
-test("TEST-CNS-1051 decisionMakerRef por tenant: mismo sujeto en tenants distintos -> refs distintos; sin ambiguedad de concatenacion tenant/canal", () => {
+test("TEST-CNS-1051 decisionMakerRef por tenant: mismo sujeto en tenants distintos -> refs distintos", () => {
   assert.notEqual(deriveDecisionMakerRef(KEY, TENANT, EMAIL), deriveDecisionMakerRef(KEY, TENANT_B, EMAIL));
-  assert.notEqual(deriveDecisionMakerRef(KEY, "ab", "c@x.invalid"), deriveDecisionMakerRef(KEY, "a", "bc@x.invalid"), "el largo delimita el tenant");
+  assert.notEqual(deriveDecisionMakerRef(KEY, TENANT, "ab@x.invalid"), deriveDecisionMakerRef(KEY, TENANT_B, "ab@x.invalid"));
 });
 
 test("TEST-CNS-1052 decisionMakerRef: KEY_VERSION 2 y el resultado difiere de la derivacion v1 (sin tenant, info v1)", () => {
@@ -72,9 +72,20 @@ test("TEST-CNS-1052 decisionMakerRef: KEY_VERSION 2 y el resultado difiere de la
   assert.notDeepEqual(deriveDecisionMakerRefKey(root), v1Key, "info HKDF v2 distinto de v1");
 });
 
-test("TEST-CNS-1053 decisionMakerRef: tenantId obligatorio (vacio o ausente lanza; sin default)", () => {
+test("TEST-CNS-1053 decisionMakerRef: tenantId obligatorio (vacio o undefined lanza con el mensaje del guard; sin default)", () => {
   assert.throws(() => deriveDecisionMakerRef(KEY, "", EMAIL), /tenantId es obligatorio/);
-  assert.throws(() => (deriveDecisionMakerRef as unknown as (k: Buffer, c: string) => string)(KEY, EMAIL), /tenantId|obligatorio|undefined/);
+  assert.throws(() => deriveDecisionMakerRef(KEY, undefined as unknown as string, EMAIL), /tenantId es obligatorio/);
+});
+
+test("TEST-CNS-1056 decisionMakerRef: tenantId debe ser Ref UUIDv4 en minusculas (fail-closed)", () => {
+  assert.throws(() => deriveDecisionMakerRef(KEY, "tenant-1", EMAIL), /forma Ref UUIDv4/);
+  assert.throws(() => deriveDecisionMakerRef(KEY, "C3A1F5D2-8B47-4E69-A0D3-5F7B9E1C2A48", EMAIL), /forma Ref UUIDv4/);
+  assert.throws(() => deriveDecisionMakerRef(KEY, `${TENANT} `, EMAIL), /forma Ref UUIDv4/);
+});
+
+test("TEST-CNS-1057 decisionMakerRef: canal normalizado vacio se rechaza (fail-closed)", () => {
+  assert.throws(() => deriveDecisionMakerRef(KEY, TENANT, ""), /canal normalizado vacio/);
+  assert.throws(() => deriveDecisionMakerRef(KEY, TENANT, "   "), /canal normalizado vacio/);
 });
 
 test("TEST-CNS-1054 decisionMakerRef: los dos tenants sinteticos locales no colisionan para el mismo canal (los tests Postgres e2e usan ambos)", () => {

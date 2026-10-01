@@ -37,7 +37,7 @@ const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
 const MANAGE_COOKIE_NAME = "__Host-cns-manage";
 const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
-const TENANT_ID = "tenant-1";
+const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+channel-contract@example.invalid";
 
 // LOCAL-only sintético (D4, no es default de producción): ver otp-policy.config.ts.
@@ -480,10 +480,10 @@ function startRightsCaseServer(): Promise<RightsCaseHarness> {
 }
 
 async function seedOpenChannelUnreachableCase(ports: RightsCaseInMemoryPorts, handle: string): Promise<void> {
-  ports.tenantHandle.issue({ handle, tenantId: "tenant-1", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") });
+  ports.tenantHandle.issue({ handle, tenantId: "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") });
   await ports.rightsCaseRepo.save({
     caseRef: fixtureUuid("case-1"),
-    tenantId: "tenant-1",
+    tenantId: "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73",
     chainRef: fixtureUuid("chain-1"),
     revokedDecisionRef: fixtureUuid("decision-1"),
     status: "OPEN",
@@ -648,7 +648,7 @@ test("TEST-CNS-537: GET /i/{token} inexistente responde 303 (RedeemSeeOther) con
 
 test("TEST-CNS-603: GET /r/{token} responde 303 con Location que valida contra el pattern del contrato (headers.Location, /recovery/confirm tiene dos segmentos)", async () => {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
-  const CONTRACT_TENANT_ID = "tenant-contract-603";
+  const CONTRACT_TENANT_ID = "fa095521-552d-4810-8a4a-8e117557b629";
   await ports.decision.repo.save({
     consentId: fixtureUuid("consent-603"),
     tenantId: CONTRACT_TENANT_ID,

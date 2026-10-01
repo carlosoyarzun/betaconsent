@@ -14,12 +14,12 @@ import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-ten
 
 async function buildPorts() {
   const tenantHandle = createInMemoryTenantHandleAdapter([
-    { handle: "handle-1", tenantId: "tenant-1", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") },
+    { handle: "handle-1", tenantId: "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1") },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   await rightsCaseRepo.save({
     caseRef: fixtureUuid("case-1"),
-    tenantId: "tenant-1",
+    tenantId: "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73",
     chainRef: fixtureUuid("chain-1"),
     revokedDecisionRef: fixtureUuid("decision-1"),
     status: "CONTACTING",
@@ -34,7 +34,7 @@ test("TEST-CNS-460: RC3 (primera Revocation del caso) registra actorRole=UNVERIF
 
   const result = await expressRevocationIntentInCase(ports, "handle-1");
 
-  const events = await ports.ledger.listByAggregate("tenant-1", "Revocation", result.revocation.revocationRef);
+  const events = await ports.ledger.listByAggregate("0a96abb3-3b07-4f0e-8f48-bcc4893e0e73", "Revocation", result.revocation.revocationRef);
   assert.equal(events.length, 1);
   assert.equal(events[0]?.actorType, "HUMAN");
   assert.equal(events[0]?.actorRole, "UNVERIFIED_BEARER");
@@ -50,7 +50,7 @@ test("TEST-CNS-460: R12 (Revocation ya abierta se adjunta) también registra act
   const second = await expressRevocationIntentInCase(ports, "handle-1");
 
   assert.equal(second.revocation.revocationRef, first.revocation.revocationRef);
-  const events = await ports.ledger.listByAggregate("tenant-1", "Revocation", first.revocation.revocationRef);
+  const events = await ports.ledger.listByAggregate("0a96abb3-3b07-4f0e-8f48-bcc4893e0e73", "Revocation", first.revocation.revocationRef);
   assert.equal(events.length, 2);
   for (const event of events) {
     assert.equal(event.actorRole, "UNVERIFIED_BEARER");

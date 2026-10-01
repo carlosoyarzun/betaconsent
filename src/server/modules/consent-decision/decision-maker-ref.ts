@@ -42,8 +42,13 @@ export function normalizeChannelForRef(channel: string): string {
   return channel.trim().normalize("NFC").toLowerCase();
 }
 
+const TENANT_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 export function deriveDecisionMakerRef(key: Buffer, tenantId: TenantId, channel: string): string {
   if (typeof tenantId !== "string" || tenantId.length === 0) throw new Error("decisionMakerRef: tenantId es obligatorio (fail-closed).");
+  if (!TENANT_REF_RE.test(tenantId)) throw new Error("decisionMakerRef: tenantId debe tener forma Ref UUIDv4 en minusculas (fail-closed).");
+  const normalized = normalizeChannelForRef(channel);
+  if (normalized.length === 0) throw new Error("decisionMakerRef: canal normalizado vacio (fail-closed).");
   const tenant = Buffer.from(tenantId, "utf8");
   const len = Buffer.alloc(4);
   len.writeUInt32BE(tenant.length);
@@ -51,7 +56,7 @@ export function deriveDecisionMakerRef(key: Buffer, tenantId: TenantId, channel:
     .update("dmref\u0000", "utf8")
     .update(len)
     .update(tenant)
-    .update(normalizeChannelForRef(channel), "utf8");
+    .update(normalized, "utf8");
   return uuidV4FromDigest(mac.digest());
 }
 

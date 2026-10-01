@@ -23,7 +23,7 @@ const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
 const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
-const TENANT_ID = "tenant-1";
+const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+verify@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
