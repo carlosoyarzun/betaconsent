@@ -1,8 +1,8 @@
 {
   "condition": "X5",
-  "commit": "efcc4b63d43809c88ab5560bc6f197dd6365c0c7",
+  "commit": "b60a72870c7a3bf9f601f1a84cac101255cc1714",
   "branch": "chore/CA-128-evidence-manifests",
-  "runAt": "2026-10-01T21:40:49.312Z",
+  "runAt": "2026-10-01T21:43:12.691Z",
   "environment": "LOCAL",
   "postgres": {
     "imageDigest": "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54"

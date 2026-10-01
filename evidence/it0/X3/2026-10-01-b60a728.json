@@ -1,30 +1,30 @@
 {
   "condition": "X3",
-  "commit": "efcc4b63d43809c88ab5560bc6f197dd6365c0c7",
+  "commit": "b60a72870c7a3bf9f601f1a84cac101255cc1714",
   "branch": "chore/CA-128-evidence-manifests",
-  "runAt": "2026-10-01T21:40:16.627Z",
+  "runAt": "2026-10-01T21:43:12.691Z",
   "environment": "LOCAL",
   "postgres": {
-    "imageDigest": null
+    "imageDigest": "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54"
   },
   "tests": [
     {
       "id": "TEST-CNS-101",
       "title": "X3 SOLO PARTE BD: CHECK data_class SYNTHETIC en todas las tablas (807/808/838/839/865) y email reservado (812/839). Cierre pendiente de CA-137 (DLP_SCAN, DEFERRED) mas allowlist de email: D8 (a), Carlos 2026-10-01",
       "file": "tests/integration/postgres/idempotency-schema.test.ts",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "id": "TEST-CNS-812",
       "title": "pg: email solo de dominios reservados (app.is_reserved_email), escaneo de catálogo de columnas email y sin columnas rut/run",
       "file": "tests/integration/postgres/pr-c-schema.test.ts",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "id": "TEST-CNS-865",
       "title": "pg: app.idempotency_key con FORCE RLS, policies solo TO app_rw, sin DELETE/TRUNCATE, grants minimos por columna y CHECK (SYNTHETIC, 2xx, hashes)",
       "file": "tests/integration/postgres/idempotency-schema.test.ts",
-      "status": "skip"
+      "status": "pass"
     },
     {
       "id": "TEST-CNS-950",
@@ -36,13 +36,13 @@
       "id": "TEST-CNS-955",
       "title": "X3: isReservedEmail (TS, allowlist de sinks) coincide con app.is_reserved_email (SQL) en un corpus de casos limite",
       "file": "tests/integration/postgres/synthetic-recipient-parity.test.ts",
-      "status": "skip"
+      "status": "pass"
     }
   ],
   "summary": {
-    "pass": 1,
+    "pass": 5,
     "fail": 0,
-    "skip": 4
+    "skip": 0
   },
   "exitCode": 0
 }
