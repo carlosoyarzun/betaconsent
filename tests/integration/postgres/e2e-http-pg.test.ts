@@ -38,6 +38,8 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { applyLocalFixtures, loadLocalFixtures } from "../../../src/infra/adapters/postgres/local-fixtures.ts";
 import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, LOCAL_ONLY_DEV_SUBJECT_REF } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { listOutboxEnvelopes } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
+import { isSyntheticRecipient } from "../../../src/server/modules/common/synthetic-recipient.ts";
+import { RESERVED_BAD, RESERVED_OK } from "../../unit/common/synthetic-recipient-vectors.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 
@@ -378,7 +380,7 @@ pgTest("TEST-CNS-880 e2e pg: consola STAFF (EN0 enrolar, I1 invitar, ready, send
   }
 });
 
-pgTest("TEST-CNS-889 e2e pg: /ready con RECIPIENT_CHANNEL responde 422 uniforme (CHECK 23514 de recipient_channel_ref), sin 500 ni request_failed; la invitacion sigue DRAFT y UNBOUND funciona", async (ctx) => {
+pgTest("TEST-CNS-889 e2e pg: /ready con RECIPIENT_CHANNEL y un UUID responde 422 uniforme (EXT-B (i): solo email reservado; el CHECK 23514 de la BD queda como defensa en profundidad), sin 500 ni request_failed; la invitacion sigue DRAFT y UNBOUND funciona", async (ctx) => {
   const migrator = await ctx.connectAs("consent_migrator");
   await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
   const env = await boot(ctx);
@@ -404,14 +406,14 @@ pgTest("TEST-CNS-889 e2e pg: /ready con RECIPIENT_CHANNEL responde 422 uniforme 
     assert.equal(invited.status, 201, await invited.clone().text());
     const { invitationRef } = (await invited.json()) as { invitationRef: string };
 
-    // FINDING contrato<->BD (EXT-B/LD-21 pendiente de Carlos): el contrato admite un UUIDv4 como recipientChannelRef; la
-    // BD (0010) solo email reservado. No se relaja el CHECK ni el contrato: 422 uniforme con codigo existente del enum.
-    const ready = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: LOCAL_ONLY_DEV_STAFF_CHANNEL_REF });
+    // EXT-B (i) (Carlos, 2026-10-01): el contrato exige email reservado; un UUID (valor antiguo) es 422 uniforme en el
+    // handler, sin llegar a la BD ni reflejarse en el error.
+    const legacyUuid = "f1a5c9e3-4d27-4b68-9e30-2c4e6a8b0d51";
+    const ready = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: legacyUuid });
     assert.equal(ready.status, 422);
     const problem = (await ready.json()) as { code: string; status: number };
-    assert.equal(problem.code, "INVALID_TRANSITION");
     assert.equal(problem.status, 422);
-    assert.ok(!JSON.stringify(problem).includes(LOCAL_ONLY_DEV_STAFF_CHANNEL_REF), "el error no refleja el valor");
+    assert.ok(!JSON.stringify(problem).includes(legacyUuid), "el error no refleja el valor");
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'DRAFT'", [T, invitationRef]), 1, "rollback: sigue DRAFT");
 
     // La tx abortada no dejo la conexion ni el agregado inutilizables: UNBOUND pasa a READY.
@@ -459,5 +461,79 @@ pgTest("TEST-CNS-886 e2e pg: recorrido de TODAS las rutas HTTP (GET y POST, sin 
     }
   } finally {
     await env.close();
+  }
+});
+
+pgTest("TEST-CNS-973 e2e pg EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_CHANNEL (email reservado) -> /send -> participante /i -> OTP al sink del email reservado -> decision -> recibo; la BD persiste el canal", async (ctx) => {
+  const migrator = await ctx.connectAs("consent_migrator");
+  await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
+  const env = await boot(ctx);
+  const T2 = LOCAL_ONLY_DEV_OTHER_TENANT_ID; // tenant propio: la base se comparte con los tests anteriores del archivo
+  try {
+    const login = await fetch(`${env.baseUrl}/__dev/staff-login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ principalRef: "staff-synthetic-06" }),
+    });
+    assert.equal(login.status, 200);
+    const c = cookiesOf(login);
+    const jar = `__Host-cns-staff=${c["__Host-cns-staff"]}; __Host-cns-staff-csrf=${c["__Host-cns-staff-csrf"]}`;
+    const staffPost = (path: string, body: unknown, extra: Record<string, string> = {}): Promise<Response> =>
+      fetch(`${env.baseUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": c["__Host-cns-staff-csrf"]!, cookie: jar, ...extra },
+        body: JSON.stringify(body),
+      });
+    const enrolled = await staffPost("/staff/enrollments", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF });
+    assert.equal(enrolled.status, 201, await enrolled.clone().text());
+    const { enrollmentRef } = (await enrolled.json()) as { enrollmentRef: string };
+    const invited = await staffPost("/staff/invitations", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef }, { "idempotency-key": "pg-973-idem-key-0001" });
+    assert.equal(invited.status, 201, await invited.clone().text());
+    const { invitationRef } = (await invited.json()) as { invitationRef: string };
+    const channel = "ext-b-973@example.invalid";
+    const ready = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: channel });
+    assert.equal(ready.status, 200, await ready.clone().text());
+    assert.equal((await staffPost(`/staff/invitations/${invitationRef}/send`, {})).status, 200);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND recipient_channel_ref = $3", [T2, invitationRef, channel]), 1);
+
+    const sent = env.bundle.staffConsole.invitationLinkSink.sent;
+    const link = sent[sent.length - 1]!;
+    const redeemed = await fetch(`${env.baseUrl}${link.invitationPath}`, { redirect: "manual" });
+    assert.equal(redeemed.status, 303);
+    const welcome = await fetch(`${env.baseUrl}/welcome`, { headers: { cookie: `__Host-cns-i-handle=${cookiesOf(redeemed)["__Host-cns-i-handle"]}` } });
+    assert.equal(welcome.status, 200);
+    let session = cookiesOf(welcome)["__Host-cns-session"]!;
+    const step = (res: Response): Response => {
+      session = cookiesOf(res)["__Host-cns-session"] ?? session;
+      return res;
+    };
+    assert.equal(step(await post(env, "/invitation/open", { "__Host-cns-session": session })).status, 200);
+    assert.equal(step(await post(env, "/otp/request", { "__Host-cns-session": session })).status, 202);
+    const otp = env.otpSink.sent[env.otpSink.sent.length - 1]!;
+    assert.equal(otp.channelRef, channel, "el OTP llega al sink del email reservado");
+    assert.equal(step(await post(env, "/otp/submit", { "__Host-cns-session": session }, { code: otp.code })).status, 200);
+    for (const body of [
+      { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+      { stepKind: "CONSENT_VERSION_VIEWED" },
+      { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true },
+      { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
+    ]) assert.equal(step(await post(env, "/decision/steps", { "__Host-cns-session": session }, body)).status, 200);
+    const decided = await post(env, "/decision/submit", { "__Host-cns-session": session }, { purposes: GRANT_ALL });
+    assert.equal(decided.status, 200);
+    const out = (await decided.json()) as { consentId: string; state: string; receiptRef: string };
+    assert.equal(out.state, "GRANTED");
+    assert.ok(out.receiptRef);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'COMPLETED'", [T2, invitationRef]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2 AND state = 'GRANTED'", [T2, out.consentId]), 1);
+  } finally {
+    await env.close();
+  }
+});
+
+pgTest("TEST-CNS-974 pg: paridad entre isSyntheticRecipient (TS) y app.is_reserved_email (SQL) sobre los vectores compartidos", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  for (const value of [...RESERVED_OK, ...RESERVED_BAD]) {
+    const sql = (await admin.query<{ ok: boolean }>("SELECT app.is_reserved_email($1) AS ok", [value])).rows[0]?.ok;
+    assert.equal(isSyntheticRecipient(value), sql, `paridad TS/SQL: ${value}`);
   }
 });
