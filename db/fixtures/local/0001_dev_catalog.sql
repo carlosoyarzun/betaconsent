@@ -7,9 +7,14 @@
 -- consent_migrator (rol no superusuario; nunca desde el proceso web). Idempotente (ON CONFLICT DO NOTHING).
 -- Los valores deben coincidir con src/server/entrypoints/dev-local-config.ts (lo verifica un test).
 
+-- Igual que startup-checks: exactamente UNA fila (count(*) = 1) LOCAL/SYNTHETIC; con EXISTS bastaba una fila LOCAL
+-- entre varias (SEC-CNS-017 P2).
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM ops.db_catalog WHERE environment = 'LOCAL' AND data_class = 'SYNTHETIC') THEN
+  IF (SELECT count(*) FROM ops.db_catalog) <> 1 THEN
+    RAISE EXCEPTION 'fixtures locales: ops.db_catalog debe tener exactamente una fila; se aborta' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF (SELECT count(*) FROM ops.db_catalog WHERE environment = 'LOCAL' AND data_class = 'SYNTHETIC') <> 1 THEN
     RAISE EXCEPTION 'fixtures locales: ops.db_catalog no es LOCAL/SYNTHETIC; se aborta' USING ERRCODE = 'invalid_parameter_value';
   END IF;
 END
