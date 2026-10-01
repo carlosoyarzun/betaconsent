@@ -63,7 +63,7 @@ export interface PostgresStore {
 export interface OpenPostgresStoreOptions {
   /** Entorno declarado; debe coincidir con el catalogo de la base (SEC N2-06). */
   readonly environment: "LOCAL" | "DEV" | "STAGING";
-  /** P-33: sin default de produccion (idempotency-policy.config.ts). */
+  /** P-33 = 24 h aprobado (Carlos, 2026-10-01; approved-parameters.ts); el caller pasa la politica cargada. */
   readonly idempotencyPolicy: IdempotencyPolicy;
   /** Por defecto process.env (inyectable en tests). */
   readonly env?: NodeJS.ProcessEnv;

@@ -1,6 +1,6 @@
 // Gobierna: src/server/ports/idempotency.port.ts (GRD-CM-08), CA-124 PR-E. Adaptador in-memory IT0:
 // participante journaled del UnitOfWork (find + ejecutar + store atómicos: si la unidad falla, la
-// entrada guardada se deshace) y aislado por tenant. El TTL P-33 NO está aprobado: el llamador lo
+// entrada guardada se deshace) y aislado por tenant. El TTL P-33 = 24 h está APROBADO (Carlos, 2026-10-01; approved-parameters.ts): el llamador lo
 // pasa explícito (idempotency-policy.config.ts, fail-closed); SEC-CNS-017 F7: `ttlMs` es
 // obligatorio (sin TTL infinito): ausente -> lanza (fail-closed).
 
@@ -20,7 +20,7 @@ interface Entry {
   readonly expiresAt: number;
 }
 
-/** Valor LOCAL-only/test-only de conveniencia para el cableado in-memory por defecto (NO es P-33 aprobado). */
+/** Valor LOCAL-only/test-only de conveniencia para el cableado in-memory por defecto (= P-33 aprobado, 24 h, Carlos 2026-10-01). */
 export const LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS = 24 * 60 * 60_000;
 
 export function createInMemoryIdempotencyAdapter(options: InMemoryIdempotencyOptions = {}): InMemoryIdempotencyAdapter {
