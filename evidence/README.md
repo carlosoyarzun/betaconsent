@@ -51,5 +51,5 @@ rev. 8 §3: X3 controles synthetic-only verificados con evidencia en `evidence/`
   completa) y luego
   `node scripts/evidence/manifest.ts --environment LOCAL --postgres-digest sha256:<digest de .github/workflows/tests.yml>`
   (o `--postgres-digest none` sin Postgres; `--environment CI` en CI). Test del generador: TEST-CNS-990.
-- **X6**: los manifiestos actuales solo cubren lo que hay en `main` (parte BD del ledger, TEST-CNS-100). La
-  implementación completa de X6 (`feat/CA-128-x6-revocation`) no está mergeada: **se regenerará al mergear X6**.
+- **X6**: la implementación completa de X6 está en `main` (PR #43, CA-128); manifiesto en
+  `evidence/it0/X6/2026-10-01-89ed842.json`.
