@@ -203,9 +203,9 @@ pgTest("TEST-CNS-790 pg: sin tenant no hay filas ni escritura, y la conexion reu
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 1 });
   try {
     const uow = new PgUnitOfWork(pool);
-    const inA = await uow.inTenant(ta, (tx) => createPgLedgerAdapter(tx).listByAggregate(ta, "Revocation", agg));
+    const inA = await uow.withTenantTx(ta, (tx) => createPgLedgerAdapter(tx).listByAggregate(ta, "Revocation", agg));
     assert.equal(inA.length, 1);
-    const inB = await uow.inTenant(tb, async (tx) => {
+    const inB = await uow.withTenantTx(tb, async (tx) => {
       const raw = (await tx.query<{ n: number }>("SELECT count(*)::int AS n FROM integrity.audit_event")).rows[0]?.n;
       const asked = await createPgLedgerAdapter(tx).listByAggregate(ta, "Revocation", agg);
       const o = await createPgOutboxAdapter(tx).enqueue({
@@ -236,7 +236,7 @@ pgTest("TEST-CNS-791 pg: claim del worker via SECURITY DEFINER del rol outbox_cl
   try {
     const uow = new PgUnitOfWork(pool);
     for (const [t, key] of [[ta, "k1"], [tb, "k2"]] as const) {
-      await uow.inTenant(t, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(t, `791-${key}`)));
+      await uow.withTenantTx(t, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(t, `791-${key}`)));
     }
   } finally {
     await pool.end();
@@ -301,8 +301,8 @@ pgTest("TEST-CNS-792 pg: el worker lee el sobre solo dentro de inTenant de su te
   const workerPool = createPool({ connectionString: ctx.urlFor("worker"), max: 1 });
   try {
     const appUow = new PgUnitOfWork(app);
-    await appUow.inTenant(ta, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(ta, "792-a")));
-    await appUow.inTenant(tb, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(tb, "792-b")));
+    await appUow.withTenantTx(ta, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(ta, "792-a")));
+    await appUow.withTenantTx(tb, (tx) => createPgOutboxAdapter(tx).enqueue(ENV_INPUT(tb, "792-b")));
 
     const workerUow = new PgUnitOfWork(workerPool);
     const refs = (await claimOutbox(await ctx.connectAs("worker"), 100)).filter((r) => r.tenantId === ta || r.tenantId === tb);
@@ -310,16 +310,16 @@ pgTest("TEST-CNS-792 pg: el worker lee el sobre solo dentro de inTenant de su te
     const refA = refs.find((r) => r.tenantId === ta)!;
     const refB = refs.find((r) => r.tenantId === tb)!;
 
-    const envA = await workerUow.inTenant(ta, (tx) => readOutboxEnvelope(tx, refA.eventId));
+    const envA = await workerUow.withTenantTx(ta, (tx) => readOutboxEnvelope(tx, refA.eventId));
     assert.equal(envA?.tenantRef, ta);
     assert.equal(envA?.eventId, refA.eventId);
     assert.equal(envA?.payload.revocationRef, fixtureUuid("r-792-a"));
     // Pidiendo la ref del otro tenant desde la unidad de trabajo de A: RLS => null.
-    assert.equal(await workerUow.inTenant(ta, (tx) => readOutboxEnvelope(tx, refB.eventId)), null);
-    assert.equal((await workerUow.inTenant(tb, (tx) => readOutboxEnvelope(tx, refB.eventId)))?.tenantRef, tb);
+    assert.equal(await workerUow.withTenantTx(ta, (tx) => readOutboxEnvelope(tx, refB.eventId)), null);
+    assert.equal((await workerUow.withTenantTx(tb, (tx) => readOutboxEnvelope(tx, refB.eventId)))?.tenantRef, tb);
     // El worker no puede escribir sobre el outbox ni siquiera con tenant.
     await assert.rejects(
-      () => workerUow.inTenant(ta, (tx) => tx.query("UPDATE app.outbox SET status = 'DELIVERED'")),
+      () => workerUow.withTenantTx(ta, (tx) => tx.query("UPDATE app.outbox SET status = 'DELIVERED'")),
       (e: unknown) => codeOf(e) === "42501",
     );
   } finally {

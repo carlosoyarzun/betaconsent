@@ -6,15 +6,23 @@
 // Error: ROLLBACK. Si el ROLLBACK falla, la conexión se destruye (release(true)). Reintenta
 // 40001/40P01 hasta 3 intentos: `work` debe ser reejecutable (sin efectos fuera de la tx).
 //
-// El dominio nunca importa este archivo (ADR-001 §11): el puerto UnitOfWorkPort y su
-// conexión con este adaptador llegan en PR-B0/PR-B.
+// El dominio nunca importa este archivo (ADR-001 §11): solo conoce UnitOfWorkPort. PgUnitOfWork lo
+// implementa (CA-124 PR-C): `inTenant` entrega TenantTxPorts completos (revocationRepo,
+// consentDecisionRepo, recoveryTokenRepo, ledger, outbox) sobre la MISMA transacción;
+// `withTenantTx` entrega la tx cruda para adaptadores y tests de infraestructura.
 //
 // Este es el ÚNICO archivo de src/** autorizado a invocar set_config('app.tenant_id', ...);
 // tests/unit/postgres/tenant-context-scan.test.ts lo hace cumplir.
 
 import type { QueryResult } from "pg";
+import type { TenantTxPorts, UnitOfWorkPort } from "../../../server/ports/unit-of-work.port.ts";
+import { createPgConsentDecisionRepository } from "./consent-decision.adapter.ts";
+import { createPgLedgerAdapter } from "./ledger.adapter.ts";
+import { createPgOutboxAdapter } from "./outbox.adapter.ts";
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
+import { createPgRecoveryTokenRepository } from "./recovery-token.adapter.ts";
+import { createPgRevocationRepository } from "./revocation.adapter.ts";
 
 export interface TenantTx {
   query<R = Record<string, unknown>>(text: string, values?: readonly unknown[]): Promise<QueryResult<R>>;
@@ -35,7 +43,18 @@ function sqlState(error: unknown): string | undefined {
   return undefined;
 }
 
-export class PgUnitOfWork {
+/** Puertos del tenant ligados a UNA transacción abierta (todos escriben en la misma tx). */
+export function createPgTenantTxPorts(tx: TenantTx): TenantTxPorts {
+  return {
+    revocationRepo: createPgRevocationRepository(tx),
+    consentDecisionRepo: createPgConsentDecisionRepository(tx),
+    recoveryTokenRepo: createPgRecoveryTokenRepository(tx),
+    ledger: createPgLedgerAdapter(tx),
+    outbox: createPgOutboxAdapter(tx),
+  };
+}
+
+export class PgUnitOfWork implements UnitOfWorkPort {
   private readonly pool: PoolLike;
   private readonly maxAttempts: number;
 
@@ -44,7 +63,12 @@ export class PgUnitOfWork {
     this.maxAttempts = options.maxAttempts ?? 3;
   }
 
-  async inTenant<T>(tenantId: string, work: (tx: TenantTx) => Promise<T>): Promise<T> {
+  inTenant<T>(tenantId: string, work: (tx: TenantTxPorts) => Promise<T>): Promise<T> {
+    return this.withTenantTx(tenantId, (tx) => work(createPgTenantTxPorts(tx)));
+  }
+
+  /** Igual que `inTenant` pero con la transacción cruda (infraestructura y tests; el dominio no la ve). */
+  async withTenantTx<T>(tenantId: string, work: (tx: TenantTx) => Promise<T>): Promise<T> {
     if (!UUID_RE.test(tenantId)) {
       throw new TypeError("tenantId debe ser un UUID.");
     }

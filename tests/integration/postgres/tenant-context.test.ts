@@ -44,8 +44,8 @@ pgTest("TEST-CNS-740 pg: inTenant A y luego B con la misma conexión (max=1) no 
     const uow = new PgUnitOfWork(pool);
     const read = (tx: { query: (t: string) => Promise<{ rows: Array<Record<string, unknown>> }> }) =>
       tx.query("SELECT app.current_tenant_id()::text AS t, pg_backend_pid() AS pid");
-    const a = (await uow.inTenant(TENANT_A, read)).rows[0];
-    const b = (await uow.inTenant(TENANT_B, read)).rows[0];
+    const a = (await uow.withTenantTx(TENANT_A, read)).rows[0];
+    const b = (await uow.withTenantTx(TENANT_B, read)).rows[0];
     assert.equal(a?.t, TENANT_A);
     assert.equal(b?.t, TENANT_B);
     assert.equal(a?.pid, b?.pid, "el test exige la misma conexión física");
@@ -68,13 +68,13 @@ pgTest("TEST-CNS-742 pg: un error del trabajo hace ROLLBACK y la conexión vuelv
     const uow = new PgUnitOfWork(pool);
     await assert.rejects(
       () =>
-        uow.inTenant(TENANT_A, async (tx) => {
+        uow.withTenantTx(TENANT_A, async (tx) => {
           await tx.query("SELECT 1");
           await tx.query("SELECT 1/0");
         }),
       (error: unknown) => (error as { code?: string }).code === "22012",
     );
-    const next = (await uow.inTenant(TENANT_B, (tx) => tx.query("SELECT app.current_tenant_id()::text AS t"))).rows[0];
+    const next = (await uow.withTenantTx(TENANT_B, (tx) => tx.query("SELECT app.current_tenant_id()::text AS t"))).rows[0];
     assert.equal(next?.t, TENANT_B);
   } finally {
     await pool.end();
