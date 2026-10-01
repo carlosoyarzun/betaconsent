@@ -30,6 +30,7 @@ import {
 } from "../../../infra/adapters/in-memory-invitation-link-channel-sink.adapter.ts";
 import { createInMemoryTenantCatalogAdapter, type FixtureTenantCatalogPort } from "../../../infra/adapters/in-memory-tenant-catalog.adapter.ts";
 import type { IdempotencyPolicy } from "../../modules/common/idempotency-policy.config.ts";
+import type { PostgresStore } from "../../../infra/adapters/postgres/store.ts";
 import type { InvitationIssuancePolicy } from "../../modules/invitation/invitation-issuance-policy.config.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
@@ -278,6 +279,97 @@ export function createDefaultRevocationFlowPorts(
     },
     rightsCase: { rightsCaseRepo, ledger, uow: tenancy.uow },
   };
+}
+
+export type ConsentStoreMode = "memory" | "postgres";
+
+/**
+ * CONSENT_STORE=memory|postgres (CA-124 PR-E). Fail-closed: valor inválido -> lanza siempre; ausente ->
+ * lanza fuera de LOCAL; en LOCAL el default es `memory` (comportamiento histórico de dev y tests).
+ */
+export function resolveConsentStoreMode(raw: string | undefined, environment: string | undefined): ConsentStoreMode {
+  if (raw === undefined || raw === "") {
+    if (environment === "LOCAL") return "memory";
+    throw new Error("CONSENT_STORE es obligatorio fuera de LOCAL (memory|postgres). Abortando (fail-closed).");
+  }
+  if (raw === "memory" || raw === "postgres") return raw;
+  throw new Error(`CONSENT_STORE inválido ("${raw.slice(0, 20)}"): solo memory|postgres. Abortando (fail-closed).`);
+}
+
+export interface PostgresFlowConfig {
+  readonly otpPolicy: OtpPolicy;
+  readonly relationshipConfig: DecisionRelationshipConfig;
+  readonly recoveryTokenPolicy: RecoveryTokenPolicy;
+  readonly staffIdentity: StaffIdentityPort;
+  readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
+}
+
+/** Cableado Postgres de los tres bolsos de puertos. Repos/ledger/outbox/catálogo del bolso son los
+ * "prohibidos fuera de tx" del store: el dominio los sustituye por los de `uow.inTenant`; cualquier uso
+ * suelto falla cerrado (OutsideTransactionError). Los sinks de canal (OTP, enlaces) siguen en memoria. */
+export function createPostgresFlowPorts(
+  store: PostgresStore,
+  cfg: PostgresFlowConfig,
+): {
+  ports: ConsentFlowPorts;
+  revocationPorts: RevocationFlowPorts;
+  staffConsole: StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink };
+} {
+  const o = store.outsideTx;
+  const invitation: InvitationPorts = {
+    invitationRepo: o.invitationRepo,
+    eligibility: createInMemoryEligibilityAdapter(),
+    ledger: o.ledger,
+    uow: store.uow,
+    tenantResolver: store.tenantResolver,
+  };
+  const otp: OtpChallengePorts = {
+    otpRepo: o.otpRepo,
+    channel: createInMemoryOtpChannelSink(),
+    ledger: o.ledger,
+    invitation,
+    uow: store.uow,
+    policy: cfg.otpPolicy,
+    secret: randomBytes(32),
+  };
+  const decision: ConsentDecisionPorts = {
+    repo: o.consentDecisionRepo,
+    ledger: o.ledger,
+    invitation,
+    uow: store.uow,
+    config: LECTORPRO_BETA_CONFIG,
+    relationships: cfg.relationshipConfig,
+  };
+  const revocationPorts: RevocationFlowPorts = {
+    tenantHandle: store.tenantHandle,
+    revocation: {
+      revocationRepo: o.revocationRepo,
+      ledger: o.ledger,
+      outbox: o.outbox,
+      recoveryTokenRepo: o.recoveryTokenRepo,
+      recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+      recoveryTokenPolicy: cfg.recoveryTokenPolicy,
+      consentDecisionRepo: o.consentDecisionRepo,
+      uow: store.uow,
+      tenantResolver: store.tenantResolver,
+    },
+    rightsCase: { rightsCaseRepo: o.rightsCaseRepo, ledger: o.ledger, uow: store.uow },
+  };
+  const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
+  const staffConsole = {
+    issuance: {
+      invitation,
+      enrollmentRepo: o.enrollmentRepo,
+      tenantCatalog: o.tenantCatalog,
+      invitationLinkChannel: invitationLinkSink,
+      ...(cfg.invitationIssuancePolicy ? { policy: cfg.invitationIssuancePolicy } : {}),
+    },
+    enrollment: { enrollmentRepo: o.enrollmentRepo, tenantCatalog: o.tenantCatalog, ledger: o.ledger, uow: store.uow },
+    uow: store.uow,
+    staffIdentity: cfg.staffIdentity,
+    invitationLinkSink,
+  };
+  return { ports: { invitation, otp, decision }, revocationPorts, staffConsole };
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
@@ -718,7 +810,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       const outbox = revocationPorts.revocation.outbox as InMemoryOutbox;
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ enqueued: outbox.enqueued.map((r) => r.envelope) }));
+      // CONSENT_STORE=postgres: el outbox vive en la base (sin sink en memoria); se responde vacío.
+      res.end(JSON.stringify({ enqueued: outbox.enqueued ? outbox.enqueued.map((r) => r.envelope) : [] }));
       return;
     }
 
