@@ -360,3 +360,5 @@ TEST-CNS-847,integration,tests/integration/postgres/p2e-races.test.ts,"pg: RC2u 
 TEST-CNS-848,integration,tests/integration/postgres/p2e-races.test.ts,"pg: dos POST con el mismo token de recuperacion: uno gana, el otro UNIFORM sin efectos (P2-D)","CA-124;PR-D;SEC-CNS-015 P2-D",ACTIVE
 TEST-CNS-849,integration,tests/integration/postgres/p2e-races.test.ts,"pg: N submits OTP incorrectos concurrentes: attempts=N, LOCKED en maxAttempts, un solo OTP_LOCKED (GRD-OT-04)","CA-124;PR-D;SEC-CNS-016 C2",ACTIVE
 TEST-CNS-850,unit,tests/unit/otp-challenge/otp-expired-reissue.test.ts,"V1 con el challenge activo expirado lo vence y emite uno nuevo con ref fresca","CA-124;PR-D;SEC-CNS-016 P2-3;otp-challenge.spec V5",ACTIVE
+TEST-CNS-860,unit,tests/unit/postgres/unit-of-work.test.ts,"UoW: maxAttempts por defecto 8 y backoff con jitter completo acotado (techo exponencial con tope) entre reintentos","CA-124;PR-E;SEC-CNS-016 P2",ACTIVE
+TEST-CNS-861,integration,tests/integration/postgres/p2e-races.test.ts,"pg: 10 submits OTP incorrectos concurrentes sobre el mismo challenge con el maxAttempts por defecto: attempts=10, ninguno agota reintentos","CA-124;PR-E;SEC-CNS-016 P2",ACTIVE

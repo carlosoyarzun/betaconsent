@@ -39,8 +39,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const RETRYABLE_SQLSTATES = new Set(["40001", "40P01"]);
 
 export interface UnitOfWorkOptions {
+  /** Intentos totales de una unidad (reintentos de 40001/40P01, UNIQUE de carrera y conflicto de secuencia). Default 8. */
   maxAttempts?: number;
+  /** Backoff con jitter completo entre reintentos: espera aleatoria en [0, min(capMs, baseMs * 2^(intento-1))). Default 5 ms / 100 ms. */
+  backoffBaseMs?: number;
+  backoffCapMs?: number;
+  /** Inyectables para tests (sin timers reales ni azar real). */
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
 }
+
+export const DEFAULT_UOW_MAX_ATTEMPTS = 8;
+const DEFAULT_BACKOFF_BASE_MS = 20;
+const DEFAULT_BACKOFF_CAP_MS = 400;
 
 /**
  * Carreras de "una sola crea, las demas se adjuntan" que la base resuelve con un UNIQUE parcial
@@ -96,10 +107,26 @@ export function createPgTenantTxPorts(tx: TenantTx): TenantTxPorts {
 export class PgUnitOfWork implements UnitOfWorkPort {
   private readonly pool: PoolLike;
   private readonly maxAttempts: number;
+  private readonly backoffBaseMs: number;
+  private readonly backoffCapMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly random: () => number;
 
   constructor(pool: PoolLike, options: UnitOfWorkOptions = {}) {
     this.pool = pool;
-    this.maxAttempts = options.maxAttempts ?? 3;
+    this.maxAttempts = options.maxAttempts ?? DEFAULT_UOW_MAX_ATTEMPTS;
+    this.backoffBaseMs = options.backoffBaseMs ?? DEFAULT_BACKOFF_BASE_MS;
+    this.backoffCapMs = options.backoffCapMs ?? DEFAULT_BACKOFF_CAP_MS;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.random = options.random ?? Math.random;
+  }
+
+  /** SEC-CNS-016 P2: espera acotada con jitter completo antes de reintentar; evita que N unidades
+   * concurrentes sobre el mismo agregado reintenten en lockstep y agoten los intentos. */
+  private async backoff(attempt: number): Promise<void> {
+    const ceiling = Math.min(this.backoffCapMs, this.backoffBaseMs * 2 ** (attempt - 1));
+    const delay = Math.floor(this.random() * ceiling);
+    if (delay > 0) await this.sleep(delay);
   }
 
   inTenant<T>(tenantId: string, work: (tx: TenantTxPorts) => Promise<T>): Promise<T> {
@@ -126,7 +153,10 @@ export class PgUnitOfWork implements UnitOfWorkPort {
         const state = sqlState(error);
         const retryable =
           (state !== undefined && RETRYABLE_SQLSTATES.has(state)) || raceConstraint(error) !== undefined || isSequenceConflict(error);
-        if (retryable && attempt < this.maxAttempts) continue;
+        if (retryable && attempt < this.maxAttempts) {
+          await this.backoff(attempt);
+          continue;
+        }
         throw error;
       }
     }
