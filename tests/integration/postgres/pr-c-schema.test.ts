@@ -112,18 +112,18 @@ pgTest("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums
   try {
     // data_class distinto de SYNTHETIC en cada tabla (incluidas las de catalogo y tenant_resolve).
     await expectFail("INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete, data_class) VALUES ($1, 'c', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '[]', true, 'REAL')", [t], "consent_decision_data_class_synthetic");
-    await expectFail("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ($1, 'r', 'ch', 'REQUESTED', 'REAL')", [t], "revocation_data_class_synthetic");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ('dec', $1, 'r', 'ch', 'REQUESTED', 'REAL')", [t], "revocation_data_class_synthetic");
     await expectFail("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at, data_class) VALUES ($1, 'r', $2, 'ch', 'd', now(), 'REAL')", [t, hex("h808")], "recovery_token_data_class_synthetic");
     await expectFail("INSERT INTO app.subject (tenant_id, subject_ref, data_class) VALUES ($1, 's', 'REAL')", [t], "subject_data_class_synthetic");
     await expectFail("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status, data_class) VALUES ($1, 'p', 'c', 'p', 'ACTIVE', 'REAL')", [t], "school_participation_data_class_synthetic");
     await expectFail("INSERT INTO tenant_resolve.recovery_token (token_hash, tenant_id, recovery_ref, data_class) VALUES ($1, $2, 'r', 'REAL')", [hex("h808b"), t], "recovery_token_data_class_synthetic");
 
     // Enums, formas y pares.
-    await expectFail("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r', 'ch', 'COMPLETED')", [t], "revocation_status_enum");
-    await expectFail("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, verified_auth_path) VALUES ($1, 'r', 'ch', 'VERIFIED', 'SMS')", [t], "revocation_auth_path_enum");
-    await expectFail("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, reason_code) VALUES ($1, 'r', 'ch', 'FAILED', 'OTHER')", [t], "revocation_reason_code_enum");
-    await expectFail("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, attested_case_ref) VALUES ($1, 'r', 'ch', 'VERIFIED', 'case')", [t], "revocation_attestation_pair");
-    await expectFail("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, '', 'ch', 'REQUESTED')", [t], "revocation_ref_len");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r', 'ch', 'COMPLETED')", [t], "revocation_status_enum");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, verified_auth_path) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'SMS')", [t], "revocation_auth_path_enum");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, reason_code) VALUES ('dec', $1, 'r', 'ch', 'FAILED', 'OTHER')", [t], "revocation_reason_code_enum");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, attested_case_ref) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'case')", [t], "revocation_attestation_pair");
+    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, '', 'ch', 'REQUESTED')", [t], "revocation_ref_len");
     await expectFail("INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete) VALUES ($1, 'c', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'MAYBE', '[]', true)", [t], "consent_decision_state_enum");
     await expectFail("INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete) VALUES ($1, 'c', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '{}', true)", [t], "consent_decision_purposes_array");
     await expectFail("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'r', 'no-es-sha256', 'ch', 'd', now())", [t], "recovery_token_hash_shape");
@@ -131,7 +131,7 @@ pgTest("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums
     await expectFail("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, 'p', 'c', 'p', 'ARCHIVED')", [t], "school_participation_status_enum");
 
     // Y una fila valida SI entra (los CHECK no son vacuos): data_class queda SYNTHETIC por defecto.
-    await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'ok', 'ch', 'REQUESTED')", [t]);
+    await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'ok', 'ch', 'REQUESTED')", [t]);
     const row = (await admin.query<{ data_class: string }>("SELECT data_class FROM app.revocation WHERE tenant_id = $1", [t])).rows[0];
     assert.equal(row?.data_class, "SYNTHETIC");
   } finally {
@@ -145,7 +145,7 @@ pgTest("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id fal
   const admin = await ctx.connectAsSuperuser();
   await admin.query("INSERT INTO app.subject (tenant_id, subject_ref) VALUES ($1, 's809')", [ta]);
   await admin.query("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, 'p809', 'c', 'p', 'ACTIVE')", [ta]);
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r809', 'ch', 'REQUESTED')", [ta]);
+  await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r809', 'ch', 'REQUESTED')", [ta]);
   await admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'c809', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '[]', true)`,
@@ -160,7 +160,7 @@ pgTest("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id fal
     assert.equal((await app.query(`SELECT 1 FROM app.${table}`)).rows.length, 0, `${table}: sin tenant debe dar 0 filas`);
   }
   await assert.rejects(
-    () => app.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'x', 'ch', 'REQUESTED')", [ta]),
+    () => app.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'x', 'ch', 'REQUESTED')", [ta]),
     (e: unknown) => codeOf(e) === "42501",
     "INSERT sin tenant rechazado por RLS",
   );
@@ -183,7 +183,7 @@ pgTest("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id fal
 
     // tenant_id falso (WITH CHECK): B no puede insertar ni "mover" filas hacia A. Una unidad por intento.
     for (const sql of [
-      "INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'falso', 'ch', 'REQUESTED')",
+      "INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'falso', 'ch', 'REQUESTED')",
       "INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'falso', $2, 'ch', 'd', now())",
     ]) {
       await assert.rejects(
@@ -420,7 +420,7 @@ pgTest("TEST-CNS-813 pg: el worker solo lee el sobre del outbox de eventos CLAIM
 pgTest("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el runtime no puede borrar ni escribir columnas fijadas por la base", async (ctx) => {
   const t = fixtureUuid("t814");
   const admin = await ctx.connectAsSuperuser();
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r814', 'ch', 'REQUESTED')", [t]);
+  await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r814', 'ch', 'REQUESTED')", [t]);
   await admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'c814', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '[]', true)`,
@@ -443,7 +443,7 @@ pgTest("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el run
       "DELETE FROM app.consent_decision WHERE consent_id = 'c814'",
       "DELETE FROM app.recovery_token WHERE recovery_ref = 'rec814'",
       "TRUNCATE app.recovery_token",
-      "INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, data_class) VALUES (current_setting('app.tenant_id')::uuid, 'x', 'ch', 'REQUESTED', 'SYNTHETIC')",
+      "INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ('dec', current_setting('app.tenant_id')::uuid, 'x', 'ch', 'REQUESTED', 'SYNTHETIC')",
       "UPDATE tenant_resolve.recovery_token SET tenant_id = tenant_id",
     ];
     for (const sql of denied) {
