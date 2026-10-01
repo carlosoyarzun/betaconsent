@@ -75,3 +75,18 @@ pgTest("TEST-CNS-879 pg: fail-closed fuera de LOCAL, como superusuario, o con op
   await assert.rejects(() => applyLocalFixtures(migrator, fixtures, { environment: "LOCAL" }), (e: unknown) => /LOCAL\/SYNTHETIC/.test((e as Error).message));
   assert.equal((await admin.query("SELECT 1 FROM app.subject")).rows.length, before, "rollback completo");
 });
+
+pgTest("TEST-CNS-887 pg: las fixtures abortan si ops.db_catalog tiene 2 filas aunque una sea LOCAL/SYNTHETIC (count(*) = 1, no EXISTS)", async (ctx) => {
+  const fixtures = loadLocalFixtures(FIXTURES_DIR);
+  const migrator = await ctx.connectAs("consent_migrator");
+  const admin = await ctx.connectAsSuperuser();
+  // Base propia de este archivo: se rompe la restriccion de fila unica solo para fabricar el caso negativo.
+  await admin.query("ALTER TABLE ops.db_catalog DISABLE TRIGGER USER");
+  await admin.query("UPDATE ops.db_catalog SET environment = 'LOCAL'");
+  await admin.query("ALTER TABLE ops.db_catalog DROP CONSTRAINT db_catalog_single_row");
+  await admin.query("ALTER TABLE ops.db_catalog DROP CONSTRAINT db_catalog_pkey");
+  await admin.query("INSERT INTO ops.db_catalog (environment) VALUES ('LOCAL')");
+  const before = (await admin.query("SELECT 1 FROM app.subject")).rows.length;
+  await assert.rejects(() => applyLocalFixtures(migrator, fixtures, { environment: "LOCAL" }), (e: unknown) => /exactamente una fila/.test((e as Error).message));
+  assert.equal((await admin.query("SELECT 1 FROM app.subject")).rows.length, before, "rollback completo");
+});

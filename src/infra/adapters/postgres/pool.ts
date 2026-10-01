@@ -42,9 +42,38 @@ export function createPool(options: CreatePoolOptions): Pool {
     application_name: options.applicationName ?? "consent-app",
     connectionTimeoutMillis: 5_000,
   });
-  // Un error en una conexión ociosa no debe tumbar el proceso ni filtrar detalles.
-  pool.on("error", () => {});
+  // Un error en una conexión ociosa no debe tumbar el proceso ni filtrar detalles (solo name/code, sin mensaje).
+  pool.on("error", (error) => logClientError("pool_idle_client_error", error));
   return pool;
+}
+
+function logClientError(event: string, error: unknown): void {
+  const e = error as { name?: unknown; code?: unknown } | null;
+  const name = typeof e?.name === "string" ? e.name : "Error";
+  const code = typeof e?.code === "string" ? ` code=${e.code}` : "";
+  console.error(`${event} name=${name}${code}`);
+}
+
+/**
+ * pg-pool quita su listener de 'error' al prestar un cliente (index.js: removeListener('error', idleListener)):
+ * si Postgres cae o mata la sesión mientras está prestado y sin query en curso, 'error' se emite sin listener y el
+ * proceso cae (SEC-CNS-017 P2). Registra un listener propio, marca el cliente como roto y envuelve `release` para
+ * (a) quitar el listener (no acumularlos en conexiones reusadas) y (b) destruir la conexión rota (release(true)).
+ * Idempotente por cliente préstamo; llamar una vez por adquisición.
+ */
+export function guardBorrowedClient(client: PoolClient): PoolClient {
+  let broken = false;
+  const onError = (error: Error): void => {
+    broken = true;
+    logClientError("pg_borrowed_client_error", error);
+  };
+  client.on("error", onError);
+  const originalRelease = client.release.bind(client);
+  client.release = (err?: Error | boolean): void => {
+    client.removeListener("error", onError);
+    originalRelease(broken ? true : err);
+  };
+  return client;
 }
 
 /**
@@ -53,7 +82,7 @@ export function createPool(options: CreatePoolOptions): Pool {
  * liberarla).
  */
 export async function acquireCleanClient(pool: PoolLike): Promise<PoolClient> {
-  const client = await pool.connect();
+  const client = guardBorrowedClient(await pool.connect());
   let clean: boolean;
   try {
     const result = await client.query<{ tenant: string | null }>("SELECT current_setting('app.tenant_id', true) AS tenant");
