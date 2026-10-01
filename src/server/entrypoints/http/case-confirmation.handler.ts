@@ -95,6 +95,25 @@ function checkCaseCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig)
   }
 }
 
+/**
+ * X6 (DEC-BR-014 rev. 8 §3; rights-case.spec INV-RC-04): toda lectura del caso por el operador queda en
+ * ops.access_log (append-only, sin PII: solo refs opacas, rol y accion), NO en el ledger. El registro y la
+ * lectura van en la MISMA tx del tenant y fail-closed: si el log falla, la lectura no se entrega.
+ */
+function readCaseAsOperator(ports: CaseConfirmationPorts, session: CaseSessionPayload) {
+  return ports.revocation.uow.inTenant(session.tenantId, async (tx) => {
+    await tx.accessLog.record({
+      tenantId: session.tenantId,
+      actorRef: session.principalRef,
+      actorRole: session.role,
+      action: "RIGHTS_CASE_READ",
+      resourceType: "RIGHTS_CASE",
+      resourceRef: session.caseRef,
+    });
+    return tx.rightsCaseRepo.findByRef(session.tenantId, session.caseRef);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // POST /platform/rights-cases/{caseRef}/confirmation (API-CNS-138, RH3 paso 1). caseRef llega
 // del path; GRD-CM-01 exige que coincida con el de la sesión CASE, o 404 uniforme.
@@ -136,7 +155,7 @@ export async function handleRecordCaseConfirmation(
     return problem(422, "ERR-CM-06");
   }
 
-  const rightsCase = await ports.revocation.uow.inTenant(session.tenantId, (tx) => tx.rightsCaseRepo.findByRef(session.tenantId, session.caseRef));
+  const rightsCase = await readCaseAsOperator(ports, session);
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
     return uniformNotFound();
   }
@@ -192,7 +211,7 @@ export async function handleCosignCaseConfirmation(
     return problem(422, "ERR-CM-06");
   }
 
-  const rightsCase = await ports.revocation.uow.inTenant(session.tenantId, (tx) => tx.rightsCaseRepo.findByRef(session.tenantId, session.caseRef));
+  const rightsCase = await readCaseAsOperator(ports, session);
   if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) {
     return uniformNotFound();
   }

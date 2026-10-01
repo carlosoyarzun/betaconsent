@@ -62,6 +62,10 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       subjectBelongsToTenant: (t, subject) => uow.inTenant(t, (tx) => tx.tenantCatalog.subjectBelongsToTenant(t, subject)),
       findParticipation: (t, participation) => uow.inTenant(t, (tx) => tx.tenantCatalog.findParticipation(t, participation)),
     },
+    accessLog: {
+      record: (entry) => uow.inTenant(entry.tenantId, (tx) => tx.accessLog.record(entry)),
+      listByTenant: (t) => uow.inTenant(t, (tx) => tx.accessLog.listByTenant(t)),
+    },
     idempotency: {
       find: (t, hash) => uow.inTenant(t, (tx) => tx.idempotency.find(t, hash)),
       store: (t, hash, response) => uow.inTenant(t, (tx) => tx.idempotency.store(t, hash, response)),

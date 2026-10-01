@@ -441,3 +441,40 @@ test("TEST-CNS-644: camino feliz — RC1 abierto -> RH2 atestado -> RH3 paso 1 r
     await fx.close();
   }
 });
+
+test("TEST-CNS-919: X6 (INV-RC-04): la lectura del caso por el operador queda en ops.access_log (refs opacas, sin PII), no en el ledger; sin lectura (403/404) no hay registro", async () => {
+  const fx = await setUp({ chainRef: "chain-919", caseRef: "case-919", revocationRef: fixtureUuid("rv-919") });
+  const uow = fx.revocationPorts.revocation.uow;
+  const logOf = () => uow.inTenant(TENANT_ID, (tx) => tx.accessLog.listByTenant(TENANT_ID));
+  try {
+    const approver = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-03" });
+    const denied = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef, caseSessionCookie: approver.caseSessionCookie, caseCsrfCookie: approver.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN, csrfHeader: approver.caseCsrfCookie,
+    });
+    assert.equal(denied.status, 403);
+    assert.deepEqual(await logOf(), [], "403 por rol: el caso no se leyo, nada que registrar");
+
+    const login = await devStaffLogin(fx.baseUrl, { tenantId: TENANT_ID, caseRef: fx.caseRef, principalRef: "staff-synthetic-01" });
+    const res = await postConfirmation(fx.baseUrl, {
+      caseRef: fx.caseRef, caseSessionCookie: login.caseSessionCookie, caseCsrfCookie: login.caseCsrfCookie,
+      origin: ALLOWED_ORIGIN, csrfHeader: login.caseCsrfCookie,
+    });
+    assert.equal(res.status, 200);
+
+    const entries = await logOf();
+    assert.equal(entries.length, 1);
+    const [entry] = entries;
+    assert.deepEqual(
+      { tenantId: entry?.tenantId, actorRef: entry?.actorRef, actorRole: entry?.actorRole, action: entry?.action, resourceType: entry?.resourceType, resourceRef: entry?.resourceRef },
+      { tenantId: TENANT_ID, actorRef: "staff-synthetic-01", actorRole: "RIGHTS_OPERATOR", action: "RIGHTS_CASE_READ", resourceType: "RIGHTS_CASE", resourceRef: fx.caseRef },
+    );
+    assert.ok(entry?.accessedAt instanceof Date);
+    assert.ok(!/@|example/.test(JSON.stringify(entry)), "sin PII en el registro");
+    // No es evento de ledger: ningun eventType de acceso/lectura en la cadena.
+    const chain = await uow.inTenant(TENANT_ID, (tx) => tx.ledger.readChain(TENANT_ID));
+    assert.ok(chain.every((r) => !/READ|ACCESS/.test(r.eventType)), "las lecturas no van al ledger");
+  } finally {
+    await fx.close();
+  }
+});
