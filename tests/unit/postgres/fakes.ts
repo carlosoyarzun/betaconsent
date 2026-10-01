@@ -1,5 +1,6 @@
 // Gobierna: CA-124 (H09). Dobles mínimos de pg para tests unitarios (sin Postgres).
 
+import { EventEmitter } from "node:events";
 import type { PoolClient, QueryResult } from "pg";
 
 export interface RecordedQuery {
@@ -9,13 +10,14 @@ export interface RecordedQuery {
 
 export type Responder = (text: string, values?: readonly unknown[]) => Partial<QueryResult> | Error | undefined;
 
-export class FakeClient {
+export class FakeClient extends EventEmitter {
   readonly queries: RecordedQuery[] = [];
   releases: Array<Error | boolean | undefined> = [];
   tenantSetting: string | null = null;
   private readonly responder: Responder;
 
   constructor(responder: Responder = () => undefined) {
+    super();
     this.responder = responder;
   }
 
