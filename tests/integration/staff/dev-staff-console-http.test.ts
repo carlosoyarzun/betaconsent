@@ -228,3 +228,26 @@ test("TEST-CNS-1065: dos invitaciones a alumnos distintos en el mismo arranque f
     await h.close();
   }
 });
+
+test("TEST-CNS-1066: cuerpo > 8 KiB -> 413 y corte (solo LOCAL); fuera de LOCAL 404 sin leer cuerpo; CSP de la página restringe script/object/base", async () => {
+  const h = await startServer("LOCAL");
+  try {
+    const { cookie, csrf } = await loginViaForm(h);
+    const big = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "a".repeat(20000) }, { cookie }).catch(() => null);
+    if (big) assert.equal(big.status, 413); // el servidor puede cortar la conexión antes de que el cliente lea la respuesta
+    assert.equal(h.staff.invitationLinkSink.sent.length, 0);
+    const csp = (await fetch(`${h.baseUrl}${BASE}`)).headers.get("content-security-policy") ?? "";
+    for (const d of ["script-src 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), d);
+    // sigue vivo y funcional tras el corte
+    assert.equal((await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie })).status, 200);
+  } finally {
+    await h.close();
+  }
+  const d = await startServer("DEV");
+  try {
+    const res = await form(d, `${BASE}/invite`, { x: "a".repeat(20000) });
+    assert.equal(res.status, 404);
+  } finally {
+    await d.close();
+  }
+});

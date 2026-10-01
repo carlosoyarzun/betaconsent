@@ -8,9 +8,10 @@
 // -> handleSendInvitation) con la sesión y el CSRF del navegador (cookie staff + campo oculto como
 // cabecera double-submit). Así valida, autoriza, aplica CSRF/Origin, idempotencia y saca el
 // tenant de la sesión exactamente igual que la API; el formulario NO transporta tenant.
+// Limitación de dev (documentada, sin cambiar dominio): si un paso falla a mitad de la cadena (I1/I2/I3) el
+// enrollment ya creado queda activo y reintentar con el mismo alumno da ENROLLMENT_ALREADY_ACTIVE (elegir otro alumno).
+// La Idempotency-Key de I1 es determinista (`dev-console-${enrollmentRef}`).
 // Cero PII: solo datos sintéticos; el correo del apoderado nunca se registra en logs ni se refleja.
-
-import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
@@ -161,7 +162,7 @@ export async function handleDevStaffConsole(req: DevStaffConsoleRequest, deps: D
     const enrollmentRef = (en0.body as { enrollmentRef: string }).enrollmentRef;
 
     const i1 = await handleCreateInvitation(
-      { ...base, idempotencyKeyHeader: `dev-console-${randomUUID()}`, body: { subjectRef: student.subjectRef, enrollmentRef, participationRef: student.participationRef, contextRef: fixture.contextRef } },
+      { ...base, idempotencyKeyHeader: `dev-console-${enrollmentRef}`, body: { subjectRef: student.subjectRef, enrollmentRef, participationRef: student.participationRef, contextRef: fixture.contextRef } },
       deps.staffConsole,
       config,
       deps.staffSessionKey,

@@ -482,3 +482,4 @@ TEST-CNS-1062,integration,tests/integration/staff/dev-staff-console-http.test.ts
 TEST-CNS-1063,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: sin sesion STAFF no permite enviar","CA-125;Carlos 2026-10-01;GRD-CM-01",ACTIVE
 TEST-CNS-1064,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: CSRF ausente/distinto u Origin ajeno rechazados 403 sin efecto","CA-125;Carlos 2026-10-01;GRD-CM-10",ACTIVE
 TEST-CNS-1065,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: dos invitaciones a alumnos distintos en el mismo arranque; alumno repetido da error claro; alumno fuera del catalogo rechazado","CA-125;Carlos 2026-10-01",ACTIVE
+TEST-CNS-1066,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: cuerpo >8KiB corta con 413; gating LOCAL antes de leer cuerpo (404); CSP script/object/base none","CA-125;Carlos 2026-10-01;SEC review",ACTIVE
