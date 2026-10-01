@@ -7,12 +7,13 @@
 // siquiera reciben un puerto capaz de leer tenant.active (revisión estática == estructural
 // aquí), así que su resultado no puede depender de él.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { closeCase, expressRevocationIntentInCase } from "../../../src/server/modules/rights-case/rights-case.ts";
-import { attestHumanAssistedVerification, cosignCaseConfirmation, recordCaseConfirmationPendingCosign } from "../../../src/server/modules/revocation/revocation.ts";
+import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign } from "../../../src/server/modules/revocation/revocation.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";

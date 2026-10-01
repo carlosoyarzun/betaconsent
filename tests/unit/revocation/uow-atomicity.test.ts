@@ -2,23 +2,12 @@
 // revocation.spec R3/R4/R3r/RH3. TEST-CNS-773..776: con UnitOfWork, un fallo inyectado en R4 deja
 // TODO como estaba antes de la operación y el reintento llega a APPLIED. SYNTHETIC DATA ONLY.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import { revocationRequestedPayload, revocationVerifiedPayload } from "../../contract/ledger-payload-fixtures.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  confirmRevocation,
-  cosignCaseConfirmation,
-  evaluateRecoveryTokenEligibilityByHash,
-  hashRecoveryToken,
-  issueRecoveryLinkBearer,
-  recordCaseConfirmationPendingCosign,
-  attestHumanAssistedVerification,
-  requestRevocation,
-  revokeWithRecoveryLinkByHash,
-  verifyRevocationOtp,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { confirmRevocation, cosignCaseConfirmation, evaluateRecoveryTokenEligibilityByHash, hashRecoveryToken, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, revokeWithRecoveryLinkByHash, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { LedgerSequenceConflictError } from "../../../src/server/ports/ledger.port.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";

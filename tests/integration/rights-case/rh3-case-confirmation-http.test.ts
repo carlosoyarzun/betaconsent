@@ -9,6 +9,7 @@
 // contrato (schema-lite).
 // TEST-CNS-637..644.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
@@ -19,7 +20,7 @@ import { createConsentFlowHttpServer, createDefaultConsentFlowPorts, createDefau
 import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "../../../src/server/entrypoints/http/revocation-flow.handler.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
-import { attestHumanAssistedVerification } from "../../../src/server/modules/revocation/revocation.ts";
+
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { StaffIdentityPort, StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import type { Environment } from "../../../src/server/modules/common/types.ts";

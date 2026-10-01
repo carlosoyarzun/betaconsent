@@ -5,21 +5,10 @@
 // revierte TODO (revocation, ledger, outbox, decision y consumo del token) y el reintento llega a
 // APPLIED. TEST-CNS-818: la numeracion del ledger la fija R4 con expectedSequence. SYNTHETIC ONLY.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import assert from "node:assert/strict";
 
-import {
-  attestHumanAssistedVerification,
-  confirmRevocation,
-  cosignCaseConfirmation,
-  evaluateRecoveryTokenEligibilityByHash,
-  hashRecoveryToken,
-  issueRecoveryLinkBearer,
-  recordCaseConfirmationPendingCosign,
-  requestRevocation,
-  revokeWithRecoveryLinkByHash,
-  verifyRevocationOtp,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { confirmRevocation, cosignCaseConfirmation, evaluateRecoveryTokenEligibilityByHash, hashRecoveryToken, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, revokeWithRecoveryLinkByHash, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";

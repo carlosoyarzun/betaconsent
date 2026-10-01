@@ -22,7 +22,13 @@ import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
-import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../modules/revocation/revocation.ts";
+import {
+  approveCaseVerification,
+  cosignCaseConfirmation,
+  proposeCaseVerification,
+  recordCaseConfirmationPendingCosign,
+  type RevocationPorts,
+} from "../../modules/revocation/revocation.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { Environment } from "../../modules/common/types.ts";
@@ -54,6 +60,7 @@ const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
   "ERR-RV-18": "RH3_FOUR_EYES_REQUIRED",
   "ERR-RV-20": "RH3_NOT_BOUND_TO_RH2",
   "ERR-RC-10": "ROSTER_INSUFFICIENT",
+  "ERR-RV-07": "RH2_SEPARATION_OF_DUTIES_VIOLATION",
 };
 
 function uniformNotFound(): HttpResult {
@@ -227,6 +234,101 @@ export async function handleCosignCaseConfirmation(
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();
       return problem(409, err.code);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RH2 con doble control (GRD-RV-09). POST /platform/rights-cases/{caseRef}/verification-proposals (API-CNS-136,
+// propose_case_verification, RIGHTS_OPERATOR con sesión CASE) y
+// POST /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/approval (API-CNS-137,
+// approve_case_verification, PRIVACY_LEGAL/SECURITY; en IT0 el roster los modela como APPROVER, OPEN-TC-06).
+// Actor SIEMPRE de la sesión (GRD-CM-07/GRD-RV-09: nunca de parámetros). Rol que no corresponde -> 403 ACTOR_NOT_ALLOWED.
+// Step-up/aserción del IdP (GRD-RC-12, P-36): APR-IDP PENDING (Carlos / studio). Interino IT0 LOCAL-only (opción (ii),
+// Carlos 2026-09-28): se exige `stepUpAssertion` con la forma del contrato (string 1..8192, nunca persistido ni logueado)
+// y su presencia cuenta como ATTESTED; sin IdP real NO hay verificación criptográfica de la aserción. FINDING P1 hasta APR-IDP.
+// ---------------------------------------------------------------------------
+const SCRIPT_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,32}$/;
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function isStepUpAssertion(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 8192;
+}
+
+function strictBody(body: unknown, allowed: readonly string[]): Record<string, unknown> | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  return Object.keys(record).every((k) => allowed.includes(k)) ? record : null;
+}
+
+export async function handleProposeCaseVerification(
+  request: RawConsentRequest,
+  caseRefFromPath: string,
+  ports: CaseConfirmationPorts,
+  config: RightsCaseHttpConfig,
+  caseSessionKey: Buffer,
+): Promise<HttpResult> {
+  const csrfFailure = checkCaseCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+  const cookies = parseCookies(request.cookieHeader);
+  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
+  if (!session || session.caseRef !== caseRefFromPath) return uniformNotFound();
+  if (session.role !== "RIGHTS_OPERATOR") return actorNotAllowed(); // GRD-RV-09: propone el RIGHTS_OPERATOR
+
+  const body = strictBody(request.body, ["verificationScriptVersion", "stepUpAssertion"]);
+  if (!body || typeof body.verificationScriptVersion !== "string" || !SCRIPT_VERSION_PATTERN.test(body.verificationScriptVersion) || !isStepUpAssertion(body.stepUpAssertion)) {
+    return problem(422, "ERR-CM-06");
+  }
+  const rightsCase = await readCaseAsOperator(ports, session);
+  if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) return uniformNotFound();
+  try {
+    const proposalRef = randomUUID();
+    const record = await proposeCaseVerification(ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, { principalRef: session.principalRef }, {
+      proposalRef,
+      verificationScriptVersion: body.verificationScriptVersion,
+    });
+    // ProposalAck: la propuesta no tiene efecto sobre la Revocation hasta la aprobación; PENDING hasta que el aprobador atesta.
+    return { status: 201, body: { proposalRef: record.proposal?.proposalRef ?? proposalRef, attestation: "PENDING" } };
+  } catch (err) {
+    if (err instanceof DomainError) {
+      if (err.code === "ERR-CM-01") return uniformNotFound();
+      return problem(err.code === "ERR-RV-07" ? 403 : 409, err.code);
+    }
+    throw err;
+  }
+}
+
+export async function handleApproveCaseVerification(
+  request: RawConsentRequest,
+  caseRefFromPath: string,
+  proposalRefFromPath: string,
+  ports: CaseConfirmationPorts,
+  config: RightsCaseHttpConfig,
+  caseSessionKey: Buffer,
+): Promise<HttpResult> {
+  const csrfFailure = checkCaseCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+  const cookies = parseCookies(request.cookieHeader);
+  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
+  if (!session || session.caseRef !== caseRefFromPath) return uniformNotFound();
+  if (!UUID_V4_PATTERN.test(proposalRefFromPath)) return uniformNotFound();
+  if (session.role !== "APPROVER") return actorNotAllowed(); // GRD-RV-09: aprueba PRIVACY_LEGAL/SECURITY (APPROVER en IT0)
+
+  const body = strictBody(request.body, ["stepUpAssertion"]);
+  if (!body || !isStepUpAssertion(body.stepUpAssertion)) return problem(422, "ERR-CM-06");
+  const rightsCase = await readCaseAsOperator(ports, session);
+  if (!rightsCase || rightsCase.tenantId !== session.tenantId || !rightsCase.revocationRef) return uniformNotFound();
+  try {
+    const result = await approveCaseVerification(
+      ports.revocation, ports.staffIdentity, session.tenantId, rightsCase.revocationRef, session.caseRef, proposalRefFromPath,
+      { principalRef: session.principalRef }, true, // aserción ATTESTED: stub LOCAL-only (APR-IDP PENDING), ver cabecera
+    );
+    return { status: 200, body: { attestation: result.attestation, revocationState: result.record.status === "VERIFIED" ? "VERIFIED" : "REQUESTED" } };
+  } catch (err) {
+    if (err instanceof DomainError) {
+      if (err.code === "ERR-CM-01") return uniformNotFound();
+      return problem(err.code === "ERR-RV-07" ? 403 : 409, err.code);
     }
     throw err;
   }

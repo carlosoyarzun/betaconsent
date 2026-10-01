@@ -83,8 +83,8 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
 
   assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["prior_steps_complete", "purposes", "receipt_ref", "state", "steps_recorded"]);
   assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "UPDATE"), [
-    "attested_case_ref", "attested_revocation_ref", "case_ref", "cosigned_by_ref", "reason_code", "recorded_by_ref", "status",
-    "verified_auth_path", "verified_recovery_method",
+    "attested_case_ref", "attested_revocation_ref", "case_ref", "cosigned_by_ref", "proposal_ref", "proposed_by_ref", "reason_code",
+    "recorded_by_ref", "second_approver_ref", "status", "verification_script_version", "verified_auth_path", "verified_recovery_method",
   ]);
   assert.deepEqual(await columnsWith(admin, "app.recovery_token", "app_rw", "UPDATE"), ["consumed_at"]);
   assert.deepEqual(await columnsWith(admin, "app.recovery_token", "app_rw", "INSERT"), [

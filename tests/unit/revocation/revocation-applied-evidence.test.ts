@@ -5,23 +5,12 @@
 // decisión de Carlos 2026-09-28, opción (a)). TEST-CNS-680..685.
 // El outbox consent.revoked de R4 se prueba en outbox-consent-revoked.test.ts (TEST-CNS-688..697).
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  attestHumanAssistedVerification,
-  confirmRevocation,
-  cosignCaseConfirmation,
-  applyRevocation,
-  issueRecoveryLinkBearer,
-  recordCaseConfirmationPendingCosign,
-  requestRevocation,
-  resolveRecoveryTokenForRedeem,
-  revokeWithRecoveryLink,
-  verifyRevocationOtp,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { confirmRevocation, cosignCaseConfirmation, applyRevocation, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, resolveRecoveryTokenForRedeem, revokeWithRecoveryLink, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";

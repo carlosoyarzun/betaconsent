@@ -77,6 +77,9 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
       verifiedAuthPath: "RECOVERY",
       verifiedRecoveryMethod: "HUMAN_ASSISTED",
       reasonCode: "WITHDRAWN_BY_REQUESTER",
+      // RH2 (0016): propuesta del paso 1 y aprobador distinto del paso 2.
+      proposal: { proposalRef: fixtureUuid("prop800"), proposedByRef: fixtureUuid("op800"), verificationScriptVersion: "guion-1" },
+      secondApproverRef: fixtureUuid("appr800"),
     });
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(full));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findByRef(t, r2)), full);

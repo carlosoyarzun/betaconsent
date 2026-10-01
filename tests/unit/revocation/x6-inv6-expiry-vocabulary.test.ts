@@ -143,9 +143,10 @@ test("TEST-CNS-967 (DEC-BR-017 §6): todos los eventos de revocación/recuperaci
       const result = validateLedgerEventPayload(e.eventType, e.payload);
       assert.ok(result.ok, `${e.eventType} fuera de su $def: ${result.errors.join(";")}`);
       if (e.eventType === "REVOCATION_VERIFIED" && (e.payload as { recoveryMethod?: string }).recoveryMethod === "HUMAN_ASSISTED") {
-        // FINDING P1 conocido: el $def exige verifiedByRef y secondApproverRef (RH2 con doble control, GRD-RV-09) y el RH2
-        // simplificado a un paso no los tiene; schema-lite no evalúa ese if/then. Este assert debe invertirse al implementar RH2.
-        assert.equal("verifiedByRef" in e.payload, false, "brecha RH2 documentada");
+        // RH2 con doble control (GRD-RV-09): el $def exige verifiedByRef y secondApproverRef; schema-lite no evalúa ese if/then,
+        // así que se comprueba explícitamente (y TEST-CNS-980 prueba que el emisor falla sin ellos).
+        const pl = e.payload as { verifiedByRef?: string; secondApproverRef?: string };
+        assert.ok(pl.verifiedByRef && pl.secondApproverRef && pl.verifiedByRef !== pl.secondApproverRef, "RH2: dos principals distintos");
       }
     }
   }

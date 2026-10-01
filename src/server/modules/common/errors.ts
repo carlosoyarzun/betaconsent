@@ -19,7 +19,9 @@ export type DomainErrorCode =
   | "ERR-RV-02" // CHAIN_NOT_GRANTED (GRD-RV-02 onFail) — respuesta uniforme, sin evento
   | "ERR-RV-04" // REVOCATION_ACTOR_NOT_ALLOWED (GRD-RV-07/08 onFail: actor no DecisionMaker o falta confirmación explícita). NO es el onFail de GRD-RV-04 (single_open_revocation_per_chain, onFail null: se adjunta)
   | "ERR-RV-05" // RECOVERY_TOKEN_INVALID (GRD-RV-06 onFail) — respuesta uniforme, sin consumir el token
+  | "ERR-RV-07" // RH2_SEPARATION_OF_DUTIES_VIOLATION (GRD-RV-09 onFail: mismo principal, rol inválido, aprobador/receptor de un grant)
   | "ERR-RV-10" // DOWNSTREAM_ACK_INVALID (GRD-RV-13/14 onFail: el stub rechaza firma inválida o repetida)
+  | "ERR-RV-13" // LEDGER_VOCABULARY_VIOLATION (GRD-RV-19/28): payload fuera de la lista blanca o sin campos exigidos
   | "ERR-RV-18" // GRD-RV-26 onFail (RH3_FOUR_EYES_REQUIRED: falta confirmación previa o co-firma el mismo principal)
   | "ERR-RV-20" // GRD-RV-10 onFail (RH3 sin RH2/RH2v ATTESTED previa)
   // specs/state-machines/invitation.spec.yaml

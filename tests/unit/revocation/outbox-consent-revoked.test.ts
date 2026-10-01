@@ -4,23 +4,11 @@
 // PII). CA-127 (diseño aprobado por Carlos 2026-09-28). TEST-CNS-688..693.
 // Datos SINTÉTICOS. Fuera de alcance: proyección C6/REVOKED (F2), consent.granted, R5/R6/R7, C8.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  applyRevocation,
-  attestHumanAssistedVerification,
-  confirmRevocation,
-  cosignCaseConfirmation,
-  issueRecoveryLinkBearer,
-  recordCaseConfirmationPendingCosign,
-  requestRevocation,
-  resolveRecoveryTokenForRedeem,
-  revokeWithRecoveryLink,
-  verifyRevocationOtp,
-  withdrawRevocation,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { applyRevocation, confirmRevocation, cosignCaseConfirmation, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, resolveRecoveryTokenForRedeem, revokeWithRecoveryLink, verifyRevocationOtp, withdrawRevocation, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";

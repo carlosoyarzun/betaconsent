@@ -29,6 +29,11 @@ export interface RevocationRecord {
    * para CONSENT_REVOKED.authPath/recoveryMethod. recoveryMethod solo si authPath = RECOVERY. */
   verifiedAuthPath?: "OTP" | "RECOVERY";
   verifiedRecoveryMethod?: "CHANNEL_LINK" | "HUMAN_ASSISTED";
+  /** RH2 paso 1 (propose_case_verification, API-CNS-136): propuesta del RIGHTS_OPERATOR (verifiedByRef) con el guion
+   * versionado; sin efecto sobre el estado hasta la aprobación. */
+  proposal?: { readonly proposalRef: string; readonly proposedByRef: string; readonly verificationScriptVersion: string };
+  /** RH2 paso 2 (approve_case_verification, API-CNS-137): secondApproverRef (distinto de proposedByRef, GRD-RV-09). */
+  secondApproverRef?: string;
   /** R8 (WithdrawRevocationRequest): único reasonCode del vocabulario IT0 (DEC-BR-017 §6). */
   reasonCode?: "WITHDRAWN_BY_REQUESTER";
 }

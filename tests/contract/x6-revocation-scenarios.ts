@@ -3,20 +3,10 @@
 // (integration): las tres vías de revocación (OTP -> enlace -> caso humano) hasta APPLIED y el
 // tramo downstream (R5/R6/R7) contra el stub interno. SYNTHETIC ONLY.
 
+import { attestHumanAssistedVerification } from "./rh2-helper.ts";
 import assert from "node:assert/strict";
 
-import {
-  attestHumanAssistedVerification,
-  confirmRevocation,
-  cosignCaseConfirmation,
-  hashRecoveryToken,
-  issueRecoveryLinkBearer,
-  recordCaseConfirmationPendingCosign,
-  requestRevocation,
-  revokeWithRecoveryLinkByHash,
-  verifyRevocationOtp,
-  type RevocationPorts,
-} from "../../src/server/modules/revocation/revocation.ts";
+import { confirmRevocation, cosignCaseConfirmation, hashRecoveryToken, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, revokeWithRecoveryLinkByHash, verifyRevocationOtp, type RevocationPorts } from "../../src/server/modules/revocation/revocation.ts";
 import {
   attestDownstreamErasure,
   emitRevocationDownstream,

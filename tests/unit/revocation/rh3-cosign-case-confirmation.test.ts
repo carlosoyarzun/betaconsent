@@ -5,16 +5,12 @@
 // contracts/openapi/consent-it0.openapi.yaml API-CNS-139. CA-128.
 // TEST-CNS-660..666.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
-import {
-  attestHumanAssistedVerification,
-  cosignCaseConfirmation,
-  recordCaseConfirmationPendingCosign,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";

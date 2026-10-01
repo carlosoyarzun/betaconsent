@@ -3,23 +3,11 @@
 // revocationRef) y GRD-RV-02 / GRD-RV-06. CA-127 (FINDING P1 proyección C6/REVOKED).
 // Datos SINTÉTICOS. TEST-CNS-698..702.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  applyRevocation,
-  attestHumanAssistedVerification,
-  confirmRevocation,
-  cosignCaseConfirmation,
-  evaluateRecoveryTokenEligibilityByHash,
-  issueRecoveryLinkBearer,
-  recordCaseConfirmationPendingCosign,
-  requestRevocation,
-  resolveRecoveryTokenForRedeem,
-  revokeWithRecoveryLink,
-  verifyRevocationOtp,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
+import { applyRevocation, confirmRevocation, cosignCaseConfirmation, evaluateRecoveryTokenEligibilityByHash, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, resolveRecoveryTokenForRedeem, revokeWithRecoveryLink, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";

@@ -1,11 +1,12 @@
 // Gobierna: specs/state-machines/revocation.spec.yaml RH3 (GRD-RV-10, ERR-RV-20; GRD-CM-01/06;
 // F-R14-04/INV-RV-11). TEST-CNS-463, TEST-CNS-464, TEST-CNS-465.
 
+import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import test from "node:test";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import assert from "node:assert/strict";
 
-import { attestHumanAssistedVerification, cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
+import { cosignCaseConfirmation, recordCaseConfirmationPendingCosign, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
