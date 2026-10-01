@@ -28,36 +28,36 @@ import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adap
 import { createInMemoryTenancy, withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 /** Registro de tenants "vivo" fuera de las máquinas RIGHTS, solo para el fixture del test. */
-const suspendedTenants = new Map<string, { active: boolean }>([["tenant-suspended", { active: false }]]);
+const suspendedTenants = new Map<string, { active: boolean }>([["b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", { active: false }]]);
 
 test("TEST-CNS-461: RC4/RC5/RC6 (cierre de RightsCase) se ejecutan con tenant SUSPENDED (RIGHTS nunca lee tenant.active)", async () => {
-  assert.equal(suspendedTenants.get("tenant-suspended")?.active, false);
+  assert.equal(suspendedTenants.get("b4d4a4b6-7361-48c5-8a6c-9cef3198a66d")?.active, false);
 
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   await rightsCaseRepo.save({
     caseRef: fixtureUuid("case-suspended"),
-    tenantId: "tenant-suspended",
+    tenantId: "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d",
     chainRef: fixtureUuid("chain-1"),
     revokedDecisionRef: fixtureUuid("decision-1"),
     status: "IN_VERIFICATION",
   });
   const ledger = createInMemoryLedgerAdapter();
 
-  const closed = await closeCase({ rightsCaseRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo }).uow }, "tenant-suspended", fixtureUuid("case-suspended"), "RESOLVED");
+  const closed = await closeCase({ rightsCaseRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo }).uow }, "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", fixtureUuid("case-suspended"), "RESOLVED");
 
   assert.equal(closed.status, "RESOLVED");
 });
 
 test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega a APPLIED", async () => {
-  assert.equal(suspendedTenants.get("tenant-suspended")?.active, false);
+  assert.equal(suspendedTenants.get("b4d4a4b6-7361-48c5-8a6c-9cef3198a66d")?.active, false);
 
   const tenantHandle = createInMemoryTenantHandleAdapter([
-    { handle: "handle-suspended", tenantId: "tenant-suspended", chainRef: fixtureUuid("chain-2"), revokedDecisionRef: fixtureUuid("decision-2") },
+    { handle: "handle-suspended", tenantId: "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", chainRef: fixtureUuid("chain-2"), revokedDecisionRef: fixtureUuid("decision-2") },
   ]);
   const rightsCaseRepo = createInMemoryRightsCaseRepository();
   await rightsCaseRepo.save({
     caseRef: fixtureUuid("case-suspended-2"),
-    tenantId: "tenant-suspended",
+    tenantId: "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d",
     chainRef: fixtureUuid("chain-2"),
     revokedDecisionRef: fixtureUuid("decision-2"),
     status: "CONTACTING",
@@ -85,7 +85,7 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
   assert.equal(revocation.status, "REQUESTED");
 
   // RH2
-  const verified = await attestHumanAssistedVerification(ports, "tenant-suspended", revocation.revocationRef, fixtureUuid("case-suspended-2"));
+  const verified = await attestHumanAssistedVerification(ports, "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", revocation.revocationRef, fixtureUuid("case-suspended-2"));
   assert.equal(verified.status, "VERIFIED");
 
   // RH3
@@ -95,10 +95,10 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
     { principalRef: fixtureUuid("approver-c"), role: "APPROVER" },
     { principalRef: fixtureUuid("approver-d"), role: "APPROVER" },
   ]);
-  await recordCaseConfirmationPendingCosign(ports, staffIdentity, "tenant-suspended", revocation.revocationRef, fixtureUuid("case-suspended-2"), {
+  await recordCaseConfirmationPendingCosign(ports, staffIdentity, "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", revocation.revocationRef, fixtureUuid("case-suspended-2"), {
     recordedByPrincipalRef: fixtureUuid("operator-a"),
   });
-  const confirmed = await cosignCaseConfirmation(ports, staffIdentity, "tenant-suspended", revocation.revocationRef, fixtureUuid("case-suspended-2"), {
+  const confirmed = await cosignCaseConfirmation(ports, staffIdentity, "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", revocation.revocationRef, fixtureUuid("case-suspended-2"), {
     cosignedByPrincipalRef: fixtureUuid("operator-b"),
   });
   // R4 síncrono dentro del cosign en IT0 (Carlos 2026-09-28): la cadena termina en APPLIED.
@@ -106,7 +106,7 @@ test("TEST-CNS-462 (INV-6): cadena RC3->RH2->RH3->R4 con tenant SUSPENDED llega 
 });
 
 test("TEST-CNS-695 (INV-6): con tenant SUSPENDED la cadena RC3->RH2->RH3->R4 encola igual un consent.revoked válido (eligibility_to_revoke)", async () => {
-  const TS = fixtureUuid("tenant-suspended-695");
+  const TS = fixtureUuid("64652b46-a72d-4f3a-8075-8dff65f89d12");
   const D = fixtureUuid("decision-695");
   suspendedTenants.set(TS, { active: false });
   assert.equal(suspendedTenants.get(TS)?.active, false);

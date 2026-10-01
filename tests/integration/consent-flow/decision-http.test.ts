@@ -24,7 +24,7 @@ const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
 const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
-const TENANT_ID = "tenant-1";
+const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+channel-2@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
@@ -107,19 +107,19 @@ const VALID_CSRF = { origin: ALLOWED_ORIGIN, csrfHeader: "csrf-token-abcdefgh", 
 
 /** Recorre invitación -> OTP hasta dejar una sesión verificada (post-V3), lista para
  * /decision/submit. Devuelve la cookie de sesión verificada. */
-async function bringToVerifiedSession(harness: Harness, invitationRef: string, subjectRef: string): Promise<string> {
-  await createInvitation(harness.ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
+async function bringToVerifiedSession(harness: Harness, invitationRef: string, subjectRef: string, tenantId: string = TENANT_ID): Promise<string> {
+  await createInvitation(harness.ports.invitation, tenantId, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef,
   });
-  await markInvitationReady(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef, {
+  await markInvitationReady(harness.ports.invitation, tenantId, "INVITER", invitationRef, {
     consentVersion: "v1",
     expiresAt: new Date(Date.now() + 60_000),
     recipientChannelRef: CHANNEL_REF,
   });
-  const { token } = await sendInvitation(harness.ports.invitation, TENANT_ID, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
+  const { token } = await sendInvitation(harness.ports.invitation, tenantId, "INVITER", invitationRef, { deliveryChannel: "CONSENT_APP_EMAIL" });
 
   const redeemed = await fetch(`${harness.baseUrl}/i/${token}`, { redirect: "manual" });
   const handleCookie = parseSetCookie(redeemed)[INVITATION_HANDLE_COOKIE_NAME];
@@ -257,10 +257,32 @@ test("TEST-CNS-933: el decisionMakerRef persistido es UUIDv4 desde HMAC con clav
     const dm = record?.decisionMakerRef ?? "";
     assert.match(dm, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.ok(dm.length >= 1 && dm.length <= 100 && !dm.includes("@"));
-    assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, CHANNEL_REF), "determinista: mismo canal -> mismo ref");
+    assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, TENANT_ID, CHANNEL_REF), "determinista: mismo canal -> mismo ref");
     const sha = createHash("sha256").update(CHANNEL_REF).digest("hex");
     assert.ok(!dm.replaceAll("-", "").includes(sha.slice(0, 16)), "no recuperable por SHA-256 simple");
     assert.ok((record?.chainRef ?? "").length > 0 && (record?.chainRef ?? "").length <= 100);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("TEST-CNS-1055: e2e HTTP: mismo canal en dos tenants -> decisionMakerRef persistido distinto (cada uno = derivacion con su tenant de sesion); mismo tenant -> mismo ref (LEGAL DECISION Carlos 2026-10-01, (a) por tenant)", async () => {
+  const harness = await startServer();
+  const TENANT_B = "7b2d4f60-1c3e-4a58-9d7f-2e6b8a0c4d13";
+  try {
+    const refs: string[] = [];
+    for (const [tenant, tag] of [[TENANT_ID, "1055a"], [TENANT_B, "1055b"]] as const) {
+      const verified = await bringToVerifiedSession(harness, fixtureUuid(`inv-${tag}`), fixtureUuid(`subject-${tag}`), tenant);
+      const afterSteps = await completeDecisionSteps(harness, verified);
+      const res = await post(harness.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+      assert.equal(res.status, 200);
+      const { consentId } = (await res.json()) as { consentId: string };
+      const record = await harness.ports.decision.repo.findByConsentId(tenant, consentId);
+      const dm = record?.decisionMakerRef ?? "";
+      assert.equal(dm, deriveDecisionMakerRef(harness.ports.decisionMakerRefKey, tenant, CHANNEL_REF));
+      refs.push(dm);
+    }
+    assert.notEqual(refs[0], refs[1], "mismo canal, tenants distintos -> refs no correlacionables");
   } finally {
     await harness.close();
   }

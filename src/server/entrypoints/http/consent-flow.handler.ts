@@ -179,8 +179,9 @@ function checkCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): Ht
 /** decisionMakerRef derivado del canal ya ligado a la invitación (nunca del cliente, GRD-OT-02
  * + D5). Es una ref opaca UUIDv4 derivado de un HMAC con clave de entorno (decision-maker-ref.ts; Carlos,
  * 2026-10-01), no el canal en claro ni un hash sin sal. */
-function deriveDecisionMakerRef(key: Buffer, channelRef: string): string {
-  return deriveKeyedDecisionMakerRef(key, channelRef);
+function deriveDecisionMakerRef(key: Buffer, tenantId: string, channelRef: string): string {
+  // LEGAL DECISION, Carlos 2026-10-01, (a) por tenant: tenantId del contexto de sesion, nunca del cliente.
+  return deriveKeyedDecisionMakerRef(key, tenantId, channelRef);
 }
 
 // ---------------------------------------------------------------------------
@@ -450,10 +451,10 @@ export async function handleSubmitOtp(
     const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
     if (!verificationRef) return uniformNotFound();
     try {
-      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(ports.decisionMakerRefKey, manageChannelRef(session.chainRef ?? "")));
+      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, manageChannelRef(session.chainRef ?? "")));
       const verifiedSession: ConsentSessionPayload =
         scope === "MANAGE"
-          ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(ports.decisionMakerRefKey, manageChannelRef(session.chainRef ?? "")) }
+          ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, manageChannelRef(session.chainRef ?? "")) }
           : { ...session, revocationOtpVerified: true };
       return {
         status: 200,
@@ -479,7 +480,7 @@ export async function handleSubmitOtp(
   // UNBOUND (sin canal) sigue siendo 404 uniforme. LD-21 (binding M2) pendiente para entrega real.
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
-  const decisionMakerRef = deriveDecisionMakerRef(ports.decisionMakerRefKey, invitation.recipientChannelRef);
+  const decisionMakerRef = deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, invitation.recipientChannelRef);
 
   try {
     await submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef);

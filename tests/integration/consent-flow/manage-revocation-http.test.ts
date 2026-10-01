@@ -28,7 +28,7 @@ const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
 const MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
-const TENANT_ID = "tenant-mgmt";
+const TENANT_ID = "e4a381a5-1295-48d1-8818-b8033107c762";
 
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
