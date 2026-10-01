@@ -17,12 +17,18 @@ CREATE SCHEMA IF NOT EXISTS tenant_resolve AUTHORIZATION tenant_resolve_owner;
 
 -- P1-2: ninguna función nueva es ejecutable por PUBLIC; el EXECUTE se concede uno por uno.
 ALTER DEFAULT PRIVILEGES FOR ROLE consent_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE tenant_resolve_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+-- P2-5: consent_owner solo puede SET ROLE tenant_resolve_owner (sin INHERIT), y ALTER DEFAULT
+-- PRIVILEGES FOR ROLE exige herencia: se ejecuta como el propio dueno, sin FOR ROLE.
+SET LOCAL ROLE tenant_resolve_owner;
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+SET LOCAL ROLE consent_owner;
 
 -- Uso de esquemas (solo USAGE: ningún CREATE). tenant_resolve solo para app_rw, que llamará
 -- a las funciones SECURITY DEFINER (P1-2); sin ningún grant sobre sus tablas.
 GRANT USAGE ON SCHEMA app, integrity, ops TO app_rw, worker, platform_rw;
+SET LOCAL ROLE tenant_resolve_owner;
 GRANT USAGE ON SCHEMA tenant_resolve TO app_rw;
+SET LOCAL ROLE consent_owner;
 
 -- Tenant de la transacción: NULL (sin tenant) => las policies devuelven 0 filas y el WITH
 -- CHECK falla. Lo fija unit-of-work.ts con set_config('app.tenant_id', $1, true).

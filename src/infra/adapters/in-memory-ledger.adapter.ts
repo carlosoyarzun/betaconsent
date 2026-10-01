@@ -20,12 +20,14 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
   const sequenceByAggregate = new JournaledMap<string, number>();
   const byIdempotencyKey = new JournaledMap<string, LedgerRecord>();
 
-  function aggregateKey(tenantId: string, aggregateType: string, aggregateId: string): string {
-    return `${tenantId}\u0000${aggregateType}\u0000${aggregateId}`;
+  // La numeración es por (tenant, aggregate_id), igual que UNIQUE (tenant_id, aggregate_id, sequence)
+  // de integrity.audit_event (common.spec.yaml ledgerEnvelope.checks); aggregateType no entra.
+  function aggregateKey(tenantId: string, aggregateId: string): string {
+    return `${tenantId}\u0000${aggregateId}`;
   }
 
   function idempotencyStoreKey(tenantId: string, aggregateType: string, aggregateId: string, idempotencyKey: string): string {
-    return `${aggregateKey(tenantId, aggregateType, aggregateId)}\u0000${idempotencyKey}`;
+    return `${aggregateKey(tenantId, aggregateId)}\u0000${idempotencyKey}`;
   }
 
   return {
@@ -41,7 +43,7 @@ export function createInMemoryLedgerAdapter(): InMemoryLedger {
         if (existing) return existing;
       }
 
-      const aggKey = aggregateKey(event.tenantId, event.aggregateType, event.aggregateId);
+      const aggKey = aggregateKey(event.tenantId, event.aggregateId);
       const currentSequence = sequenceByAggregate.get(aggKey) ?? 0;
       if (event.expectedSequence !== undefined && event.expectedSequence !== currentSequence) {
         throw new LedgerSequenceConflictError(event.expectedSequence, currentSequence);

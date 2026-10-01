@@ -39,8 +39,9 @@ $roles$;
 -- El migrador hereda los privilegios del dueño y puede hacer SET ROLE consent_owner (el
 -- runner ejecuta cada migración de base de datos como consent_owner).
 GRANT consent_owner TO consent_migrator WITH INHERIT TRUE, SET TRUE;
--- consent_owner debe poder crear el esquema tenant_resolve con AUTHORIZATION tenant_resolve_owner.
-GRANT tenant_resolve_owner TO consent_owner WITH INHERIT TRUE, SET TRUE;
+-- consent_owner debe poder crear el esquema tenant_resolve con AUTHORIZATION tenant_resolve_owner:
+-- basta SET (P2-5: sin INHERIT, consent_owner no hereda los privilegios del dueno de tenant_resolve).
+GRANT tenant_resolve_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
 
 -- Los roles de runtime NO son miembros de ningún owner (invariante que verifica
 -- startup-checks.ts y TEST-CNS-744). Reasegurar por si un despliegue previo los hubiera unido.

@@ -281,7 +281,7 @@ TEST-CNS-743,integration,tests/integration/postgres/catalog.test.ts,"pg: EXECUTE
 TEST-CNS-744,integration,tests/integration/postgres/catalog.test.ts,"pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, fuera de los owners y sin session_replication_role","CA-124;ADR-002;P1-3",ACTIVE
 TEST-CNS-744,integration,tests/integration/postgres/catalog.test.ts,"pg: las conexiones de runtime no pueden crear objetos ni cambiar de rol a un owner","CA-124;ADR-002;P1-3",ACTIVE
 TEST-CNS-745,integration,tests/integration/postgres/catalog.test.ts,"pg: ops.db_catalog es de fila única, SYNTHETIC/LOCAL, inmutable y sin escritura para runtime","CA-124;ADR-002;GRD-CM-11;P1-5",ACTIVE
-TEST-CNS-746,integration,tests/integration/postgres/catalog.test.ts,"pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app","CA-124;ADR-006;P1-6",ACTIVE
+TEST-CNS-746,integration,tests/integration/postgres/catalog.test.ts,"pg: ningún rol de runtime con BYPASSRLS, sin policies con current_user/session_user y RLS forzada en app e integrity (tablas reales) y sin vistas sin security_invoker sobre tablas RLS","CA-124;ADR-006;P1-6",ACTIVE
 TEST-CNS-747,integration,tests/integration/postgres/catalog.test.ts,"pg: los chequeos de arranque aceptan app_rw/worker/platform_rw y rechazan migrador y superusuario","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
 TEST-CNS-747,unit,tests/unit/postgres/startup-checks.test.ts,"un rol de runtime sano y un catálogo SYNTHETIC/LOCAL arrancan","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
 TEST-CNS-747,unit,tests/unit/postgres/startup-checks.test.ts,"no arranca: superusuario, BYPASSRLS, miembro de owner, CREATE en esquema, session_replication_role","CA-124;GRD-CM-11;ERR-CM-11",ACTIVE
@@ -294,7 +294,21 @@ TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: 
 TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: una migración que falla no deja cambios parciales ni se registra; la siguiente sí se aplica","CA-124;D2",ACTIVE
 TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: el alcance cluster no se ejecuta en el paso database","CA-124;D2",ACTIVE
 TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"parseMigration valida nombre, alcance y calcula sha256","CA-124;D2",ACTIVE
-TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"las migraciones del repo: 0000 es cluster, el resto database, versiones únicas y ordenadas","CA-124;D2",ACTIVE
+TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"las migraciones del repo: 0000 y 0004 son cluster, el resto database, versiones únicas y ordenadas","CA-124;D2",ACTIVE
 TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"ninguna migración contiene contraseñas ni credenciales (cero secretos en el repo)","CA-124;D2",ACTIVE
 TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"setRolePasswords escapa la contraseña como literal y rechaza contraseñas cortas","CA-124;D2",ACTIVE
 TEST-CNS-750,integration,tests/integration/postgres/tenant-context.test.ts,"pg: app.current_tenant_id() es NULL sin tenant, con '' y devuelve el uuid con tenant","CA-124;ADR-006;INV-CM-02",ACTIVE
+TEST-CNS-780,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): append numera 1..n, registro SYNTHETIC/no evidenciario, listByAggregate en orden","CA-124;PR-B;ADR-002 §2;INV-CM-01",ACTIVE
+TEST-CNS-781,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): numeración por (tenant, aggregate_id)","CA-124;PR-B;ADR-002 §2;UNIQUE(tenant_id,aggregate_id,sequence)",ACTIVE
+TEST-CNS-782,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): expectedSequence conflicto/avance e idempotencyKey antes del control","CA-124;PR-B;ledgerEnvelope.concurrency",ACTIVE
+TEST-CNS-783,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): unidades concurrentes con mismo expectedSequence, una gana y la otra LedgerSequenceConflictError","CA-124;PR-B;revocation.spec R4",ACTIVE
+TEST-CNS-784,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): outbox sobre válido PENDING y dedupe por (tenant, key)","CA-124;PR-B;API-CNS-185;INV-CM-01",ACTIVE
+TEST-CNS-785,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): aislamiento por tenant, escritura con tenantId ajeno rechazada","CA-124;PR-B;INV-CM-02;INV-3",ACTIVE
+TEST-CNS-786,contract,tests/contract/ports/ledger-outbox-tx.contract.ts,"Ledger/Outbox contract (memoria y Postgres): atomicidad ledger+outbox ante fallo","CA-124;PR-B;INV-CM-01",ACTIVE
+TEST-CNS-787,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: ledger y outbox con FORCE RLS, policies por app.current_tenant_id() y grants mínimos","CA-124;PR-B;ADR-006;P1-6;SEC N2-06",ACTIVE
+TEST-CNS-788,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: ledger append-only (UPDATE/DELETE/TRUNCATE bloqueados incl. superusuario y replica)","CA-124;PR-B;INV-CM-01",ACTIVE
+TEST-CNS-789,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: CHECK/UNIQUE del ledger y del outbox (SYNTHETIC, FIXTURE solo LOCAL, evidentiary, dedupe)","CA-124;PR-B;ADR-002 §2/§8",ACTIVE
+TEST-CNS-790,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: sin tenant 0 filas y escritura rechazada; conexión reusada A->B sobre tablas reales","CA-124;PR-B;INV-CM-02;INV-3;P1-1",ACTIVE
+TEST-CNS-791,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: claim del worker (SECURITY DEFINER de outbox_claimer) devuelve solo refs, lease fijo, EXECUTE solo worker","CA-124;PR-B;SEC-CNS-012 P1-2",ACTIVE
+TEST-CNS-792,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: el worker lee el sobre solo dentro de inTenant de su tenant; ref de otro tenant da null","CA-124;PR-B;P1-6;INV-CM-02",ACTIVE
+TEST-CNS-793,integration,tests/integration/postgres/ledger-outbox-schema.test.ts,"pg: outbox_claimer NOLOGIN/NOBYPASSRLS, sin membresías, mínimo por columna; consent_owner sin INHERIT sobre tenant_resolve_owner","CA-124;PR-B;P1-6;P2-5",ACTIVE
