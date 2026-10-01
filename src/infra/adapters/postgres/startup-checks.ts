@@ -11,6 +11,8 @@ import type { Queryable } from "./pool.ts";
 export interface StartupCheckOptions {
   /** Environment declarado por la configuración; si difiere del catálogo, no arranca (SEC N2-06). */
   expectedEnvironment?: "LOCAL" | "DEV" | "STAGING";
+  /** SEC-CNS-017 F6: rol de runtime esperado (`current_user` exacto). El proceso web exige `app_rw`. */
+  expectedRole?: string;
 }
 
 export interface StartupCheckResult {
@@ -39,6 +41,9 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   if (me === undefined) {
     failures.push("no se pudo leer el rol de la conexión");
   } else {
+    if (options.expectedRole !== undefined && me.rolname !== options.expectedRole) {
+      failures.push(`el rol de la conexión no es ${options.expectedRole}`);
+    }
     if (me.rolsuper) failures.push("el rol de la conexión es superusuario");
     if (me.rolbypassrls) failures.push("el rol de la conexión tiene BYPASSRLS");
   }

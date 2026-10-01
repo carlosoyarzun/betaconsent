@@ -21,6 +21,8 @@ import type { OutboxPort } from "../../server/ports/outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "../../server/ports/recovery-token.port.ts";
 import type { RevocationRepositoryPort } from "../../server/ports/revocation-repository.port.ts";
 import type { RightsCaseRepositoryPort } from "../../server/ports/rights-case-repository.port.ts";
+import type { TenantCatalogPort } from "../../server/ports/tenant-catalog.port.ts";
+import type { IdempotencyPort } from "../../server/ports/idempotency.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-work.port.ts";
 import { isTxParticipant, TX_JOURNAL, type TxParticipant, type Undo } from "./in-memory-tx.ts";
 
@@ -125,6 +127,24 @@ function scopeEnrollmentRepo(inner: EnrollmentRepositoryPort, tenant: TenantId):
   };
 }
 
+/** Espeja el RLS del catálogo: sujeto o participación de OTRO tenant = desconocido (false/null). */
+function scopeTenantCatalog(inner: TenantCatalogPort, tenant: TenantId): TenantCatalogPort {
+  return {
+    subjectBelongsToTenant: async (t, subjectRef) => (t === tenant ? inner.subjectBelongsToTenant(t, subjectRef) : false),
+    findParticipation: async (t, participationRef) => (t === tenant ? inner.findParticipation(t, participationRef) : null),
+  };
+}
+
+function scopeIdempotency(inner: IdempotencyPort, tenant: TenantId): IdempotencyPort {
+  return {
+    find: async (t, hash) => (t === tenant ? inner.find(t, hash) : null),
+    store: async (t, hash, response) => {
+      if (t !== tenant) throw new TenantScopeViolationError("idempotency.store");
+      return inner.store(t, hash, response);
+    },
+  };
+}
+
 function scopeLedger(inner: LedgerPort, tenant: TenantId): LedgerPort {
   return {
     append: async (event) => {
@@ -171,6 +191,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     "enrollmentRepo",
     "ledger",
     "outbox",
+    "idempotency",
   ] as const;
   for (const name of keys) {
     const port: unknown = ports[name];
@@ -194,6 +215,8 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
         enrollmentRepo: scopeEnrollmentRepo(ports.enrollmentRepo, tenantId),
         ledger: scopeLedger(ports.ledger, tenantId),
         outbox: scopeOutbox(ports.outbox, tenantId),
+        tenantCatalog: scopeTenantCatalog(ports.tenantCatalog, tenantId),
+        idempotency: scopeIdempotency(ports.idempotency, tenantId),
       });
     } catch (error) {
       for (let i = journal.length - 1; i >= 0; i--) journal[i]?.();

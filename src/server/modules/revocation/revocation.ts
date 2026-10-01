@@ -86,7 +86,7 @@ export function attestHumanAssistedVerification(
   return inTx(ports, tenantId, (p) => attestHumanAssistedVerificationTx(p, tenantId, revocationRef, caseRef));
 }
 
-async function attestHumanAssistedVerificationTx(
+export async function attestHumanAssistedVerificationTx(
   ports: RevocationPorts,
   tenantId: string,
   revocationRef: string,
@@ -616,18 +616,17 @@ export async function issueRecoveryLinkBearer(
   revokedDecisionRef: string,
   trigger: Rv0BearerTrigger,
 ): Promise<Rv0BearerResult> {
-  // GRD-RV-02 (precondición de RV0, ERR-RV-02 uniforme): cadena ya REVOKED (C6) o de otro ciclo
-  // -> no se emite token ni evento; la respuesta HTTP sigue siendo la uniforme.
-  if (await isAlreadyRevoked(ports, tenantId, revokedDecisionRef)) {
-    return { sent: false };
-  }
   const token = randomBytes(32).toString("hex"); // GRD-RV-06/GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashRecoveryToken(token);
   const recoveryRef = `rec-${randomUUID()}`;
   const expiresAt = new Date(Date.now() + ports.recoveryTokenPolicy.ttlMs);
-  // CA-124: token + evento de ledger en una sola unidad de trabajo. El envío al canal (efecto
+  // CA-124: precondición + token + evento de ledger en una sola unidad de trabajo (SEC-CNS-016: la
+  // lectura de la decisión corre BAJO el tenant, nunca fuera de `inTenant`). El envío al canal (efecto
   // externo, no transaccional) va DESPUÉS de confirmar: si la escritura falla no sale ningún enlace.
-  await inTx(ports, tenantId, async (p) => {
+  const issued = await inTx(ports, tenantId, async (p) => {
+    // GRD-RV-02 (precondición de RV0, ERR-RV-02 uniforme): cadena ya REVOKED (C6) o de otro ciclo
+    // -> no se emite token ni evento; la respuesta HTTP sigue siendo la uniforme.
+    if (await isAlreadyRevoked(p, tenantId, revokedDecisionRef)) return false;
     await p.recoveryTokenRepo.save({ tokenHash, recoveryRef, tenantId, chainRef, revokedDecisionRef, expiresAt });
     await appendNext(p.ledger, {
       eventType: "RECOVERY_TOKEN_ISSUED",
@@ -640,7 +639,9 @@ export async function issueRecoveryLinkBearer(
       // Sin idempotencyKey: cada emisión es un token nuevo (K vigentes por cadena, revocation.spec
       // RV0 effects); una emisión nueva no invalida ni dedupea las vigentes.
     });
+    return true;
   });
+  if (!issued) return { sent: false };
   // El token en claro solo vive en este mensaje del sink LOCAL; se descarta al retornar.
   await ports.recoveryLinkChannel.send({ recoveryPath: `/r/${token}` });
   return { sent: true };
@@ -656,12 +657,13 @@ export async function issueRecoveryLinkBearer(
 /** CA-124 §5: hash -> (tenant, recoveryRef) por el TenantResolverPort (sin tenant) y relectura del
  * registro bajo ese tenant. `null` si el hash no resuelve. No evalúa consumo ni expiración. */
 async function findRecoveryTokenByHash(
-  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "tenantResolver">,
+  ports: Pick<RevocationPorts, "uow" | "tenantResolver">,
   tokenHash: string,
 ): Promise<RecoveryTokenRecord | null> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved) return null;
-  const record = await ports.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+  // SEC-CNS-016: el registro se relee BAJO el tenant resuelto (inTenant), nunca fuera de una tx.
+  const record = await ports.uow.inTenant(resolved.tenantId, (tx) => tx.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef));
   // SEC-CNS-015 P2-A: la ref resuelta debe corresponder al hash pedido (defensa en profundidad).
   return record && record.tokenHash === tokenHash ? record : null;
 }
@@ -675,7 +677,7 @@ async function findRecoveryTokenByHash(
  * revokeWithRecoveryLink). Devuelve `null` si el hash no resuelve, si ya fue consumido o si
  * expiró (GRD-RV-06). */
 export async function resolveRecoveryTokenForRedeem(
-  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "tenantResolver">,
+  ports: Pick<RevocationPorts, "uow" | "tenantResolver">,
   token: string,
 ): Promise<{ tenantId: string; chainRef: string; revokedDecisionRef: string; tokenHash: string } | null> {
   const tokenHash = hashRecoveryToken(token);
@@ -787,8 +789,22 @@ export async function evaluateRecoveryTokenEligibility(
   tokenHash: string,
 ): Promise<RecoveryTokenEligibility | null> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
-  const tokenRecord =
-    resolved && resolved.tenantId === tenantId ? await ports.recoveryTokenRepo.findByRef(tenantId, resolved.recoveryRef) : null;
+  if (!resolved || resolved.tenantId !== tenantId) return null;
+  return evaluateRecoveryTokenEligibilityResolved(ports, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef);
+}
+
+/** Núcleo de GRD-RV-06 con el `recoveryRef` ya resuelto (sin tocar el resolver): corre DENTRO de la tx del
+ * tenant (repos de la tx), así una unidad nunca pide una segunda conexión mientras retiene la suya
+ * (SEC-CNS-016: sin riesgo de agotar el pool). */
+async function evaluateRecoveryTokenEligibilityResolved(
+  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "revocationRepo" | "consentDecisionRepo">,
+  tenantId: string,
+  chainRef: string,
+  revokedDecisionRef: string,
+  tokenHash: string,
+  recoveryRef: string,
+): Promise<RecoveryTokenEligibility | null> {
+  const tokenRecord = await ports.recoveryTokenRepo.findByRef(tenantId, recoveryRef);
   if (
     !tokenRecord ||
     tokenRecord.tokenHash !== tokenHash || // SEC-CNS-015 P2-A
@@ -816,50 +832,42 @@ export async function evaluateRecoveryTokenEligibility(
 }
 
 /**
- * SEC-CNS-014 (GET /r/{token} ya no lee la BD): dado solo el hash del portador
- * (`__Host-cns-recovery`, recovery-handle.ts), resuelve server-side (tenantId, chainRef,
- * revokedDecisionRef) desde `recoveryTokenRepo` (GRD-CM-01), nunca desde la cookie ni el body.
- * Si el hash no resuelve a ningún token (inexistente), devuelve identidad vacía: el llamador
- * (evaluateRecoveryTokenEligibilityByHash / revokeWithRecoveryLinkByHash) igual falla en el
- * primer chequeo de `evaluateRecoveryTokenEligibility` (`!tokenRecord`), sin usar esta
- * identidad vacía para nada más.
- */
-async function identityFromTokenHash(
-  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "tenantResolver">,
-  tokenHash: string,
-): Promise<{ tenantId: string; chainRef: string; revokedDecisionRef: string }> {
-  const record = await findRecoveryTokenByHash(ports, tokenHash);
-  return record
-    ? { tenantId: record.tenantId, chainRef: record.chainRef, revokedDecisionRef: record.revokedDecisionRef }
-    : { tenantId: "", chainRef: "", revokedDecisionRef: "" };
-}
-
-/**
- * GET /recovery/confirm (SEC-CNS-014, INV-CM-08): variante de evaluateRecoveryTokenEligibility
- * que solo necesita el hash (el llamador ya no tiene tenantId/chainRef/revokedDecisionRef
- * resueltos de antes, porque GET /r/{token} ya no los resuelve). Sigue siendo un predicado puro
- * (sin efectos); reutiliza evaluateRecoveryTokenEligibility con la identidad que el propio
- * tokenRecord declara, así que el chequeo [1] de esa función (comparar contra lo que trae la
- * sesión) se vuelve una comparación del registro contra sí mismo — los chequeos [2] (GRANTED
- * vigente real) y [3] (Revocation abierta del mismo ciclo) siguen aplicando sin cambios.
+ * GET /recovery/confirm (SEC-CNS-014, INV-CM-08): variante de evaluateRecoveryTokenEligibility que solo
+ * necesita el hash (el llamador ya no tiene tenantId/chainRef/revokedDecisionRef resueltos de antes,
+ * porque GET /r/{token} ya no los resuelve). Sigue siendo un predicado puro (sin efectos). El hash se
+ * resuelve a (tenant, recoveryRef) por el TenantResolverPort (SIN tenant, ANTES de la tx); luego UNA
+ * unidad de trabajo del tenant relee el token (de ahí salen chainRef/revokedDecisionRef, GRD-CM-01: nunca
+ * de la cookie ni del body) y evalúa [1] (el registro contra sí mismo), [2] (GRANTED vigente real) y [3]
+ * (Revocation abierta del mismo ciclo). SEC-CNS-016: ninguna lectura de repos fuera de `inTenant`.
  */
 export async function evaluateRecoveryTokenEligibilityByHash(
-  ports: Pick<RevocationPorts, "recoveryTokenRepo" | "revocationRepo" | "consentDecisionRepo" | "tenantResolver">,
+  ports: Pick<RevocationPorts, "uow" | "tenantResolver">,
   tokenHash: string,
 ): Promise<RecoveryTokenEligibility | null> {
-  const { tenantId, chainRef, revokedDecisionRef } = await identityFromTokenHash(ports, tokenHash);
-  return evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+  const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
+  if (!resolved) return null;
+  return ports.uow.inTenant(resolved.tenantId, async (tx) => {
+    const record = await tx.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+    // SEC-CNS-015 P2-A: la ref resuelta debe corresponder al hash pedido.
+    if (!record || record.tokenHash !== tokenHash) return null;
+    return evaluateRecoveryTokenEligibilityResolved(tx, record.tenantId, record.chainRef, record.revokedDecisionRef, tokenHash, resolved.recoveryRef);
+  });
 }
 
 /**
  * POST /recovery/revoke (SEC-CNS-014): variante de revokeWithRecoveryLink que resuelve
  * tenantId/chainRef/revokedDecisionRef en servidor desde el hash del portador (GRD-CM-01),
- * nunca desde la cookie ni el body (la cookie `__Host-cns-recovery` solo trae el hash).
+ * nunca desde la cookie ni el body (la cookie `__Host-cns-recovery` solo trae el hash). Resolver
+ * (sin tenant) -> UNA unidad de trabajo del tenant que relee el token y ejecuta R1r..R4.
  */
 export async function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): Promise<RecoveryRevokeOutcome> {
-  const { tenantId, chainRef, revokedDecisionRef } = await identityFromTokenHash(ports, tokenHash);
-  if (tenantId === "") return { kind: "UNIFORM" }; // hash sin token: respuesta uniforme, sin tx ni evento.
-  return revokeWithRecoveryLink(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+  const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
+  if (!resolved) return { kind: "UNIFORM" }; // hash sin token: respuesta uniforme, sin tx ni evento.
+  return inTx(ports, resolved.tenantId, async (p) => {
+    const record = await p.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+    if (!record || record.tokenHash !== tokenHash) return { kind: "UNIFORM" };
+    return revokeWithRecoveryLinkTx(p, resolved.tenantId, record.chainRef, record.revokedDecisionRef, tokenHash, resolved.recoveryRef);
+  });
 }
 
 /**
@@ -889,7 +897,20 @@ export function revokeWithRecoveryLink(
   // corren en UNA unidad de trabajo. Si R4 falla, el token NO queda consumido, no queda
   // Revocation CONFIRMED ni evento alguno, y el mismo enlace sirve para reintentar hasta APPLIED
   // (antes el reintento caía en R11 NOOP con la Revocation varada en CONFIRMED).
-  return inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash));
+  return revokeWithRecoveryLinkResolving(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+}
+
+/** Resuelve el hash por el TenantResolverPort ANTES de la tx (una tx nunca pide una segunda conexión). */
+async function revokeWithRecoveryLinkResolving(
+  ports: RevocationPorts,
+  tenantId: string,
+  chainRef: string,
+  revokedDecisionRef: string,
+  tokenHash: string,
+): Promise<RecoveryRevokeOutcome> {
+  const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
+  if (!resolved || resolved.tenantId !== tenantId) return { kind: "UNIFORM" }; // GRD-RV-06 onFail: ERR-RV-05
+  return inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef));
 }
 
 async function revokeWithRecoveryLinkTx(
@@ -898,8 +919,9 @@ async function revokeWithRecoveryLinkTx(
   chainRef: string,
   revokedDecisionRef: string,
   tokenHash: string,
+  recoveryRef: string,
 ): Promise<RecoveryRevokeOutcome> {
-  const eligibility = await evaluateRecoveryTokenEligibility(ports, tenantId, chainRef, revokedDecisionRef, tokenHash);
+  const eligibility = await evaluateRecoveryTokenEligibilityResolved(ports, tenantId, chainRef, revokedDecisionRef, tokenHash, recoveryRef);
   if (!eligibility) {
     // GRD-RV-06 onFail: ERR-RV-05, respuesta uniforme, sin revelar revocationRef, sin evento.
     return { kind: "UNIFORM" };

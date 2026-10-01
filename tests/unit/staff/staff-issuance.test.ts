@@ -42,7 +42,7 @@ function build(withPolicy = true) {
   catalog.seedSubject(TENANT_A, SUBJECT);
   catalog.seedParticipation(TENANT_A, { participationRef: PARTICIPATION, contextRef: CONTEXT, productRef: "LECTORPRO", status: "ACTIVE" });
   const invitationRepo = createInMemoryInvitationRepository();
-  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, enrollmentRepo });
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, enrollmentRepo, tenantCatalog: catalog });
   const issuance: StaffIssuancePorts = {
     invitation: { invitationRepo, eligibility: createInMemoryEligibilityAdapter(), ledger, ...tenancy },
     enrollmentRepo,

@@ -5,6 +5,7 @@
 // la base y el lock de fila, el append falla con LedgerSequenceConflictError y la unidad no deja nada; en el camino
 // feliz cada append declara base + k. SYNTHETIC DATA ONLY.
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -84,6 +85,7 @@ function makeFlow(ledger: LedgerPort, hooks: { otpLock?: () => Promise<void>; de
     invitation,
     config: LECTORPRO_BETA_CONFIG,
     relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
+    chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
   };
   return { invitation, otp, decision, invitationRepo, otpRepo, decisionRepo };
 }

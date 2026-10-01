@@ -6,11 +6,14 @@
 // Uso: `node src/server/entrypoints/dev.ts` (PORT opcional, default 3000). Documentado en
 // src/README.md.
 
-import { randomBytes } from "node:crypto";
+import { deriveChainRefKey, loadChainRefSecret } from "../modules/consent-decision/chain-ref.ts";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
   createConsentFlowHttpServer,
+  createPostgresFlowPorts,
+  resolveConsentStoreMode,
   createDefaultConsentFlowPorts,
   createDefaultRevocationFlowPorts,
   createDefaultStaffConsolePorts,
@@ -26,6 +29,7 @@ import { createInvitation, markInvitationReady, sendInvitation } from "../module
 import { RH3_DEV_CASE_REF, seedRh3DevCase } from "./dev-rh3-seed.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
+  LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY,
   LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY,
   LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY,
   LOCAL_ONLY_DEV_PARTICIPATION_REF,
@@ -40,6 +44,13 @@ import {
   LOCAL_ONLY_DEV_TENANT_ID,
   LOCAL_ONLY_DEV_SUBJECT_REF,
 } from "./dev-local-config.ts";
+import { openPostgresStore, type PostgresStore } from "../../infra/adapters/postgres/store.ts";
+import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
+import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
+import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
+import type { StaffConsolePorts } from "./http/staff-console.handler.ts";
+import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
+import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { InMemoryTenantHandleAdapter } from "../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 
@@ -67,12 +78,57 @@ const otpPolicy = loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY);
 // 2026-09-27): el enum legal real sigue PENDING DEC-BR-003 / EXT-A / LD-01.
 const relationshipConfig = loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
 
-const ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig);
+// CA-124 PR-E: CONSENT_STORE=memory|postgres (LOCAL: default memory; valor inválido -> aborta).
+let storeMode: "memory" | "postgres";
+try {
+  storeMode = resolveConsentStoreMode(process.env.CONSENT_STORE, environment);
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(1);
+}
+let pgStore: PostgresStore | undefined;
+if (storeMode === "postgres") {
+  try {
+    // Credencial SOLO por entorno (CNS_DATABASE_URL, rol app_rw); chequeos de arranque (TEST-CNS-724/747)
+    // obligatorios antes de escuchar. P-33: valor LOCAL-only sintético.
+    pgStore = await openPostgresStore({
+      environment: "LOCAL",
+      idempotencyPolicy: loadIdempotencyPolicyConfig(LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY),
+    });
+  } catch (error) {
+    console.error(`CONSENT_STORE=postgres: no arranca (${(error as Error).name}). ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+
+const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY);
+const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
+const staffIssuancePolicy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY);
+
+// SEC-CNS-017 F2: clave HMAC del chainRef opaco (CNS_CHAIN_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
+const chainRefKey = deriveChainRefKey(loadChainRefSecret(process.env, environment));
+let ports: ConsentFlowPorts;
+let pgBundle: ReturnType<typeof createPostgresFlowPorts> | undefined;
+if (pgStore) {
+  pgBundle = createPostgresFlowPorts(pgStore, {
+    otpPolicy,
+    relationshipConfig,
+    recoveryTokenPolicy,
+    staffIdentity,
+    chainRefKey,
+    invitationIssuancePolicy: staffIssuancePolicy,
+  });
+  ports = pgBundle.ports;
+} else {
+  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig, chainRefKey);
+}
 const sessionSecret = randomBytes(32);
 
 const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
-const INVITATION_REF = "inv-dev-001";
-const SUBJECT_REF = LOCAL_ONLY_DEV_SUBJECT_REF;
+// En Postgres el seed persiste entre arranques: ref y sujeto nuevos por proceso (GRD-IV-01: una sola
+// invitación no terminal por sujeto), sintéticos y sin PII.
+const INVITATION_REF = pgStore ? `inv-dev-${randomBytes(4).toString("hex")}` : "inv-dev-001";
+const SUBJECT_REF = pgStore ? randomUUID() : LOCAL_ONLY_DEV_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
 await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
@@ -96,7 +152,8 @@ const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", I
 const MGMT_CHAIN_REF = "chain-dev-mgmt";
 const MGMT_CONSENT_ID = "consent-dev-mgmt-001";
 const MGMT_TOKEN = "dev-mgmt-token-001";
-await ports.decision.repo.save({
+// SEC-CNS-016: la escritura corre bajo el tenant (uow.inTenant), igual en memoria que en Postgres.
+await ports.decision.uow.inTenant(TENANT_ID, (tx) => tx.consentDecisionRepo.save({
   consentId: MGMT_CONSENT_ID,
   tenantId: TENANT_ID,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -111,10 +168,9 @@ await ports.decision.repo.save({
   priorStepsComplete: true,
   stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
   receiptRef: "receipt-dev-mgmt-001",
-});
+}));
 // P-15 (recovery-token-policy.config.ts): mismo patrón D4 que otpPolicy, LOCAL-only, PENDING
 // de valor aprobado en SEC-CNS-006 (CA-116 PR 2, UX-CNS-004 recovery).
-const recoveryTokenPolicy = loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY);
 // P-18 (recovery-handle-policy.config.ts, ADR-006 §6.2, SEC-CNS-014): TTL de la cookie
 // __Host-cns-recovery que fija GET /r/{token} sin leer la BD; distinto de P-15 (arriba).
 const recoveryHandlePolicy = loadRecoveryHandlePolicyConfig(LOCAL_ONLY_DEV_RECOVERY_HANDLE_POLICY);
@@ -122,38 +178,54 @@ const recoveryHandlePolicy = loadRecoveryHandlePolicyConfig(LOCAL_ONLY_DEV_RECOV
 // __Host-cns-m-handle que fijan GET /i/{token} y GET /m/{token} sin leer la BD.
 const invitationHandlePolicy = loadInvitationHandlePolicyConfig(LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY);
 const manageHandlePolicy = loadManageHandlePolicyConfig(LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY);
-const revocationPorts = createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
-(revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
-  handle: MGMT_TOKEN,
-  tenantId: TENANT_ID,
-  chainRef: MGMT_CHAIN_REF,
-  revokedDecisionRef: MGMT_CONSENT_ID,
-});
+const revocationPorts: RevocationFlowPorts = pgBundle
+  ? pgBundle.revocationPorts
+  : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
+if (pgStore) {
+  // Siembra del handle por la función SECURITY DEFINER tenant_resolve.register_handle (idempotente; el
+  // tenant sale de app.current_tenant_id(); nunca BYPASSRLS).
+  await pgStore.uow.withTenantTx(TENANT_ID, (tx) =>
+    registerTenantHandle(tx, { handle: MGMT_TOKEN, chainRef: MGMT_CHAIN_REF, revokedDecisionRef: MGMT_CONSENT_ID }),
+  );
+} else {
+  (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({
+    handle: MGMT_TOKEN,
+    tenantId: TENANT_ID,
+    chainRef: MGMT_CHAIN_REF,
+    revokedDecisionRef: MGMT_CONSENT_ID,
+  });
+}
 
 // CA-128 (API-CNS-138, RH3 paso 1): además del enlace /m/<token> de arriba, siembra un caso
 // RH3 completo (RC1 abierto + RH2 ya atestado) para poder probar record_case_confirmation a
 // mano sin repetir HTTP para RC1/RH2 (fuera de alcance de este slice). Cadena/decisión propias
 // (RH3_*), separadas de MGMT_* de arriba, para no interferir con el flujo de gestión.
 const RH3_CASE_REF = RH3_DEV_CASE_REF;
-await seedRh3DevCase(ports, revocationPorts, TENANT_ID);
+// SEC-CNS-017 F4: siembra atomica (una tx) e idempotente por consulta; ya no se traga ningun error.
+if (!(await seedRh3DevCase(ports, revocationPorts, TENANT_ID))) {
+  console.log("RH3 dev ya sembrado en la base; se conserva.");
+}
 // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING (Carlos 2026-09-28 opción (ii)).
-const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
 
 // CA-125 (API-CNS-105/110/111/112): consola STAFF para enrolar e invitar. LOCAL-only: catálogo
 // del tenant sembrado por fixture (IT0 no tiene alta de sujetos/participaciones: FINDING P1), y
 // política P-10 + deliveryChannel (EXT-B) con valores sintéticos LOCAL, sin default de producción.
-const staffConsole = createDefaultStaffConsolePorts(
-  ports.invitation,
-  staffIdentity,
-  loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
-);
-staffConsole.catalog.seedSubject(TENANT_ID, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF);
-staffConsole.catalog.seedParticipation(TENANT_ID, {
-  participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
-  contextRef: LECTORPRO_BETA_CONFIG.contextRef,
-  productRef: LECTORPRO_BETA_CONFIG.productRef,
-  status: "ACTIVE",
-});
+let staffConsole: StaffConsolePorts;
+if (pgBundle) {
+  // El catálogo (app.subject/school_participation) es de solo lectura para app_rw (0005): lo provisiona el
+  // aprovisionamiento (superusuario/fixture) fuera del proceso web. Sin él, EN0/I1 responden 404 uniforme.
+  staffConsole = pgBundle.staffConsole;
+} else {
+  const memoryStaff = createDefaultStaffConsolePorts(ports.invitation, staffIdentity, staffIssuancePolicy, loadIdempotencyPolicyConfig(LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY));
+  memoryStaff.catalog.seedSubject(TENANT_ID, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF);
+  memoryStaff.catalog.seedParticipation(TENANT_ID, {
+    participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
+    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+    productRef: LECTORPRO_BETA_CONFIG.productRef,
+    status: "ACTIVE",
+  });
+  staffConsole = memoryStaff;
+}
 
 const server = createConsentFlowHttpServer({
   config: { allowedOrigin },
@@ -166,12 +238,14 @@ const server = createConsentFlowHttpServer({
   environment: "LOCAL",
   staffIdentity,
   staffConsole,
+  storeMode,
+  ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
 });
 
 server.listen(port, "127.0.0.1", () => {
   const address = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}`;
-  console.log(`Consent App (IT0, LOCAL) escuchando en ${baseUrl}`);
+  console.log(`Consent App (IT0, LOCAL, CONSENT_STORE=${storeMode}) escuchando en ${baseUrl}`);
   // API-CNS-101 (P-12): el flujo empieza con el GET de canje, nunca con el token suelto (cero
   // PII/credenciales en logs fuera de esta URL sintética de LOCAL, dominio example.invalid).
   // UX-CNS-001: el canje redirige a /welcome (INV-CM-08, no transiciona ahí).

@@ -5,6 +5,7 @@
 // perdedora espera, relee el estado ya cambiado y falla con el error de dominio del guard (nunca con un conflicto
 // de secuencia). Requiere Postgres real (harness.ts). SYNTHETIC DATA ONLY.
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
@@ -26,7 +27,7 @@ import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapte
 import { createInMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { createPgTenantResolver } from "../../../src/infra/adapters/postgres/tenant-resolver.adapter.ts";
-import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
+import { DEFAULT_UOW_MAX_ATTEMPTS, PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest } from "./harness.ts";
@@ -46,8 +47,8 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
   decision: ConsentDecisionPorts;
   count: (sql: string, values: unknown[]) => Promise<number>;
   pool: ReturnType<typeof createPool>;
-}) => Promise<T>, maxAttempts = 1): Promise<T> {
-  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 8 });
+}) => Promise<T>, maxAttempts = 1, policy: { codeLength: number; maxAttempts: number; ttlMs: number; maxResends: number } = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }): Promise<T> {
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 16 });
   const admin = await ctx.connectAsSuperuser();
   try {
     const uow = new PgUnitOfWork(pool, { maxAttempts });
@@ -65,7 +66,7 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
       ledger: outside.ledger,
       uow,
       invitation,
-      policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
+      policy,
       secret: randomBytes(32),
     };
     const decision: ConsentDecisionPorts = {
@@ -75,6 +76,7 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
       invitation,
       config: LECTORPRO_BETA_CONFIG,
       relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
+      chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
     };
     const count = async (sql: string, values: unknown[]): Promise<number> => (await admin.query<{ n: number }>(sql, values)).rows[0]?.n ?? -1;
     return await body({ uow, outside, invitation, otp, decision, count, pool });
@@ -224,4 +226,28 @@ pgTest("TEST-CNS-848 pg: dos POST concurrentes con el mismo token de recuperacio
       assert.equal(await count("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1 AND dedupe_key = $2", [T, `${rev!.revocationRef}:consent.revoked`]), 1);
     }
   });
+});
+
+// SEC-CNS-016 P2 (reintentos del UoW): con la base de secuencia capturada ANTES del lock, N submits concurrentes sobre el
+// mismo challenge se pisan entre si; sin espera, los reintentos van en lockstep y se agotan. Con backoff con jitter y el
+// maxAttempts por defecto del UoW, ningun intento incorrecto se pierde ni falla con LedgerSequenceConflictError.
+pgTest("TEST-CNS-861 pg: 10 submits incorrectos concurrentes sobre el mismo challenge con el maxAttempts por defecto no agotan reintentos: attempts = 10, ninguno falla con conflicto de secuencia", async (ctx) => {
+  const T = fixtureUuid("t861");
+  await withEnv(ctx, async ({ outside, otp, count }) => {
+    const sink = otp.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
+    const N = 10;
+    for (let round = 0; round < 5; round += 1) {
+      const inv = fixtureUuid(`inv861-${round}`);
+      const ver = fixtureUuid(`ver861-${round}`);
+      await seedOpenedInvitation(outside, T, inv, `test+s861-${round}@example.invalid`);
+      await requestOtp(otp, T, ver, inv, CHANNEL);
+      const good = sink.sent[sink.sent.length - 1]!.code;
+      const wrong = good === "000000" ? "111111" : "000000";
+      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, "dm-861")));
+      const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
+      assert.ok(codes.every((c) => c === "ERR-OT-02"), `ronda ${round}: todos rechazados por codigo incorrecto, ninguno por reintentos agotados: ${codes.join(",")}`);
+      assert.equal((await outside.otpRepo.findByRef(T, ver))?.attempts, N, "ningun intento se pierde");
+      assert.equal(await eventCount(count, T, ver, "OTP_FAILED"), N);
+    }
+  }, DEFAULT_UOW_MAX_ATTEMPTS, { codeLength: 6, maxAttempts: 1000, ttlMs: 60_000, maxResends: 3 });
 });

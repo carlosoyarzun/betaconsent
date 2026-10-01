@@ -3,8 +3,10 @@
 // puro (sin frameworks, sin dependencias nuevas), análogo a server.ts (RC2u).
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
+import { deriveChainRefKey } from "../../modules/consent-decision/chain-ref.ts";
+import type { OutboxEnvelope } from "../../ports/outbox.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
 import { createInMemoryInvitationRepository } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
@@ -23,12 +25,14 @@ import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-m
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import { createInMemoryEnrollmentRepository } from "../../../infra/adapters/in-memory-enrollment-repository.adapter.ts";
-import { createInMemoryIdempotencyAdapter } from "../../../infra/adapters/in-memory-idempotency.adapter.ts";
+import { createInMemoryIdempotencyAdapter, LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS } from "../../../infra/adapters/in-memory-idempotency.adapter.ts";
 import {
   createInMemoryInvitationLinkChannelSink,
   type InMemoryInvitationLinkChannelSink,
 } from "../../../infra/adapters/in-memory-invitation-link-channel-sink.adapter.ts";
 import { createInMemoryTenantCatalogAdapter, type FixtureTenantCatalogPort } from "../../../infra/adapters/in-memory-tenant-catalog.adapter.ts";
+import type { IdempotencyPolicy } from "../../modules/common/idempotency-policy.config.ts";
+import type { PostgresStore } from "../../../infra/adapters/postgres/store.ts";
 import type { InvitationIssuancePolicy } from "../../modules/invitation/invitation-issuance-policy.config.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../modules/consent-decision/lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "../../modules/consent-decision/decision-relationship.config.ts";
@@ -151,6 +155,11 @@ export interface ConsentFlowHttpServerOptions {
    * I2/I3 ERR-CM-12). dev.ts y los tests inyectan catálogo y política LOCAL-only.
    */
   readonly staffConsole?: StaffConsolePorts;
+  /** SEC-CNS-017 F3: modo de almacenamiento, explicito (no se infiere del Proxy de puertos). `memory` por defecto. */
+  readonly storeMode?: "memory" | "postgres";
+  /** Solo storeMode=postgres + LOCAL: lector del outbox del tenant de dev (dentro de inTenant/withTenantTx de ese
+   * tenant, RLS). Sin el, GET /__dev/outbox-sink responde 404 en postgres. */
+  readonly devOutboxSink?: () => Promise<readonly OutboxEnvelope[]>;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -159,16 +168,18 @@ export function createDefaultStaffConsolePorts(
   invitation: InvitationPorts,
   staffIdentity: StaffIdentityPort,
   policy?: InvitationIssuancePolicy,
+  idempotencyPolicy?: IdempotencyPolicy,
 ): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink; readonly catalog: FixtureTenantCatalogPort } {
   const enrollmentRepo = createInMemoryEnrollmentRepository();
   // CA-124: UoW de EN0 sobre el MISMO enrollmentRepo (y el ledger/invitationRepo compartidos).
-  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo });
   const tenantCatalog = createInMemoryTenantCatalogAdapter();
+  const idempotency = createInMemoryIdempotencyAdapter({ ttlMs: idempotencyPolicy ? idempotencyPolicy.ttlMs : LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS });
+  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo, tenantCatalog, idempotency });
   const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
   return {
     issuance: { invitation, enrollmentRepo, tenantCatalog, invitationLinkChannel: invitationLinkSink, ...(policy ? { policy } : {}) },
     enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger, uow: tenancy.uow },
-    idempotency: createInMemoryIdempotencyAdapter(),
+    uow: tenancy.uow,
     staffIdentity,
     invitationLinkSink,
     catalog: tenantCatalog,
@@ -178,7 +189,11 @@ export function createDefaultStaffConsolePorts(
 /** `relationshipConfig` es obligatorio, mismo patrón fail-closed que `otpPolicy` (D4,
  * decision-relationship.config.ts): sin default de producción en esta función; el caller
  * (dev.ts LOCAL, o tests) siempre pasa un override explícito. */
-export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationshipConfig: DecisionRelationshipConfig): ConsentFlowPorts {
+export function createDefaultConsentFlowPorts(
+  otpPolicy: OtpPolicy,
+  relationshipConfig: DecisionRelationshipConfig,
+  chainRefKey: Buffer = deriveChainRefKey(randomBytes(32)),
+): ConsentFlowPorts {
   const ledger = createInMemoryLedgerAdapter();
   const invitationRepo = createInMemoryInvitationRepository();
   const otpRepo = createInMemoryOtpVerificationRepository();
@@ -207,6 +222,7 @@ export function createDefaultConsentFlowPorts(otpPolicy: OtpPolicy, relationship
     uow: tenancy.uow,
     config: LECTORPRO_BETA_CONFIG,
     relationships: relationshipConfig,
+    chainRefKey,
   };
   return { invitation, otp, decision };
 }
@@ -275,6 +291,105 @@ export function createDefaultRevocationFlowPorts(
     },
     rightsCase: { rightsCaseRepo, ledger, uow: tenancy.uow },
   };
+}
+
+export type ConsentStoreMode = "memory" | "postgres";
+
+/**
+ * CONSENT_STORE=memory|postgres (CA-124 PR-E). Fail-closed: valor inválido -> lanza siempre; ausente ->
+ * lanza fuera de LOCAL; en LOCAL el default es `memory` (comportamiento histórico de dev y tests).
+ */
+export function resolveConsentStoreMode(raw: string | undefined, environment: string | undefined): ConsentStoreMode {
+  if (raw === undefined || raw === "") {
+    if (environment === "LOCAL") return "memory";
+    throw new Error("CONSENT_STORE es obligatorio fuera de LOCAL (memory|postgres). Abortando (fail-closed).");
+  }
+  if (raw === "memory") {
+    // SEC-CNS-017 F7: el almacen en memoria es solo LOCAL (dev/tests); fuera de LOCAL no arranca.
+    if (environment !== "LOCAL") throw new Error("CONSENT_STORE=memory solo se admite en LOCAL. Abortando (fail-closed).");
+    return raw;
+  }
+  if (raw === "postgres") return raw;
+  throw new Error(`CONSENT_STORE inválido ("${raw.slice(0, 20)}"): solo memory|postgres. Abortando (fail-closed).`);
+}
+
+export interface PostgresFlowConfig {
+  readonly otpPolicy: OtpPolicy;
+  readonly relationshipConfig: DecisionRelationshipConfig;
+  readonly recoveryTokenPolicy: RecoveryTokenPolicy;
+  readonly staffIdentity: StaffIdentityPort;
+  /** SEC-CNS-017 F2: clave HMAC del chainRef (chain-ref.ts), derivada de CNS_CHAIN_REF_SECRET. */
+  readonly chainRefKey: Buffer;
+  readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
+}
+
+/** Cableado Postgres de los tres bolsos de puertos. Repos/ledger/outbox/catálogo del bolso son los
+ * "prohibidos fuera de tx" del store: el dominio los sustituye por los de `uow.inTenant`; cualquier uso
+ * suelto falla cerrado (OutsideTransactionError). Los sinks de canal (OTP, enlaces) siguen en memoria. */
+export function createPostgresFlowPorts(
+  store: PostgresStore,
+  cfg: PostgresFlowConfig,
+): {
+  ports: ConsentFlowPorts;
+  revocationPorts: RevocationFlowPorts;
+  staffConsole: StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink };
+} {
+  const o = store.outsideTx;
+  const invitation: InvitationPorts = {
+    invitationRepo: o.invitationRepo,
+    eligibility: createInMemoryEligibilityAdapter(),
+    ledger: o.ledger,
+    uow: store.uow,
+    tenantResolver: store.tenantResolver,
+  };
+  const otp: OtpChallengePorts = {
+    otpRepo: o.otpRepo,
+    channel: createInMemoryOtpChannelSink(),
+    ledger: o.ledger,
+    invitation,
+    uow: store.uow,
+    policy: cfg.otpPolicy,
+    secret: randomBytes(32),
+  };
+  const decision: ConsentDecisionPorts = {
+    repo: o.consentDecisionRepo,
+    ledger: o.ledger,
+    invitation,
+    uow: store.uow,
+    config: LECTORPRO_BETA_CONFIG,
+    relationships: cfg.relationshipConfig,
+    chainRefKey: cfg.chainRefKey,
+  };
+  const revocationPorts: RevocationFlowPorts = {
+    tenantHandle: store.tenantHandle,
+    revocation: {
+      revocationRepo: o.revocationRepo,
+      ledger: o.ledger,
+      outbox: o.outbox,
+      recoveryTokenRepo: o.recoveryTokenRepo,
+      recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+      recoveryTokenPolicy: cfg.recoveryTokenPolicy,
+      consentDecisionRepo: o.consentDecisionRepo,
+      uow: store.uow,
+      tenantResolver: store.tenantResolver,
+    },
+    rightsCase: { rightsCaseRepo: o.rightsCaseRepo, ledger: o.ledger, uow: store.uow },
+  };
+  const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
+  const staffConsole = {
+    issuance: {
+      invitation,
+      enrollmentRepo: o.enrollmentRepo,
+      tenantCatalog: o.tenantCatalog,
+      invitationLinkChannel: invitationLinkSink,
+      ...(cfg.invitationIssuancePolicy ? { policy: cfg.invitationIssuancePolicy } : {}),
+    },
+    enrollment: { enrollmentRepo: o.enrollmentRepo, tenantCatalog: o.tenantCatalog, ledger: o.ledger, uow: store.uow },
+    uow: store.uow,
+    staffIdentity: cfg.staffIdentity,
+    invitationLinkSink,
+  };
+  return { ports: { invitation, otp, decision }, revocationPorts, staffConsole };
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
@@ -428,11 +543,10 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffConsolePorts: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
   const caseConfirmationPorts: CaseConfirmationPorts = {
     revocation: revocationPorts.revocation,
-    rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo,
     staffIdentity,
   };
 
-  return createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0] ?? "";
 
@@ -582,10 +696,13 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Set-Cookie", cookiesToSet);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
+      // SEC-CNS-016: la lectura de la decisión corre BAJO el tenant de la sesión (inTenant).
+      const revokedDecisionRef = view.session.revokedDecisionRef;
       const decisionRevoked =
-        view.session.revokedDecisionRef !== undefined &&
-        (await revocationPorts.revocation.consentDecisionRepo.findByConsentId(view.session.tenantId, view.session.revokedDecisionRef))?.state ===
-          "REVOKED";
+        revokedDecisionRef !== undefined &&
+        (await revocationPorts.revocation.uow.inTenant(view.session.tenantId, (tx) =>
+          tx.consentDecisionRepo.findByConsentId(view.session!.tenantId, revokedDecisionRef),
+        ))?.state === "REVOKED";
       res.end(
         !view.session.manageDecisionMakerRef
           ? renderManageEntryPage()
@@ -711,6 +828,18 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         res.end(JSON.stringify({ status: 404 }));
         return;
       }
+      if (options.storeMode === "postgres") {
+        // El outbox vive en la base: el bolso fuera de tx es un Proxy que rechaza, no un InMemoryOutbox.
+        if (!options.devOutboxSink) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ status: 404 }));
+          return;
+        }
+        const envelopes = await options.devOutboxSink();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ enqueued: envelopes }));
+        return;
+      }
       const outbox = revocationPorts.revocation.outbox as InMemoryOutbox;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ enqueued: outbox.enqueued.map((r) => r.envelope) }));
@@ -776,7 +905,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const result = await handleDevStaffLogin(
         request,
         options.environment ?? "DEV",
-        { staffIdentity, rightsCaseRepo: revocationPorts.rightsCase.rightsCaseRepo },
+        { staffIdentity, uow: revocationPorts.revocation.uow },
         config,
         caseSessionKey,
       );
@@ -877,5 +1006,34 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
     }
     writeResult(res, config, result);
+  };
+
+  // SEC-CNS-017 F1: catch global. Un rechazo no capturado del callback async mata el proceso en Node
+  // 24 e imprime el error de pg completo (detail/valores de fila = posible PII). Respuesta 500
+  // uniforme sin message/detail; se registra solo `name` y `code` (nunca message/stack/detail).
+  return createServer((req: IncomingMessage, res: ServerResponse) => {
+    handleRequest(req, res).catch((error: unknown) => {
+      const e = error as { name?: unknown; code?: unknown } | null;
+      const name = typeof e?.name === "string" ? e.name.slice(0, 60) : "UnknownError";
+      const code = typeof e?.code === "string" ? e.code.slice(0, 20) : undefined;
+      console.error(`request_failed name=${name}${code ? ` code=${code}` : ""}`);
+      try {
+        if (res.headersSent) {
+          res.destroy();
+          return;
+        }
+        const wantsHtml = (headerValue(req.headers.accept) ?? "").includes("text/html");
+        if (wantsHtml) {
+          writeHtmlSecurityHeaders(res);
+          res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
+          res.end("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><title>Error</title></head><body><p>Error interno.</p></body></html>");
+        } else {
+          res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ code: "INTERNAL_ERROR", status: 500, correlationId: randomUUID() }));
+        }
+      } catch {
+        res.destroy();
+      }
+    });
   });
 }

@@ -3,6 +3,7 @@
 // (SubmitDecision required_declined); specs/adapters/lectorpro-beta.spec.yaml (finalidades).
 // GRD-CM-02, GRD-CM-05, GRD-CD-01/02/05/06/07/08/11. TEST-CNS-490..TEST-CNS-496.
 
+import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -61,6 +62,7 @@ function makeAllPorts() {
     config: LECTORPRO_BETA_CONFIG,
     // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
     relationships: { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] },
+    chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
   };
   return { invitationPorts, otpPorts, consentPorts };
 }

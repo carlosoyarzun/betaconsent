@@ -44,7 +44,7 @@ test("TEST-CNS-742 inTenant: BEGIN, set_config local como primer statement, trab
   assert.equal(result, "ok");
   const texts = client.queries.map((q) => q.text);
   assert.equal(texts[0]?.includes("current_setting('app.tenant_id'"), true);
-  assert.deepEqual(texts.slice(1), ["BEGIN", "SELECT set_config('app.tenant_id', $1, true)", "SELECT 1", "COMMIT"]);
+  assert.deepEqual(texts.slice(1), ["BEGIN", "SELECT set_config('app.tenant_id', $1, true)", "SET LOCAL lock_timeout = 2000", "SET LOCAL statement_timeout = 5000", "SELECT 1", "COMMIT"]);
   assert.deepEqual(client.queries[2]?.values, [TENANT]);
   assert.deepEqual(client.releases, [false]);
 });
@@ -81,7 +81,7 @@ test("TEST-CNS-742 inTenant reintenta 40001/40P01 hasta 3 intentos y luego propa
   const clients = [new FakeClient(), new FakeClient(), new FakeClient(), new FakeClient()];
   const pool = fakePool(clients);
   let calls = 0;
-  const uow = new PgUnitOfWork(pool);
+  const uow = new PgUnitOfWork(pool, { maxAttempts: 3, sleep: async () => {} });
   const result = await uow.withTenantTx(TENANT, async () => {
     calls += 1;
     if (calls === 1) throw sqlError("40001");
@@ -92,7 +92,7 @@ test("TEST-CNS-742 inTenant reintenta 40001/40P01 hasta 3 intentos y luego propa
   assert.equal(calls, 3);
 
   calls = 0;
-  const failing = new PgUnitOfWork(fakePool([new FakeClient()]));
+  const failing = new PgUnitOfWork(fakePool([new FakeClient()]), { maxAttempts: 3, sleep: async () => {} });
   await assert.rejects(
     () =>
       failing.withTenantTx(TENANT, async () => {
@@ -127,4 +127,41 @@ test("TEST-CNS-742 la tx entregada al trabajo deja de funcionar al terminar", as
   const uow = new PgUnitOfWork(fakePool([new FakeClient()]));
   const leaked = await uow.withTenantTx(TENANT, async (tx) => tx);
   await assert.rejects(() => leaked.query("SELECT 1"), /ya terminó/);
+});
+
+test("TEST-CNS-860 inTenant: maxAttempts por defecto 8 y backoff con jitter acotado (techo exponencial con tope) entre reintentos", async () => {
+  const sleeps: number[] = [];
+  const uow = new PgUnitOfWork(fakePool([new FakeClient()]), {
+    backoffBaseMs: 10,
+    backoffCapMs: 50,
+    random: () => 0.999,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+  });
+  let calls = 0;
+  await assert.rejects(() =>
+    uow.withTenantTx(TENANT, async () => {
+      calls += 1;
+      throw sqlError("40001");
+    }),
+  );
+  assert.equal(calls, 8, "default razonable: 8 intentos");
+  assert.equal(sleeps.length, 7, "una espera entre intentos, ninguna tras el ultimo");
+  assert.deepEqual(sleeps, [9, 19, 39, 49, 49, 49, 49], "jitter completo bajo techo min(cap, base*2^(n-1))");
+  for (const ms of sleeps) assert.ok(ms < 50, "nunca supera el tope");
+});
+
+test("TEST-CNS-860 inTenant: el jitter con random=0 no espera y sin reintento no hay espera", async () => {
+  const sleeps: number[] = [];
+  const uow = new PgUnitOfWork(fakePool([new FakeClient()]), { random: () => 0, sleep: async (ms) => void sleeps.push(ms) });
+  let calls = 0;
+  await uow.withTenantTx(TENANT, async () => {
+    calls += 1;
+    if (calls < 3) throw sqlError("40P01");
+  });
+  assert.deepEqual(sleeps, []);
+  let once = 0;
+  await uow.withTenantTx(TENANT, async () => void (once += 1));
+  assert.equal(once, 1);
 });

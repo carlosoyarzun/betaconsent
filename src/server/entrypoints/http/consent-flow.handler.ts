@@ -370,7 +370,9 @@ export async function handleRequestOtp(
   }
 
   if (scope !== "DECISION" || !session.invitationRef) return uniformNotFound();
-  const invitation = await ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
+  // SEC-CNS-016: la lectura corre BAJO el tenant de la sesión (inTenant), nunca fuera de una tx.
+  const invitationRef = session.invitationRef;
+  const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   let verificationRef = session.verificationRef ?? randomUUID();
@@ -465,7 +467,9 @@ export async function handleSubmitOtp(
   }
 
   if (scope !== "DECISION" || !session.verificationRef || !session.invitationRef) return uniformNotFound();
-  const invitation = await ports.invitation.invitationRepo.findByRef(session.tenantId, session.invitationRef);
+  // SEC-CNS-016: la lectura corre BAJO el tenant de la sesión (inTenant), nunca fuera de una tx.
+  const invitationRef = session.invitationRef;
+  const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
   if (!invitation || !invitation.recipientChannelRef) return uniformNotFound();
 
   const decisionMakerRef = deriveDecisionMakerRef(invitation.recipientChannelRef);

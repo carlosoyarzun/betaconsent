@@ -6,6 +6,8 @@
 import type { TenantResolverPort } from "../../server/ports/tenant-resolver.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-work.port.ts";
 import type { TenantHandlePort } from "../../server/ports/tenant-handle.port.ts";
+import { createInMemoryIdempotencyAdapter, LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS } from "./in-memory-idempotency.adapter.ts";
+import { createInMemoryTenantCatalogAdapter } from "./in-memory-tenant-catalog.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "./in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEnrollmentRepository } from "./in-memory-enrollment-repository.adapter.ts";
 import { createInMemoryInvitationRepository } from "./in-memory-invitation-repository.adapter.ts";
@@ -43,6 +45,8 @@ export function createInMemoryTenancy(ports: InMemoryTenancySources): InMemoryTe
     enrollmentRepo: ports.enrollmentRepo ?? createInMemoryEnrollmentRepository(),
     ledger: ports.ledger,
     outbox: ports.outbox ?? createInMemoryOutboxAdapter(),
+    tenantCatalog: ports.tenantCatalog ?? createInMemoryTenantCatalogAdapter(),
+    idempotency: ports.idempotency ?? createInMemoryIdempotencyAdapter({ ttlMs: LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS }),
   };
   return {
     uow: createInMemoryUnitOfWork(full),

@@ -14,7 +14,7 @@ import { assertActorRoleIn } from "../common/guards.ts";
 import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EnrollmentRecord, EnrollmentRepositoryPort } from "../../ports/enrollment-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
-import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
+import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { TenantCatalogPort } from "../../ports/tenant-catalog.port.ts";
 
 export interface EnrollmentPorts {
@@ -56,12 +56,16 @@ export function openEnrollment(
   // CA-124 PR-D (SEC-CNS-015 P2-E): una tx; dentro, repo y ledger son los de la tx. Agregado nuevo:
   // expectedSequence 0 explicito; la carrera por (sujeto, participacion) la resuelve el UNIQUE parcial
   // GRD-TC-03 y el reintento del UoW (la perdedora ve al Enrollment ganador y falla con ERR-TC-03).
-  return ports.uow.inTenant(tenantId, (tx) =>
-    openEnrollmentTx({ ...ports, enrollmentRepo: tx.enrollmentRepo, ledger: tx.ledger }, tenantId, actorRole, input),
-  );
+  return ports.uow.inTenant(tenantId, (tx) => openEnrollmentTx(enrollmentPortsInTx(ports, tx), tenantId, actorRole, input));
 }
 
-async function openEnrollmentTx(
+/** Puertos de EN0 ligados a una tx abierta del tenant (repo, catálogo y ledger de la tx; lecturas bajo RLS). */
+export function enrollmentPortsInTx(ports: EnrollmentPorts, tx: TenantTxPorts): EnrollmentPorts {
+  return { ...ports, enrollmentRepo: tx.enrollmentRepo, tenantCatalog: tx.tenantCatalog, ledger: tx.ledger };
+}
+
+/** EN0 dentro de una tx ya abierta (puertos de `enrollmentPortsInTx`): no abre `inTenant`. */
+export async function openEnrollmentTx(
   ports: EnrollmentPorts,
   tenantId: TenantId,
   actorRole: ActorRole,

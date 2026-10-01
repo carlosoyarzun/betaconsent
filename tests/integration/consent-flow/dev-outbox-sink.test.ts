@@ -48,3 +48,23 @@ test("TEST-CNS-696: GET /__dev/outbox-sink existe (200, {enqueued: []}) en LOCAL
     }
   }
 });
+
+test("TEST-CNS-881: storeMode=postgres sin devOutboxSink responde 404 (nunca TypeError del Proxy); con el lector responde sus sobres", async () => {
+  for (const [sink, expected] of [[undefined, 404], [async () => [], 200]] as const) {
+    const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+    const server: Server = createConsentFlowHttpServer({
+      config: { allowedOrigin: ALLOWED_ORIGIN },
+      ports,
+      environment: "LOCAL",
+      storeMode: "postgres",
+      ...(sink ? { devOutboxSink: sink } : {}),
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/__dev/outbox-sink`);
+      assert.equal(res.status, expected);
+    } finally {
+      await new Promise((r) => server.close(() => r(undefined)));
+    }
+  }
+});
