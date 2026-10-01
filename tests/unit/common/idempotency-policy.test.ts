@@ -16,12 +16,12 @@ const B = "22222222-2222-4222-8222-222222222222";
 const KEY = "a".repeat(64);
 const R = { payloadHash: "b".repeat(64), status: 201, body: { ref: "x" } };
 
-test("TEST-CNS-868 loadIdempotencyPolicyConfig: sin override ni CNS_IDEMPOTENCY_TTL_MS lanza (fail-closed, sin default de produccion)", () => {
+test("TEST-CNS-868 loadIdempotencyPolicyConfig: sin override ni env aplica P-33 aprobado (24 h); valores invalidos de env lanzan", () => {
   const saved = process.env.CNS_IDEMPOTENCY_TTL_MS;
   delete process.env.CNS_IDEMPOTENCY_TTL_MS;
   try {
-    assert.throws(() => loadIdempotencyPolicyConfig(), /P-33/);
-    assert.throws(() => loadIdempotencyPolicyConfig({}), /PENDING/);
+    // CA-128 (Carlos, 2026-10-01): P-33 = 24 h APROBADO; sin override ni env ya no lanza.
+    assert.deepEqual(loadIdempotencyPolicyConfig(), { ttlMs: 24 * 60 * 60_000 });
     process.env.CNS_IDEMPOTENCY_TTL_MS = "abc";
     assert.throws(() => loadIdempotencyPolicyConfig(), /entero positivo/);
     process.env.CNS_IDEMPOTENCY_TTL_MS = "-5";

@@ -6,6 +6,12 @@
 // abierta de Carlos (EXT-B). El caller (dev.ts LOCAL-only, tests) pasa un override explícito;
 // sin él, I2/I3 fallan cerrado (ERR-CM-12, GUARD_EVALUATOR_UNAVAILABLE).
 
+import { APPROVED_P10_INVITATION_EXPIRES_IN_MS } from "../common/approved-parameters.ts";
+
+// ACTUALIZADO (Carlos, 2026-10-01, CA-128): P-10 = 7 días APROBADO (default en cualquier entorno).
+// deliveryChannel (EXT-B / F-014) sigue SIN aprobar: fail-closed. EXT-B (a): en IT0 se permiten
+// invitaciones UNBOUND (sin destinatario) y no hay tabla de canales; RECIPIENT_CHANNEL sigue rechazado en pg.
+
 export type InvitationDeliveryChannel = "SCHOOL_CHANNEL" | "CONSENT_APP_EMAIL";
 
 const DELIVERY_CHANNELS: readonly InvitationDeliveryChannel[] = ["SCHOOL_CHANNEL", "CONSENT_APP_EMAIL"];
@@ -20,13 +26,10 @@ export interface InvitationIssuancePolicy {
 export function loadInvitationIssuancePolicyConfig(
   overrides: Partial<InvitationIssuancePolicy> = {},
 ): InvitationIssuancePolicy {
-  const expiresInMs = overrides.expiresInMs;
+  const expiresInMs = overrides.expiresInMs ?? APPROVED_P10_INVITATION_EXPIRES_IN_MS;
   const deliveryChannel = overrides.deliveryChannel;
-  if (expiresInMs === undefined || !Number.isFinite(expiresInMs) || expiresInMs <= 0) {
-    throw new Error(
-      "Política de emisión de invitaciones incompleta: P-10 (expiresInMs) no tiene valor aprobado en este " +
-        "entorno. No hay default de producción; dev.ts y los tests pasan un override LOCAL-only.",
-    );
+  if (!Number.isFinite(expiresInMs) || expiresInMs <= 0) {
+    throw new Error("Política de emisión de invitaciones inválida: P-10 (expiresInMs) debe ser un número positivo.");
   }
   if (deliveryChannel === undefined || !DELIVERY_CHANNELS.includes(deliveryChannel)) {
     throw new Error(

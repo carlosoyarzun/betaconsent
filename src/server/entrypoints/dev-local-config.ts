@@ -10,13 +10,18 @@
 // D4 / GRD-CD-04 (decision-relationship.config.ts, opción b de Carlos, 2026-09-27): sin default
 // de producción; estos valores son LOCAL-only y nunca se usan fuera de dev.ts/tests.
 
+import {
+  APPROVED_LINK_HANDLE_TTL_MS,
+  APPROVED_P10_INVITATION_EXPIRES_IN_MS,
+  APPROVED_P33_IDEMPOTENCY_TTL_MS,
+} from "../modules/common/approved-parameters.ts";
+
 /** P-01/P-02/P-03 (otp-policy.config.ts): sin valor aprobado en SEC-CNS-006, LOCAL-only. */
 export const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: 6, ttlMs: 5 * 60_000, maxAttempts: 3, maxResends: 3 };
 
-/** P-33 (idempotency-policy.config.ts, GRD-CM-08): TTL de la Idempotency-Key de la consola STAFF; sin
- * valor aprobado en SEC-CNS-006, LOCAL-only (24 h es un valor sintético de conveniencia, no una
- * recomendación de producto). Nunca un default de producción. */
-export const LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY = { ttlMs: 24 * 60 * 60_000 };
+/** P-33 (idempotency-policy.config.ts, GRD-CM-08): TTL de la Idempotency-Key = 24 h, APROBADO
+ * (Carlos, 2026-10-01); vale en cualquier entorno (approved-parameters.ts). */
+export const LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY = { ttlMs: APPROVED_P33_IDEMPOTENCY_TTL_MS };
 
 /** GRD-CD-04: enum legal real PENDING DEC-BR-003 / EXT-A / LD-01; debe cumplir el patrón del
  * contrato `^[A-Z_]{1,40}$` (solo A-Z y "_", sin dígitos). */
@@ -42,8 +47,9 @@ export const LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
 
 /** SEC-CNS-014 patrón (Carlos, 2026-09-28), link-handle.ts/manage-handle-policy.config.ts: TTL
  * de la cookie `__Host-cns-m-handle` que fija GET /m/{token} sin leer la BD. Mismo criterio
- * LOCAL-only que arriba. */
-export const LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY = { ttlMs: 10 * 60_000 };
+ * LOCAL-only que arriba. TTL 10 min APROBADO (Carlos, 2026-10-01; approved-parameters.ts). Pasa como
+ * override explícito porque manage-handle-policy.config.ts (modules/revocation/*) no se toca en CA-128. */
+export const LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY = { ttlMs: APPROVED_LINK_HANDLE_TTL_MS };
 
 /** Refs opacas sintéticas de dev.ts (LOCAL-only): TenantRef/Ref válidos contra common.schema.json
  * (:27, :35), porque viajan tal cual en el sobre de consent.revoked (CA-127). */
@@ -58,13 +64,13 @@ export const LOCAL_ONLY_DEV_OTHER_TENANT_ID = "5d2e8a1c-6b3f-4d97-9c04-7e1a3b5d9
  * tiene todavía un flujo de alta de sujetos ni participaciones: FINDING P1). Cero PII. */
 export const LOCAL_ONLY_DEV_STAFF_SUBJECT_REF = "b7c3d1e5-2a48-4f96-8d10-6e9f0a2c4b73";
 export const LOCAL_ONLY_DEV_PARTICIPATION_REF = "d4f8a2c6-7b13-4e59-a8c2-0f3d5b7e9a14";
-export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "f1a5c9e3-4d27-4b68-9e30-2c4e6a8b0d51";
+export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "staff-recipient@example.invalid";
 
-/** CA-125: P-10 (vigencia de la invitación; sin valor aprobado en el repo) y deliveryChannel
- * (EXT-B / F-014, DEC-BR-014 §7: decisión de Carlos pendiente). Valores LOCAL-only de
- * conveniencia para el sink de dev, sin ninguna salida de red; NO son una recomendación. */
+/** CA-125: P-10 (vigencia de la invitación = 7 días, APROBADO, Carlos 2026-10-01) y deliveryChannel
+ * (EXT-B / F-014, DEC-BR-014 §7: sigue sin aprobar; valor LOCAL-only para el sink de dev, sin salida
+ * de red). EXT-B (a), Carlos 2026-10-01: IT0 permite invitaciones UNBOUND y no tiene tabla de canales. */
 export const LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY = {
-  expiresInMs: 24 * 60 * 60_000,
+  expiresInMs: APPROVED_P10_INVITATION_EXPIRES_IN_MS,
   deliveryChannel: "CONSENT_APP_EMAIL" as const,
 };
 
