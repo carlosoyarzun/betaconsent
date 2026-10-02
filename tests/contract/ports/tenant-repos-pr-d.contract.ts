@@ -122,6 +122,10 @@ export function runTenantReposPrDContract(adapterName: string, register: Registe
     const declined: InvitationRecord = { ...minimal, state: "DECLINED" };
     await h.uow.inTenant(t, (tx) => tx.invitationRepo.save(declined));
     assert.equal(await h.uow.inTenant(t, (tx) => tx.invitationRepo.findActiveBySubject(t, minimal.contextRef, minimal.subjectRef)), null);
+    // GRD-IV-14 (API-CNS-116): existsBySubject cuenta cualquier estado, tambien el terminal, solo para (tenant, contexto, sujeto).
+    assert.equal(await h.uow.inTenant(t, (tx) => tx.invitationRepo.existsBySubject(t, minimal.contextRef, minimal.subjectRef)), true);
+    assert.equal(await h.uow.inTenant(t, (tx) => tx.invitationRepo.existsBySubject(t, "OTRO_CONTEXTO", minimal.subjectRef)), false);
+    assert.equal(await h.uow.inTenant(t, (tx) => tx.invitationRepo.existsBySubject(t, minimal.contextRef, fixtureUuid("subject-nope"))), false);
   });
 
   register(name("TEST-CNS-831", "OtpVerificationRepository: round-trip (DECISION y REVOCATION con canal mgmt:), consumedAt, findActiveByParent solo CODE_SENT/NOT_STARTED, findByRefForUpdate"), async (h) => {

@@ -6,7 +6,13 @@
 import type { InvitationRecord, InvitationRepositoryPort } from "../../server/ports/invitation-repository.port.ts";
 import { JournaledMap, TX_JOURNAL, UNSCOPED_LOOKUP, type TxParticipant, type UnscopedTokenLookup } from "./in-memory-tx.ts";
 
-export type InMemoryInvitationRepository = InvitationRepositoryPort & TxParticipant & UnscopedTokenLookup<InvitationRecord>;
+/** Listado de LECTURA para la proyeccion in-memory del roster (API-CNS-116): NO es parte del puerto del dominio.
+ * Orden de insercion = orden de creacion (equivale a created_at en el desempate de la prioridad). */
+export interface InvitationListing {
+  listByTenant(tenantId: string): readonly InvitationRecord[];
+}
+
+export type InMemoryInvitationRepository = InvitationRepositoryPort & TxParticipant & UnscopedTokenLookup<InvitationRecord> & InvitationListing;
 
 export function createInMemoryInvitationRepository(): InMemoryInvitationRepository {
   const byKey = new JournaledMap<string, InvitationRecord>();
@@ -45,6 +51,15 @@ export function createInMemoryInvitationRepository(): InMemoryInvitationReposito
         }
       }
       return null;
+    },
+    async existsBySubject(tenantId, contextRef, subjectRef) {
+      for (const record of byKey.values()) {
+        if (record.tenantId === tenantId && record.contextRef === contextRef && record.subjectRef === subjectRef) return true;
+      }
+      return false;
+    },
+    listByTenant(tenantId) {
+      return [...byKey.values()].filter((r) => r.tenantId === tenantId);
     },
     async save(record) {
       byKey.set(key(record.tenantId, record.invitationRef), { ...record });

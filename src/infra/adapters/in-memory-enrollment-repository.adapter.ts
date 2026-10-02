@@ -4,7 +4,12 @@
 import type { EnrollmentRecord, EnrollmentRepositoryPort } from "../../server/ports/enrollment-repository.port.ts";
 import { JournaledMap, TX_JOURNAL, type TxParticipant } from "./in-memory-tx.ts";
 
-export type InMemoryEnrollmentRepository = EnrollmentRepositoryPort & TxParticipant;
+/** Listado de LECTURA para la proyeccion in-memory del roster (API-CNS-116): NO es parte del puerto del dominio. */
+export interface EnrollmentListing {
+  listByTenant(tenantId: string): readonly EnrollmentRecord[];
+}
+
+export type InMemoryEnrollmentRepository = EnrollmentRepositoryPort & TxParticipant & EnrollmentListing;
 
 export function createInMemoryEnrollmentRepository(): InMemoryEnrollmentRepository {
   const byKey = new JournaledMap<string, EnrollmentRecord>();
@@ -29,6 +34,9 @@ export function createInMemoryEnrollmentRepository(): InMemoryEnrollmentReposito
         }
       }
       return null;
+    },
+    listByTenant(tenantId) {
+      return [...byKey.values()].filter((r) => r.tenantId === tenantId);
     },
     async save(record) {
       byKey.set(key(record.tenantId, record.enrollmentRef), { ...record });

@@ -189,8 +189,14 @@ pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con 
 
   // P2-1: ninguna vista (ni materializada) sobre tablas con RLS sin security_invoker; si no, la vista
   // correria con los privilegios de su dueno y esquivaria la policy por tenant.
-  const views = (await admin.query<{ v: string }>(
-    `SELECT DISTINCT v.oid::regclass::text AS v
+  // Unica excepcion (API-CNS-116, SEC-CNS-018 rev. 2 R1): app.staff_roster_invitation_status es security_invoker=false
+  // A PROPOSITO (proyeccion colapsada del roster del colegio) y solo con: security_barrier=true, dueno
+  // staff_roster_owner (nunca consent_owner ni un rol de runtime) y WHERE por tenant explicito. Cualquier otra
+  // vista sigue prohibida.
+  const views = (await admin.query<{ v: string; barrier: boolean; owner: string }>(
+    `SELECT DISTINCT v.oid::regclass::text AS v,
+            COALESCE(v.reloptions @> ARRAY['security_barrier=true'], false) AS barrier,
+            pg_get_userbyid(v.relowner) AS owner
        FROM pg_class v
        JOIN pg_rewrite r ON r.ev_class = v.oid
        JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
@@ -198,7 +204,12 @@ pgTest("TEST-CNS-746 pg: ningún rol de runtime con BYPASSRLS, sin policies con 
       WHERE v.relkind IN ('v', 'm') AND t.relrowsecurity
         AND (v.relkind = 'm' OR NOT COALESCE(v.reloptions @> ARRAY['security_invoker=true'], false))`,
   )).rows;
-  assert.deepEqual(views, [], "vistas sobre tablas con RLS sin security_invoker");
+  const rosterView = "app.staff_roster_invitation_status";
+  assert.deepEqual(views.filter((v) => v.v !== rosterView), [], "vistas sobre tablas con RLS sin security_invoker");
+  for (const v of views.filter((x) => x.v === rosterView)) {
+    assert.equal(v.barrier, true, "la vista del roster debe ser security_barrier");
+    assert.equal(v.owner, "staff_roster_owner", "la vista del roster debe pertenecer a staff_roster_owner");
+  }
 });
 
 pgTest("TEST-CNS-747 pg: los chequeos de arranque aceptan app_rw/worker/platform_rw y rechazan migrador y superusuario", async (ctx) => {

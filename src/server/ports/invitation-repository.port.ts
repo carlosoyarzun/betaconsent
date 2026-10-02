@@ -48,5 +48,7 @@ export interface InvitationRepositoryPort {
   findByRefForUpdate(tenantId: TenantId, invitationRef: string): Promise<InvitationRecord | null>;
   /** GRD-IV-01: no debe existir otra Invitation no terminal para (tenantId, contextRef, subjectRef). */
   findActiveBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): Promise<InvitationRecord | null>;
+  /** GRD-IV-14 (API-CNS-116, PC-2): existe CUALQUIER Invitation (en cualquier estado) para (tenantId, contextRef, subjectRef). */
+  existsBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): Promise<boolean>;
   save(record: InvitationRecord): Promise<void>;
 }
