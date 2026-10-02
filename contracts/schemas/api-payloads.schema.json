@@ -1097,6 +1097,105 @@
         "contextRef",
         "state"
       ]
+    },
+    "StaffInvitationStatus": {
+      "type": "string",
+      "enum": [
+        "NOT_INVITED",
+        "PENDING_SEND",
+        "SENT",
+        "DECISION_RECORDED",
+        "CLOSED_WITHOUT_DECISION"
+      ],
+      "description": "API-CNS-116: estado operativo colapsado en la base. No es el vocabulario de la máquina de estados."
+    },
+    "StaffRosterRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjectRef",
+        "participationRef",
+        "subjectLabel",
+        "invitationStatus"
+      ],
+      "properties": {
+        "subjectRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "participationRef": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subjectLabel": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^Alumno de prueba [0-9]{1,4}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "invitationStatus": {
+          "$ref": "#/$defs/StaffInvitationStatus"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "not": {
+              "properties": {
+                "invitationStatus": {
+                  "const": "NOT_INVITED"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "participationRef": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "description": "API-CNS-116: una fila por (alumno, contexto). participationRef solo no nulo en NOT_INVITED. Sin sentOn, canal, email ni timestamps."
+    },
+    "StaffRosterPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "nextCursor"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/StaffRosterRow"
+          }
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^c1\\.[A-Za-z0-9_-]{40,400}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     }
   }
 }

@@ -34,7 +34,7 @@ export class RosterCursorInvalidError extends Error {
   }
 }
 
-export interface RosterCursorBinding {
+export interface RosterCursorScope {
   readonly tenantId: string;
   readonly principalRef: string;
   readonly role: string;
@@ -65,14 +65,14 @@ export function loadStaffRosterCursorSecret(env: Readonly<Record<string, string 
   return secret;
 }
 
-function aadOf(binding: RosterCursorBinding): Buffer {
-  return Buffer.from(JSON.stringify([STAFF_ROSTER_CURSOR_HKDF_INFO, binding.tenantId, binding.principalRef, binding.role, STAFF_ROSTER_CURSOR_ROUTE]), "utf8");
+function aadOf(scope: RosterCursorScope): Buffer {
+  return Buffer.from(JSON.stringify([STAFF_ROSTER_CURSOR_HKDF_INFO, scope.tenantId, scope.principalRef, scope.role, STAFF_ROSTER_CURSOR_ROUTE]), "utf8");
 }
 
-export function encodeRosterCursor(key: Buffer, binding: RosterCursorBinding, position: RosterCursorPosition, nowMs: number = Date.now()): string {
+export function encodeRosterCursor(key: Buffer, scope: RosterCursorScope, position: RosterCursorPosition, nowMs: number = Date.now()): string {
   const nonce = randomBytes(NONCE_BYTES);
   const cipher = createCipheriv("aes-256-gcm", key, nonce);
-  cipher.setAAD(aadOf(binding));
+  cipher.setAAD(aadOf(scope));
   const plaintext = Buffer.from(JSON.stringify({ s: position.subjectRef, x: position.contextRef, t: nowMs }), "utf8");
   const sealed = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
   return `${STAFF_ROSTER_CURSOR_PREFIX}${Buffer.concat([nonce, sealed]).toString("base64url")}`;
@@ -80,7 +80,7 @@ export function encodeRosterCursor(key: Buffer, binding: RosterCursorBinding, po
 
 export function decodeRosterCursor(
   key: Buffer,
-  binding: RosterCursorBinding,
+  scope: RosterCursorScope,
   cursor: string,
   nowMs: number = Date.now(),
 ): RosterCursorPosition {
@@ -94,7 +94,7 @@ export function decodeRosterCursor(
     const tag = raw.subarray(raw.length - TAG_BYTES);
     const ciphertext = raw.subarray(NONCE_BYTES, raw.length - TAG_BYTES);
     const decipher = createDecipheriv("aes-256-gcm", key, nonce);
-    decipher.setAAD(aadOf(binding));
+    decipher.setAAD(aadOf(scope));
     decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
     const parsed = JSON.parse(plaintext) as unknown;

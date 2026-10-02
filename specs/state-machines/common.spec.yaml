@@ -8,11 +8,12 @@
 # rev. 2 (2026-09-27): correcciones de SEC-CNS-012 (SEC-review-CA116) y AUDIT-H01.
 # Las demás specs referencian por ID los guards (GRD-CM-*), errores (ERR-CM-*),
 # invariantes (INV-CM-*, INV-3, INV-12) y el actor UNVERIFIED_BEARER declarados aquí. Cero PII.
+# rev. 0.4.4 (2026-10-02, API-CNS-116, DEC-BR-019): ERR-CM-13 LIST_QUERY_INVALID; extension de ERR-CM-12 (503 del GET /staff/roster). Regla de GET STAFF: sin token CSRF (INV-CM-08, no transiciona); JSON exige Sec-Fetch-Site same-origin y Origin identico si viene (404 uniforme), porque la cookie de sesion es SameSite=Lax.
 specId: SPEC-CNS-SM-COMMON
 title: "State machines IT0 — reglas transversales (tenancy, clases de ruta, ledger, actor, fail-closed)"
 smId: SM-CNS-001
 smSection: "§0, §1, §7 (el §6 se modela en tenant-context.spec.yaml, solo en lo que afecta a las cinco máquinas)"
-version: "0.4.3"
+version: "0.4.4"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -156,6 +157,7 @@ failClosed:
 globalErrors: # aplican a toda transición de todas las specs (el checker los cuenta como usados)
   - ERR-CM-06 # INVALID_TRANSITION
   - ERR-CM-12 # GUARD_EVALUATOR_UNAVAILABLE
+  - ERR-CM-13 # LIST_QUERY_INVALID (solo lecturas de lista, API-CNS-116; se lista aqui para el checker H01: no hay otra clave de uso)
 startupChecks: # chequeos de arranque, no de transición (el checker los cuenta como usados)
   - GRD-CM-11
 
@@ -334,6 +336,13 @@ errors:
     emitsEvent: none
     governedBy: ["[N-SM] §1 'Not a context pause'", "SM-CNS-001 R0.3"]
     testIds: [TEST-CNS-312]
+    extension: "API-CNS-116 (GET /staff/roster): tambien cubre fallo de BD, de ops.access_log, de SET LOCAL ROLE, reloj BD vs proceso > 2 s, estado sin rama (NULL) y directorio de etiquetas caido -> 503 sin datos (OPEN-CT-08)."
+  - id: ERR-CM-13
+    code: LIST_QUERY_INVALID
+    response: "422 uniforme (cuerpo identico, sin eco): limit fuera de 1-100, parametro desconocido o repetido, cursor invalido, alterado, de otro principal/tenant, expirado o de version desconocida (API-CNS-116)"
+    emitsEvent: none
+    governedBy: ["API-CNS-116", "REQ-CNS-036", "SEC-CNS-018 rev. 2 R4", "INV-CM-05"]
+    testIds: [TEST-CNS-1082, TEST-CNS-1083, TEST-CNS-1085]
 
 invariants:
   - id: INV-CM-01

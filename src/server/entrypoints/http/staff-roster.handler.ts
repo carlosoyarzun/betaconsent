@@ -21,7 +21,7 @@ import {
   decodeRosterCursor,
   encodeRosterCursor,
   RosterCursorInvalidError,
-  type RosterCursorBinding,
+  type RosterCursorScope,
   type RosterCursorPosition,
 } from "../../modules/staff-roster/roster-cursor.ts";
 import { StaffRosterUnavailableError, type StaffRosterProjectionRow } from "../../ports/staff-roster.port.ts";
@@ -142,11 +142,11 @@ async function evaluate(
 
   const query = parseQuery(request.rawQuery);
   if (query === null) return listQueryInvalid();
-  const binding: RosterCursorBinding = { tenantId: staff.tenantId, principalRef: staff.principalRef, role: "TENANT_ADMIN" };
+  const scope: RosterCursorScope = { tenantId: staff.tenantId, principalRef: staff.principalRef, role: "TENANT_ADMIN" };
   let after: RosterCursorPosition | null = null;
   if (query.cursor !== null) {
     try {
-      after = decodeRosterCursor(cursorKey, binding, query.cursor, nowMs());
+      after = decodeRosterCursor(cursorKey, scope, query.cursor, nowMs());
     } catch (error) {
       if (error instanceof RosterCursorInvalidError) return listQueryInvalid();
       throw error;
@@ -192,7 +192,7 @@ async function evaluate(
   const last = page[page.length - 1];
   const nextCursor =
     rows.length > query.limit && last !== undefined
-      ? encodeRosterCursor(cursorKey, binding, { subjectRef: last.subjectRef, contextRef: last.contextRef }, nowMs())
+      ? encodeRosterCursor(cursorKey, scope, { subjectRef: last.subjectRef, contextRef: last.contextRef }, nowMs())
       : null;
   return { status: 200, body: { items, nextCursor } };
 }
