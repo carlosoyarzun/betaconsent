@@ -63,7 +63,8 @@ async function lastSequence(ports: InvitationPorts, tenantId: TenantId, invitati
  * I1: null -> DRAFT. Guards: GRD-IV-02 (subject/enrollment/participation del tenant y coherentes
  * entre sí, ERR-CM-01), GRD-CM-03 (Guard P, ERR-CM-03), GRD-CM-04 (Guard E, ERR-CM-04),
  * GRD-IV-11 (reemisión: P-11 sin valor aprobado en el repo => límite 0 fail-closed, ERR-IV-07),
- * y los de invitation.createInvitation (GRD-CM-05, GRD-CM-07, GRD-IV-01).
+ * GRD-IV-14 (fuente STAFF: ninguna Invitation previa en cualquier estado, ERR-IV-02 uniforme) y los de
+ * invitation.createInvitation (GRD-CM-05, GRD-CM-07, GRD-IV-01).
  * El productRef sale de la SchoolParticipation del tenant, nunca del body.
  */
 export function staffCreateInvitation(
@@ -103,6 +104,13 @@ export async function staffCreateInvitationTx(
     // GRD-IV-11: el límite P-11 no tiene valor en el repo; sin valor, fail-closed (rechazo hasta
     // revisión humana). FINDING P2 de CA-125.
     throw new DomainError("ERR-IV-07");
+  }
+  // GRD-IV-14 (API-CNS-116, PC-2, Carlos 2026-10-02): desde la fuente STAFF, I1 solo para NOT_INVITED: no existe NINGUNA Invitation
+  // previa (en cualquier estado) para (tenant, contexto, sujeto). Uniforme con GRD-IV-01: mismo ERR-IV-02 (mismo status y cuerpo)
+  // para cualquier estado previo, asi no revela el sentido de una decision anterior. Se evalua tras los guards de pertenencia
+  // (ERR-CM-01/03/04), nunca antes: un sujeto ajeno sigue siendo 404 uniforme.
+  if (await ports.invitation.invitationRepo.existsBySubject(tenantId, input.contextRef, input.subjectRef)) {
+    throw new DomainError("ERR-IV-02");
   }
 
   const invitationRef = randomUUID(); // INV-CM-09

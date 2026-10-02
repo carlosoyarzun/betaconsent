@@ -81,7 +81,7 @@ export interface RawConsentRequest {
 }
 
 export interface HttpResult {
-  readonly status: 200 | 201 | 202 | 303 | 403 | 404 | 409 | 422;
+  readonly status: 200 | 201 | 202 | 303 | 403 | 404 | 409 | 422 | 503;
   readonly body: Readonly<Record<string, unknown>>;
   /** Si está presente, el transporte (server.ts) debe fijar esta cookie de sesión (D5). */
   readonly setSessionCookie?: string;

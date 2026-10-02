@@ -294,7 +294,7 @@ TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: 
 TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: una migración que falla no deja cambios parciales ni se registra; la siguiente sí se aplica","CA-124;D2",ACTIVE
 TEST-CNS-749,integration,tests/integration/postgres/migrate-runner.test.ts,"pg: el alcance cluster no se ejecuta en el paso database","CA-124;D2",ACTIVE
 TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"parseMigration valida nombre, alcance y calcula sha256","CA-124;D2",ACTIVE
-TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"las migraciones del repo: 0000 y 0004 son cluster, el resto database, versiones únicas y ordenadas","CA-124;D2",ACTIVE
+TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"las migraciones del repo: 0000, 0004 y 0018 son cluster, el resto database, versiones únicas y ordenadas","CA-124;D2",ACTIVE
 TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"ninguna migración contiene contraseñas ni credenciales (cero secretos en el repo)","CA-124;D2",ACTIVE
 TEST-CNS-749,unit,tests/unit/postgres/migrate.test.ts,"setRolePasswords escapa la contraseña como literal y rechaza contraseñas cortas","CA-124;D2",ACTIVE
 TEST-CNS-750,integration,tests/integration/postgres/tenant-context.test.ts,"pg: app.current_tenant_id() es NULL sin tenant, con '' y devuelve el uuid con tenant","CA-124;ADR-006;INV-CM-02",ACTIVE
@@ -491,3 +491,32 @@ TEST-CNS-1063,integration,tests/integration/staff/dev-staff-console-http.test.ts
 TEST-CNS-1064,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: CSRF ausente/distinto u Origin ajeno rechazados 403 sin efecto","CA-125;Carlos 2026-10-01;GRD-CM-10",ACTIVE
 TEST-CNS-1065,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: dos invitaciones a alumnos distintos en el mismo arranque; alumno repetido da error claro; alumno fuera del catalogo rechazado","CA-125;Carlos 2026-10-01",ACTIVE
 TEST-CNS-1066,integration,tests/integration/staff/dev-staff-console-http.test.ts,"consola dev: cuerpo >8KiB corta con 413; gating LOCAL antes de leer cuerpo (404); CSP script/object/base none","CA-125;Carlos 2026-10-01;SEC review",ACTIVE
+TEST-CNS-1070,contract,tests/contract/ports/staff-roster.test.ts,"StaffRoster contract (in-memory): mapeo de cada estado persistible con expiracion perezosa (D1, D9, PC-1)","API-CNS-116;REQ-CNS-036;DEC-BR-019;SEC-CNS-018",ACTIVE
+TEST-CNS-1070,integration,tests/integration/postgres/staff-roster.test.ts,"StaffRoster contract (postgres): mapeo de cada estado persistible con expiracion perezosa","API-CNS-116;REQ-CNS-036;DEC-BR-019;SEC-CNS-018",ACTIVE
+TEST-CNS-1071,contract,tests/contract/ports/staff-roster.test.ts,"StaffRoster contract (in-memory): prioridad PC-2 y COMPLETED=DECLINED","API-CNS-116;PC-2;INV-IV-09",ACTIVE
+TEST-CNS-1071,integration,tests/integration/postgres/staff-roster.test.ts,"StaffRoster contract (postgres): prioridad PC-2 y COMPLETED=DECLINED","API-CNS-116;PC-2;INV-IV-09",ACTIVE
+TEST-CNS-1072,contract,tests/contract/ports/staff-roster.test.ts,"StaffRoster contract (in-memory): keyset (subject_ref, context_ref) con dos contextos sin duplicar ni saltar","API-CNS-116;SEC-CNS-018 R6",ACTIVE
+TEST-CNS-1072,integration,tests/integration/postgres/staff-roster.test.ts,"StaffRoster contract (postgres): keyset COLLATE C con dos contextos sin duplicar ni saltar","API-CNS-116;SEC-CNS-018 R6",ACTIVE
+TEST-CNS-1073,contract,tests/contract/ports/staff-roster.test.ts,"StaffRoster contract (in-memory): aislamiento por tenant con subject_ref compartido","API-CNS-116;INV-CM-02",ACTIVE
+TEST-CNS-1073,integration,tests/integration/postgres/staff-roster.test.ts,"StaffRoster contract (postgres): aislamiento por tenant con subject_ref compartido","API-CNS-116;INV-CM-02",ACTIVE
+TEST-CNS-1074,contract,tests/contract/ports/staff-roster.test.ts,"StaffRoster contract (in-memory): participation_ref de matricula ACTIVE y una fila access_log por lectura","API-CNS-116;DEC-BR-014 §3 X6",ACTIVE
+TEST-CNS-1074,integration,tests/integration/postgres/staff-roster.test.ts,"StaffRoster contract (postgres): participation_ref de matricula ACTIVE y una fila access_log por lectura","API-CNS-116;DEC-BR-014 §3 X6",ACTIVE
+TEST-CNS-1075,integration,tests/integration/postgres/staff-roster.test.ts,"pg: vista de staff_roster_owner, columnas minimas, grants por columna, policies, app_rw sin SELECT sin SET ROLE, lector sin tablas base","API-CNS-116;SEC-CNS-018 R1;R2",ACTIVE
+TEST-CNS-1076,integration,tests/integration/postgres/staff-roster.test.ts,"pg: CHECK invitation_state_enum == ramas del CASE de la vista; un estado nuevo falla","API-CNS-116;SEC-CNS-018 R1;T-11",ACTIVE
+TEST-CNS-1077,integration,tests/integration/postgres/staff-roster.test.ts,"pg: la vista solo depende de subject, school_participation, invitation y enrollment","API-CNS-116;T-17;INV-IV-09",ACTIVE
+TEST-CNS-1078,integration,tests/integration/postgres/staff-roster.test.ts,"pg: staff_status NULL, rol no aplicado, reloj desfasado y access_log caido -> 503 sin datos (ROLLBACK)","API-CNS-116;SEC-CNS-018 R3;F-7;T-18",ACTIVE
+TEST-CNS-1079,integration,tests/integration/postgres/staff-roster.test.ts,"estatico: el adaptador solo consulta la vista y no contiene RESET ROLE ni otro SET ROLE","API-CNS-116;SEC-CNS-018 R3",ACTIVE
+TEST-CNS-1080,integration,tests/integration/staff/staff-roster-http.test.ts,"200 valida StaffRosterPage, mapeo, cabeceras, sin ETag ni canal/email; DECLINED y COMPLETED indistinguibles","API-CNS-116;REQ-CNS-036;DEC-BR-019;SEC-CNS-018",ACTIVE
+TEST-CNS-1081,integration,tests/integration/staff/staff-roster-http.test.ts,"gating Sec-Fetch-Site/Origin/sesion/rol y access_log una vez por request","API-CNS-116;SEC-CNS-018 R3;GRD-CM-01;GRD-CM-07",ACTIVE
+TEST-CNS-1082,integration,tests/integration/staff/staff-roster-http.test.ts,"cursor alterado, de otro principal/tenant, version desconocida o expirado -> 422 uniforme","API-CNS-116;ERR-CM-13;SEC-CNS-018 R4",ACTIVE
+TEST-CNS-1083,integration,tests/integration/staff/staff-roster-http.test.ts,"query limit 1 y 100 validos; resto 422 identico","API-CNS-116;ERR-CM-13",ACTIVE
+TEST-CNS-1084,contract,tests/contract/ports/staff-roster.test.ts,"in-memory: si el access log falla la lectura no devuelve datos","API-CNS-116;ERR-CM-12",ACTIVE
+TEST-CNS-1084,integration,tests/integration/staff/staff-roster-http.test.ts,"http: si el access_log falla -> 503 sin datos; el GET no escribe estado","API-CNS-116;ERR-CM-12;INV-CM-08",ACTIVE
+TEST-CNS-1085,unit,tests/unit/staff-roster/roster-cursor.test.ts,"cursor c1. AES-256-GCM: ida y vuelta, manipulado, AAD, TTL, version, UUIDv4; secreto por entorno","API-CNS-116;SEC-CNS-018 R4",ACTIVE
+TEST-CNS-1086,unit,tests/unit/staff/grd-iv-14.test.ts,"GRD-IV-14: I1 STAFF con invitacion previa en cualquier estado -> ERR-IV-02 identico","API-CNS-116;GRD-IV-14;PC-2",ACTIVE
+TEST-CNS-1087,unit,tests/unit/postgres/startup-checks.test.ts,"R2: membresias y privilegios de staff_roster_owner/reader en el arranque","API-CNS-116;SEC-CNS-018 R2",ACTIVE
+TEST-CNS-1088,unit,tests/unit/postgres/startup-checks.test.ts,"F-7: no arranca si el reloj de la BD difiere del proceso en mas de 2 s","API-CNS-116;F-7",ACTIVE
+TEST-CNS-1089,integration,tests/integration/staff/staff-roster-http.test.ts,"etiqueta solo con patron; participationRef solo en NOT_INVITED (matricula activa > directorio > null)","API-CNS-116;P2-d",ACTIVE
+TEST-CNS-1090,integration,tests/integration/staff/staff-roster-http.test.ts,"aislamiento cross-tenant con subject_ref compartido (estado, etiqueta, participacion)","API-CNS-116;INV-CM-02",ACTIVE
+TEST-CNS-1091,unit,tests/unit/staff/grd-iv-14.test.ts,"el directorio sintetico solo existe en LOCAL con clave (tenant, sujeto)","API-CNS-116;ERR-CM-11",ACTIVE
+TEST-CNS-1092,integration,tests/integration/postgres/staff-roster.test.ts,"pg: ops.access_log admite STAFF_ROSTER_READ/STAFF_ROSTER emparejados","API-CNS-116;DEC-BR-014 §3 X6",ACTIVE

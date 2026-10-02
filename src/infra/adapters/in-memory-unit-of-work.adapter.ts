@@ -87,6 +87,7 @@ function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId):
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
     findActiveBySubject: async (t, contextRef, subjectRef) => (t === tenant ? inner.findActiveBySubject(t, contextRef, subjectRef) : null),
+    existsBySubject: async (t, contextRef, subjectRef) => (t === tenant ? inner.existsBySubject(t, contextRef, subjectRef) : false),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("invitationRepo.save");
       return inner.save(record);

@@ -7,12 +7,14 @@
 import type { TenantId } from "../modules/common/types.ts";
 
 export type AccessLogActorRole = "RIGHTS_OPERATOR" | "APPROVER" | "TENANT_ADMIN" | "PLATFORM_ADMIN";
-export type AccessLogAction = "RIGHTS_CASE_READ";
-export type AccessLogResourceType = "RIGHTS_CASE";
+// 0020 (API-CNS-116): STAFF_ROSTER_READ / STAFF_ROSTER = lectura del roster del colegio por un TENANT_ADMIN
+// (UNA fila por request, resourceRef = tenantId).
+export type AccessLogAction = "RIGHTS_CASE_READ" | "STAFF_ROSTER_READ";
+export type AccessLogResourceType = "RIGHTS_CASE" | "STAFF_ROSTER";
 
 export const ACCESS_LOG_ACTOR_ROLES: readonly AccessLogActorRole[] = ["RIGHTS_OPERATOR", "APPROVER", "TENANT_ADMIN", "PLATFORM_ADMIN"];
-export const ACCESS_LOG_ACTIONS: readonly AccessLogAction[] = ["RIGHTS_CASE_READ"];
-export const ACCESS_LOG_RESOURCE_TYPES: readonly AccessLogResourceType[] = ["RIGHTS_CASE"];
+export const ACCESS_LOG_ACTIONS: readonly AccessLogAction[] = ["RIGHTS_CASE_READ", "STAFF_ROSTER_READ"];
+export const ACCESS_LOG_RESOURCE_TYPES: readonly AccessLogResourceType[] = ["RIGHTS_CASE", "STAFF_ROSTER"];
 /** principalRef canonico: "staff-synthetic-NN" (roster IT0, staff-identity.port.ts) o Ref UUIDv4; espejo del CHECK de 0014. */
 export const ACCESS_LOG_ACTOR_REF_PATTERN = /^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 /** Ref UUIDv4 (common.schema.json#/$defs/Ref); espejo del CHECK de 0014. */
@@ -52,6 +54,8 @@ export function validateAccessLogEntry(entry: AccessLogEntry): void {
   if (!ACCESS_LOG_ACTOR_ROLES.includes(entry.actorRole)) throw new AccessLogValidationError("actorRole");
   if (!ACCESS_LOG_ACTIONS.includes(entry.action)) throw new AccessLogValidationError("action");
   if (!ACCESS_LOG_RESOURCE_TYPES.includes(entry.resourceType)) throw new AccessLogValidationError("resourceType");
+  // Espejo de access_log_action_resource_pair (0020): un par permitido por accion.
+  if ((entry.action === "RIGHTS_CASE_READ") !== (entry.resourceType === "RIGHTS_CASE")) throw new AccessLogValidationError("resourceType");
   if (!ACCESS_LOG_RESOURCE_REF_PATTERN.test(entry.resourceRef)) throw new AccessLogValidationError("resourceRef");
 }
 

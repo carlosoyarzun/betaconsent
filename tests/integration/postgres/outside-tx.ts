@@ -31,6 +31,7 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.invitationRepo.findByRef(t, ref)),
       findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.invitationRepo.findByRefForUpdate(t, ref)),
       findActiveBySubject: (t, ctx, subject) => uow.inTenant(t, (tx) => tx.invitationRepo.findActiveBySubject(t, ctx, subject)),
+      existsBySubject: (t, ctx, subject) => uow.inTenant(t, (tx) => tx.invitationRepo.existsBySubject(t, ctx, subject)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.invitationRepo.save(record)),
     },
     otpRepo: {

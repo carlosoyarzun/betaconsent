@@ -40,7 +40,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$'",
       [table],
     )).rows;
     const expectedCmds = READ_ONLY.includes(table as (typeof READ_ONLY)[number]) ? ["SELECT"] : ["INSERT", "SELECT", "UPDATE"];

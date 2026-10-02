@@ -495,6 +495,48 @@ paths:
         '403': {$ref: '#/components/responses/CsrfRejected'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
         '409': {$ref: '#/components/responses/Problem'}
+  /staff/roster:
+    get:
+      operationId: listRosterInvitationStatus
+      x-api-id: API-CNS-116
+      tags: [staff]
+      summary: Lista del colegio — alumnos y estado operativo COLAPSADO de la invitación (lectura; no transiciona)
+      description: >
+        Una fila por (alumno, contexto). El estado ya llega colapsado desde la base (vista app.staff_roster_invitation_status tras
+        SET LOCAL ROLE staff_roster_reader): COMPLETED y DECLINED son indistinguibles (DECISION_RECORDED); SENT/OPENED/VERIFIED son SENT;
+        la expiración se calcula con el reloj de la BD. Sin sentOn, sin canal ni email, sin timestamps. Keyset por subject_ref/context_ref
+        COLLATE "C" (nunca por estado ni fecha); sin totales. Solo JSON (la página HTML 90:33 es otra entrega).
+        Gating: Sec-Fetch-Site same-origin obligatorio y Origin idéntico si viene (si no, 404 uniforme); sin token CSRF (GET, INV-CM-08).
+        Cabeceras: Cache-Control no-store, Cross-Origin-Resource-Policy same-origin, Content-Security-Policy frame-ancestors 'none', sin ETag.
+        Cada lectura escribe UNA fila STAFF_ROSTER_READ en ops.access_log (resource_ref = tenant_id), en la misma tx; si no puede, 503.
+      x-governed-by: ["REQ-CNS-036 AC-04..AC-09", "UX-CNS-005", "DEC-BR-019", "invitation.spec projections.staffInvitationStatus, INV-IV-09", "SEC-CNS-018 rev. 2", "DEC-BR-014 §3 X6"]
+      x-route-class: STAFF_ADMIN
+      x-actor: {source: STAFF, actorType: HUMAN, actorRole: INVITER}
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07]
+      x-forbidden-fields: [invitationRef, state, token, tokenHash, recipientChannelRef, recipientBinding, deliveryChannel, expiresAt, reasonCode, enrollmentRef, consentVersion, boundDecisionMakerRef, sentOn, tenantRef, organizationRef]
+      x-pending: ["PC-1 SUBJECT_MISMATCH_REPORTED se muestra SENT hasta expiresAt (aplica cuando CANCELLED persista)", "D-3 ticket sid/iat/exp de la sesión staff para ligar el cursor", "F-3 sentOn fuera del contrato (AC-04 pide fecha de envío)", "LD-b / LD-c / LD-e (LEGAL DECISION, post-IT0)"]
+      security: [{staffSession: []}]
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+        - {name: cursor, in: query, required: false, schema: {type: string, pattern: '^c1\.[A-Za-z0-9_-]{40,400}$'}}
+      responses:
+        '200':
+          description: Página del roster. Cache-Control no-store; Cross-Origin-Resource-Policy same-origin; CSP frame-ancestors 'none'.
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/StaffRosterPage'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+        '422':
+          description: ERR-CM-13 LIST_QUERY_INVALID — limit fuera de rango, parámetro desconocido o repetido, cursor inválido/alterado/de otro principal o tenant/expirado/de versión desconocida. Cuerpo idéntico siempre.
+          content:
+            application/problem+json:
+              schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
+        '503':
+          description: ERR-CM-12 GUARD_EVALUATOR_UNAVAILABLE — fallo de BD, access_log, SET ROLE, reloj (|Δ| > 2 s), estado sin rama o directorio. Sin datos.
+          content:
+            application/problem+json:
+              schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
   /staff/invitations/{invitationRef}/resend:
     post:
       operationId: resendInvitation

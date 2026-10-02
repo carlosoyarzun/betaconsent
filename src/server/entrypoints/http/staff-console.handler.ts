@@ -34,6 +34,8 @@ import { isReservedEmail } from "../../modules/common/synthetic-recipient.ts";
 import { InvalidRecipientChannelRefError } from "../../ports/invitation-repository.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
+import type { StaffRosterReaderPort } from "../../ports/staff-roster.port.ts";
+import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
@@ -47,6 +49,11 @@ export interface StaffConsolePorts {
    * `uow.inTenant` (find + ejecutar + store de la Idempotency-Key en la MISMA tx; GRD-CM-08). */
   readonly uow: UnitOfWorkPort;
   readonly staffIdentity: StaffIdentityPort;
+  /** API-CNS-116 (GET /staff/roster): lector de la proyeccion colapsada del roster. Ausente = el GET responde 503
+   * (fail-closed). Postgres: vista tras SET LOCAL ROLE staff_roster_reader; in-memory: misma semantica. */
+  readonly roster?: StaffRosterReaderPort;
+  /** API-CNS-116: directorio SINTETICO de etiquetas (solo LOCAL/CI, inyectado desde dev.ts). Ausente = etiqueta null. */
+  readonly subjectDirectory?: SubjectDirectoryPort;
 }
 
 /** Resultado de un paso de la consola dentro de la tx: la respuesta y, opcionalmente, un efecto externo
@@ -112,12 +119,12 @@ function domainFailure(err: unknown): HttpResult {
   throw err;
 }
 
-interface AuthenticatedStaff {
+export interface AuthenticatedStaff {
   readonly tenantId: string;
   readonly principalRef: string;
 }
 
-/** GRD-CM-10 + GRD-CM-01 + GRD-CM-07 para todas las rutas /staff/*. */
+/** GRD-CM-10 + GRD-CM-01 + GRD-CM-07 para todas las rutas /staff/* de escritura (POST). */
 async function authenticate(
   request: RawConsentRequest,
   ports: StaffConsolePorts,
@@ -136,12 +143,27 @@ async function authenticate(
     if (err instanceof DomainError && err.code === "ERR-CM-09") return { ok: false, result: csrfRejected() };
     throw err;
   }
+  return authenticateStaffSession(request.cookieHeader, ports.staffIdentity, config, staffSessionKey);
+}
 
+/**
+ * GRD-CM-01 + GRD-CM-02 + GRD-CM-07 sin CSRF: sesion STAFF vigente + membership vigente + rol TENANT_ADMIN. Lo usan
+ * los POST (tras GRD-CM-10) y el GET /staff/roster (API-CNS-116: no transiciona, INV-CM-08; su defensa es
+ * Sec-Fetch-Site/Origin, no un token CSRF). 404 uniforme sin sesion o con membership discrepante; 403 ACTOR_NOT_ALLOWED
+ * para otro rol (solo distinguible en la consola STAFF).
+ */
+export async function authenticateStaffSession(
+  cookieHeader: string | undefined,
+  staffIdentity: StaffIdentityPort,
+  config: RightsCaseHttpConfig,
+  staffSessionKey: Buffer,
+): Promise<{ readonly ok: true; readonly staff: AuthenticatedStaff } | { readonly ok: false; readonly result: HttpResult }> {
+  const cookies = parseCookies(cookieHeader);
   const session = decodeStaffSession(staffSessionKey, cookies[config.staffSessionCookieName]);
   if (!session) return { ok: false, result: uniformNotFound() }; // GRD-CM-01
   // Membership vigente: el principal debe seguir en el roster atestado con el mismo rol y el
   // mismo tenant que la sesión. Cualquier discrepancia = sin sesión (404 uniforme).
-  const principal = await ports.staffIdentity.findByPrincipalRef(session.principalRef);
+  const principal = await staffIdentity.findByPrincipalRef(session.principalRef);
   if (!principal || principal.role !== session.role || principal.tenantId === undefined || principal.tenantId !== session.tenantId) {
     return { ok: false, result: uniformNotFound() };
   }

@@ -5,10 +5,25 @@
 // arranca si el rol de la conexión es superusuario, BYPASSRLS, miembro de un owner, puede
 // CREAR en algún esquema o cambiar session_replication_role, o si el catálogo de la base no
 // es SYNTHETIC/LOCAL|DEV|STAGING (o difiere del environment configurado).
+//
+// API-CNS-116 (SEC-CNS-018 rev. 2, R2/F-7): además exige que el rol de runtime NO sea miembro de
+// staff_roster_owner; que app_rw sea miembro de staff_roster_reader solo WITH INHERIT FALSE, SET TRUE;
+// que staff_roster_reader solo pueda SELECT sobre la vista app.staff_roster_invitation_status (ningún
+// otro objeto, ninguna escritura, ningún CREATE) y que el rol de runtime no pueda leer la vista sin SET
+// ROLE; y que el reloj de la BD (now() de la vista) y el del proceso (Date.now() del dominio) difieran
+// como máximo 2 s.
 
 import type { Queryable } from "./pool.ts";
 
+/** F-7: tolerancia entre el reloj de la BD (vista del roster) y el del proceso (dominio). */
+export const MAX_CLOCK_SKEW_MS = 2000;
+
+/** Vista de la proyeccion del roster del colegio (0019) y roles de R1/R2. */
+export const STAFF_ROSTER_VIEW = "app.staff_roster_invitation_status";
+
 export interface StartupCheckOptions {
+  /** Reloj del proceso para el chequeo F-7 (inyectable en tests); por defecto Date.now. */
+  nowMs?: () => number;
   /** Environment declarado por la configuración; si difiere del catálogo, no arranca (SEC N2-06). */
   expectedEnvironment?: "LOCAL" | "DEV" | "STAGING";
   /** SEC-CNS-017 F6: rol de runtime esperado (`current_user` exacto). El proceso web exige `app_rw`. */
@@ -31,6 +46,27 @@ export class StartupCheckError extends Error {
 
 const ALLOWED_ENVIRONMENTS = new Set(["LOCAL", "DEV", "STAGING"]);
 
+export interface ClockSkewResult {
+  ok: boolean;
+  /** dbMs - procesoMs (ms); NaN si la BD no devolvió un instante legible. */
+  skewMs: number;
+}
+
+/**
+ * F-7: compara clock_timestamp() de la BD con el reloj del proceso (punto medio de la ventana de la consulta, para
+ * no contar la latencia). Falla si |delta| > maxSkewMs o si no se puede leer (fail-closed). Sirve de chequeo de
+ * arranque y de salud (el GET /staff/roster lo repite dentro de su tx).
+ */
+export async function checkClockSkew(db: Queryable, nowMs: () => number = Date.now, maxSkewMs: number = MAX_CLOCK_SKEW_MS): Promise<ClockSkewResult> {
+  const before = nowMs();
+  const r = await db.query<{ db_ms: string }>("SELECT (extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint::text AS db_ms");
+  const after = nowMs();
+  const dbMs = Number(r.rows[0]?.db_ms);
+  if (!Number.isFinite(dbMs)) return { ok: false, skewMs: Number.NaN };
+  const skewMs = dbMs - (before + after) / 2;
+  return { ok: Math.abs(skewMs) <= maxSkewMs, skewMs };
+}
+
 export async function runStartupChecks(db: Queryable, options: StartupCheckOptions = {}): Promise<StartupCheckResult> {
   const failures: string[] = [];
 
@@ -50,12 +86,17 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 
   const membership = await db.query<{ owner: string; member: boolean }>(
     `SELECT o.rolname AS owner, pg_catalog.pg_has_role(current_user, o.oid, 'MEMBER') AS member
-       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner')`,
+       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner', 'staff_roster_owner')`,
   );
-  if (membership.rows.length < 2) failures.push("faltan los roles owner (base sin migrar)");
+  if (membership.rows.length < 3) failures.push("faltan los roles owner (base sin migrar)");
   for (const row of membership.rows) {
     if (row.member) failures.push(`el rol de la conexión es miembro de ${row.owner}`);
   }
+
+  await checkStaffRosterRoles(db, me?.rolname, failures);
+
+  const clock = await checkClockSkew(db, options.nowMs ?? Date.now).catch(() => ({ ok: false, skewMs: Number.NaN }));
+  if (!clock.ok) failures.push(`el reloj de la base difiere del proceso en más de ${MAX_CLOCK_SKEW_MS / 1000} s o no se pudo leer (F-7)`);
 
   const create = await db.query<{ nspname: string }>(
     `SELECT nspname FROM pg_catalog.pg_namespace
@@ -86,6 +127,61 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   }
 
   return { ok: failures.length === 0, failures };
+}
+
+/** R2: membresías y privilegios de staff_roster_owner / staff_roster_reader (ver cabecera). */
+async function checkStaffRosterRoles(db: Queryable, runtimeRole: string | undefined, failures: string[]): Promise<void> {
+  try {
+    const reader = await db.query<{ inherit_option: boolean; set_option: boolean }>(
+      `SELECT m.inherit_option, m.set_option
+         FROM pg_catalog.pg_auth_members m
+         JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+         JOIN pg_catalog.pg_roles u ON u.oid = m.member
+        WHERE r.rolname = 'staff_roster_reader' AND u.rolname = current_user`,
+    );
+    if (runtimeRole === "app_rw") {
+      const row = reader.rows[0];
+      if (reader.rows.length !== 1 || row === undefined || row.inherit_option !== false || row.set_option !== true) {
+        failures.push("app_rw debe ser miembro de staff_roster_reader WITH INHERIT FALSE, SET TRUE");
+      }
+    } else if (reader.rows.length > 0) {
+      failures.push("solo app_rw puede ser miembro de staff_roster_reader");
+    }
+
+    // Objetos sobre los que staff_roster_reader tiene privilegios que no debe tener (nombre de objeto, sin datos).
+    const grants = await db.query<{ rel: string }>(
+      `SELECT n.nspname || '.' || c.relname AS rel
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+          AND (
+            pg_catalog.has_table_privilege('staff_roster_reader', c.oid, 'INSERT')
+            OR pg_catalog.has_table_privilege('staff_roster_reader', c.oid, 'UPDATE')
+            OR pg_catalog.has_table_privilege('staff_roster_reader', c.oid, 'DELETE')
+            OR pg_catalog.has_table_privilege('staff_roster_reader', c.oid, 'TRUNCATE')
+            OR pg_catalog.has_table_privilege('staff_roster_reader', c.oid, 'REFERENCES')
+            OR pg_catalog.has_table_privilege('staff_roster_reader', c.oid, 'TRIGGER')
+            OR (pg_catalog.has_any_column_privilege('staff_roster_reader', c.oid, 'SELECT')
+                AND n.nspname || '.' || c.relname <> '${STAFF_ROSTER_VIEW}')
+          )`,
+    );
+    for (const row of grants.rows) failures.push(`staff_roster_reader tiene privilegios indebidos sobre ${row.rel} (solo SELECT sobre la vista del roster)`);
+
+    const view = await db.query<{ reader_select: boolean; runtime_select: boolean; schema_create: boolean }>(
+      `SELECT pg_catalog.has_table_privilege('staff_roster_reader', '${STAFF_ROSTER_VIEW}', 'SELECT') AS reader_select,
+              pg_catalog.has_any_column_privilege(current_user, '${STAFF_ROSTER_VIEW}', 'SELECT') AS runtime_select,
+              EXISTS (SELECT 1 FROM pg_catalog.pg_namespace s
+                       WHERE s.nspname !~ '^pg_' AND s.nspname <> 'information_schema'
+                         AND (pg_catalog.has_schema_privilege('staff_roster_reader', s.oid, 'CREATE')
+                              OR pg_catalog.has_schema_privilege('staff_roster_owner', s.oid, 'CREATE'))) AS schema_create`,
+    );
+    const v = view.rows[0];
+    if (v === undefined || v.reader_select !== true) failures.push("staff_roster_reader no tiene SELECT sobre la vista del roster");
+    if (v === undefined || v.runtime_select !== false) failures.push("el rol de la conexión puede leer la vista del roster sin SET ROLE");
+    if (v === undefined || v.schema_create !== false) failures.push("staff_roster_owner o staff_roster_reader tienen CREATE en algún esquema");
+  } catch {
+    failures.push("no se pudieron verificar los roles del roster (staff_roster_owner / staff_roster_reader)");
+  }
 }
 
 export async function assertStartupChecks(db: Queryable, options: StartupCheckOptions = {}): Promise<void> {

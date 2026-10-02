@@ -5,12 +5,13 @@
 # rev. 4b (2026-09-27): SEC-CNS-012 re-verificación rev. 4 N2-01 (guardsBySource en I9), N2-05 (GRD-TC-07 en I1/I3/I3r/I4); AUDIT-H01-rev4 M-05.
 # rev. 4e (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra el grupo GRD-CM-02 (Guard T, cross-tenant) de OPEN-RV-12 en I2/I3/I3r/I4/I5/I6/I7/I9 — errors += ERR-CM-02. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
 # rev. 4f (2026-09-28, SEC-CNS-014, Carlos, opción a): GET /i/{token} (P-12) deja de leer la BD en el canje — mismo patrón que GET /r/{token} (revocation.spec.yaml managementLink/RECOVERY). Ya no evalúa GRD-IV-13 ni GRD-IV-07 en el propio GET: hashea el token, fija el handle LANDING firmado y responde SIEMPRE el mismo 303 a /welcome (válido, inexistente o expirado son indistinguibles). GRD-IV-13 y GRD-IV-07 pasan a evaluarse en GET /welcome (render, solo lectura), antes de crear ahí la sesión LANDING real. Cierra el oráculo 303/404 de TEST-CNS-537. Sin cambio de guards del POST I4, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
+# rev. 0.4.4 (2026-10-02, API-CNS-116, REQ-CNS-036, DEC-BR-019, SEC-CNS-018 rev. 2; decisiones de Carlos PC-1 (b) y PC-2 (a)): GRD-IV-14 en I1 (fuente STAFF: solo NOT_INVITED, ERR-IV-02 uniforme), proyeccion staffInvitationStatus e INV-IV-09. Sin cambio de estados ni de semantica de consentimiento/revocacion/elegibilidad.
 specId: SPEC-CNS-SM-INVITATION
 title: "State machine Invitation (IT0)"
 smId: SM-CNS-001
 smSection: "§2, §2.1, §2.2"
 aggregateType: Invitation
-version: "0.4.3"
+version: "0.4.4"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -120,10 +121,11 @@ transitions:
     actor: {actorType: HUMAN, actorRole: INVITER}
     routeClass: ISSUANCE_DECISION
     httpPost: true
-    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11, GRD-TC-07]
+    guards: [GRD-CM-01, GRD-CM-02, GRD-CM-03, GRD-CM-04, GRD-CM-05, GRD-CM-07, GRD-CM-08, GRD-CM-10, GRD-IV-01, GRD-IV-02, GRD-IV-11, GRD-IV-14, GRD-TC-07]
     effects:
       - "Crea el agregado Invitation con tenantRef del inviter (resuelto en servidor, nunca del cliente)."
       - "Si reissueOfRef está presente: reemisión sujeta a GRD-IV-11 (P-11)."
+      - "Fuente STAFF (API-CNS-110): solo para NOT_INVITED (GRD-IV-14); con cualquier Invitation previa, ERR-IV-02 uniforme."
     emits: [INVITATION_CREATED]
     idempotencyKey: "(tenantRef, clientRequestId)"
     errors: [ERR-CM-01, ERR-CM-02, ERR-CM-03, ERR-CM-04, ERR-CM-05, ERR-CM-09, ERR-CM-10, ERR-IV-02, ERR-IV-07]
@@ -301,6 +303,13 @@ guards:
     onFail: ERR-IV-02
     governedBy: ["SM-CNS-001 §2 I1 [Q1]", "LD-20"]
     testIds: [TEST-CNS-120, TEST-CNS-132]
+  - id: GRD-IV-14
+    name: staff_issuance_only_for_not_invited
+    rule: "Fuente STAFF de I1: no existe NINGUNA Invitation previa (en cualquier estado, terminal o no) para (tenantRef, contextRef, subjectRef). Se evalua tras GRD-IV-02/GRD-CM-03/GRD-CM-04. Si falla, ERR-IV-02 INVITATION_ALREADY_ACTIVE con el mismo status y cuerpo que GRD-IV-01: uniforme, no revela el estado previo (ni el sentido de una decision)."
+    onFail: ERR-IV-02
+    decidedRef: "PC-2 (Carlos, 2026-10-02)"
+    governedBy: ["REQ-CNS-036", "API-CNS-116", "DEC-BR-019", "RULE-CNS-029", "SEC-CNS-018 rev. 2"]
+    testIds: [TEST-CNS-1086]
   - id: GRD-IV-02
     name: subject_belongs_to_tenant
     rule: "subjectRef y enrollmentRef pertenecen al tenant resuelto (lectura bajo RLS)."
@@ -537,6 +546,24 @@ invariants:
     statement: "Solo invitationMode = INSTITUTION_MEDIATED en BETA_2026_01 (sin canal de familias individuales)."
     governedBy: ["DEC-BR-013", "RULE-CNS-024", "DEC-BR-014 §1"]
     testIds: [TEST-CNS-138]
+
+  - id: INV-IV-09
+    statement: "La proyeccion del tenant (projections.staffInvitationStatus) no distingue COMPLETED/DECLINED ni SENT/OPENED/VERIFIED; se calcula en la BD, sin escribir, con el reloj de la BD (now()); un estado sin rama da NULL y el GET responde 503. Prioridad por (alumno, contexto): no terminal efectiva > cualquier decision > cerrada mas reciente (desempate created_at, invitation_ref)."
+    governedBy: ["REQ-CNS-036 AC-05/AC-06", "API-CNS-116", "DEC-BR-019", "SEC-CNS-018 rev. 2", "PC-1", "PC-2"]
+    testIds: [TEST-CNS-1070, TEST-CNS-1071, TEST-CNS-1076, TEST-CNS-1077]
+
+projections:
+  staffInvitationStatus:
+    source: "vista app.staff_roster_invitation_status (db/migrations/0019); lector staff_roster_reader; API-CNS-116"
+    clock: "pg_catalog.now() de la BD (constante dentro de la tx del GET); nunca un parametro del llamador"
+    mapping:
+      NOT_INVITED: "sin Invitation en (tenant, contexto, sujeto)"
+      PENDING_SEND: "DRAFT; READY con expiresAt nulo o futuro"
+      SENT: "SENT | OPENED | VERIFIED con expiresAt futuro (no revela apertura ni verificacion, D9)"
+      DECISION_RECORDED: "COMPLETED | DECLINED, con o sin expiresAt vencido (no revela el sentido, D1)"
+      CLOSED_WITHOUT_DECISION: "READY | SENT | OPENED | VERIFIED con expiresAt vencido (I8 perezosa, sin escribir); futuro: EXPIRED y CANCELLED (INVITER_WITHDRAWN, TOKEN_COMPROMISED, ENROLLMENT_CLOSED, PARTICIPATION_CLOSED)"
+    pendingPersistence: "PC-1 (Carlos, b): CANCELLED por SUBJECT_MISMATCH_REPORTED se mostrara SENT hasta expiresAt y luego CLOSED_WITHOUT_DECISION. La migracion que persista EXPIRED/CANCELLED debe actualizar la vista en la misma migracion (TEST-CNS-1076 lo bloquea)."
+    forbiddenInResponse: [invitationRef, state, token, tokenHash, recipientChannelRef, recipientBinding, deliveryChannel, expiresAt, reasonCode, enrollmentRef, consentVersion, boundDecisionMakerRef, sentOn, timestamps]
 
 failClosed: >
   Cualquier guard no satisfecho o no evaluable rechaza la transición sin evento (ERR-CM-06 /

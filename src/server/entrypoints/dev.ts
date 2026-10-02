@@ -47,6 +47,8 @@ import {
   LOCAL_ONLY_DEV_TENANT_ID,
   LOCAL_ONLY_DEV_SUBJECT_REF,
 } from "./dev-local-config.ts";
+import { createInMemorySubjectDirectory } from "../../infra/adapters/in-memory-subject-directory.adapter.ts";
+import { deriveStaffRosterCursorKey, loadStaffRosterCursorSecret } from "../modules/staff-roster/roster-cursor.ts";
 import { openPostgresStore, type PostgresStore } from "../../infra/adapters/postgres/store.ts";
 import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
 import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
@@ -112,6 +114,14 @@ const staffIssuancePolicy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_IN
 const chainRefKey = deriveChainRefKey(loadChainRefSecret(process.env, environment));
 // CA-128 (Carlos, 2026-10-01): clave HMAC del decisionMakerRef (CNS_DECISION_MAKER_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
 const decisionMakerRefKey = deriveDecisionMakerRefKey(loadDecisionMakerRefSecret(process.env, environment));
+// API-CNS-116 (R4): clave del cursor de GET /staff/roster (CNS_STAFF_ROSTER_CURSOR_SECRET; LOCAL sin env: constante LOCAL_ONLY).
+const staffRosterCursorKey = deriveStaffRosterCursorKey(loadStaffRosterCursorSecret(process.env, environment));
+// API-CNS-116 (P2-d): directorio SINTETICO de etiquetas "Alumno de prueba N" por (tenant, sujeto), inyectado desde este composition
+// root. Solo LOCAL/CI (la fabrica aborta si el entorno no es LOCAL; el store Postgres ya valido el catalogo de la BD).
+const subjectDirectory = createInMemorySubjectDirectory(
+  environment,
+  LOCAL_ONLY_DEV_STAFF_STUDENTS.map((s) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })),
+);
 let ports: ConsentFlowPorts;
 let pgBundle: ReturnType<typeof createPostgresFlowPorts> | undefined;
 if (pgStore) {
@@ -123,6 +133,7 @@ if (pgStore) {
     chainRefKey,
     decisionMakerRefKey,
     invitationIssuancePolicy: staffIssuancePolicy,
+    subjectDirectory,
   });
   ports = pgBundle.ports;
 } else {
@@ -237,7 +248,7 @@ if (pgBundle) {
       status: "ACTIVE",
     });
   }
-  staffConsole = memoryStaff;
+  staffConsole = { ...memoryStaff, subjectDirectory };
 }
 
 const server = createConsentFlowHttpServer({
@@ -258,6 +269,7 @@ const server = createConsentFlowHttpServer({
     consentVersion: "v1-dev",
   },
   storeMode,
+  staffRosterCursorKey,
   ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
 });
 
@@ -331,5 +343,7 @@ server.listen(port, "127.0.0.1", () => {
   );
   console.log(staffPost("/staff/invitations/<INVITATION_REF>/send", "", "{}"));
   console.log(`  4) leer el enlace entregado al sink de dev (solo LOCAL): curl ${baseUrl}/__dev/invitation-sink`);
+  console.log(`  6) lista del colegio (API-CNS-116, JSON; same-origin obligatorio, un browser lo envia solo; con curl hay que simularlo):`);
+  console.log(`  curl -i -b ${staffJar} -H 'sec-fetch-site: same-origin' '${baseUrl}/staff/roster?limit=50'`);
   console.log(`  5) abrir el enlace del sink: curl -i ${baseUrl}<invitationPath>   # 303 a /welcome; seguir en el navegador`);
 });

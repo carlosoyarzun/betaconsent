@@ -91,6 +91,14 @@ export function createPgInvitationRepository(tx: TenantTx): InvitationRepository
       const row = r.rows[0];
       return row ? toRecord(row) : null;
     },
+    async existsBySubject(tenantId, contextRef, subjectRef) {
+      // GRD-IV-14: cualquier estado (terminal o no) cuenta; solo la existencia, sin leer la fila.
+      const r = await tx.query<{ found: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM app.invitation WHERE tenant_id = $1 AND context_ref = $2 AND subject_ref = $3) AS found`,
+        [tenantId, contextRef, subjectRef],
+      );
+      return r.rows[0]?.found === true;
+    },
     async save(record) {
       // Upsert. La identidad (contexto, producto, sujeto, enrollment, participacion, reemision) se
       // fija al crear y no es actualizable (sin grant de columna).
