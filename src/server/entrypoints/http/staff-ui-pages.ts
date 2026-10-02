@@ -154,7 +154,7 @@ function shell(opts: { readonly title: string; readonly width: "narrow" | "form"
 `;
 }
 
-const BACK_LINK = `<a class="lp-link lp-staff-back lp-verify-tap-target" href="${STAFF_LIST_PATH}">← Volver a la lista de alumnos</a>`;
+const BACK_LINK = `<a class="lp-link lp-verify-tap-target" href="${STAFF_LIST_PATH}">← Volver a la lista de alumnos</a>`;
 
 function studentCard(label: string | null): string {
   return `<section class="lp-card lp-staff-card" role="group" aria-labelledby="student-card-label">
@@ -231,7 +231,7 @@ function renderList(view: Extract<StaffUiView, { kind: "list" }>): string {
         action = `<span class="lp-staff-muted">Sin acciones</span>`;
       }
       return `<tr>
-          <th scope="row" class="lp-staff-student">${e(name)}</th>
+          <th scope="row">${e(name)}</th>
           <td>${statusBadge(item.status)}</td>
           <td>${action}</td>
         </tr>`;
@@ -240,7 +240,7 @@ function renderList(view: Extract<StaffUiView, { kind: "list" }>): string {
   const more =
     view.nextCursor === null
       ? ""
-      : `<p><a class="lp-link lp-staff-more lp-verify-tap-target" href="${STAFF_LIST_PATH}?cursor=${e(encodeURIComponent(view.nextCursor))}">Ver más alumnos</a></p>`;
+      : `<p><a class="lp-link lp-verify-tap-target" href="${STAFF_LIST_PATH}?cursor=${e(encodeURIComponent(view.nextCursor))}">Ver más alumnos</a></p>`;
   return shell({
     title: "Alumnos del colegio",
     width: "wide",

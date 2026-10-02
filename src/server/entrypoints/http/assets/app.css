@@ -382,7 +382,7 @@
   color: var(--lp-action-primary);
   cursor: pointer;
 }
-/* Foco visible (2.4.7): borde 2px text-primary + halo de 3px (Figma 90:262); nunca outline:none sin reemplazo. */
+/* Foco visible (2.4.7): borde 2px text-primary + halo de 3px (Figma 90:262); nunca se quita el contorno de foco sin reemplazo. */
 .lp-staff-btn:focus-visible,
 .lp-staff-btn-text:focus-visible,
 .lp-staff-body a:focus-visible,
