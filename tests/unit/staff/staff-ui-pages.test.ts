@@ -71,6 +71,9 @@ test("TEST-CNS-1100 etiqueta exacta por estado de API-CNS-116; solo NOT_INVITED 
       assert.ok(!html.toLowerCase().includes(forbidden.toLowerCase()), `${status}: sin ${forbidden}`);
     }
   }
+  // Envio incompleto con participacion: se puede retomar desde Invitar.
+  const resume = renderStaffUiPage({ kind: "list", csrfToken: CSRF, items: [{ label: "Alumno de prueba 1", subjectRef: SUBJECT, participationRef: PART, status: "PENDING_SEND" }], nextCursor: null });
+  assert.ok(resume.includes(">Invitar</button>") && resume.includes("Envío incompleto"));
   // NOT_INVITED sin participationRef: sin boton, texto neutro.
   const none = renderStaffUiPage({ kind: "list", csrfToken: CSRF, items: [{ label: null, subjectRef: SUBJECT, participationRef: null, status: "NOT_INVITED" }], nextCursor: null });
   assert.ok(!none.includes(">Invitar</button>") && none.includes("Invitación no disponible por ahora") && none.includes("Alumno sin etiqueta"));
@@ -176,9 +179,13 @@ test("TEST-CNS-1103 marcador legal literal en resumen y confirmacion; resumen co
     assert.ok(!/REF-0000|Referencia de soporte|Reintentar/.test(html), `${variant}: sin referencia ilustrativa ni Reintentar`);
     assert.ok(!html.includes(EMAIL) && !html.includes("@gmail.com"));
   }
-  // Cadena parcial: avisa que no se repita y que no puede reinvitarse; sin codigos internos.
+  // Cadena parcial: avisa que puede retomarse con Invitar y, si se repite, contactar soporte; sin codigos internos.
   const partial = renderStaffUiPage({ kind: "error", variant: "not-configured", partial: true });
-  assert.ok(partial.includes("No la repitas por tu cuenta") && partial.includes("no puede reinvitarse"));
+  assert.ok(partial.includes("retomarla con «Invitar»") && partial.includes("contacta a soporte") && !partial.includes("reinvitarse"));
+  const generic = renderStaffUiPage({ kind: "error", variant: "generic", partial: true });
+  assert.ok(generic.includes("retómala con «Invitar»") && !generic.includes("No la repitas"));
+  const already = renderStaffUiPage({ kind: "sent", csrfToken: CSRF, label: "Alumno de prueba 1", alreadySent: true });
+  assert.ok(already.includes("La invitación ya había sido enviada.") && already.includes("No se envió una nueva.") && !already.includes("Enviamos la invitación"));
   assert.ok(!/ERR-|GUARD_|INVITATION_/.test(partial));
   // Activa (409): sin formulario.
   const active = renderStaffUiPage({ kind: "active", csrfToken: CSRF, label: "Alumno de prueba 3" });

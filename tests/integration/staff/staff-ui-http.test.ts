@@ -274,7 +274,7 @@ test("TEST-CNS-1106 lista: Sec-Fetch (same-origin o none+navigate+document), Ori
   }
 });
 
-test("TEST-CNS-1107 lista: etiqueta por estado, 'Invitar' solo en sin invitar, sin correo, sin subjectRef en URLs, orden y conteos no revelan el sentido", async () => {
+test("TEST-CNS-1107 lista: etiqueta por estado, 'Invitar' en sin invitar y envio incompleto, sin correo, sin subjectRef en URLs, orden y conteos no revelan el sentido", async () => {
   const subjects = [student(1), student(2), student(3), student(4), student(5), student(6)];
   const h = await start({ students: subjects });
   try {
@@ -289,8 +289,8 @@ test("TEST-CNS-1107 lista: etiqueta por estado, 'Invitar' solo en sin invitar, s
     assert.equal(rows.length, 6);
     const badges = rows.map((r) => r[2]!.replace(/<[^>]+>/g, "").trim()).sort();
     assert.deepEqual(badges, ["Cerrada sin decisión", "Decisión registrada", "Decisión registrada", "Enviada", "Envío incompleto", "Sin invitar"]);
-    assert.equal(res.html.split(">Invitar</button>").length - 1, 1, "una sola accion: el alumno sin invitar");
-    assert.equal(res.html.split("Sin acciones").length - 1, 5);
+    assert.equal(res.html.split(">Invitar</button>").length - 1, 2, "acciones: el alumno sin invitar y el de envio incompleto (retomar)");
+    assert.equal(res.html.split("Sin acciones").length - 1, 4);
     assert.ok(!res.html.includes(GOOD_EMAIL) && !/guardian|recipient|token|invitationRef|expiresAt/i.test(res.html.replace(/Correo del apoderado|csrf_token/g, "")));
     for (const m of res.html.matchAll(/(?:href|action)="([^"]*)"/g)) {
       for (const s of subjects) assert.ok(!m[1]!.includes(s.subjectRef) && !m[1]!.includes(s.participationRef), "refs fuera de las URLs");
@@ -511,7 +511,7 @@ test("TEST-CNS-1114 invitacion activa: un alumno con invitacion en curso ve el a
   }
 });
 
-test("TEST-CNS-1115 fallo a mitad de la cadena (I2 sin politica de emision): se detiene sin compensar ni reintento, avisa que pudo quedar a medias y la lista muestra 'Envio incompleto' sin acciones", async () => {
+test("TEST-CNS-1115 fallo a mitad de la cadena (I2 sin politica): se detiene sin compensar, avisa que puede retomarse con 'Invitar' (sin Reintentar); retomar usa el correo nuevo porque I2 no se habia completado; repetir la cadena completa dice que ya habia sido enviada", async () => {
   const s = student(1);
   const h = await start({ withPolicy: false });
   try {
@@ -520,14 +520,60 @@ test("TEST-CNS-1115 fallo a mitad de la cadena (I2 sin politica de emision): se 
     assert.equal(res.status, 503);
     assert.equal(h1Of(res.html), "No pudimos completar el envío");
     assert.ok(res.html.includes("El servicio de invitaciones no está configurado."));
-    assert.ok(res.html.includes("No la repitas por tu cuenta") && res.html.includes("no puede reinvitarse"));
+    assert.ok(res.html.includes("retomarla con «Invitar»") && res.html.includes("contacta a soporte") && !res.html.includes("reinvitarse"));
     assert.ok(!/Reintentar|ERR-|GUARD_|REF-0000|@/.test(res.html.replace(/@example\.invalid/g, "")), "sin Reintentar, sin codigos internos, sin refs");
     assert.ok(!res.html.includes(GOOD_EMAIL));
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
     const list = await listGet(h);
     const row = list.html.match(/<th scope="row">Alumno de prueba 1<\/th>\s*<td>([\s\S]*?)<\/td>\s*<td>([\s\S]*?)<\/td>/)!;
-    assert.ok(row[1]!.includes("Envío incompleto") && row[2]!.includes("Sin acciones"));
+    assert.ok(row[1]!.includes("Envío incompleto") && row[2]!.includes(">Invitar</button>"), "se puede retomar desde Invitar");
     assert.ok(!list.html.includes("Reintentar"));
+    // retomar: la politica ya existe; con OTRO correo (I2 no se habia completado) se usa el nuevo
+    (h.staff.issuance as { policy?: unknown }).policy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY);
+    const retake = await postForm(h, "/staff/students/send", fields(s, { guardian_email: "nuevo@example.invalid" }), { cookie });
+    assert.equal(retake.status, 303, retake.html);
+    assert.equal(h.staff.invitationLinkSink.sent.length, 1);
+    assert.equal(h.staff.invitationLinkSink.sent[0]!.recipientChannelRef, "nuevo@example.invalid");
+    assert.equal(await invitationCount(h), 1, "se reutiliza la invitacion, no se crea otra");
+    const flash = (res: Res): string => res.headers.getSetCookie().find((c) => c.startsWith(`${FLASH_COOKIE}=`))!.split(";")[0]!;
+    const NAV_SAME = { "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+    const first = await getPage(h, "/staff/students/sent", NAV_SAME, `${cookie}; ${flash(retake)}`);
+    assert.ok(first.html.includes("Enviamos la invitación al apoderado.") && !first.html.includes("ya había sido enviada"));
+    // repetir la cadena completa (todo desde idempotencia): sin envio nuevo y la confirmacion lo dice
+    const repeat = await postForm(h, "/staff/students/send", fields(s, { guardian_email: "nuevo@example.invalid" }), { cookie });
+    assert.equal(repeat.status, 303);
+    assert.equal(h.staff.invitationLinkSink.sent.length, 1, "sin envio nuevo");
+    const second = await getPage(h, "/staff/students/sent", NAV_SAME, `${cookie}; ${flash(repeat)}`);
+    assert.ok(second.html.includes("La invitación ya había sido enviada.") && second.html.includes("No se envió una nueva."));
+    assert.ok(!second.html.includes("nuevo@example.invalid"));
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1126 antes de EN0 el servidor verifica que (alumno, participacion) sea una fila retomable del roster del tenant: participationRef ajeno del mismo tenant, o alumno ya cerrado/decidido -> error uniforme sin crear nada", async () => {
+  const a = student(1);
+  const b = student(2);
+  const h = await start();
+  try {
+    const cookie = session(h);
+    // participacion valida del MISMO tenant pero de otro alumno
+    const foreign = await postForm(h, "/staff/students/send", { ...fields(a), participation: b.participationRef, guardian_email: GOOD_EMAIL }, { cookie });
+    assert.equal(foreign.status, 404);
+    assert.equal(h1Of(foreign.html), "No pudimos abrir esta página");
+    // participacion inventada (bien formada, inexistente)
+    const invented = await postForm(h, "/staff/students/send", { ...fields(a), participation: fixtureUuid("inventada"), guardian_email: GOOD_EMAIL }, { cookie });
+    assert.equal(invented.status, 404);
+    // alumno con decision registrada o cerrado: no es retomable
+    await seedInvitation(h, b.subjectRef, "COMPLETED", null, "decided");
+    const decided = await postForm(h, "/staff/students/send", fields(b, { guardian_email: GOOD_EMAIL }), { cookie });
+    assert.equal(decided.status, 404);
+    assert.equal(h.staff.invitationLinkSink.sent.length, 0);
+    assert.equal(await invitationCount(h), 1, "solo la sembrada por el test");
+    const enrollments = (h.staff.issuance.enrollmentRepo as unknown as { listByTenant(t: string): readonly unknown[] }).listByTenant(TENANT_A);
+    assert.equal(enrollments.length, 0, "no se creo ninguna matricula");
+    // el alumno correcto sigue funcionando
+    assert.equal((await postForm(h, "/staff/students/send", fields(a, { guardian_email: GOOD_EMAIL }), { cookie })).status, 303);
   } finally {
     await h.close();
   }

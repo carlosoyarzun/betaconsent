@@ -249,7 +249,7 @@ pgTest("TEST-CNS-1124 pg http: GET /staff/students (HTML) -> 200, exactamente 1 
   }
 });
 
-pgTest("TEST-CNS-1125 pg http: recorrido HTML completo (dev-login -> lista -> formulario -> resumen -> envio -> confirmacion -> lista Enviada) sobre Postgres; doble envio idempotente; la BD persiste una sola invitacion SENT", async (ctx) => {
+pgTest("TEST-CNS-1125 pg http (+ P2-2: participacion ajena -> 404): recorrido HTML completo (dev-login -> lista -> formulario -> resumen -> envio -> confirmacion -> lista Enviada) sobre Postgres; doble envio idempotente; la BD persiste una sola invitacion SENT", async (ctx) => {
   const migrator = await ctx.connectAs("consent_migrator");
   await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
   const directory = LOCAL_ONLY_DEV_STAFF_STUDENTS.map((st) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: st.subjectRef, label: st.label, participationRef: st.participationRef }));
@@ -310,8 +310,15 @@ pgTest("TEST-CNS-1125 pg http: recorrido HTML completo (dev-login -> lista -> fo
     assert.equal(dup.status, 409);
     assert.ok(dup.body.includes("Este alumno ya tiene una invitación activa.") && !dup.body.includes("otro@example.invalid"));
     assert.equal(await countInvitations(), 1);
-    // el access_log del tenant: una fila por GET de la lista (2), ninguna por los POST
-    assert.equal(await accessLogCount(admin, LOCAL_ONLY_DEV_TENANT_ID), 2);
+    // el access_log del tenant: una fila por GET de la lista (2) y una por cada verificacion previa a EN0 de un envio (3: send, again, dup)
+    assert.equal(await accessLogCount(admin, LOCAL_ONLY_DEV_TENANT_ID), 5);
+    // participacion ajena del mismo tenant -> 404 uniforme, sin crear nada
+    const other = LOCAL_ONLY_DEV_STAFF_STUDENTS[1]!;
+    const foreign = await postForm(env, "/staff/students/send", { ...fields, subject: other.subjectRef, participation: LOCAL_ONLY_DEV_STAFF_STUDENTS[2]!.participationRef, guardian_email: GOOD_EMAIL }, jar);
+    assert.equal(foreign.status, 404);
+    assert.equal(await countInvitations(), 1);
+    const enr = Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM app.enrollment WHERE tenant_id = $1", [LOCAL_ONLY_DEV_TENANT_ID])).rows[0]?.n);
+    assert.equal(enr, 1, "solo la matricula del alumno invitado");
     // cero PII en logs
     const all = captured.join("\n");
     assert.ok(!all.includes(GOOD_EMAIL) && !all.includes("gmail"));

@@ -66,7 +66,7 @@ export type StaffUiView =
   | { readonly kind: "list"; readonly csrfToken: string; readonly items: readonly StaffUiListItem[]; readonly nextCursor: string | null }
   | { readonly kind: "form"; readonly csrfToken: string; readonly student: StaffUiStudent; readonly error?: "format" | "reserved"; readonly email?: string }
   | { readonly kind: "review"; readonly csrfToken: string; readonly student: StaffUiStudent; readonly email: string }
-  | { readonly kind: "sent"; readonly csrfToken: string; readonly label: string | null }
+  | { readonly kind: "sent"; readonly csrfToken: string; readonly label: string | null; /** La cadena completa se reprodujo desde idempotencia: no hubo un envio nuevo. */ readonly alreadySent?: boolean }
   | { readonly kind: "active"; readonly csrfToken: string; readonly label: string | null }
   | {
       readonly kind: "error";
@@ -218,7 +218,8 @@ function renderList(view: Extract<StaffUiView, { kind: "list" }>): string {
     .map((item) => {
       const name = labelOf(item.label);
       let action: string;
-      if (item.status === "NOT_INVITED" && item.participationRef !== null) {
+      // "Invitar" tambien en "Envio incompleto": retomar la cadena (idempotencia determinista; decision de Carlos).
+      if ((item.status === "NOT_INVITED" || item.status === "PENDING_SEND") && item.participationRef !== null) {
         action = `<form method="post" action="${STAFF_INVITE_PATH}" class="lp-staff-row-form">
             ${hidden("csrf_token", view.csrfToken)}
             ${hidden("subject", item.subjectRef)}
@@ -351,8 +352,8 @@ function renderSent(view: Extract<StaffUiView, { kind: "sent" }>): string {
     body: `${breadcrumb([CRUMB_ROOT, CRUMB_LIST, { text: "Invitación enviada" }])}
     <h1 class="lp-staff-h1" id="sent-h1" tabindex="-1" autofocus>Invitación enviada</h1>
     <div class="lp-staff-alert lp-staff-alert--success" role="status" aria-live="polite">
-      <p class="lp-staff-alert-title">Enviamos la invitación al apoderado.</p>
-      <p>Estado de ${e(name)}: Enviada. El enlace no se muestra aquí por seguridad.</p>
+      <p class="lp-staff-alert-title">${view.alreadySent ? "La invitación ya había sido enviada." : "Enviamos la invitación al apoderado."}</p>
+      <p>${view.alreadySent ? "No se envió una nueva. " : ""}Estado de ${e(name)}: Enviada. El enlace no se muestra aquí por seguridad.</p>
     </div>
     <section class="lp-card lp-staff-card" aria-labelledby="summary-title">
       <h2 id="summary-title" class="lp-staff-h3">Resumen</h2>
@@ -385,7 +386,7 @@ function renderActive(view: Extract<StaffUiView, { kind: "active" }>): string {
 }
 
 const PARTIAL_NOTICE =
-  "Es posible que la invitación haya quedado a medias. No la repitas por tu cuenta; contacta a soporte. En esta etapa un alumno con una invitación a medias no puede reinvitarse.";
+  "Es posible que la invitación haya quedado a medias. Puedes volver a la lista y retomarla con «Invitar»; si el error se repite, contacta a soporte.";
 
 interface ErrorCopy {
   readonly h1: string;
@@ -398,7 +399,7 @@ const ERROR_COPY: Readonly<Record<StaffUiErrorVariant, ErrorCopy>> = {
   generic: {
     h1: "No pudimos completar el envío",
     title: "Algo salió mal de nuestro lado.",
-    body: "El alumno puede haber quedado en un estado intermedio: la invitación pudo crearse a medias. No la repitas por tu cuenta; contacta a soporte.",
+    body: "El alumno puede haber quedado en un estado intermedio: la invitación pudo crearse a medias. Vuelve a la lista y retómala con «Invitar»; si el error se repite, contacta a soporte.",
     action: { text: "Volver a la lista", href: STAFF_LIST_PATH },
   },
   session: {

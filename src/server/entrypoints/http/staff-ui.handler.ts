@@ -24,6 +24,8 @@ import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import { isReservedEmail } from "../../modules/common/synthetic-recipient.ts";
 import { SUBJECT_LABEL_PATTERN } from "../../ports/subject-directory.port.ts";
+import type { Environment } from "../../modules/common/types.ts";
+import type { StaffInvitationStatus } from "../../ports/staff-roster.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import type { HttpResult } from "./consent-flow.handler.ts";
@@ -49,6 +51,7 @@ import {
   STAFF_SEND_PATH,
   STAFF_SENT_PATH,
   type StaffUiErrorVariant,
+  type StaffUiListItem,
   type StaffUiStudent,
   type StaffUiView,
 } from "./staff-ui-pages.ts";
@@ -153,6 +156,8 @@ interface FlashPayload {
   readonly l: string | null;
   /** Expiracion (ms epoch, reloj del servidor). */
   readonly e: number;
+  /** La cadena completa se reprodujo desde idempotencia (no hubo envio nuevo). */
+  readonly a: boolean;
 }
 
 function encodeFlash(key: Buffer, payload: FlashPayload): string {
@@ -160,7 +165,7 @@ function encodeFlash(key: Buffer, payload: FlashPayload): string {
   return `${body}.${flashMac(key, body)}`;
 }
 
-function decodeFlash(key: Buffer, value: string | undefined, principalRef: string, nowMs: number): { readonly label: string | null } | null {
+function decodeFlash(key: Buffer, value: string | undefined, principalRef: string, nowMs: number): { readonly label: string | null; readonly alreadySent: boolean } | null {
   if (!value) return null;
   const dot = value.indexOf(".");
   if (dot === -1) return null;
@@ -172,7 +177,7 @@ function decodeFlash(key: Buffer, value: string | undefined, principalRef: strin
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Record<string, unknown>;
     if (parsed.p !== principalRef || typeof parsed.e !== "number" || parsed.e < nowMs) return null;
     if (parsed.l !== null && !(typeof parsed.l === "string" && SUBJECT_LABEL_PATTERN.test(parsed.l))) return null;
-    return { label: parsed.l as string | null };
+    return { label: parsed.l as string | null, alreadySent: parsed.a === true };
   } catch {
     return null;
   }
@@ -287,12 +292,16 @@ async function handleList(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
     return errorPage(503, "list-unavailable", false, existingCsrf);
   }
   const csrfToken = existingCsrf ?? generateCsrfToken();
-  const items = evaluation.page.items.map((item) => ({
-    label: item.subjectLabel,
-    subjectRef: item.subjectRef,
-    participationRef: item.participationRef,
-    status: item.invitationStatus,
-  }));
+  const items: StaffUiListItem[] = [];
+  for (const item of evaluation.page.items) {
+    // El contrato solo expone participationRef en NOT_INVITED; para retomar un "Envio incompleto" la UI lo toma del directorio del servidor.
+    let participationRef = item.participationRef;
+    if (item.invitationStatus === "PENDING_SEND" && deps.staffConsole.subjectDirectory) {
+      const entry = await deps.staffConsole.subjectDirectory.lookup(evaluation.staff.tenantId, item.subjectRef);
+      participationRef = entry?.participationRef !== undefined && entry.participationRef !== null && REF_PATTERN.test(entry.participationRef) ? entry.participationRef : null;
+    }
+    items.push({ label: item.subjectLabel, subjectRef: item.subjectRef, participationRef, status: item.invitationStatus });
+  }
   return page(
     200,
     { kind: "list", csrfToken, items, nextCursor: evaluation.page.nextCursor },
@@ -314,7 +323,7 @@ async function handleSent(req: StaffUiRequest, deps: StaffUiDeps, nowMs: number)
   const flash = decodeFlash(flashKey(deps.staffSessionKey), parseCookies(req.cookieHeader)[FLASH_COOKIE_NAME], auth.staff.principalRef, nowMs);
   // Sin confirmacion vigente (recarga tardia, otra sesion): nada que confirmar, se vuelve a la lista.
   if (csrfToken === undefined || flash === null) return redirect(STAFF_LIST_PATH);
-  return page(200, { kind: "sent", csrfToken, label: flash.label });
+  return page(200, { kind: "sent", csrfToken, label: flash.label, alreadySent: flash.alreadySent });
 }
 
 async function handleDevLogin(req: StaffUiRequest, deps: StaffUiDeps, enabled: boolean): Promise<StaffUiResponse> {
@@ -323,7 +332,7 @@ async function handleDevLogin(req: StaffUiRequest, deps: StaffUiDeps, enabled: b
   if (req.originHeader !== deps.config.allowedOrigin) return errorPage(403, "csrf");
   const result = await handleDevStaffConsoleLogin(
     { originHeader: req.originHeader, csrfHeaderToken: undefined, cookieHeader: req.cookieHeader, body: { principalRef: deps.devLoginPrincipalRef } },
-    "LOCAL",
+    (deps.environment ?? "DEV") as Environment, // el gating real (LOCAL + fixture) ya se evaluo en `enabled`
     deps.staffConsole.staffIdentity,
     deps.config,
     deps.staffSessionKey,
@@ -392,6 +401,28 @@ async function handlePost(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
   return sendInvitation(req, deps, staff, student, check.email, csrfToken);
 }
 
+const RESUMABLE: ReadonlySet<StaffInvitationStatus> = new Set(["NOT_INVITED", "PENDING_SEND", "SENT"]);
+
+/** Estado colapsado de la fila (alumno, contexto del estudio) si la participacion enviada corresponde a la del servidor y el estado
+ * admite iniciar o retomar la cadena (SENT: solo para reproducirla por idempotencia). null = no aplica. Lanza si el puerto falla. */
+async function resumableStatus(deps: StaffUiDeps, staff: { readonly tenantId: string; readonly principalRef: string }, student: StaffUiStudent): Promise<StaffInvitationStatus | null> {
+  const roster = deps.staffConsole.roster;
+  if (roster === undefined) throw new Error("roster no configurado");
+  const entry = deps.staffConsole.subjectDirectory ? await deps.staffConsole.subjectDirectory.lookup(staff.tenantId, student.subjectRef) : null;
+  let after: { subjectRef: string; contextRef: string } | null = null;
+  for (;;) {
+    const rows = await roster.readPage({ tenantId: staff.tenantId, principalRef: staff.principalRef, actorRole: "TENANT_ADMIN", after, rowLimit: 100 });
+    const row = rows.find((r) => r.subjectRef === student.subjectRef && r.contextRef === deps.ui.contextRef);
+    if (row !== undefined) {
+      const known = [row.activeEnrollmentParticipationRef, entry?.participationRef ?? null];
+      return RESUMABLE.has(row.staffStatus) && known.includes(student.participationRef) ? row.staffStatus : null;
+    }
+    const last = rows[rows.length - 1];
+    if (rows.length < 100 || last === undefined) return null;
+    after = { subjectRef: last.subjectRef, contextRef: last.contextRef };
+  }
+}
+
 async function sendInvitation(
   req: StaffUiRequest,
   deps: StaffUiDeps,
@@ -406,6 +437,16 @@ async function sendInvitation(
   const base = { originHeader: req.originHeader, csrfHeaderToken: csrfToken, cookieHeader: req.cookieHeader };
   const subjectRef = student.subjectRef;
   const participationRef = student.participationRef as string; // validado con REF_PATTERN arriba
+
+  // P2-2 (SEC-CNS-020): antes de EN0, (subjectRef, participationRef) debe ser una fila retomable del roster del tenant. Misma proyeccion
+  // colapsada del puerto (sin duplicar el mapeo); si no, el mismo error uniforme que una ref ajena, sin crear nada.
+  let before: StaffInvitationStatus | null;
+  try {
+    before = await resumableStatus(deps, staff, student);
+  } catch {
+    return errorPage(503, "not-configured");
+  }
+  if (before === null) return errorPage(404, "session");
 
   const en0 = await handleOpenEnrollment({ ...base, idempotencyKeyHeader: key("en0"), body: { subjectRef, participationRef } }, staffConsole, config, staffSessionKey);
   if (!ok(en0)) return failureResponse("EN0", en0, student.label, csrfToken);
@@ -434,6 +475,7 @@ async function sendInvitation(
 
   // PRG: la confirmacion es un GET aparte; la cookie flash lleva solo la etiqueta sintetica.
   const nowMs = (deps.nowMs ?? Date.now)();
-  const flash = encodeFlash(flashKey(staffSessionKey), { p: staff.principalRef, l: student.label, e: nowMs + FLASH_TTL_MS });
+  // Si ya estaba SENT antes de la cadena, todo vino de idempotencia: la confirmacion dice que ya habia sido enviada.
+  const flash = encodeFlash(flashKey(staffSessionKey), { p: staff.principalRef, l: student.label, e: nowMs + FLASH_TTL_MS, a: before === "SENT" });
   return redirect(STAFF_SENT_PATH, [serializeFlashCookie(flash)]);
 }
