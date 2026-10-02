@@ -697,7 +697,21 @@ test("TEST-CNS-977: E2E memoria EXT-B (i): STAFF EN0 -> I1 -> /ready RECIPIENT_C
     assert.equal((await h.ports.invitation.invitationRepo.findByRef(TENANT_A, invitationRef))?.state, "COMPLETED");
 
     // IT0: UNBOUND se emite, pero el participante no completa OTP (404 uniforme, sin cambio de comportamiento).
-    const created2 = await post(h.baseUrl, "/staff/invitations", inviteBody(enrollmentRef), { login: admin, idempotencyKey: "test-idem-key-0972-bbbb" });
+    // GRD-IV-14 (API-CNS-116): tras una decision, I1 STAFF sobre el MISMO alumno es ERR-IV-02 (409); el tramo UNBOUND usa otro alumno.
+    const repeated = await post(h.baseUrl, "/staff/invitations", inviteBody(enrollmentRef), { login: admin, idempotencyKey: "test-idem-key-0972-aaaa" });
+    assert.equal(repeated.status, 409, repeated.raw);
+    const subject2 = fixtureUuid("subject-2-977");
+    const participation2 = fixtureUuid("participation-2-977");
+    h.staff.catalog.seedSubject(TENANT_A, subject2);
+    h.staff.catalog.seedParticipation(TENANT_A, { participationRef: participation2, contextRef: CONTEXT, productRef: "LECTORPRO", status: "ACTIVE" });
+    const enr2 = await post(h.baseUrl, "/staff/enrollments", { subjectRef: subject2, participationRef: participation2 }, { login: admin });
+    assert.equal(enr2.status, 201, enr2.raw);
+    const created2 = await post(
+      h.baseUrl,
+      "/staff/invitations",
+      { subjectRef: subject2, enrollmentRef: enr2.json.enrollmentRef, participationRef: participation2, contextRef: CONTEXT },
+      { login: admin, idempotencyKey: "test-idem-key-0972-bbbb" },
+    );
     assert.equal(created2.status, 201, created2.raw);
     const unboundRef = created2.json.invitationRef as string;
     const unboundBody = { consentVersion: "v1-test", recipientBinding: "UNBOUND" };

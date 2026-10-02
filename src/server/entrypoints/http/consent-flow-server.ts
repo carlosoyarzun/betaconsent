@@ -24,6 +24,7 @@ import { createInMemoryRecoveryTokenRepository } from "../../../infra/adapters/i
 import { createInMemoryRevocationRepository } from "../../../infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
+import type { InvitationListing } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../infra/adapters/in-memory-staff-identity.adapter.ts";
 import { createInMemoryEnrollmentRepository } from "../../../infra/adapters/in-memory-enrollment-repository.adapter.ts";
 import { createInMemoryIdempotencyAdapter, LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS } from "../../../infra/adapters/in-memory-idempotency.adapter.ts";
@@ -108,6 +109,12 @@ import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./rec
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
+import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
+import { deriveStaffRosterCursorKey } from "../../modules/staff-roster/roster-cursor.ts";
+import { createInMemoryAccessLogAdapter, type InMemoryAccessLog } from "../../../infra/adapters/in-memory-access-log.adapter.ts";
+import { createInMemoryStaffRosterReader } from "../../../infra/adapters/in-memory-staff-roster.adapter.ts";
+import { createPgStaffRosterReader } from "../../../infra/adapters/postgres/staff-roster.adapter.ts";
+import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 
 export interface ConsentFlowHttpServerOptions {
   readonly config?: Partial<RightsCaseHttpConfig>;
@@ -172,6 +179,9 @@ export interface ConsentFlowHttpServerOptions {
   /** CA-125 (Carlos 2026-10-01): datos sintéticos de la consola dev GET /__dev/staff-console. Sin esto, o fuera de
    * LOCAL, la ruta no existe (404, GRD-CM-13). */
   readonly devStaffConsole?: DevStaffConsoleFixture;
+  /** API-CNS-116 (R4): clave del cursor de GET /staff/roster (HKDF de CNS_STAFF_ROSTER_CURSOR_SECRET, propia por entorno).
+   * Si se omite, se genera una aleatoria por proceso (los cursores mueren con el proceso; TTL 15 min). */
+  readonly staffRosterCursorKey?: Buffer;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -181,20 +191,33 @@ export function createDefaultStaffConsolePorts(
   staffIdentity: StaffIdentityPort,
   policy?: InvitationIssuancePolicy,
   idempotencyPolicy?: IdempotencyPolicy,
-): StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink; readonly catalog: FixtureTenantCatalogPort } {
+): StaffConsolePorts & {
+  readonly invitationLinkSink: InMemoryInvitationLinkChannelSink;
+  readonly catalog: FixtureTenantCatalogPort;
+  readonly accessLog: InMemoryAccessLog;
+} {
   const enrollmentRepo = createInMemoryEnrollmentRepository();
+  const accessLog = createInMemoryAccessLogAdapter();
   // CA-124: UoW de EN0 sobre el MISMO enrollmentRepo (y el ledger/invitationRepo compartidos).
   const tenantCatalog = createInMemoryTenantCatalogAdapter();
   const idempotency = createInMemoryIdempotencyAdapter({ ttlMs: idempotencyPolicy ? idempotencyPolicy.ttlMs : LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS });
-  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo, tenantCatalog, idempotency });
+  const tenancy = createInMemoryTenancy({ ledger: invitation.ledger, enrollmentRepo, invitationRepo: invitation.invitationRepo, tenantCatalog, idempotency, accessLog });
   const invitationLinkSink = createInMemoryInvitationLinkChannelSink();
+  // API-CNS-116: proyeccion in-memory (misma semantica que la vista de Postgres) sobre los MISMOS repos del flujo. Si el repo
+  // de invitaciones inyectado no sabe listar (no es el in-memory), el GET responde 503 (fail-closed).
+  const listing = invitation.invitationRepo as Partial<InvitationListing>;
+  const roster = typeof listing.listByTenant === "function"
+    ? createInMemoryStaffRosterReader({ uow: tenancy.uow, invitations: listing as InvitationListing, enrollments: enrollmentRepo, catalog: tenantCatalog })
+    : undefined;
   return {
     issuance: { invitation, enrollmentRepo, tenantCatalog, invitationLinkChannel: invitationLinkSink, ...(policy ? { policy } : {}) },
     enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger, uow: tenancy.uow },
     uow: tenancy.uow,
     staffIdentity,
+    ...(roster ? { roster } : {}),
     invitationLinkSink,
     catalog: tenantCatalog,
+    accessLog,
   };
 }
 
@@ -336,6 +359,8 @@ export interface PostgresFlowConfig {
   /** CA-128: clave HMAC del decisionMakerRef (decision-maker-ref.ts), de CNS_DECISION_MAKER_REF_SECRET. */
   readonly decisionMakerRefKey: Buffer;
   readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
+  /** API-CNS-116: directorio SINTETICO de etiquetas (solo LOCAL/CI). Sin el, subjectLabel = null. */
+  readonly subjectDirectory?: SubjectDirectoryPort;
 }
 
 /** Cableado Postgres de los tres bolsos de puertos. Repos/ledger/outbox/catálogo del bolso son los
@@ -402,6 +427,9 @@ export function createPostgresFlowPorts(
     enrollment: { enrollmentRepo: o.enrollmentRepo, tenantCatalog: o.tenantCatalog, ledger: o.ledger, uow: store.uow },
     uow: store.uow,
     staffIdentity: cfg.staffIdentity,
+    // API-CNS-116: la lectura va por la vista tras SET LOCAL ROLE staff_roster_reader (adaptador Postgres).
+    roster: createPgStaffRosterReader(store.uow),
+    ...(cfg.subjectDirectory ? { subjectDirectory: cfg.subjectDirectory } : {}),
     invitationLinkSink,
   };
   return { ports: { invitation, otp, decision, decisionMakerRefKey: cfg.decisionMakerRefKey }, revocationPorts, staffConsole };
@@ -481,7 +509,7 @@ function serializeClearSessionCookie(config: RightsCaseHttpConfig): string {
  * application/json. En los dos entrypoints de este repo (consent-flow-server.ts, server.ts)
  * los únicos usos de 403/409/422 son, precisamente, esos tres. */
 function contentTypeForStatus(status: number): string {
-  return status === 403 || status === 409 || status === 422 ? "application/problem+json" : "application/json";
+  return status === 403 || status === 409 || status === 422 || status === 503 ? "application/problem+json" : "application/json";
 }
 
 /** Cabeceras de las páginas HTML servidas por este entrypoint (/welcome, /verify): CLAUDE.md
@@ -582,6 +610,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   // CA-125: clave propia de la sesión STAFF (staff-session.ts), aislada de las de arriba.
   const staffSessionKey = deriveStaffSessionKey(sessionSecret);
   const staffConsolePorts: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
+  // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion).
+  const staffRosterCursorKey = options.staffRosterCursorKey ?? deriveStaffRosterCursorKey(randomBytes(32));
   const caseConfirmationPorts: CaseConfirmationPorts = {
     revocation: revocationPorts.revocation,
     staffIdentity,
@@ -950,6 +980,28 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
       res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });
       res.end(consoleResponse.html);
+      return;
+    }
+
+    if (req.method === "GET" && path === STAFF_ROSTER_PATH) {
+      // API-CNS-116: lectura STAFF (JSON). El query string se pasa tal cual al handler y NUNCA se registra.
+      const queryAt = url.indexOf("?");
+      writeResult(
+        res,
+        config,
+        await handleListStaffRoster(
+          {
+            cookieHeader: headerValue(req.headers.cookie),
+            originHeader: headerValue(req.headers.origin),
+            secFetchSiteHeader: headerValue(req.headers["sec-fetch-site"]),
+            rawQuery: queryAt === -1 ? "" : url.slice(queryAt + 1),
+          },
+          staffConsolePorts,
+          config,
+          staffSessionKey,
+          staffRosterCursorKey,
+        ),
+      );
       return;
     }
 
