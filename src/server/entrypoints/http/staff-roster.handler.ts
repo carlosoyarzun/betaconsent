@@ -44,7 +44,31 @@ export interface RawStaffRosterRequest {
   readonly secFetchSiteHeader: string | undefined;
   /** Query string sin el "?" (puede ser ""). Nunca se registra en logs. */
   readonly rawQuery: string;
+  /** Solo la variante HTML (R5): Sec-Fetch-Mode / Sec-Fetch-Dest tal cual llegaron. */
+  readonly secFetchModeHeader?: string | undefined;
+  readonly secFetchDestHeader?: string | undefined;
 }
+
+/** Variante de borde: `json` exige Sec-Fetch-Site same-origin; `html` (pagina 90:33, R5) acepta same-origin y `none` SOLO
+ * con Sec-Fetch-Mode=navigate y Sec-Fetch-Dest=document (navegacion directa del usuario). El resto del orden es identico. */
+export type StaffRosterEdge = "json" | "html";
+
+/** Fila ya colapsada (misma forma que StaffRosterRow del contrato). */
+export interface StaffRosterItem {
+  readonly subjectRef: string;
+  readonly participationRef: string | null;
+  readonly subjectLabel: string | null;
+  readonly invitationStatus: StaffRosterProjectionRow["staffStatus"];
+}
+
+export interface StaffRosterPageData {
+  readonly items: readonly StaffRosterItem[];
+  readonly nextCursor: string | null;
+}
+
+export type StaffRosterEvaluation =
+  | { readonly ok: true; readonly page: StaffRosterPageData; readonly staff: { readonly tenantId: string; readonly principalRef: string } }
+  | { readonly ok: false; readonly result: HttpResult };
 
 /** Cabeceras de seguridad de TODA respuesta de la ruta (2xx y errores): iguales para que no sirvan de oraculo. */
 export const STAFF_ROSTER_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
@@ -115,47 +139,60 @@ export async function handleListStaffRoster(
   cursorKey: Buffer,
   nowMs: () => number = Date.now,
 ): Promise<HttpResult> {
-  return withHeaders(await evaluate(request, ports, config, staffSessionKey, cursorKey, nowMs));
+  const outcome = await evaluateStaffRoster("json", request, ports, config, staffSessionKey, cursorKey, nowMs);
+  return withHeaders(outcome.ok ? { status: 200, body: { items: outcome.page.items, nextCursor: outcome.page.nextCursor } } : outcome.result);
 }
 
-async function evaluate(
+/** R5: la navegacion directa (URL escrita, marcador) llega con Sec-Fetch-Site none; solo asi se acepta en la variante HTML. */
+function secFetchAllowed(edge: StaffRosterEdge, request: RawStaffRosterRequest): boolean {
+  if (request.secFetchSiteHeader === "same-origin") return true;
+  return edge === "html" && request.secFetchSiteHeader === "none" && request.secFetchModeHeader === "navigate" && request.secFetchDestHeader === "document";
+}
+
+/**
+ * Orden FIJO unico del GET (JSON y HTML comparten esta funcion: mismo gating, misma consulta, mismo mapeo, misma fila de
+ * access_log; el HTML solo cambia la representacion). Devuelve la pagina ya colapsada o el HttpResult de error.
+ */
+export async function evaluateStaffRoster(
+  edge: StaffRosterEdge,
   request: RawStaffRosterRequest,
   ports: StaffConsolePorts,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
   cursorKey: Buffer,
-  nowMs: () => number,
-): Promise<HttpResult> {
+  nowMs: () => number = Date.now,
+): Promise<StaffRosterEvaluation> {
+  const fail = (result: HttpResult): StaffRosterEvaluation => ({ ok: false, result });
   // (1) gating completo, fuera de la tx.
-  // SameSite=Lax deja pasar la cookie en un GET cross-site de nivel superior: JSON exige same-origin.
-  if (request.secFetchSiteHeader !== "same-origin") return uniformNotFound();
-  if (request.originHeader !== undefined && request.originHeader !== config.allowedOrigin) return uniformNotFound();
+  // SameSite=Lax deja pasar la cookie en un GET cross-site de nivel superior: se exige same-origin (HTML: o navegacion directa).
+  if (!secFetchAllowed(edge, request)) return fail(uniformNotFound());
+  if (request.originHeader !== undefined && request.originHeader !== config.allowedOrigin) return fail(uniformNotFound());
 
   let auth: Awaited<ReturnType<typeof authenticateStaffSession>>;
   try {
     auth = await authenticateStaffSession(request.cookieHeader, ports.staffIdentity, config, staffSessionKey);
   } catch {
-    return unavailable(); // el roster de identidad no responde: fail-closed, sin datos
+    return fail(unavailable()); // el roster de identidad no responde: fail-closed, sin datos
   }
-  if (!auth.ok) return auth.result;
+  if (!auth.ok) return fail(auth.result);
   const staff = auth.staff;
 
   const query = parseQuery(request.rawQuery);
-  if (query === null) return listQueryInvalid();
+  if (query === null) return fail(listQueryInvalid());
   const scope: RosterCursorScope = { tenantId: staff.tenantId, principalRef: staff.principalRef, role: "TENANT_ADMIN" };
   let after: RosterCursorPosition | null = null;
   if (query.cursor !== null) {
     try {
       after = decodeRosterCursor(cursorKey, scope, query.cursor, nowMs());
     } catch (error) {
-      if (error instanceof RosterCursorInvalidError) return listQueryInvalid();
+      if (error instanceof RosterCursorInvalidError) return fail(listQueryInvalid());
       throw error;
     }
   }
 
   // (2..7) un unico puerto abre la tx y hace access_log -> SET ROLE -> SELECT -> COMMIT.
   const roster = ports.roster;
-  if (roster === undefined) return unavailable();
+  if (roster === undefined) return fail(unavailable());
   let rows: readonly StaffRosterProjectionRow[];
   try {
     rows = await roster.readPage({
@@ -166,12 +203,12 @@ async function evaluate(
       rowLimit: query.limit + 1,
     });
   } catch (error) {
-    if (error instanceof StaffRosterUnavailableError) return unavailable();
-    return unavailable(); // cualquier otro fallo del puerto: tambien 503 sin datos ni detalle
+    if (error instanceof StaffRosterUnavailableError) return fail(unavailable());
+    return fail(unavailable()); // cualquier otro fallo del puerto: tambien 503 sin datos ni detalle
   }
 
   const page = rows.slice(0, query.limit);
-  const items: Array<Record<string, unknown>> = [];
+  const items: StaffRosterItem[] = [];
   try {
     for (const row of page) {
       const entry = ports.subjectDirectory ? await ports.subjectDirectory.lookup(staff.tenantId, row.subjectRef) : null;
@@ -186,7 +223,7 @@ async function evaluate(
       items.push({ subjectRef: row.subjectRef, participationRef, subjectLabel: label, invitationStatus: row.staffStatus });
     }
   } catch {
-    return unavailable(); // puerto de etiquetas caido
+    return fail(unavailable()); // puerto de etiquetas caido
   }
 
   const last = page[page.length - 1];
@@ -194,5 +231,5 @@ async function evaluate(
     rows.length > query.limit && last !== undefined
       ? encodeRosterCursor(cursorKey, scope, { subjectRef: last.subjectRef, contextRef: last.contextRef }, nowMs())
       : null;
-  return { status: 200, body: { items, nextCursor } };
+  return { ok: true, page: { items, nextCursor }, staff };
 }
