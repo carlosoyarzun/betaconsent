@@ -505,7 +505,7 @@ paths:
         Una fila por (alumno, contexto). El estado ya llega colapsado desde la base (vista app.staff_roster_invitation_status tras
         SET LOCAL ROLE staff_roster_reader): COMPLETED y DECLINED son indistinguibles (DECISION_RECORDED); SENT/OPENED/VERIFIED son SENT;
         la expiración se calcula con el reloj de la BD. Sin sentOn, sin canal ni email, sin timestamps. Keyset por subject_ref/context_ref
-        COLLATE "C" (nunca por estado ni fecha); sin totales. Solo JSON (la página HTML 90:33 es otra entrega).
+        COLLATE "C" (nunca por estado ni fecha); sin totales. Solo JSON; la página HTML 90:33 (/staff/students, REQ-CNS-036) consume la misma lógica.
         Gating: Sec-Fetch-Site same-origin obligatorio y Origin idéntico si viene (si no, 404 uniforme); sin token CSRF (GET, INV-CM-08).
         Cabeceras: Cache-Control no-store, Cross-Origin-Resource-Policy same-origin, Content-Security-Policy frame-ancestors 'none', sin ETag.
         Cada lectura escribe UNA fila STAFF_ROSTER_READ en ops.access_log (resource_ref = tenant_id), en la misma tx; si no puede, 503.
