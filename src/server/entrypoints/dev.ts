@@ -270,6 +270,8 @@ const server = createConsentFlowHttpServer({
   },
   storeMode,
   staffRosterCursorKey,
+  // REQ-CNS-036 / UX-CNS-005: pantallas del colegio bajo /staff (contexto y version de consentimiento los fija el servidor).
+  staffUi: { contextRef: LECTORPRO_BETA_CONFIG.contextRef, consentVersion: "v1-dev" },
   ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
 });
 
@@ -319,6 +321,7 @@ server.listen(port, "127.0.0.1", () => {
   const staffPost = (route: string, extraHeaders: string, payload: string): string =>
     `  curl -i -b ${staffJar} -X POST ${baseUrl}${route} -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF>" -H 'content-type: application/json'${extraHeaders} -d '${payload}'`;
   console.log(`Consola del colegio (CA-125, pantalla dev sin terminal; solo LOCAL; 6 alumnos sintéticos, una invitación por alumno): ${baseUrl}/__dev/staff-console`);
+  console.log(`Consola del colegio (REQ-CNS-036 / UX-CNS-005; pantallas HTML sin JS; botón "Entrar (solo desarrollo)" solo en LOCAL): ${baseUrl}/staff`);
   console.log(`Flujo STAFF por curl (CA-125, TENANT_ADMIN sintético 18c54cb1-9df4-4d4d-b371-b606e4c3b8e6, colegio de dev):`);
   console.log(`  1) login (solo LOCAL; el tenant sale del roster, no del body):`);
   console.log(

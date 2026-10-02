@@ -196,3 +196,320 @@
    botón) y necesitan el mismo agrandado de área táctil que .lp-verify-tap-target; se reutiliza
    esa clase directamente en el HTML (manage-page.ts, revocation-page.ts, verify-page.ts) en vez
    de duplicar la regla. */
+
+/* ==========================================================================
+   Consola del colegio (REQ-CNS-036 / UX-CNS-005, Carlos 2026-10-02; Figma 90:2; handoff staff-ui-handoff.md).
+   Solo tokens `--lp-*` (design-system/css/tokens.css). Literales justificados:
+   - 44px de tamano tactil: no hay token; decision de Carlos 2026-09-27 (igual que .lp-welcome-cta).
+   - halo de foco rgba(26, 92, 184, 0.35): lo usa Figma 90:262; tokens.css solo trae 0.15 en .lp-input:focus (handoff §11).
+   Contraste (WCAG 1.4.3/1.4.11): TODO texto va en --lp-text-primary/-secondary (o -muted solo sobre surface-default y en controles
+   inactivos); los colores de feedback (error/warning/success/info) se usan solo para borde, fondo y punto, siempre junto a texto.
+   No se reutilizan .lp-alert-error ni .lp-input-error-msg (pintan texto con --lp-color-feedback-error: no pasa 4.5:1).
+   ========================================================================== */
+.lp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.lp-staff-body {
+  margin: 0;
+  background: var(--lp-bg-page);
+  color: var(--lp-text-primary);
+  font-family: var(--lp-font-family);
+  font-size: var(--lp-font-size-md);
+  line-height: var(--lp-line-height-normal);
+}
+
+.lp-staff-skip {
+  position: absolute;
+  left: var(--lp-spacing-8);
+  top: -64px;
+  padding: var(--lp-spacing-8) var(--lp-spacing-16);
+  background: var(--lp-surface-default);
+  color: var(--lp-action-primary);
+  border: 2px solid var(--lp-text-primary);
+  border-radius: var(--lp-radius-md);
+  z-index: var(--lp-z-fixed);
+}
+.lp-staff-skip:focus { top: var(--lp-spacing-8); }
+
+.lp-staff-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lp-spacing-12) var(--lp-spacing-24);
+  padding: var(--lp-spacing-16) var(--lp-spacing-32);
+  background: var(--lp-surface-default);
+  border-bottom: 1px solid var(--lp-border-default);
+}
+.lp-staff-brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--lp-spacing-4) var(--lp-spacing-16); }
+.lp-staff-brand-name { font-size: var(--lp-font-size-lg); font-weight: var(--lp-font-weight-bold); color: var(--lp-text-primary); }
+.lp-staff-brand-sub { font-size: var(--lp-font-size-sm); color: var(--lp-text-secondary); }
+.lp-staff-session { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lp-spacing-4) var(--lp-spacing-16); }
+.lp-staff-session-name { font-size: var(--lp-font-size-sm); color: var(--lp-text-secondary); }
+.lp-staff-session form { margin: 0; }
+
+.lp-staff-main {
+  padding: var(--lp-spacing-40) var(--lp-spacing-32) var(--lp-spacing-64);
+  box-sizing: border-box;
+}
+.lp-staff-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-spacing-24);
+  width: 100%;
+  margin: 0 auto;
+}
+.lp-staff-content--narrow { max-width: 560px; }
+.lp-staff-content--form { max-width: 640px; }
+.lp-staff-content--wide { max-width: 1040px; }
+.lp-staff-content > * { margin: 0; min-width: 0; }
+
+/* Aviso persistente IT0 (AC-03): estatico, sin role; texto largo con wrap (Figma usa nowrap). */
+.lp-staff-banner {
+  padding: var(--lp-spacing-8) var(--lp-spacing-12);
+  background: var(--lp-color-feedback-warning-bg);
+  border: 1px solid var(--lp-color-feedback-warning);
+  border-radius: var(--lp-radius-md);
+  font-size: var(--lp-font-size-sm);
+  font-weight: var(--lp-font-weight-medium);
+  color: var(--lp-text-primary);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.lp-staff-crumbs { font-size: var(--lp-font-size-sm); color: var(--lp-text-secondary); }
+.lp-staff-crumbs ol { display: flex; flex-wrap: wrap; gap: var(--lp-spacing-4) 0; margin: 0; padding: 0; list-style: none; }
+.lp-staff-crumbs li + li::before { content: "/"; padding: 0 var(--lp-spacing-8); }
+
+.lp-staff-h1 { margin: 0; font-size: var(--lp-font-size-xxxl); font-weight: var(--lp-font-weight-bold); line-height: var(--lp-line-height-tight); color: var(--lp-text-primary); overflow-wrap: anywhere; }
+.lp-staff-h2 { margin: 0; font-size: var(--lp-font-size-xl); font-weight: var(--lp-font-weight-semibold); color: var(--lp-text-primary); }
+.lp-staff-h3 { margin: 0; font-size: var(--lp-font-size-md); font-weight: var(--lp-font-weight-semibold); color: var(--lp-text-primary); }
+.lp-staff-lead { margin: 0; font-size: var(--lp-font-size-md); color: var(--lp-text-secondary); }
+.lp-staff-help { margin: 0; font-size: var(--lp-font-size-sm); color: var(--lp-text-secondary); }
+.lp-staff-note { margin: 0; font-size: var(--lp-font-size-sm); color: var(--lp-text-primary); }
+.lp-staff-muted { font-size: var(--lp-font-size-sm); color: var(--lp-text-muted); } /* solo sobre surface-default (4.76:1) */
+.lp-staff-optional { font-weight: var(--lp-font-weight-regular); color: var(--lp-text-secondary); }
+
+.lp-staff-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-spacing-16);
+  padding: var(--lp-spacing-24) var(--lp-spacing-20);
+  background: var(--lp-surface-default);
+  border: 1px solid var(--lp-border-default);
+  border-radius: var(--lp-radius-lg);
+  box-sizing: border-box;
+}
+.lp-staff-card > * { margin: 0; }
+.lp-staff-card-label { font-size: var(--lp-font-size-sm); font-weight: var(--lp-font-weight-medium); color: var(--lp-text-secondary); }
+.lp-staff-card-value { font-size: var(--lp-font-size-lg); font-weight: var(--lp-font-weight-semibold); color: var(--lp-text-primary); overflow-wrap: anywhere; }
+.lp-staff-form { gap: var(--lp-spacing-24); }
+.lp-staff-empty { align-items: center; text-align: center; padding: var(--lp-spacing-48); gap: var(--lp-spacing-12); }
+
+.lp-staff-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-spacing-4);
+  padding: var(--lp-spacing-16);
+  background: var(--lp-bg-subtle);
+  border: 1px solid var(--lp-text-muted);
+  border-radius: var(--lp-radius-md);
+}
+.lp-staff-placeholder p { margin: 0; }
+.lp-staff-placeholder-title { font-weight: var(--lp-font-weight-medium); color: var(--lp-text-primary); }
+.lp-staff-dev-login { display: flex; flex-direction: column; gap: var(--lp-spacing-8); margin: 0; padding-top: var(--lp-spacing-16); border-top: 1px dashed var(--lp-text-muted); }
+
+.lp-staff-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-spacing-8);
+  padding: var(--lp-spacing-16);
+  background: var(--lp-bg-subtle);
+  border-radius: var(--lp-radius-md);
+  font-size: var(--lp-font-size-sm);
+  color: var(--lp-text-primary);
+}
+.lp-staff-review > * { margin: 0; overflow-wrap: anywhere; }
+.lp-staff-legal-marker {
+  padding: var(--lp-spacing-8) var(--lp-spacing-12);
+  background: var(--lp-color-feedback-warning-bg);
+  border: 1px solid var(--lp-color-feedback-warning);
+  border-radius: var(--lp-radius-md);
+  font-size: var(--lp-font-size-sm);
+  font-weight: var(--lp-font-weight-medium);
+  color: var(--lp-text-primary);
+}
+
+/* Botones: 44px de alto minimo (decision de Carlos 2026-09-27), 16px/semibold (el DS .lp-btn usa 14px/8x16). */
+.lp-staff-btn {
+  min-height: 44px;
+  padding: 0 var(--lp-spacing-24);
+  font-size: var(--lp-font-size-md);
+  white-space: normal;
+  text-align: center;
+  box-sizing: border-box;
+}
+.lp-staff-btn-secondary {
+  background: var(--lp-surface-default);
+  color: var(--lp-action-primary);
+  border: 2px solid var(--lp-action-primary);
+}
+.lp-staff-btn-secondary:hover { background: var(--lp-action-secondary); }
+.lp-staff-btn-disabled,
+.lp-staff-btn-disabled:hover {
+  background: var(--lp-bg-subtle);
+  color: var(--lp-text-muted);
+  border: 1px dashed var(--lp-text-muted);
+  cursor: not-allowed;
+}
+.lp-staff-btn-text {
+  min-height: 44px;
+  padding: 0 var(--lp-spacing-24);
+  background: transparent;
+  border: 0;
+  font-family: var(--lp-font-family);
+  font-size: var(--lp-font-size-md);
+  font-weight: var(--lp-font-weight-semibold);
+  color: var(--lp-action-primary);
+  cursor: pointer;
+}
+/* Foco visible (2.4.7): borde 2px text-primary + halo de 3px (Figma 90:262); nunca se quita el contorno de foco sin reemplazo. */
+.lp-staff-btn:focus-visible,
+.lp-staff-btn-text:focus-visible,
+.lp-staff-body a:focus-visible,
+.lp-staff-input:focus-visible,
+.lp-staff-alert:focus-visible,
+.lp-staff-body h1:focus-visible {
+  outline: 2px solid var(--lp-text-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(26, 92, 184, 0.35);
+}
+.lp-staff-actions { display: flex; flex-wrap: wrap; gap: var(--lp-spacing-16); }
+.lp-staff-actions .lp-staff-btn { min-width: 200px; text-decoration: none; }
+.lp-staff-row-form { margin: 0; }
+
+.lp-staff-body a.lp-link {
+  font-size: var(--lp-font-size-sm);
+  font-weight: var(--lp-font-weight-medium);
+  color: var(--lp-action-primary);
+}
+
+/* Formulario: borde en reposo --lp-text-muted (3:1, 1.4.11; border-default no pasa para controles). */
+.lp-staff-label { font-size: var(--lp-font-size-md); font-weight: var(--lp-font-weight-medium); color: var(--lp-text-primary); }
+.lp-staff-input {
+  min-height: 48px;
+  padding: 0 var(--lp-spacing-16);
+  font-size: var(--lp-font-size-md);
+  border: 1px solid var(--lp-text-muted);
+}
+.lp-staff-input:focus { border: 2px solid var(--lp-action-primary); box-shadow: 0 0 0 3px rgba(26, 92, 184, 0.35); }
+.lp-staff-input[aria-invalid="true"] { border: 2px solid var(--lp-color-feedback-error); }
+.lp-staff-field-error {
+  padding: var(--lp-spacing-8) var(--lp-spacing-12);
+  background: var(--lp-color-feedback-error-bg);
+  border: 1px solid var(--lp-color-feedback-error);
+  border-radius: var(--lp-radius-md);
+  font-size: var(--lp-font-size-sm);
+  font-weight: var(--lp-font-weight-medium);
+  color: var(--lp-text-primary);
+}
+
+/* Alertas de pagina: texto text-primary (no el color de feedback). */
+.lp-staff-alert {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-spacing-4);
+  padding: var(--lp-spacing-16) var(--lp-spacing-20);
+  border: 1px solid;
+  border-radius: var(--lp-radius-lg);
+  font-size: var(--lp-font-size-sm);
+  color: var(--lp-text-primary);
+  overflow-wrap: anywhere;
+}
+.lp-staff-alert > * { margin: 0; }
+.lp-staff-alert-title { font-size: var(--lp-font-size-md); font-weight: var(--lp-font-weight-semibold); }
+.lp-staff-alert--error { background: var(--lp-color-feedback-error-bg); border-color: var(--lp-color-feedback-error); }
+.lp-staff-alert--warning { background: var(--lp-color-feedback-warning-bg); border-color: var(--lp-color-feedback-warning); }
+.lp-staff-alert--success { background: var(--lp-color-feedback-success-bg); border-color: var(--lp-color-feedback-success); }
+
+/* Tabla de la lista: el DS pone th 12px bold MAYUSCULAS text-muted; aqui 14px semibold text-secondary (handoff §2). */
+.lp-staff-table th[scope="col"] {
+  padding: var(--lp-spacing-12) var(--lp-spacing-20);
+  background: var(--lp-bg-subtle);
+  font-size: var(--lp-font-size-sm);
+  font-weight: var(--lp-font-weight-semibold);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--lp-text-secondary);
+}
+.lp-staff-table td,
+.lp-staff-table th[scope="row"] { padding: var(--lp-spacing-12) var(--lp-spacing-20); vertical-align: middle; }
+.lp-staff-table th[scope="row"] { font-size: var(--lp-font-size-md); font-weight: var(--lp-font-weight-medium); color: var(--lp-text-primary); text-align: left; text-transform: none; letter-spacing: normal; background: transparent; }
+.lp-staff-table tbody tr:hover { background: var(--lp-surface-active); }
+
+/* Badge de estado: el estado es texto; el punto es decorativo (aria-hidden). Texto en text-primary. */
+.lp-staff-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lp-spacing-8);
+  padding: var(--lp-spacing-4) var(--lp-spacing-12);
+  border-radius: var(--lp-radius-full);
+  font-size: var(--lp-font-size-sm);
+  font-weight: var(--lp-font-weight-medium);
+  color: var(--lp-text-primary);
+}
+.lp-staff-dot { width: 8px; height: 8px; border-radius: var(--lp-radius-full); flex: none; }
+.lp-staff-badge--neutral { background: var(--lp-bg-subtle); }
+.lp-staff-badge--neutral .lp-staff-dot { background: var(--lp-text-muted); }
+.lp-staff-badge--warning { background: var(--lp-color-feedback-warning-bg); }
+.lp-staff-badge--warning .lp-staff-dot { background: var(--lp-color-feedback-warning); }
+.lp-staff-badge--info { background: var(--lp-color-feedback-info-bg); }
+.lp-staff-badge--info .lp-staff-dot { background: var(--lp-color-feedback-info); }
+.lp-staff-badge--success { background: var(--lp-color-feedback-success-bg); }
+.lp-staff-badge--success .lp-staff-dot { background: var(--lp-color-feedback-success); }
+
+/* Degradacion a 375 px (handoff §13): sin scroll horizontal ni reflow roto hasta 320 CSS px (1.4.10). */
+@media (max-width: 640px) {
+  .lp-staff-header { padding: var(--lp-spacing-16); }
+  .lp-staff-main { padding: var(--lp-spacing-24) var(--lp-spacing-16) var(--lp-spacing-48); }
+  .lp-staff-actions { flex-direction: column; }
+  .lp-staff-actions .lp-staff-btn { width: 100%; min-width: 0; }
+  .lp-staff-empty { padding: var(--lp-spacing-24) var(--lp-spacing-16); }
+  /* Tabla -> lista apilada: cada fila es una tarjeta; el <thead> sigue en el arbol accesible (sr-only). */
+  .lp-staff-table-container { overflow: visible; background: transparent; border: 0; }
+  .lp-staff-table,
+  .lp-staff-table tbody,
+  .lp-staff-table tr,
+  .lp-staff-table th,
+  .lp-staff-table td { display: block; }
+  .lp-staff-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .lp-staff-table tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lp-spacing-8);
+    margin-bottom: var(--lp-spacing-12);
+    padding: var(--lp-spacing-16);
+    background: var(--lp-surface-default);
+    border: 1px solid var(--lp-border-default);
+    border-radius: var(--lp-radius-lg);
+  }
+  .lp-staff-table td,
+  .lp-staff-table th[scope="row"] { padding: 0; }
+  .lp-staff-row-form .lp-staff-btn { width: 100%; }
+}
