@@ -215,7 +215,8 @@ function failureResponse(step: Step, result: HttpResult, label: string | null, c
   if (result.status === 404) return errorPage(404, "session", partial);
   if (code === "CSRF_REJECTED") return errorPage(403, "csrf", partial);
   if (code === "ACTOR_NOT_ALLOWED") return errorPage(403, "permission", partial);
-  if (code === "ENROLLMENT_ALREADY_ACTIVE" || code === "INVITATION_ALREADY_ACTIVE") return page(409, { kind: "active", csrfToken, label });
+  // IDEMPOTENCY_CONFLICT: la misma cadena (alumno + participacion) ya se ejecuto con otro correo; es "ya tiene una invitacion".
+  if (code === "ENROLLMENT_ALREADY_ACTIVE" || code === "INVITATION_ALREADY_ACTIVE" || code === "IDEMPOTENCY_CONFLICT") return page(409, { kind: "active", csrfToken, label });
   if (code === "INVITER_NOT_PARTICIPATING" || code === "ENROLLMENT_NOT_ACTIVE" || code === "CONTEXT_NOT_ACTIVE" || code === "VERSION_OR_MODE_GUARD_FAILED") {
     return errorPage(409, "not-current", partial, csrfToken);
   }

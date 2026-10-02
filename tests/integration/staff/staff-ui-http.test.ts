@@ -482,6 +482,11 @@ test("TEST-CNS-1113 idempotencia determinista: doble clic o recarga del envio no
     assert.ok(c.status === 303, "el reenvio posterior reproduce la respuesta guardada");
     assert.equal((await invitationCount(h)), 1, "una sola invitacion");
     assert.equal(h.staff.invitationLinkSink.sent.length, 1, "un solo mensaje entregado");
+    // misma cadena con OTRO correo (formulario viejo): conflicto de idempotencia presentado como "ya tiene una invitacion activa", sin efecto ni eco
+    const other = await postForm(h, "/staff/students/send", fields(s, { guardian_email: "otro@example.invalid" }), { cookie });
+    assert.equal(other.status, 409);
+    assert.ok(other.html.includes("Este alumno ya tiene una invitación activa.") && !other.html.includes("otro@example.invalid"));
+    assert.equal(h.staff.invitationLinkSink.sent.length, 1);
   } finally {
     await h.close();
   }
