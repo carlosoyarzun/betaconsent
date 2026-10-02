@@ -110,6 +110,7 @@ import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
+import { handleStaffUi, isStaffUiRoute, STAFF_UI_RESPONSE_HEADERS, type StaffUiConfig } from "./staff-ui.handler.ts";
 import { deriveStaffRosterCursorKey } from "../../modules/staff-roster/roster-cursor.ts";
 import { createInMemoryAccessLogAdapter, type InMemoryAccessLog } from "../../../infra/adapters/in-memory-access-log.adapter.ts";
 import { createInMemoryStaffRosterReader } from "../../../infra/adapters/in-memory-staff-roster.adapter.ts";
@@ -182,6 +183,10 @@ export interface ConsentFlowHttpServerOptions {
   /** API-CNS-116 (R4): clave del cursor de GET /staff/roster (HKDF de CNS_STAFF_ROSTER_CURSOR_SECRET, propia por entorno).
    * Si se omite, se genera una aleatoria por proceso (los cursores mueren con el proceso; TTL 15 min). */
   readonly staffRosterCursorKey?: Buffer;
+  /** REQ-CNS-036 / UX-CNS-005: pantallas HTML del colegio bajo /staff/... (entrada, lista, formulario, resumen, confirmacion).
+   * Contexto y version de consentimiento los fija el servidor. Sin esto, esas rutas no existen (404). El login dev de la
+   * entrada ("Entrar (solo desarrollo)", POST /staff/dev-login) solo existe con environment=LOCAL y `devStaffConsole`. */
+  readonly staffUi?: StaffUiConfig;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -980,6 +985,51 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
       res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });
       res.end(consoleResponse.html);
+      return;
+    }
+
+    if (options.staffUi && isStaffUiRoute(req.method ?? "", path)) {
+      // REQ-CNS-036: pantallas HTML del colegio. El cuerpo del formulario y el query (cursor cifrado) NUNCA se registran.
+      const formBody = req.method === "POST" ? await readFormBody(req) : "";
+      if (formBody === null) {
+        res.setHeader("Connection", "close");
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 413 }), () => req.destroy());
+        return;
+      }
+      const queryAt = url.indexOf("?");
+      const uiResponse = await handleStaffUi(
+        {
+          method: req.method ?? "GET",
+          path,
+          rawQuery: queryAt === -1 ? "" : url.slice(queryAt + 1),
+          originHeader: headerValue(req.headers.origin),
+          cookieHeader: headerValue(req.headers.cookie),
+          secFetchSiteHeader: headerValue(req.headers["sec-fetch-site"]),
+          secFetchModeHeader: headerValue(req.headers["sec-fetch-mode"]),
+          secFetchDestHeader: headerValue(req.headers["sec-fetch-dest"]),
+          formBody,
+        },
+        {
+          environment: options.environment,
+          ui: options.staffUi,
+          devLoginPrincipalRef: options.devStaffConsole?.principalRef,
+          staffConsole: staffConsolePorts,
+          config,
+          staffSessionKey,
+          cursorKey: staffRosterCursorKey,
+        },
+      );
+      if (uiResponse.html === undefined && uiResponse.status === 404) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      for (const [name, value] of Object.entries(STAFF_UI_RESPONSE_HEADERS)) res.setHeader(name, value);
+      if (uiResponse.setCookies && uiResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...uiResponse.setCookies]);
+      if (uiResponse.location) res.setHeader("Location", uiResponse.location);
+      res.writeHead(uiResponse.status, { "content-type": "text/html; charset=utf-8" });
+      res.end(uiResponse.html ?? "");
       return;
     }
 

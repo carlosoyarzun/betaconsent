@@ -144,7 +144,7 @@ export async function handleListStaffRoster(
 }
 
 /** R5: la navegacion directa (URL escrita, marcador) llega con Sec-Fetch-Site none; solo asi se acepta en la variante HTML. */
-function secFetchAllowed(edge: StaffRosterEdge, request: RawStaffRosterRequest): boolean {
+export function secFetchAllowed(edge: StaffRosterEdge, request: Pick<RawStaffRosterRequest, "secFetchSiteHeader" | "secFetchModeHeader" | "secFetchDestHeader">): boolean {
   if (request.secFetchSiteHeader === "same-origin") return true;
   return edge === "html" && request.secFetchSiteHeader === "none" && request.secFetchModeHeader === "navigate" && request.secFetchDestHeader === "document";
 }
