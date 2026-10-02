@@ -30,7 +30,7 @@ import { createInMemoryOtpVerificationRepository } from "../../../src/infra/adap
 import { createInMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 
-const TENANT_ID = "tenant-1";
+const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+channel-1@example.invalid";
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
 
