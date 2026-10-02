@@ -34,7 +34,9 @@ import {
   LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY,
   LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY,
   LOCAL_ONLY_DEV_PARTICIPATION_REF,
+  LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF,
   LOCAL_ONLY_DEV_STAFF_CHANNEL_REF,
+  LOCAL_ONLY_DEV_STAFF_STUDENTS,
   LOCAL_ONLY_DEV_STAFF_SUBJECT_REF,
   LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY,
   LOCAL_ONLY_DEV_OTP_POLICY,
@@ -225,13 +227,16 @@ if (pgBundle) {
   staffConsole = pgBundle.staffConsole;
 } else {
   const memoryStaff = createDefaultStaffConsolePorts(ports.invitation, staffIdentity, staffIssuancePolicy, loadIdempotencyPolicyConfig(LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY));
-  memoryStaff.catalog.seedSubject(TENANT_ID, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF);
-  memoryStaff.catalog.seedParticipation(TENANT_ID, {
-    participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF,
-    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
-    productRef: LECTORPRO_BETA_CONFIG.productRef,
-    status: "ACTIVE",
-  });
+  // El primer alumno es el del banner; los demás (consola dev) permiten varias invitaciones por arranque.
+  for (const student of LOCAL_ONLY_DEV_STAFF_STUDENTS) {
+    memoryStaff.catalog.seedSubject(TENANT_ID, student.subjectRef);
+    memoryStaff.catalog.seedParticipation(TENANT_ID, {
+      participationRef: student.participationRef,
+      contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+      productRef: LECTORPRO_BETA_CONFIG.productRef,
+      status: "ACTIVE",
+    });
+  }
   staffConsole = memoryStaff;
 }
 
@@ -246,6 +251,12 @@ const server = createConsentFlowHttpServer({
   environment: "LOCAL",
   staffIdentity,
   staffConsole,
+  devStaffConsole: {
+    principalRef: LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF,
+    students: LOCAL_ONLY_DEV_STAFF_STUDENTS,
+    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+    consentVersion: "v1-dev",
+  },
   storeMode,
   ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
 });
@@ -295,7 +306,8 @@ server.listen(port, "127.0.0.1", () => {
   const staffJar = "/tmp/cns-staff-admin.txt";
   const staffPost = (route: string, extraHeaders: string, payload: string): string =>
     `  curl -i -b ${staffJar} -X POST ${baseUrl}${route} -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF>" -H 'content-type: application/json'${extraHeaders} -d '${payload}'`;
-  console.log(`Flujo STAFF (CA-125, TENANT_ADMIN sintético 18c54cb1-9df4-4d4d-b371-b606e4c3b8e6, colegio de dev):`);
+  console.log(`Consola del colegio (CA-125, pantalla dev sin terminal; solo LOCAL; 6 alumnos sintéticos, una invitación por alumno): ${baseUrl}/__dev/staff-console`);
+  console.log(`Flujo STAFF por curl (CA-125, TENANT_ADMIN sintético 18c54cb1-9df4-4d4d-b371-b606e4c3b8e6, colegio de dev):`);
   console.log(`  1) login (solo LOCAL; el tenant sale del roster, no del body):`);
   console.log(
     `  curl -i -c ${staffJar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"principalRef":"18c54cb1-9df4-4d4d-b371-b606e4c3b8e6"}'`,

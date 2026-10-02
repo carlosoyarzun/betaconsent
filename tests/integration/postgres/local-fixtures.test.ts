@@ -10,6 +10,7 @@ import { applyLocalFixtures, loadLocalFixtures, LocalFixtureError } from "../../
 import {
   LOCAL_ONLY_DEV_OTHER_TENANT_ID,
   LOCAL_ONLY_DEV_PARTICIPATION_REF,
+  LOCAL_ONLY_DEV_STAFF_STUDENTS,
   LOCAL_ONLY_DEV_STAFF_SUBJECT_REF,
   LOCAL_ONLY_DEV_SUBJECT_REF,
   LOCAL_ONLY_DEV_TENANT_ID,
@@ -30,17 +31,18 @@ pgTest("TEST-CNS-879 pg: fixtures locales como consent_migrator siembran el cata
 
   const admin = await ctx.connectAsSuperuser();
   const subjects = (await admin.query<{ tenant_id: string; subject_ref: string }>("SELECT tenant_id, subject_ref FROM app.subject")).rows;
-  assert.equal(subjects.length, 3);
+  assert.equal(subjects.length, 3 + LOCAL_ONLY_DEV_STAFF_STUDENTS.length - 1);
   const pairs = new Set(subjects.map((s) => `${s.tenant_id}/${s.subject_ref}`));
   for (const p of [
     `${LOCAL_ONLY_DEV_TENANT_ID}/${LOCAL_ONLY_DEV_SUBJECT_REF}`,
     `${LOCAL_ONLY_DEV_TENANT_ID}/${LOCAL_ONLY_DEV_STAFF_SUBJECT_REF}`,
     `${LOCAL_ONLY_DEV_OTHER_TENANT_ID}/${LOCAL_ONLY_DEV_STAFF_SUBJECT_REF}`,
+    ...LOCAL_ONLY_DEV_STAFF_STUDENTS.map((st) => `${LOCAL_ONLY_DEV_TENANT_ID}/${st.subjectRef}`),
   ]) assert.ok(pairs.has(p), p);
   const parts = (await admin.query<{ tenant_id: string; participation_ref: string; context_ref: string; product_ref: string; status: string }>("SELECT * FROM app.school_participation")).rows;
-  assert.equal(parts.length, 2);
+  assert.equal(parts.length, 2 + LOCAL_ONLY_DEV_STAFF_STUDENTS.length - 1);
   for (const r of parts) {
-    assert.equal(r.participation_ref, LOCAL_ONLY_DEV_PARTICIPATION_REF);
+    assert.ok(r.participation_ref === LOCAL_ONLY_DEV_PARTICIPATION_REF || (r.tenant_id === LOCAL_ONLY_DEV_TENANT_ID && LOCAL_ONLY_DEV_STAFF_STUDENTS.some((st) => st.participationRef === r.participation_ref)), r.participation_ref);
     assert.equal(r.context_ref, LECTORPRO_BETA_CONFIG.contextRef);
     assert.equal(r.product_ref, LECTORPRO_BETA_CONFIG.productRef);
     assert.equal(r.status, "ACTIVE");

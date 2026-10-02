@@ -64,6 +64,20 @@ export const LOCAL_ONLY_DEV_OTHER_TENANT_ID = "5d2e8a1c-6b3f-4d97-9c04-7e1a3b5d9
  * tiene todavía un flujo de alta de sujetos ni participaciones: FINDING P1). Cero PII. */
 export const LOCAL_ONLY_DEV_STAFF_SUBJECT_REF = "b7c3d1e5-2a48-4f96-8d10-6e9f0a2c4b73";
 export const LOCAL_ONLY_DEV_PARTICIPATION_REF = "d4f8a2c6-7b13-4e59-a8c2-0f3d5b7e9a14";
+/** Alumnos sintéticos del colegio de dev para la consola dev (CA-125, Carlos 2026-10-01): el primero es el del banner
+ * (LOCAL_ONLY_DEV_STAFF_SUBJECT_REF/LOCAL_ONLY_DEV_PARTICIPATION_REF); los otros 5 permiten varias invitaciones por
+ * arranque (cada alumno admite una participación activa). El catálogo no tiene nombres: la etiqueta es solo de la
+ * consola. Refs UUIDv4 fijas, cero PII. Deben coincidir con db/fixtures/local/0001_dev_catalog.sql. */
+export const LOCAL_ONLY_DEV_STAFF_STUDENTS: readonly { readonly label: string; readonly subjectRef: string; readonly participationRef: string }[] = [
+  { label: "Alumno de prueba 1", subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF },
+  { label: "Alumno de prueba 2", subjectRef: "e74bb5c4-bc34-4f14-b773-ed7be16c7eab", participationRef: "9bd69327-dcfb-476e-b638-439f138dafe9" },
+  { label: "Alumno de prueba 3", subjectRef: "cbd3aca8-1fd0-4ce5-aeaf-6ccf4c8d9bd4", participationRef: "3f529dbe-d674-4e2e-bda8-b8548ab5a0ed" },
+  { label: "Alumno de prueba 4", subjectRef: "7ac9347f-c8ce-4de6-94ac-30ad4bb19c99", participationRef: "a5197e72-eee4-4784-8e2e-aa225e037977" },
+  { label: "Alumno de prueba 5", subjectRef: "b07be7e0-88b9-4233-807c-ae6263b45aa7", participationRef: "4a54ce87-8bff-4487-8f5b-2f620867768e" },
+  { label: "Alumno de prueba 6", subjectRef: "9467c808-e8d3-486d-a73a-87a6cfdc02ef", participationRef: "74a01146-1bf6-4d67-bffe-bd72c89332dc" },
+];
+/** TENANT_ADMIN sintético del colegio de dev (mismo valor que su entrada en LOCAL_ONLY_DEV_STAFF_ROSTER); lo usa la consola dev. */
+export const LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF = "18c54cb1-9df4-4d4d-b371-b606e4c3b8e6";
 export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "staff-recipient@example.invalid";
 
 /** CA-125: P-10 (vigencia de la invitación = 7 días, APROBADO, Carlos 2026-10-01) y deliveryChannel
@@ -90,6 +104,6 @@ export const LOCAL_ONLY_DEV_STAFF_ROSTER = [
   // CA-125 (contracts/openapi /staff/*, staffSession): miembros TENANT_ADMIN de la consola STAFF,
   // cada uno con su membership de tenant (GRD-CM-01) y sin reutilizar personas entre roles
   // (GRD-RC-15). 05 = colegio de dev; 06 = OTRO colegio, para probar el aislamiento por tenant.
-  { principalRef: "18c54cb1-9df4-4d4d-b371-b606e4c3b8e6", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
+  { principalRef: LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF, role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_TENANT_ID },
   { principalRef: "905ea2ae-b8ed-4681-a1ae-36767a4b0f0e", role: "TENANT_ADMIN" as const, tenantId: LOCAL_ONLY_DEV_OTHER_TENANT_ID },
 ];

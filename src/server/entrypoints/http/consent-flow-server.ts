@@ -107,6 +107,7 @@ import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from ".
 import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
+import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 
 export interface ConsentFlowHttpServerOptions {
   readonly config?: Partial<RightsCaseHttpConfig>;
@@ -168,6 +169,9 @@ export interface ConsentFlowHttpServerOptions {
   /** Solo storeMode=postgres + LOCAL: lector del outbox del tenant de dev (dentro de inTenant/withTenantTx de ese
    * tenant, RLS). Sin el, GET /__dev/outbox-sink responde 404 en postgres. */
   readonly devOutboxSink?: () => Promise<readonly OutboxEnvelope[]>;
+  /** CA-125 (Carlos 2026-10-01): datos sintéticos de la consola dev GET /__dev/staff-console. Sin esto, o fuera de
+   * LOCAL, la ruta no existe (404, GRD-CM-13). */
+  readonly devStaffConsole?: DevStaffConsoleFixture;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -417,6 +421,32 @@ function readBody(req: IncomingMessage): Promise<unknown> {
       }
     });
     req.on("error", reject);
+  });
+}
+
+/** Cuerpo application/x-www-form-urlencoded (consola dev), tope 8 KiB. Devuelve null si lo supera: deja de acumular
+ * y deja de consumir la request (el caller responde 413 y la destruye). */
+function readFormBody(req: IncomingMessage): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    req.on("data", (chunk: Buffer) => {
+      if (done) return;
+      size += chunk.length;
+      if (size > 8192) {
+        done = true;
+        chunks.length = 0;
+        req.pause();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (!done) resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (err) => (done ? undefined : reject(err)));
   });
 }
 
@@ -884,6 +914,42 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const sink = staffConsolePorts.issuance.invitationLinkChannel as InMemoryInvitationLinkChannelSink;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ sent: sink.sent }));
+      return;
+    }
+
+    if (isDevStaffConsolePath(path)) {
+      // CA-125: consola dev (HTML). El gating GRD-CM-13 (LOCAL + fixture) vive en handleDevStaffConsole:
+      // fuera de LOCAL responde el mismo 404 JSON que los demás /__dev/*. Nunca se registra el cuerpo.
+      // GRD-CM-13: el gating (LOCAL + fixture) va ANTES de leer el cuerpo, como los demás /__dev/*.
+      if (options.environment !== "LOCAL" || !options.devStaffConsole) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      const formBody = req.method === "POST" ? await readFormBody(req) : "";
+      if (formBody === null) {
+        res.setHeader("Connection", "close");
+        res.writeHead(413, { "content-type": "application/json" }, );
+        res.end(JSON.stringify({ status: 413 }), () => req.destroy());
+        return;
+      }
+      const consoleResponse = await handleDevStaffConsole(
+        { method: req.method ?? "GET", path, originHeader: headerValue(req.headers.origin), cookieHeader: headerValue(req.headers.cookie), formBody },
+        { environment: options.environment, fixture: options.devStaffConsole, staffIdentity, staffConsole: staffConsolePorts, config, staffSessionKey },
+        () => (staffConsolePorts.issuance.invitationLinkChannel as InMemoryInvitationLinkChannelSink).sent ?? [],
+      );
+      if (consoleResponse.status === 404) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+      if (consoleResponse.setCookies && consoleResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...consoleResponse.setCookies]);
+      if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
+      res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });
+      res.end(consoleResponse.html);
       return;
     }
 
