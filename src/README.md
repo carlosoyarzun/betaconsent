@@ -33,6 +33,6 @@ Pantallas HTML server-rendered (sin JS, CSP estricta) activadas con la opción `
 
 La cookie `__Host-cns-staff` lleva `sid` (32 bytes aleatorios), `iat` y `exp` firmados (`entrypoints/http/staff-session.ts`) y cada request se valida además contra el registro del servidor (`ports/staff-session-store.port.ts`; adaptadores in-memory y Postgres `app.staff_session`, migración `0021`, RLS FORCE por tenant, solo el hash del sid). Fallo de cualquier tipo (firma, `exp`, revocada, inactividad, otro tenant/principal/rol) = el mismo 404 uniforme. Logout revoca el sid; cada login emite un sid nuevo y revoca el previo del navegador. El token CSRF de la consola es `HMAC(clave HKDF propia, sid)`, y el cursor de `GET /staff/roster` (AAD) y la cookie flash quedan ligados al sid. El dev-login LOCAL usa el mismo `issueStaffSession` (sin privilegios extra). Las sesiones expiradas se limpian al iniciar sesión (solo las ya vencidas y fuera de retención; la policy de DELETE lo impone).
 
-Parámetros **PROPUESTOS — pendiente aprobación de Carlos** (`server/modules/common/approved-parameters.ts`, prefijo `PROPOSED_`): vida absoluta 8 h, inactividad 30 min, retención de filas expiradas 24 h. No son valores aprobados.
+Parámetros aprobados por Carlos el 2026-10-05 (`server/modules/common/approved-parameters.ts`, prefijo `APPROVED_STAFF_SESSION_`): vida absoluta 8 h, inactividad 30 min, retención de filas expiradas 24 h.
 
 La consola `/__dev/staff-console` se mantiene. El copy legal es un marcador (`COPY LEGAL PENDIENTE — Carlos`).

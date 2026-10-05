@@ -20,8 +20,8 @@ import {
   type StaffSessionPayload,
 } from "../../../src/server/entrypoints/http/staff-session.ts";
 import {
-  PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS,
-  PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS,
+  APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS,
+  APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS,
 } from "../../../src/server/modules/common/approved-parameters.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 
@@ -39,7 +39,7 @@ test("TEST-CNS-1140 sid: 32 bytes aleatorios (256 bits >= 128), base64url de 43 
   assert.notEqual(hashStaffSid("A".repeat(43)), "A".repeat(43));
 });
 
-test("TEST-CNS-1140 decode: firma, formato, iat <= now < exp con reloj inyectado; sin nowMs solo valida firma; propuestos 8 h / 30 min no se presentan como aprobados", () => {
+test("TEST-CNS-1140 decode: firma, formato, iat <= now < exp con reloj inyectado; sin nowMs solo valida firma; parametros aprobados 8 h / 30 min (Carlos, 2026-10-05)", () => {
   const cookie = encodeStaffSession(key, payload());
   assert.deepEqual(decodeStaffSession(key, cookie, T0), payload());
   assert.notEqual(decodeStaffSession(key, cookie, T0 + 999), null);
@@ -54,8 +54,8 @@ test("TEST-CNS-1140 decode: firma, formato, iat <= now < exp con reloj inyectado
     assert.equal(decodeStaffSession(key, encodeStaffSession(key, bad), T0), null);
   }
   assert.equal(decodeStaffSession(key, undefined, T0), null);
-  assert.equal(PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS, 8 * 60 * 60_000);
-  assert.equal(PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS, 30 * 60_000);
+  assert.equal(APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS, 8 * 60 * 60_000);
+  assert.equal(APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS, 30 * 60_000);
 });
 
 test("TEST-CNS-1140 CSRF ligado al sid: mismo sid mismo token, otro sid otro token, otra clave otro token; comparacion exacta", () => {
@@ -77,8 +77,8 @@ test("TEST-CNS-1140 issueStaffSession: iat/exp del reloj inyectado, registro con
   const decoded = decodeStaffSession(key, first.cookieValue, now)!;
   assert.equal(decoded.sid, first.sid);
   assert.equal(decoded.iat, T0);
-  assert.equal(decoded.exp, T0 + PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS);
-  assert.equal(first.maxAgeSec, PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS / 1000);
+  assert.equal(decoded.exp, T0 + APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS);
+  assert.equal(first.maxAgeSec, APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS / 1000);
   assert.match(serializeStaffSessionCookie("__Host-cns-staff", first.cookieValue, first.maxAgeSec), /^__Host-cns-staff=[^;]+; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800$/);
   assert.equal(first.csrfToken, staffCsrfTokenFor(key, first.sid));
   const stored = JSON.stringify(sessions.rows());
@@ -90,12 +90,12 @@ test("TEST-CNS-1140 issueStaffSession: iat/exp del reloj inyectado, registro con
   now = T0 + 60_000;
   const second = await issueStaffSession(deps, who, first.cookieValue);
   assert.notEqual(second.sid, first.sid);
-  const live = (sid: string) => sessions.validateAndTouch({ ...who, sidHash: hashStaffSid(sid), nowMs: now, idleTimeoutMs: PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS });
+  const live = (sid: string) => sessions.validateAndTouch({ ...who, sidHash: hashStaffSid(sid), nowMs: now, idleTimeoutMs: APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS });
   assert.equal(await live(first.sid), false, "el sid previo quedo revocado");
   assert.equal(await live(second.sid), true);
 
   // logout: revoca por cookie (aunque ya haya vencido por exp) y es idempotente; basura no hace nada
-  now = T0 + PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS + 1;
+  now = T0 + APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS + 1;
   assert.equal((await revokeStaffSessionCookie(deps, second.cookieValue))?.sid, second.sid);
   assert.equal(await revokeStaffSessionCookie(deps, second.cookieValue) !== null, true);
   assert.equal(await revokeStaffSessionCookie(deps, "basura"), null);

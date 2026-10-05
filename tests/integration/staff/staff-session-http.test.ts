@@ -26,7 +26,7 @@ import {
   createDefaultStaffConsolePorts,
 } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import { decodeStaffSession, deriveStaffSessionKey, hashStaffSid } from "../../../src/server/entrypoints/http/staff-session.ts";
-import { PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS, PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS } from "../../../src/server/modules/common/approved-parameters.ts";
+import { APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS, APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS } from "../../../src/server/modules/common/approved-parameters.ts";
 import { loadIdempotencyPolicyConfig } from "../../../src/server/modules/common/idempotency-policy.config.ts";
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
@@ -200,7 +200,7 @@ test("TEST-CNS-1143 logout revoca el sid en servidor: la cookie robada tras logo
 test("TEST-CNS-1145 expiracion: por inactividad (se desliza con el uso) y absoluta (exp), con reloj inyectado; mismo 404 uniforme sin filtrar la causa", async () => {
   const h = await start();
   try {
-    assert.equal(PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS, 30 * MIN);
+    assert.equal(APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS, 30 * MIN);
     const t0 = h.clock.now;
     const idle = await login(h);
     h.clock.now = t0 + 29 * MIN;
@@ -223,7 +223,7 @@ test("TEST-CNS-1145 expiracion: por inactividad (se desliza con el uso) y absolu
     h.clock.now = t0;
     const busy = await login(h);
     const exp = decodeStaffSession(KEY, busy.sessionValue)!.exp;
-    assert.equal(exp - t0, PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS);
+    assert.equal(exp - t0, APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS);
     let t = t0;
     while (t + 20 * MIN < exp) {
       t += 20 * MIN;
@@ -353,7 +353,7 @@ test("TEST-CNS-1150 dev-login solo en LOCAL con el mismo mecanismo y sin privile
     assert.equal(rowsOf(local).length, 1);
     const row = rowsOf(local)[0]!;
     assert.deepEqual({ tenantId: row.tenantId, principalRef: row.principalRef, role: row.role, sidHash: row.sidHash }, { tenantId: TENANT_A, principalRef: ADMIN_A, role: "TENANT_ADMIN", sidHash: hashStaffSid(s.sid) });
-    assert.equal(row.expiresAtMs - row.issuedAtMs, PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS);
+    assert.equal(row.expiresAtMs - row.issuedAtMs, APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS);
     const sessionSetCookie = s.setCookies.find((c) => c.startsWith(`${STAFF_COOKIE}=`))!;
     assert.match(sessionSetCookie, /; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800$/);
     // sin privilegios extra: el dev-login de otro principal que no sea TENANT_ADMIN del roster no emite sesion

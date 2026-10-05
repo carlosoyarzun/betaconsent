@@ -39,7 +39,7 @@ import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import { serializeCsrfCookie } from "./csrf.ts";
-import { PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS } from "../../modules/common/approved-parameters.ts";
+import { APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS } from "../../modules/common/approved-parameters.ts";
 import type { StaffSessionStorePort } from "../../ports/staff-session-store.port.ts";
 import {
   decodeStaffSession,
@@ -195,7 +195,7 @@ export async function authenticateStaffSession(
     principalRef: session.principalRef,
     role: session.role,
     nowMs,
-    idleTimeoutMs: PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS,
+    idleTimeoutMs: APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS,
   });
   if (!live) return { ok: false, result: uniformNotFound() };
   if (session.role !== "TENANT_ADMIN") {

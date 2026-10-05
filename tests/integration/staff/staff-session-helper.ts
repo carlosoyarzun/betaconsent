@@ -11,7 +11,7 @@ import {
   staffCsrfTokenFor,
   type StaffSessionPayload,
 } from "../../../src/server/entrypoints/http/staff-session.ts";
-import { PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS } from "../../../src/server/modules/common/approved-parameters.ts";
+import { APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS } from "../../../src/server/modules/common/approved-parameters.ts";
 import type { StaffRole } from "../../../src/server/ports/staff-identity.port.ts";
 import type { StaffSessionStorePort } from "../../../src/server/ports/staff-session-store.port.ts";
 
@@ -40,7 +40,7 @@ export function mintStaffSession(
   if (hit !== undefined) return hit;
   const sid = createHash("sha256").update(`test-sid|${id}`).digest("base64url"); // 43 caracteres, 256 bits
   const now = Date.now();
-  const payload: StaffSessionPayload = { sid, tenantId: who.tenantId, principalRef: who.principalRef, role, iat: now, exp: now + PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS };
+  const payload: StaffSessionPayload = { sid, tenantId: who.tenantId, principalRef: who.principalRef, role, iat: now, exp: now + APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS };
   void sessions.create({ tenantId: who.tenantId, sidHash: hashStaffSid(sid), principalRef: who.principalRef, role, issuedAtMs: payload.iat, expiresAtMs: payload.exp });
   const minted: MintedStaffSession = { sid, cookieValue: encodeStaffSession(key, payload), csrf: staffCsrfTokenFor(key, sid), payload };
   cache.set(id, minted);

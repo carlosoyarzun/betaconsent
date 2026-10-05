@@ -12,11 +12,11 @@
 // CA-138 (Carlos, 2026-10-05; SEC-CNS-018 rev. 2 D-3, SEC-CNS-020 P2-3): la cookie ya NO es un HMAC sin vida. Lleva `sid`
 // (aleatorio, 256 bits), `iat` y `exp` (absoluta); el servidor guarda además un registro por sid (StaffSessionStorePort) que
 // permite REVOCAR (logout) y expirar por INACTIVIDAD. El token CSRF, el cursor de API-CNS-116 y la cookie flash se ligan al
-// sid. Los valores de vida son PROPUESTOS (approved-parameters.ts), no aprobados.
+// sid. Los valores de vida estan aprobados (approved-parameters.ts, Carlos 2026-10-05).
 
 import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 
-import { PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS, PROPOSED_STAFF_SESSION_PURGE_RETENTION_MS } from "../../modules/common/approved-parameters.ts";
+import { APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS, APPROVED_STAFF_SESSION_PURGE_RETENTION_MS } from "../../modules/common/approved-parameters.ts";
 import type { StaffRole } from "../../ports/staff-identity.port.ts";
 import type { StaffSessionStorePort } from "../../ports/staff-session-store.port.ts";
 
@@ -135,13 +135,13 @@ export async function issueStaffSession(
   previousCookie?: string,
 ): Promise<IssuedStaffSession> {
   const now = (deps.nowMs ?? Date.now)();
-  const ttl = deps.absoluteTtlMs ?? PROPOSED_STAFF_SESSION_ABSOLUTE_TTL_MS;
+  const ttl = deps.absoluteTtlMs ?? APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS;
   const previous = decodeStaffSession(deps.staffSessionKey, previousCookie);
   if (previous !== null) await deps.sessions.revoke(previous.tenantId, hashStaffSid(previous.sid), now);
   const sid = newStaffSid();
   const payload: StaffSessionPayload = { sid, tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role, iat: now, exp: now + ttl };
   await deps.sessions.create({ tenantId: payload.tenantId, sidHash: hashStaffSid(sid), principalRef: payload.principalRef, role: payload.role, issuedAtMs: payload.iat, expiresAtMs: payload.exp });
-  await deps.sessions.purgeExpired(payload.tenantId, now, PROPOSED_STAFF_SESSION_PURGE_RETENTION_MS).catch((error: unknown) => {
+  await deps.sessions.purgeExpired(payload.tenantId, now, APPROVED_STAFF_SESSION_PURGE_RETENTION_MS).catch((error: unknown) => {
     // P2-6: solo nombre/codigo del error (nunca sid, hash, refs ni el mensaje de la base).
     const code = (error as { code?: unknown } | null)?.code;
     console.error(`staff_session_purge_failed name=${error instanceof Error ? error.name : "unknown"}${typeof code === "string" ? ` code=${code}` : ""}`);

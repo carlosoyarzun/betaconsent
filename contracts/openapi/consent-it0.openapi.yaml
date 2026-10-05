@@ -112,7 +112,7 @@ components:
         inactividad, y tenant, principal y rol coincidentes. Cualquier fallo es el mismo 404 uniforme sin filtrar la causa. Logout revoca el sid en servidor.
         El token CSRF de la consola, el cursor de GET /staff/roster y la cookie flash de la UI quedan ligados al sid. Cada login emite un sid nuevo (rotación).
         Acceso staff IT0_ONLY.
-      x-pending: ["P-26 (nombre de cookie)", "LD-03 (quién opera RC0 y con qué base)", "CA-138: vida absoluta (propuesta 8 h) e inactividad (propuesta 30 min) PROPUESTAS, pendiente aprobación de Carlos (approved-parameters.ts)"]
+      x-pending: ["P-26 (nombre de cookie)", "LD-03 (quién opera RC0 y con qué base)"]
     platformSession:
       type: apiKey
       in: cookie
