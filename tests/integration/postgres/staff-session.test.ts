@@ -129,3 +129,66 @@ pgTest("TEST-CNS-1148 pg: app.staff_session con FORCE RLS por tenant, grants min
   await rw.end();
   await admin.end();
 });
+
+pgTest("TEST-CNS-1152 pg: CHECK last_seen_at dentro de [issued_at, expires_at]: app_rw no puede dejar la ultima actividad en el futuro lejano ni antes de la emision", async (ctx) => {
+  const T = fixtureUuid("t1152");
+  const rw = await ctx.connectAs("app_rw");
+  try {
+    await rw.query("BEGIN");
+    await rw.query("SELECT set_config('app.tenant_id', $1, true)", [T]);
+    await rw.query(
+      `INSERT INTO app.staff_session (tenant_id, sid_hash, principal_ref, role, issued_at, expires_at, last_seen_at)
+       VALUES ($1, $2, 'staff-synthetic-01', 'TENANT_ADMIN', now(), now() + interval '8 hours', now())`,
+      [T, hex("ok")],
+    );
+    for (const [label, value] of [["futuro lejano", "now() + interval '100 years'"], ["pasado la exp", "now() + interval '9 hours'"], ["antes de la emision", "now() - interval '1 day'"]] as const) {
+      await rw.query("SAVEPOINT s");
+      await assert.rejects(
+        () => rw.query(`UPDATE app.staff_session SET last_seen_at = ${value} WHERE sid_hash = $1`, [hex("ok")]),
+        (e: unknown) => codeOf(e) === "23514" && (e as { constraint?: string }).constraint === "staff_session_last_seen_in_life",
+        label,
+      );
+      await rw.query("ROLLBACK TO SAVEPOINT s");
+    }
+    await rw.query("SAVEPOINT s");
+    await assert.rejects(
+      () => rw.query(
+        `INSERT INTO app.staff_session (tenant_id, sid_hash, principal_ref, role, issued_at, expires_at, last_seen_at)
+         VALUES ($1, $2, 'staff-synthetic-01', 'TENANT_ADMIN', now(), now() + interval '8 hours', now() + interval '100 years')`,
+        [T, hex("fut")],
+      ),
+      (e: unknown) => codeOf(e) === "23514",
+    );
+    await rw.query("ROLLBACK TO SAVEPOINT s");
+    await rw.query("ROLLBACK");
+  } finally {
+    await rw.end();
+  }
+});
+
+pgTest("TEST-CNS-1153 pg: validateAndTouch solo escribe last_seen_at si esta atrasada mas que la granularidad (60 s); dentro de la ventana valida sin escribir; revocada no valida", async (ctx) => {
+  const T = fixtureUuid("t1153");
+  const admin = await ctx.connectAsSuperuser();
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 1 });
+  try {
+    const store = createPgStaffSessionStore(new PgUnitOfWork(pool, {}));
+    const now = Date.now();
+    const sidHash = hex("g");
+    await store.create({ tenantId: T, sidHash, principalRef: "staff-synthetic-01", role: "TENANT_ADMIN", issuedAtMs: now, expiresAtMs: now + 8 * 3_600_000 });
+    const lastSeen = async (): Promise<number> => Number((await admin.query<{ ms: string }>("SELECT (extract(epoch FROM last_seen_at) * 1000)::bigint::text AS ms FROM app.staff_session WHERE sid_hash = $1", [sidHash])).rows[0]?.ms);
+    const v = (nowMs: number) => store.validateAndTouch({ tenantId: T, sidHash, principalRef: "staff-synthetic-01", role: "TENANT_ADMIN", nowMs, idleTimeoutMs: 30 * 60_000 });
+    const before = await lastSeen();
+    assert.equal(await v(now + 10_000), true);
+    assert.equal(await lastSeen(), before, "dentro de 60 s no se escribe");
+    assert.equal(await v(now + 59_000), true);
+    assert.equal(await lastSeen(), before);
+    assert.equal(await v(now + 61_000), true);
+    assert.equal(await lastSeen(), now + 61_000, "pasada la granularidad se avanza");
+    assert.equal(await v(now + 61_000 + 30 * 60_000 + 1), false, "inactividad correcta con esa granularidad");
+    await store.revoke(T, sidHash, now + 62_000);
+    assert.equal(await v(now + 70_000), false, "revocada no valida aunque este dentro de la ventana");
+  } finally {
+    await pool.end();
+    await admin.end();
+  }
+});

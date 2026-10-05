@@ -9,6 +9,13 @@
 import type { TenantId } from "../modules/common/types.ts";
 import type { StaffRole } from "./staff-identity.port.ts";
 
+/**
+ * CA-138 (P2-4): granularidad con que se avanza la ultima actividad. `validateAndTouch` solo ESCRIBE `last_seen_at` si el valor guardado es
+ * anterior a `nowMs - 60 s`; dentro de esa ventana valida sin escribir (un GET no genera un UPDATE por request). La inactividad sigue siendo
+ * correcta (nunca se extiende de mas: el valor guardado esta atrasado a lo sumo 60 s, asi que la sesion puede expirar hasta 60 s ANTES, nunca despues).
+ */
+export const STAFF_SESSION_TOUCH_GRANULARITY_MS = 60_000;
+
 export interface StaffSessionRecord {
   readonly tenantId: TenantId;
   /** sha256 hex (64) del sid. */

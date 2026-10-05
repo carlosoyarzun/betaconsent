@@ -26,7 +26,9 @@ CREATE TABLE app.staff_session (
   revoked_at    timestamptz,
   data_class    text        NOT NULL DEFAULT 'SYNTHETIC' CONSTRAINT staff_session_data_class_synthetic CHECK (data_class = 'SYNTHETIC'),
   CONSTRAINT staff_session_pkey PRIMARY KEY (tenant_id, sid_hash),
-  CONSTRAINT staff_session_exp_after_iat CHECK (expires_at > issued_at)
+  CONSTRAINT staff_session_exp_after_iat CHECK (expires_at > issued_at),
+  -- P2-5: la ultima actividad nunca queda fuera de la vida de la sesion (app_rw no puede dejarla en el futuro lejano).
+  CONSTRAINT staff_session_last_seen_in_life CHECK (last_seen_at >= issued_at AND last_seen_at <= expires_at)
 );
 
 CREATE INDEX staff_session_tenant_expires_idx ON app.staff_session (tenant_id, expires_at);

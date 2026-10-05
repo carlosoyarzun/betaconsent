@@ -141,7 +141,12 @@ export async function issueStaffSession(
   const sid = newStaffSid();
   const payload: StaffSessionPayload = { sid, tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role, iat: now, exp: now + ttl };
   await deps.sessions.create({ tenantId: payload.tenantId, sidHash: hashStaffSid(sid), principalRef: payload.principalRef, role: payload.role, issuedAtMs: payload.iat, expiresAtMs: payload.exp });
-  await deps.sessions.purgeExpired(payload.tenantId, now, PROPOSED_STAFF_SESSION_PURGE_RETENTION_MS).catch(() => 0);
+  await deps.sessions.purgeExpired(payload.tenantId, now, PROPOSED_STAFF_SESSION_PURGE_RETENTION_MS).catch((error: unknown) => {
+    // P2-6: solo nombre/codigo del error (nunca sid, hash, refs ni el mensaje de la base).
+    const code = (error as { code?: unknown } | null)?.code;
+    console.error(`staff_session_purge_failed name=${error instanceof Error ? error.name : "unknown"}${typeof code === "string" ? ` code=${code}` : ""}`);
+    return 0;
+  });
   return { sid, cookieValue: encodeStaffSession(deps.staffSessionKey, payload), csrfToken: staffCsrfTokenFor(deps.staffSessionKey, sid), maxAgeSec: Math.floor(ttl / 1000) };
 }
 

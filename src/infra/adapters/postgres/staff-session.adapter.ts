@@ -4,7 +4,7 @@
 // condicionado: validar y avanzar la ultima actividad son atomicos (dos requests concurrentes no se pisan).
 // Cualquier fallo de la base se propaga al llamador (los bordes responden 503/fail-closed); nunca "valido por defecto".
 
-import type { StaffSessionStorePort } from "../../../server/ports/staff-session-store.port.ts";
+import { STAFF_SESSION_TOUCH_GRANULARITY_MS, type StaffSessionStorePort } from "../../../server/ports/staff-session-store.port.ts";
 import type { PgUnitOfWork } from "./unit-of-work.ts";
 
 const ts = (n: string): string => `pg_catalog.to_timestamp(${n}::double precision / 1000.0)`;
@@ -22,16 +22,21 @@ export function createPgStaffSessionStore(uow: Pick<PgUnitOfWork, "withTenantTx"
     },
     async validateAndTouch(input) {
       return uow.withTenantTx(input.tenantId, async (tx) => {
-        const r = await tx.query(
-          `UPDATE app.staff_session
-              SET last_seen_at = GREATEST(last_seen_at, ${ts("$5")})
-            WHERE tenant_id = $1 AND sid_hash = $2 AND principal_ref = $3 AND role = $4
+        const cond = `tenant_id = $1 AND sid_hash = $2 AND principal_ref = $3 AND role = $4
               AND revoked_at IS NULL
               AND expires_at > ${ts("$5")}
-              AND last_seen_at > ${ts("$6")}`,
-          [input.tenantId, input.sidHash, input.principalRef, input.role, String(input.nowMs), String(input.nowMs - input.idleTimeoutMs)],
+              AND last_seen_at > ${ts("$6")}`;
+        const params = [input.tenantId, input.sidHash, input.principalRef, input.role, String(input.nowMs), String(input.nowMs - input.idleTimeoutMs)];
+        // P2-4: UPDATE unico (atomico con la revocacion: `revoked_at IS NULL`) solo si la ultima actividad esta atrasada mas que la granularidad.
+        const touched = await tx.query(
+          `UPDATE app.staff_session SET last_seen_at = ${ts("$5")}
+            WHERE ${cond} AND last_seen_at < ${ts("$7")}`,
+          [...params, String(input.nowMs - STAFF_SESSION_TOUCH_GRANULARITY_MS)],
         );
-        return r.rowCount === 1;
+        if (touched.rowCount === 1) return true;
+        // Dentro de la ventana: valida con las MISMAS condiciones, sin escribir.
+        const fresh = await tx.query(`SELECT 1 FROM app.staff_session WHERE ${cond}`, params);
+        return fresh.rowCount === 1;
       });
     },
     async revoke(tenantId, sidHash, nowMs) {

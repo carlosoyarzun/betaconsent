@@ -101,3 +101,18 @@ test("TEST-CNS-1140 issueStaffSession: iat/exp del reloj inyectado, registro con
   assert.equal(await revokeStaffSessionCookie(deps, "basura"), null);
   assert.equal(await revokeStaffSessionCookie(deps, undefined), null);
 });
+
+test("TEST-CNS-1154 si falla la limpieza de expiradas el login sigue y solo se registra nombre/codigo del error (sin sid, hash, refs ni mensaje)", async () => {
+  const sessions = createInMemoryStaffSessionStore();
+  const failing = { ...sessions, purgeExpired: async () => { throw Object.assign(new TypeError(`detalle sensible ${who.principalRef}`), { code: "XX000" }); } };
+  const printed: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => { printed.push(a.map(String).join(" ")); };
+  try {
+    const issued = await issueStaffSession({ sessions: failing, staffSessionKey: key, nowMs: () => T0 }, who);
+    assert.match(issued.cookieValue, /\./, "el login no falla");
+  } finally {
+    console.error = orig;
+  }
+  assert.deepEqual(printed, ["staff_session_purge_failed name=TypeError code=XX000"]);
+});

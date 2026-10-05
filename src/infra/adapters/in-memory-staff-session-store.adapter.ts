@@ -2,7 +2,7 @@
 // (LOCAL/CI): MISMA semantica que app.staff_session (db/migrations/0021). Clave (tenantId, sidHash): un sid de otro tenant no
 // existe. Solo hashes y refs opacas; sin PII. Los tests de contrato compartidos corren las mismas escenas contra los dos.
 
-import type { StaffSessionRecord, StaffSessionStorePort } from "../../server/ports/staff-session-store.port.ts";
+import { STAFF_SESSION_TOUCH_GRANULARITY_MS, type StaffSessionRecord, type StaffSessionStorePort } from "../../server/ports/staff-session-store.port.ts";
 
 interface Row extends StaffSessionRecord {
   lastSeenAtMs: number;
@@ -26,7 +26,7 @@ export function createInMemoryStaffSessionStore(): StaffSessionStorePort & { rea
       if (row.revokedAtMs !== null) return false;
       if (!(row.expiresAtMs > input.nowMs)) return false;
       if (!(row.lastSeenAtMs > input.nowMs - input.idleTimeoutMs)) return false;
-      row.lastSeenAtMs = Math.max(row.lastSeenAtMs, input.nowMs);
+      if (row.lastSeenAtMs < input.nowMs - STAFF_SESSION_TOUCH_GRANULARITY_MS) row.lastSeenAtMs = input.nowMs;
       return true;
     },
     async revoke(tenantId, sidHash, nowMs) {

@@ -1261,7 +1261,7 @@ paths:
   /staff/logout:
     post:
       operationId: logoutStaffSession
-      x-api-id: "PENDING-ID (CA-138: asignar API-CNS-### por lampone-architect)"
+      x-api-id: API-CNS-192
       tags: [staff]
       summary: Cerrar la sesión STAFF (CA-138) — revoca el sid en servidor y borra las cookies
       description: >-
@@ -1271,7 +1271,7 @@ paths:
       x-governed-by: ["CA-138", "SEC-CNS-018 rev. 2 D-3", "SEC-CNS-020 P2-3", "common.spec GRD-CM-10"]
       x-route-class: STAFF_ADMIN
       x-guards: [GRD-CM-10]
-      x-pending: ["CA-138: ID API-CNS-### sin asignar; el contrato de respuesta (200 {} vs 204) lo confirma lampone-architect"]
+      x-pending: ["CA-138: API-CNS-192 es el siguiente ID libre (maximo previo API-CNS-191); respuesta fijada en 200 con cuerpo {} (no 204), pendiente de confirmacion de lampone-architect"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
