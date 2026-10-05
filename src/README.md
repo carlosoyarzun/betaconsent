@@ -26,7 +26,13 @@ Pantallas HTML server-rendered (sin JS, CSP estricta) activadas con la opción `
 | `GET /staff/students` | Lista de alumnos y estado; usa la misma lógica que `GET /staff/roster` (API-CNS-116), una fila en access_log por GET. Exige Sec-Fetch-Site `same-origin`, o `none` con Mode=navigate y Dest=document. |
 | `POST /staff/students/invite` · `/review` · `/send` | Formulario, resumen y envío (EN0→I1→I2→I3) con CSRF + Origin; las refs van en campos ocultos, nunca en la URL. |
 | `GET /staff/students/sent` | Confirmación tras PRG (cookie flash con solo la etiqueta del alumno). |
-| `POST /staff/logout` | Borra las cookies de sesión. |
+| `POST /staff/logout` | Revoca el sid en servidor (la cookie robada deja de servir) y borra las cookies. Con `Content-Type: application/json` y `X-CSRF-Token` es el equivalente de API (200 `{}`). |
 | `POST /staff/dev-login` | Botón "Entrar (solo desarrollo)" en `/staff`: existe SOLO con `CNS_ENVIRONMENT=LOCAL` y fixture dev; usa el mismo login dev, sin ampliar privilegios. Fuera de LOCAL responde 404 y el botón no se renderiza. |
+
+### Sesión STAFF (CA-138, SEC-CNS-018 rev. 2 D-3, SEC-CNS-020 P2-3)
+
+La cookie `__Host-cns-staff` lleva `sid` (32 bytes aleatorios), `iat` y `exp` firmados (`entrypoints/http/staff-session.ts`) y cada request se valida además contra el registro del servidor (`ports/staff-session-store.port.ts`; adaptadores in-memory y Postgres `app.staff_session`, migración `0021`, RLS FORCE por tenant, solo el hash del sid). Fallo de cualquier tipo (firma, `exp`, revocada, inactividad, otro tenant/principal/rol) = el mismo 404 uniforme. Logout revoca el sid; cada login emite un sid nuevo y revoca el previo del navegador. El token CSRF de la consola es `HMAC(clave HKDF propia, sid)`, y el cursor de `GET /staff/roster` (AAD) y la cookie flash quedan ligados al sid. El dev-login LOCAL usa el mismo `issueStaffSession` (sin privilegios extra). Las sesiones expiradas se limpian al iniciar sesión (solo las ya vencidas y fuera de retención; la policy de DELETE lo impone).
+
+Parámetros **PROPUESTOS — pendiente aprobación de Carlos** (`server/modules/common/approved-parameters.ts`, prefijo `PROPOSED_`): vida absoluta 8 h, inactividad 30 min, retención de filas expiradas 24 h. No son valores aprobados.
 
 La consola `/__dev/staff-console` se mantiene. El copy legal es un marcador (`COPY LEGAL PENDIENTE — Carlos`).
