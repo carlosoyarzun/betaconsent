@@ -67,7 +67,7 @@ export interface StaffRosterPageData {
 }
 
 export type StaffRosterEvaluation =
-  | { readonly ok: true; readonly page: StaffRosterPageData; readonly staff: { readonly tenantId: string; readonly principalRef: string } }
+  | { readonly ok: true; readonly page: StaffRosterPageData; readonly staff: { readonly tenantId: string; readonly principalRef: string; readonly sid: string } }
   | { readonly ok: false; readonly result: HttpResult };
 
 /** Cabeceras de seguridad de TODA respuesta de la ruta (2xx y errores): iguales para que no sirvan de oraculo. */
@@ -170,7 +170,7 @@ export async function evaluateStaffRoster(
 
   let auth: Awaited<ReturnType<typeof authenticateStaffSession>>;
   try {
-    auth = await authenticateStaffSession(request.cookieHeader, ports.staffIdentity, config, staffSessionKey);
+    auth = await authenticateStaffSession(request.cookieHeader, { staffIdentity: ports.staffIdentity, sessions: ports.sessions, nowMs }, config, staffSessionKey);
   } catch {
     return fail(unavailable()); // el roster de identidad no responde: fail-closed, sin datos
   }
@@ -179,7 +179,7 @@ export async function evaluateStaffRoster(
 
   const query = parseQuery(request.rawQuery);
   if (query === null) return fail(listQueryInvalid());
-  const scope: RosterCursorScope = { tenantId: staff.tenantId, principalRef: staff.principalRef, role: "TENANT_ADMIN" };
+  const scope: RosterCursorScope = { tenantId: staff.tenantId, principalRef: staff.principalRef, role: "TENANT_ADMIN", sid: staff.sid };
   let after: RosterCursorPosition | null = null;
   if (query.cursor !== null) {
     try {

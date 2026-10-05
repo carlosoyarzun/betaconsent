@@ -3,7 +3,9 @@
 //
 //   cursor = "c1." + base64url( nonce(12) || AES-256-GCM(ciphertext || tag(16)) )
 //   clave  = HKDF-SHA256(secreto del servidor propio por entorno, info "CNS-STAFF-ROSTER-CURSOR-v1")
-//   AAD    = JSON canonico (arreglo) ["CNS-STAFF-ROSTER-CURSOR-v1", tenantId, principalRef, role, "GET /staff/roster"]
+//   AAD    = JSON canonico (arreglo) ["CNS-STAFF-ROSTER-CURSOR-v1", tenantId, principalRef, role, sid, "GET /staff/roster"]
+//            CA-138 (SEC-CNS-018 rev. 2 D-3): el sid de la sesion STAFF entra en el AAD, asi un cursor de otra sesion (aunque sea
+//            del mismo principal) no descifra; cerrar sesion invalida los cursores de esa sesion.
 //            (JSON.stringify de un arreglo de cadenas: sin ambiguedad por concatenacion)
 //   plaintext = JSON {"s": lastSubjectRef, "x": lastContextRef, "t": iat(ms)}; TTL 15 min contra la hora del servidor.
 //
@@ -38,6 +40,8 @@ export interface RosterCursorScope {
   readonly tenantId: string;
   readonly principalRef: string;
   readonly role: string;
+  /** CA-138: sid de la sesion STAFF (en claro, solo en memoria; nunca se persiste ni se loguea). */
+  readonly sid: string;
 }
 
 export interface RosterCursorPosition {
@@ -66,7 +70,7 @@ export function loadStaffRosterCursorSecret(env: Readonly<Record<string, string 
 }
 
 function aadOf(scope: RosterCursorScope): Buffer {
-  return Buffer.from(JSON.stringify([STAFF_ROSTER_CURSOR_HKDF_INFO, scope.tenantId, scope.principalRef, scope.role, STAFF_ROSTER_CURSOR_ROUTE]), "utf8");
+  return Buffer.from(JSON.stringify([STAFF_ROSTER_CURSOR_HKDF_INFO, scope.tenantId, scope.principalRef, scope.role, scope.sid, STAFF_ROSTER_CURSOR_ROUTE]), "utf8");
 }
 
 export function encodeRosterCursor(key: Buffer, scope: RosterCursorScope, position: RosterCursorPosition, nowMs: number = Date.now()): string {

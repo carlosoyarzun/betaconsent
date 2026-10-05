@@ -20,6 +20,7 @@
 
 import { createHash, createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
 
+
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import { isReservedEmail } from "../../modules/common/synthetic-recipient.ts";
@@ -29,8 +30,9 @@ import type { StaffInvitationStatus } from "../../ports/staff-roster.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import type { HttpResult } from "./consent-flow.handler.ts";
-import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
+import { serializeCsrfCookie } from "./csrf.ts";
 import { evaluateStaffRoster, secFetchAllowed } from "./staff-roster.handler.ts";
+import { decodeStaffSession, hashStaffSid, revokeStaffSessionCookie, staffCsrfMatchesSession, staffCsrfTokenFor } from "./staff-session.ts";
 import {
   authenticateStaffSession,
   handleCreateInvitation,
@@ -152,6 +154,8 @@ function flashMac(key: Buffer, body: string): string {
 interface FlashPayload {
   /** principalRef de la sesion (ref opaca sintetica): la cookie no sirve con otra sesion. */
   readonly p: string;
+  /** CA-138: sha256 del sid de la sesion que la emitio (nunca el sid en claro): la cookie no sirve con otra sesion ni tras un nuevo login. */
+  readonly s: string;
   /** Etiqueta sintetica del alumno (ya validada contra el patron) o null. */
   readonly l: string | null;
   /** Expiracion (ms epoch, reloj del servidor). */
@@ -165,7 +169,7 @@ function encodeFlash(key: Buffer, payload: FlashPayload): string {
   return `${body}.${flashMac(key, body)}`;
 }
 
-function decodeFlash(key: Buffer, value: string | undefined, principalRef: string, nowMs: number): { readonly label: string | null; readonly alreadySent: boolean } | null {
+function decodeFlash(key: Buffer, value: string | undefined, principalRef: string, sid: string, nowMs: number): { readonly label: string | null; readonly alreadySent: boolean } | null {
   if (!value) return null;
   const dot = value.indexOf(".");
   if (dot === -1) return null;
@@ -175,7 +179,7 @@ function decodeFlash(key: Buffer, value: string | undefined, principalRef: strin
   if (mac.length !== expected.length || !timingSafeEqual(mac, expected)) return null;
   try {
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Record<string, unknown>;
-    if (parsed.p !== principalRef || typeof parsed.e !== "number" || parsed.e < nowMs) return null;
+    if (parsed.p !== principalRef || parsed.s !== hashStaffSid(sid) || typeof parsed.e !== "number" || parsed.e < nowMs) return null;
     if (parsed.l !== null && !(typeof parsed.l === "string" && SUBJECT_LABEL_PATTERN.test(parsed.l))) return null;
     return { label: parsed.l as string | null, alreadySent: parsed.a === true };
   } catch {
@@ -239,20 +243,20 @@ export async function handleStaffUi(req: StaffUiRequest, deps: StaffUiDeps): Pro
   const nowMs = deps.nowMs ?? Date.now;
 
   if (req.method === "GET") {
-    if (req.path === STAFF_ENTRY_PATH) return handleEntry(req, deps, devLogin);
-    if (req.path === STAFF_LIST_PATH) return handleList(req, deps);
+    if (req.path === STAFF_ENTRY_PATH) return handleEntry(req, deps, devLogin, nowMs);
+    if (req.path === STAFF_LIST_PATH) return handleList(req, deps, nowMs);
     return handleSent(req, deps, nowMs());
   }
 
   // POST: dev-login no tiene sesion previa ni CSRF; solo existe en LOCAL (GRD-CM-13: fuera de LOCAL, 404 como cualquier ruta inexistente).
   if (req.path === STAFF_DEV_LOGIN_PATH) return handleDevLogin(req, deps, devLogin);
-  return handlePost(req, deps);
+  return handlePost(req, deps, nowMs);
 }
 
-async function handleEntry(req: StaffUiRequest, deps: StaffUiDeps, devLogin: boolean): Promise<StaffUiResponse> {
+async function handleEntry(req: StaffUiRequest, deps: StaffUiDeps, devLogin: boolean, nowMs: () => number): Promise<StaffUiResponse> {
   // Con sesion vigente la entrada no tiene nada que mostrar: va a la lista (la lista hace su propio gating completo).
   try {
-    const auth = await authenticateStaffSession(req.cookieHeader, deps.staffConsole.staffIdentity, deps.config, deps.staffSessionKey);
+    const auth = await authenticateStaffSession(req.cookieHeader, { ...deps.staffConsole, nowMs }, deps.config, deps.staffSessionKey);
     if (auth.ok) return redirect(STAFF_LIST_PATH);
   } catch {
     // identidad no disponible: se muestra la entrada (sin datos)
@@ -265,7 +269,7 @@ function csrfCookieOf(req: StaffUiRequest, deps: StaffUiDeps): string | undefine
   return value !== undefined && value.length > 0 ? value : undefined;
 }
 
-async function handleList(req: StaffUiRequest, deps: StaffUiDeps): Promise<StaffUiResponse> {
+async function handleList(req: StaffUiRequest, deps: StaffUiDeps, nowMs: () => number): Promise<StaffUiResponse> {
   const evaluation = await evaluateStaffRoster(
     "html",
     {
@@ -280,7 +284,7 @@ async function handleList(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
     deps.config,
     deps.staffSessionKey,
     deps.cursorKey,
-    deps.nowMs,
+    nowMs,
   );
   const existingCsrf = csrfCookieOf(req, deps);
   if (!evaluation.ok) {
@@ -291,7 +295,8 @@ async function handleList(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
     if (status === 422) return errorPage(422, "query", false, existingCsrf);
     return errorPage(503, "list-unavailable", false, existingCsrf);
   }
-  const csrfToken = existingCsrf ?? generateCsrfToken();
+  // CA-138: el token CSRF es el ligado al sid de esta sesion; si el navegador trae otro (o ninguno), se vuelve a fijar.
+  const csrfToken = staffCsrfTokenFor(deps.staffSessionKey, evaluation.staff.sid);
   const items: StaffUiListItem[] = [];
   for (const item of evaluation.page.items) {
     // El contrato solo expone participationRef en NOT_INVITED; para retomar un "Envio incompleto" la UI lo toma del directorio del servidor.
@@ -305,22 +310,23 @@ async function handleList(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
   return page(
     200,
     { kind: "list", csrfToken, items, nextCursor: evaluation.page.nextCursor },
-    existingCsrf === undefined ? [serializeCsrfCookie(deps.config.staffCsrfCookieName, csrfToken)] : undefined,
+    existingCsrf !== csrfToken ? [serializeCsrfCookie(deps.config.staffCsrfCookieName, csrfToken)] : undefined,
   );
 }
 
-async function handleSent(req: StaffUiRequest, deps: StaffUiDeps, nowMs: number): Promise<StaffUiResponse> {
+async function handleSent(req: StaffUiRequest, deps: StaffUiDeps, nowMsValue: number): Promise<StaffUiResponse> {
+  const nowMs = (): number => nowMsValue;
   if (!secFetchAllowed("html", req)) return errorPage(404, "session");
   if (req.originHeader !== undefined && req.originHeader !== deps.config.allowedOrigin) return errorPage(404, "session");
   let auth: Awaited<ReturnType<typeof authenticateStaffSession>>;
   try {
-    auth = await authenticateStaffSession(req.cookieHeader, deps.staffConsole.staffIdentity, deps.config, deps.staffSessionKey);
+    auth = await authenticateStaffSession(req.cookieHeader, { ...deps.staffConsole, nowMs }, deps.config, deps.staffSessionKey);
   } catch {
     return errorPage(503, "list-unavailable");
   }
   if (!auth.ok) return auth.result.status === 403 ? errorPage(403, "permission") : errorPage(404, "session");
   const csrfToken = csrfCookieOf(req, deps);
-  const flash = decodeFlash(flashKey(deps.staffSessionKey), parseCookies(req.cookieHeader)[FLASH_COOKIE_NAME], auth.staff.principalRef, nowMs);
+  const flash = decodeFlash(flashKey(deps.staffSessionKey), parseCookies(req.cookieHeader)[FLASH_COOKIE_NAME], auth.staff.principalRef, auth.staff.sid, nowMsValue);
   // Sin confirmacion vigente (recarga tardia, otra sesion): nada que confirmar, se vuelve a la lista.
   if (csrfToken === undefined || flash === null) return redirect(STAFF_LIST_PATH);
   return page(200, { kind: "sent", csrfToken, label: flash.label, alreadySent: flash.alreadySent });
@@ -333,7 +339,7 @@ async function handleDevLogin(req: StaffUiRequest, deps: StaffUiDeps, enabled: b
   const result = await handleDevStaffConsoleLogin(
     { originHeader: req.originHeader, csrfHeaderToken: undefined, cookieHeader: req.cookieHeader, body: { principalRef: deps.devLoginPrincipalRef } },
     (deps.environment ?? "DEV") as Environment, // el gating real (LOCAL + fixture) ya se evaluo en `enabled`
-    deps.staffConsole.staffIdentity,
+    { ...deps.staffConsole, ...(deps.nowMs ? { nowMs: deps.nowMs } : {}) },
     deps.config,
     deps.staffSessionKey,
   );
@@ -341,7 +347,7 @@ async function handleDevLogin(req: StaffUiRequest, deps: StaffUiDeps, enabled: b
   return redirect(STAFF_LIST_PATH, [result.setStaffSessionCookie, result.setStaffCsrfCookie]);
 }
 
-async function handlePost(req: StaffUiRequest, deps: StaffUiDeps): Promise<StaffUiResponse> {
+async function handlePost(req: StaffUiRequest, deps: StaffUiDeps, nowMs: () => number): Promise<StaffUiResponse> {
   const form = new URLSearchParams(req.formBody);
   const cookies = parseCookies(req.cookieHeader);
   const csrfCookie = cookies[deps.config.staffCsrfCookieName];
@@ -362,7 +368,16 @@ async function handlePost(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
   const csrfToken = csrfCookie as string; // assertCsrfAndOrigin garantiza que existe y que el campo coincide
 
   if (req.path === STAFF_LOGOUT_PATH) {
-    // Sesion sin estado (HMAC): cerrar = borrar las cookies del navegador. La proxima peticion no tiene sesion (404 uniforme).
+    // CA-138: cerrar REVOCA el sid en servidor (la cookie copiada o robada deja de servir de inmediato) y ademas borra las cookies del
+    // navegador. Si la cookie trae una sesion firmada, el token CSRF debe ser el de ESA sesion. Sin sesion valida solo se borran cookies.
+    const cookieValue = cookies[deps.config.staffSessionCookieName];
+    const closing = decodeStaffSession(deps.staffSessionKey, cookieValue);
+    if (closing !== null && !staffCsrfMatchesSession(deps.staffSessionKey, closing.sid, csrfCookie)) return errorPage(403, "csrf");
+    try {
+      await revokeStaffSessionCookie({ sessions: deps.staffConsole.sessions, staffSessionKey: deps.staffSessionKey, nowMs }, cookieValue);
+    } catch {
+      return errorPage(503, "generic"); // no se pudo revocar: NO se finge un cierre exitoso
+    }
     const expire = "Path=/; Secure; SameSite=Lax; Max-Age=0";
     return redirect(STAFF_ENTRY_PATH, [
       `${deps.config.staffSessionCookieName}=; ${expire}; HttpOnly`,
@@ -373,12 +388,14 @@ async function handlePost(req: StaffUiRequest, deps: StaffUiDeps): Promise<Staff
 
   let auth: Awaited<ReturnType<typeof authenticateStaffSession>>;
   try {
-    auth = await authenticateStaffSession(req.cookieHeader, deps.staffConsole.staffIdentity, deps.config, deps.staffSessionKey);
+    auth = await authenticateStaffSession(req.cookieHeader, { ...deps.staffConsole, nowMs }, deps.config, deps.staffSessionKey);
   } catch {
     return errorPage(503, "generic");
   }
   if (!auth.ok) return auth.result.status === 403 ? errorPage(403, "permission") : errorPage(404, "session");
   const staff = auth.staff;
+  // CA-138: el token CSRF debe ser el de ESTA sesion (ligado al sid), no solo igual en cookie y campo.
+  if (!staffCsrfMatchesSession(deps.staffSessionKey, staff.sid, csrfCookie)) return errorPage(403, "csrf");
 
   const subjectRef = form.get("subject") ?? "";
   const participationRef = form.get("participation") ?? "";
@@ -426,7 +443,7 @@ async function resumableStatus(deps: StaffUiDeps, staff: { readonly tenantId: st
 async function sendInvitation(
   req: StaffUiRequest,
   deps: StaffUiDeps,
-  staff: { readonly tenantId: string; readonly principalRef: string },
+  staff: { readonly tenantId: string; readonly principalRef: string; readonly sid: string },
   student: StaffUiStudent,
   email: string,
   csrfToken: string,
@@ -476,6 +493,6 @@ async function sendInvitation(
   // PRG: la confirmacion es un GET aparte; la cookie flash lleva solo la etiqueta sintetica.
   const nowMs = (deps.nowMs ?? Date.now)();
   // Si ya estaba SENT antes de la cadena, todo vino de idempotencia: la confirmacion dice que ya habia sido enviada.
-  const flash = encodeFlash(flashKey(staffSessionKey), { p: staff.principalRef, l: student.label, e: nowMs + FLASH_TTL_MS, a: before === "SENT" });
+  const flash = encodeFlash(flashKey(staffSessionKey), { p: staff.principalRef, s: hashStaffSid(staff.sid), l: student.label, e: nowMs + FLASH_TTL_MS, a: before === "SENT" });
   return redirect(STAFF_SENT_PATH, [serializeFlashCookie(flash)]);
 }

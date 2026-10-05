@@ -16,7 +16,7 @@ import {
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 
 const key = deriveStaffRosterCursorKey(randomBytes(32));
-const scope = { tenantId: fixtureUuid("t1085"), principalRef: fixtureUuid("p1085"), role: "TENANT_ADMIN" };
+const scope = { tenantId: fixtureUuid("t1085"), principalRef: fixtureUuid("p1085"), role: "TENANT_ADMIN", sid: "A".repeat(43) };
 const position = { subjectRef: fixtureUuid("s1085"), contextRef: "BETA_2026_01" };
 const bad = (fn: () => unknown): void => assert.throws(fn, (e: unknown) => e instanceof RosterCursorInvalidError);
 
@@ -45,8 +45,8 @@ test("TEST-CNS-1085 cursor: manipulado, otro tenant/principal/rol, otra clave, e
 });
 
 test("TEST-CNS-1085 cursor: el AAD es inambiguo (tenant/principal desplazados no colisionan) y lastSubjectRef debe ser UUIDv4 tras descifrar", () => {
-  const a = { tenantId: "ab", principalRef: "c", role: "TENANT_ADMIN" };
-  const b = { tenantId: "a", principalRef: "bc", role: "TENANT_ADMIN" };
+  const a = { tenantId: "ab", principalRef: "c", role: "TENANT_ADMIN", sid: "s" };
+  const b = { tenantId: "a", principalRef: "bc", role: "TENANT_ADMIN", sid: "s" };
   const cursor = encodeRosterCursor(key, a, position, 1_000);
   bad(() => decodeRosterCursor(key, b, cursor, 1_000));
   bad(() => decodeRosterCursor(key, scope, encodeRosterCursor(key, scope, { subjectRef: "no-es-uuid", contextRef: "BETA_2026_01" }, 1_000), 1_000));
@@ -60,4 +60,10 @@ test("TEST-CNS-1085 secreto del cursor: LOCAL usa constante; fuera de LOCAL no a
   const secret = randomBytes(32);
   assert.deepEqual(loadStaffRosterCursorSecret({ CNS_STAFF_ROSTER_CURSOR_SECRET: secret.toString("base64") }, "DEV"), secret);
   assert.throws(() => deriveStaffRosterCursorKey(Buffer.alloc(8)));
+});
+
+test("TEST-CNS-1144 cursor ligado al sid (CA-138): un cursor de otra sesion, aunque del mismo tenant/principal/rol, no descifra", () => {
+  const cursor = encodeRosterCursor(key, scope, position, 1_000);
+  assert.deepEqual(decodeRosterCursor(key, scope, cursor, 1_000), position);
+  bad(() => decodeRosterCursor(key, { ...scope, sid: "B".repeat(43) }, cursor, 1_000));
 });

@@ -27,7 +27,7 @@ import {
   LOCAL_ONLY_DEV_TENANT_ID,
 } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { createConsentFlowHttpServer, createPostgresFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
-import { deriveStaffSessionKey, encodeStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { deriveStaffSessionKey, issueStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import { loadDecisionRelationshipConfig } from "../../../src/server/modules/consent-decision/decision-relationship.config.ts";
@@ -37,6 +37,7 @@ import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/
 import { loadOtpPolicyConfig } from "../../../src/server/modules/otp-challenge/otp-policy.config.ts";
 import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revocation/recovery-token-policy.config.ts";
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
+import type { StaffSessionStorePort } from "../../../src/server/ports/staff-session-store.port.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest, type PgTestContext } from "./harness.ts";
@@ -45,13 +46,13 @@ const ORIGIN = "http://consola-staff-ui-pg.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
 const CSRF_COOKIE = "__Host-cns-staff-csrf";
 const FLASH_COOKIE = "__Host-cns-staff-flash";
-const CSRF = "csrf-ui-pg-0123456789abcdef";
 const NAV = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } as const;
 const GOOD_EMAIL = "apoderado1@example.invalid";
 
 interface Boot {
   readonly baseUrl: string;
   readonly sessionSecret: Buffer;
+  readonly sessions: StaffSessionStorePort;
   readonly failed: string[];
   close(): Promise<void>;
 }
@@ -101,6 +102,7 @@ async function boot(ctx: PgTestContext, roster: readonly StaffPrincipal[], direc
   return {
     baseUrl,
     sessionSecret,
+    sessions: bundle.staffConsole.sessions,
     failed,
     async close() {
       console.error = realConsoleError;
@@ -141,12 +143,16 @@ async function postForm(env: Boot, path: string, fields: Record<string, string>,
   return { status: res.status, body: await res.text(), headers: res.headers };
 }
 
-const session = (env: Boot, principalRef: string, tenantId: string): string =>
-  `${STAFF_COOKIE}=${encodeStaffSession(deriveStaffSessionKey(env.sessionSecret), { tenantId, principalRef, role: "TENANT_ADMIN" })}; ${CSRF_COOKIE}=${CSRF}`;
+/** CA-138: la cookie sola ya no basta; la sesion se emite (y registra en app.staff_session) con el mismo mecanismo que el login. */
+const session = async (env: Boot, principalRef: string, tenantId: string): Promise<string> => {
+  const issued = await issueStaffSession({ sessions: env.sessions, staffSessionKey: deriveStaffSessionKey(env.sessionSecret) }, { tenantId, principalRef, role: "TENANT_ADMIN" });
+  return `${STAFF_COOKIE}=${issued.cookieValue}; ${CSRF_COOKIE}=${issued.csrfToken}`;
+};
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g;
 /** Normaliza refs y el correlationId: lo unico que puede diferir entre COMPLETED y DECLINED. */
-const normalize = (s: string): string => s.replace(UUID, "REF");
+// CA-138: el token CSRF esta ligado al sid (distinto por sesion), asi que tambien es "lo unico que puede diferir".
+const normalize = (s: string): string => s.replace(UUID, "REF").replace(/(name="csrf_token" value=")[A-Za-z0-9_-]+/g, "$1CSRF");
 const stableHeaders = (h: Headers): Array<[string, string]> => [...h.entries()].filter(([k]) => !["date", "content-length", "connection", "keep-alive", "set-cookie"].includes(k)).sort();
 
 async function accessLogCount(admin: Client, tenantId: string): Promise<number> {
@@ -191,7 +197,7 @@ pgTest("TEST-CNS-1123 pg http: GET /staff/roster -> 200, exactamente 1 fila en o
   const s = await twoDecisionTenants(ctx, "json");
   const env = await boot(ctx, s.roster, s.directory, false);
   try {
-    const ask = (principal: string, tenant: string) => get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, session(env, principal, tenant));
+    const ask = async (principal: string, tenant: string) => get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, await session(env, principal, tenant));
     assert.equal(await accessLogCount(s.admin, s.tenantC), 0);
     const completed = await ask(s.adminC, s.tenantC);
     const declined = await ask(s.adminD, s.tenantD);
@@ -208,7 +214,7 @@ pgTest("TEST-CNS-1123 pg http: GET /staff/roster -> 200, exactamente 1 fila en o
     // un segundo GET suma exactamente otra fila; un gating fallido no suma
     await ask(s.adminC, s.tenantC);
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2);
-    const noSite = await get(env, "/staff/roster", {}, session(env, s.adminC, s.tenantC));
+    const noSite = await get(env, "/staff/roster", {}, await session(env, s.adminC, s.tenantC));
     assert.equal(noSite.status, 404);
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2);
   } finally {
@@ -221,7 +227,7 @@ pgTest("TEST-CNS-1124 pg http: GET /staff/students (HTML) -> 200, exactamente 1 
   const s = await twoDecisionTenants(ctx, "html");
   const env = await boot(ctx, s.roster, s.directory, false);
   try {
-    const ask = (principal: string, tenant: string, headers: Record<string, string> = NAV) => get(env, "/staff/students", headers, session(env, principal, tenant));
+    const ask = async (principal: string, tenant: string, headers: Record<string, string> = NAV) => get(env, "/staff/students", headers, await session(env, principal, tenant));
     const completed = await ask(s.adminC, s.tenantC);
     const declined = await ask(s.adminD, s.tenantD);
     assert.equal(completed.status, 200);
@@ -241,7 +247,7 @@ pgTest("TEST-CNS-1124 pg http: GET /staff/students (HTML) -> 200, exactamente 1 
     }
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2, "un gating fallido no escribe access_log");
     // el HTML y el JSON de la misma peticion comparten proyeccion: mismo numero de filas y mismos estados
-    const json = JSON.parse((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, session(env, s.adminC, s.tenantC))).body) as { items: unknown[] };
+    const json = JSON.parse((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, await session(env, s.adminC, s.tenantC))).body) as { items: unknown[] };
     assert.equal(json.items.length, completed.body.split('<th scope="row">').length - 1);
   } finally {
     await env.close();

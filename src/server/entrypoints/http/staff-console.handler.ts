@@ -38,8 +38,17 @@ import type { StaffRosterReaderPort } from "../../ports/staff-roster.port.ts";
 import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
-import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
-import { decodeStaffSession, encodeStaffSession, serializeStaffSessionCookie, type StaffSessionPayload } from "./staff-session.ts";
+import { serializeCsrfCookie } from "./csrf.ts";
+import { PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS } from "../../modules/common/approved-parameters.ts";
+import type { StaffSessionStorePort } from "../../ports/staff-session-store.port.ts";
+import {
+  decodeStaffSession,
+  hashStaffSid,
+  issueStaffSession,
+  revokeStaffSessionCookie,
+  serializeStaffSessionCookie,
+  staffCsrfMatchesSession,
+} from "./staff-session.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 
 export interface StaffConsolePorts {
@@ -49,6 +58,10 @@ export interface StaffConsolePorts {
    * `uow.inTenant` (find + ejecutar + store de la Idempotency-Key en la MISMA tx; GRD-CM-08). */
   readonly uow: UnitOfWorkPort;
   readonly staffIdentity: StaffIdentityPort;
+  /** CA-138: registro servidor de sesiones STAFF (sid hasheado; revocacion, inactividad). Sin el no hay sesion valida (fail-closed). */
+  readonly sessions: StaffSessionStorePort;
+  /** CA-138: reloj de la sesion STAFF (inyectable en tests; por defecto Date.now). */
+  readonly nowMs?: () => number;
   /** API-CNS-116 (GET /staff/roster): lector de la proyeccion colapsada del roster. Ausente = el GET responde 503
    * (fail-closed). Postgres: vista tras SET LOCAL ROLE staff_roster_reader; in-memory: misma semantica. */
   readonly roster?: StaffRosterReaderPort;
@@ -122,6 +135,8 @@ function domainFailure(err: unknown): HttpResult {
 export interface AuthenticatedStaff {
   readonly tenantId: string;
   readonly principalRef: string;
+  /** CA-138: sid de la sesion vigente (en claro, solo en memoria del request; liga CSRF, cursor y flash). */
+  readonly sid: string;
 }
 
 /** GRD-CM-10 + GRD-CM-01 + GRD-CM-07 para todas las rutas /staff/* de escritura (POST). */
@@ -143,7 +158,10 @@ async function authenticate(
     if (err instanceof DomainError && err.code === "ERR-CM-09") return { ok: false, result: csrfRejected() };
     throw err;
   }
-  return authenticateStaffSession(request.cookieHeader, ports.staffIdentity, config, staffSessionKey);
+  const auth = await authenticateStaffSession(request.cookieHeader, ports, config, staffSessionKey);
+  // CA-138: el token CSRF debe ser el de ESTA sesion (ligado al sid), no solo igual en cookie y cabecera.
+  if (auth.ok && !staffCsrfMatchesSession(staffSessionKey, auth.staff.sid, cookies[config.staffCsrfCookieName])) return { ok: false, result: csrfRejected() };
+  return auth;
 }
 
 /**
@@ -154,25 +172,38 @@ async function authenticate(
  */
 export async function authenticateStaffSession(
   cookieHeader: string | undefined,
-  staffIdentity: StaffIdentityPort,
+  ports: Pick<StaffConsolePorts, "staffIdentity" | "sessions" | "nowMs">,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
 ): Promise<{ readonly ok: true; readonly staff: AuthenticatedStaff } | { readonly ok: false; readonly result: HttpResult }> {
   const cookies = parseCookies(cookieHeader);
-  const session = decodeStaffSession(staffSessionKey, cookies[config.staffSessionCookieName]);
+  const nowMs = (ports.nowMs ?? Date.now)();
+  // CA-138: firma + iat/exp (expiracion absoluta). Cualquier fallo = el mismo 404 uniforme, sin filtrar la causa.
+  const session = decodeStaffSession(staffSessionKey, cookies[config.staffSessionCookieName], nowMs);
   if (!session) return { ok: false, result: uniformNotFound() }; // GRD-CM-01
   // Membership vigente: el principal debe seguir en el roster atestado con el mismo rol y el
   // mismo tenant que la sesión. Cualquier discrepancia = sin sesión (404 uniforme).
-  const principal = await staffIdentity.findByPrincipalRef(session.principalRef);
+  const principal = await ports.staffIdentity.findByPrincipalRef(session.principalRef);
   if (!principal || principal.role !== session.role || principal.tenantId === undefined || principal.tenantId !== session.tenantId) {
     return { ok: false, result: uniformNotFound() };
   }
+  // CA-138: registro servidor (mismo tenant, principal y rol; no revocada; sin exceder la inactividad; avanza la ultima actividad).
+  // Revocada, vencida por inactividad, desconocida o de otro tenant: el mismo 404 uniforme.
+  const live = await ports.sessions.validateAndTouch({
+    tenantId: session.tenantId,
+    sidHash: hashStaffSid(session.sid),
+    principalRef: session.principalRef,
+    role: session.role,
+    nowMs,
+    idleTimeoutMs: PROPOSED_STAFF_SESSION_IDLE_TIMEOUT_MS,
+  });
+  if (!live) return { ok: false, result: uniformNotFound() };
   if (session.role !== "TENANT_ADMIN") {
     // GRD-CM-07: solo TENANT_ADMIN (actorRole INVITER) opera EN0/I1-I3. ACTOR_NOT_ALLOWED solo se
     // expone en las consolas STAFF/PLATFORM/CASE.
     return { ok: false, result: problem(403, "ERR-CM-10") };
   }
-  return { ok: true, staff: { tenantId: session.tenantId, principalRef: session.principalRef } };
+  return { ok: true, staff: { tenantId: session.tenantId, principalRef: session.principalRef, sid: session.sid } };
 }
 
 /** Objeto plano con EXACTAMENTE las claves permitidas (additionalProperties: false); si no, null. */
@@ -386,7 +417,7 @@ export async function handleSendInvitation(
 export async function handleDevStaffConsoleLogin(
   request: RawConsentRequest,
   environment: Environment,
-  staffIdentity: StaffIdentityPort,
+  ports: Pick<StaffConsolePorts, "staffIdentity" | "sessions" | "nowMs">,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
 ): Promise<HttpResult> {
@@ -394,16 +425,58 @@ export async function handleDevStaffConsoleLogin(
 
   const body = strictObject(request.body, ["principalRef"]);
   if (!body || typeof body.principalRef !== "string") return { status: 422, body: { status: 422 } };
-  const principal = await staffIdentity.findByPrincipalRef(body.principalRef);
+  const principal = await ports.staffIdentity.findByPrincipalRef(body.principalRef);
   if (!principal || principal.role !== "TENANT_ADMIN" || principal.tenantId === undefined) {
     return { status: 422, body: { status: 422 } };
   }
 
-  const session: StaffSessionPayload = { tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role };
+  // CA-138: MISMO mecanismo de emision que cualquier sesion (sid nuevo + registro en servidor); si el navegador traia una sesion previa,
+  // su sid se revoca (rotacion anti fixation). Sin privilegios extra respecto de la sesion normal.
+  const previous = parseCookies(request.cookieHeader)[config.staffSessionCookieName];
+  const issued = await issueStaffSession(
+    { sessions: ports.sessions, staffSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) },
+    { tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role },
+    previous,
+  );
   return {
     status: 200,
     body: { principalRef: principal.principalRef, role: principal.role },
-    setStaffSessionCookie: serializeStaffSessionCookie(config.staffSessionCookieName, encodeStaffSession(staffSessionKey, session)),
-    setStaffCsrfCookie: serializeCsrfCookie(config.staffCsrfCookieName, generateCsrfToken()),
+    setStaffSessionCookie: serializeStaffSessionCookie(config.staffSessionCookieName, issued.cookieValue, issued.maxAgeSec),
+    setStaffCsrfCookie: serializeCsrfCookie(config.staffCsrfCookieName, issued.csrfToken),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// POST /staff/logout (equivalente JSON del logout de la consola; CA-138). GRD-CM-10 (CSRF double-submit + Origin) y, si la
+// cookie trae una sesion firmada, el token debe ser el de ESA sesion. REVOCA el sid en servidor (la cookie robada o copiada
+// deja de servir de inmediato) y borra las cookies del navegador. Idempotente: sin sesion valida solo borra cookies.
+// ---------------------------------------------------------------------------
+export async function handleStaffLogout(
+  request: RawConsentRequest,
+  ports: Pick<StaffConsolePorts, "sessions" | "nowMs">,
+  config: RightsCaseHttpConfig,
+  staffSessionKey: Buffer,
+): Promise<HttpResult> {
+  const cookies = parseCookies(request.cookieHeader);
+  try {
+    assertCsrfAndOrigin({
+      originHeader: request.originHeader,
+      allowedOrigin: config.allowedOrigin,
+      csrfHeaderToken: request.csrfHeaderToken,
+      csrfCookieToken: cookies[config.staffCsrfCookieName],
+    });
+  } catch (err) {
+    if (err instanceof DomainError && err.code === "ERR-CM-09") return csrfRejected();
+    throw err;
+  }
+  const session = decodeStaffSession(staffSessionKey, cookies[config.staffSessionCookieName]);
+  if (session !== null && !staffCsrfMatchesSession(staffSessionKey, session.sid, cookies[config.staffCsrfCookieName])) return csrfRejected();
+  await revokeStaffSessionCookie({ sessions: ports.sessions, staffSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) }, cookies[config.staffSessionCookieName]);
+  const expire = "Path=/; Secure; SameSite=Lax; Max-Age=0";
+  return {
+    status: 200,
+    body: {},
+    extraHeaders: { "Cache-Control": "no-store" },
+    clearStaffCookies: [`${config.staffSessionCookieName}=; ${expire}; HttpOnly`, `${config.staffCsrfCookieName}=; ${expire}`, `__Host-cns-staff-flash=; ${expire}; HttpOnly`],
   };
 }
