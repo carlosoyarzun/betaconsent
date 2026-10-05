@@ -81,7 +81,10 @@
   --lp-z-popover: 1060;
   --lp-z-tooltip: 1070;
 
-  /* Static Colors & Feedback */
+  /* Static Colors & Feedback.
+     --lp-color-feedback-* son colores de marca de estado: SOLO para puntos, iconos, bordes
+     decorativos y fondos (-bg). Nunca como color de texto ni como fondo de texto blanco:
+     usar --lp-text-error|warning|success|info y --lp-action-danger (WCAG 1.4.3). */
   --lp-color-feedback-success: #10B981;
   --lp-color-feedback-success-bg: rgba(16, 185, 129, 0.12);
   --lp-color-feedback-warning: #F59E0B;
@@ -108,10 +111,19 @@
 
   --lp-text-primary: #1E293B;
   --lp-text-secondary: #475569;
-  --lp-text-muted: #64748B;
+  --lp-text-muted: #5B6B80;
+  --lp-text-error: #B91C1C;
+  --lp-text-warning: #92400E;
+  --lp-text-success: #047857;
+  --lp-text-info: #1D4ED8;
 
   --lp-border-default: #E2E8F0;
   --lp-border-strong: #CBD5E1;
+  --lp-border-control: #7B8BA0;
+
+  --lp-action-danger: #DC2626;
+  --lp-action-danger-hover: #B91C1C;
+  --lp-action-danger-text: #FFFFFF;
 
   --lp-action-primary: #1A5CB8;
   --lp-action-primary-hover: #164FA0;
@@ -133,10 +145,19 @@
 
   --lp-text-primary: #F8FAFC;
   --lp-text-secondary: #CBD5E1;
-  --lp-text-muted: #94A3B8;
+  --lp-text-muted: #A3B1C6;
+  --lp-text-error: #FCA5A5;
+  --lp-text-warning: #FCD34D;
+  --lp-text-success: #6EE7B7;
+  --lp-text-info: #93C5FD;
 
   --lp-border-default: #334155;
   --lp-border-strong: #475569;
+  --lp-border-control: #7C8DA6;
+
+  --lp-action-danger: #DC2626;
+  --lp-action-danger-hover: #B91C1C;
+  --lp-action-danger-text: #FFFFFF;
 
   --lp-action-primary: #2563EB;
   --lp-action-primary-hover: #1D4ED8;
@@ -157,10 +178,19 @@
 
   --lp-text-primary: #1E293B;
   --lp-text-secondary: #475569;
-  --lp-text-muted: #64748B;
+  --lp-text-muted: #5B6B80;
+  --lp-text-error: #B91C1C;
+  --lp-text-warning: #92400E;
+  --lp-text-success: #047857;
+  --lp-text-info: #1D4ED8;
 
   --lp-border-default: #E2E8F0;
   --lp-border-strong: #CBD5E1;
+  --lp-border-control: #7B8BA0;
+
+  --lp-action-danger: #DC2626;
+  --lp-action-danger-hover: #B91C1C;
+  --lp-action-danger-text: #FFFFFF;
 
   --lp-action-primary: #1A5CB8;
   --lp-action-primary-hover: #164FA0;

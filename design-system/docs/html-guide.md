@@ -116,6 +116,15 @@ Todas las pantallas del portal autenticado deben estructurarse con la plantilla 
 </span>
 ```
 
+### Alertas (`.lp-alert-*`)
+
+```html
+<div role="alert" class="lp-alert-error">No pudimos completar la acción.</div>
+<div class="lp-alert-warning">Revisa los datos antes de continuar.</div>
+```
+
+El texto usa `--lp-text-error|warning|success|info` (4.5:1); no pintes texto con `--lp-color-feedback-*`. Ver "Contraste" en `usage.md`.
+
 ### Tarjetas de Estadísticas (`.lp-stat-card`)
 
 ```html

@@ -54,7 +54,7 @@
 .lp-btn-outline {
   background-color: transparent;
   color: var(--lp-text-primary);
-  border-color: var(--lp-border-default);
+  border-color: var(--lp-border-control);
 }
 
 .lp-btn-outline:hover {
@@ -73,12 +73,12 @@
 }
 
 .lp-btn-danger {
-  background-color: var(--lp-color-feedback-error);
-  color: #FFFFFF;
+  background-color: var(--lp-action-danger);
+  color: var(--lp-action-danger-text);
 }
 
 .lp-btn-danger:hover {
-  background-color: #DC2626;
+  background-color: var(--lp-action-danger-hover);
 }
 
 /* Button Sizes */
@@ -129,22 +129,22 @@
 
 .lp-badge-success {
   background-color: var(--lp-color-feedback-success-bg);
-  color: var(--lp-color-feedback-success);
+  color: var(--lp-text-success);
 }
 
 .lp-badge-warning {
   background-color: var(--lp-color-feedback-warning-bg);
-  color: var(--lp-color-feedback-warning);
+  color: var(--lp-text-warning);
 }
 
 .lp-badge-error {
   background-color: var(--lp-color-feedback-error-bg);
-  color: var(--lp-color-feedback-error);
+  color: var(--lp-text-error);
 }
 
 .lp-badge-info {
   background-color: var(--lp-color-feedback-info-bg);
-  color: var(--lp-color-feedback-info);
+  color: var(--lp-text-info);
 }
 
 .lp-badge-neutral {
@@ -272,7 +272,7 @@
   font-size: var(--lp-font-size-sm);
   padding: 10px 14px;
   border-radius: var(--lp-radius-md);
-  border: 1px solid var(--lp-border-default);
+  border: 1px solid var(--lp-border-control);
   background-color: var(--lp-surface-default);
   color: var(--lp-text-primary);
   outline: none;
@@ -296,8 +296,22 @@
 
 .lp-input-error-msg {
   font-size: var(--lp-font-size-xs);
-  color: var(--lp-color-feedback-error);
+  color: var(--lp-text-error);
 }
+
+/* Alertas de pagina: texto en --lp-text-*, borde/fondo con el color de feedback. */
+.lp-alert-error,
+.lp-alert-warning,
+.lp-alert-success,
+.lp-alert-info {
+  border: 1px solid;
+  border-radius: var(--lp-radius-md);
+  padding: var(--lp-spacing-16);
+}
+.lp-alert-error   { border-color: var(--lp-color-feedback-error);   background: var(--lp-color-feedback-error-bg);   color: var(--lp-text-error); }
+.lp-alert-warning { border-color: var(--lp-color-feedback-warning); background: var(--lp-color-feedback-warning-bg); color: var(--lp-text-warning); }
+.lp-alert-success { border-color: var(--lp-color-feedback-success); background: var(--lp-color-feedback-success-bg); color: var(--lp-text-success); }
+.lp-alert-info    { border-color: var(--lp-color-feedback-info);    background: var(--lp-color-feedback-info-bg);    color: var(--lp-text-info); }
 
 
 /* --------------------------------------------------------------------------

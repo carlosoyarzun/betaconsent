@@ -62,21 +62,8 @@
   display: none;
 }
 
-/* FINDING P1 (Carlos, prueba en navegador con dev.ts): las tres pantallas de error uniforme
-   (9:12 /welcome, 59:3 /manage, 33:106 /recovery/confirm) mostraban el texto plano sin la caja
-   de alerta roja que sí llevan en Figma. No existe una clase .lp-alert-* en design-system/
-   (grep confirmado); esta utilidad vive en el CSS de la app, mismo criterio que .lp-verify-cta,
-   reutilizando los tokens de feedback ya existentes en design-system/css/tokens.css
-   (--lp-color-feedback-error / -bg), sin inventar valores nuevos. Aplica a todo
-   #error-uniform (los tres estados uniformes y sus contrapartes ocultas que revocation.js/
-   manage.js/welcome.js muestran en cliente ante el mismo error). */
-.lp-alert-error {
-  border: 1px solid var(--lp-color-feedback-error, #EF4444);
-  background: var(--lp-color-feedback-error-bg, rgba(239, 68, 68, 0.12));
-  color: var(--lp-color-feedback-error, #EF4444);
-  border-radius: var(--lp-radius-md, 8px);
-  padding: var(--lp-spacing-16, 16px);
-}
+/* .lp-alert-error vive en design-system/css/components.css (alertas de pagina con texto
+   --lp-text-error, WCAG 1.4.3); aplica a todo #error-uniform de /welcome, /manage y /recovery. */
 
 /* /decision (UX-CNS-003, handoff decision-handoff.md §2/§7): no existen .lp-checkbox/.lp-radio
    en design-system/css/components.css (P1 del handoff); estas utilidades nuevas viven en el CSS
@@ -109,7 +96,7 @@
   flex: 1;
   min-height: 44px;
   border-radius: var(--lp-radius-md, 8px);
-  border: 1px solid var(--lp-border-default);
+  border: 1px solid var(--lp-border-control); /* control interactivo: 3:1 (WCAG 1.4.11) */
   background: transparent;
   cursor: pointer;
 }
@@ -118,14 +105,14 @@
 .lp-decision-chip[aria-checked="true"][data-value="yes"] {
   border-color: var(--lp-color-feedback-success, #10b981);
   background: var(--lp-color-feedback-success-bg, #ecfdf5);
-  color: var(--lp-color-feedback-success, #10b981);
+  color: var(--lp-text-success);
 }
 
 .lp-decision-chip[aria-checked="true"][data-choice="DECLINE"],
 .lp-decision-chip[aria-checked="true"][data-value="no"] {
   border-color: var(--lp-color-feedback-error, #ef4444);
   background: var(--lp-color-feedback-error-bg, #fef2f2);
-  color: var(--lp-color-feedback-error, #ef4444);
+  color: var(--lp-text-error);
 }
 
 .lp-decision-checkbox-row {
@@ -159,16 +146,10 @@
    .lp-btn-secondary no existe en design-system/css/components.css (mismo hueco P1 ya reportado
    en el handoff de /decision para .lp-checkbox/.lp-radio): utilidad mínima aquí, mismo criterio
    que .lp-decision-chip para no bloquear la implementación en un cambio de design-system/. */
-.lp-btn-danger {
-  background: var(--lp-color-feedback-error, #ef4444);
-  color: #fff;
-  border: none;
-}
-
 .lp-btn-secondary {
   background: transparent;
-  color: var(--lp-text-default, #111827);
-  border: 1px solid var(--lp-border-default, #d1d5db);
+  color: var(--lp-text-primary);
+  border: 1px solid var(--lp-border-control);
 }
 
 .lp-manage-page,
@@ -202,9 +183,9 @@
    Solo tokens `--lp-*` (design-system/css/tokens.css). Literales justificados:
    - 44px de tamano tactil: no hay token; decision de Carlos 2026-09-27 (igual que .lp-welcome-cta).
    - halo de foco rgba(26, 92, 184, 0.35): lo usa Figma 90:262; tokens.css solo trae 0.15 en .lp-input:focus (handoff §11).
-   Contraste (WCAG 1.4.3/1.4.11): TODO texto va en --lp-text-primary/-secondary (o -muted solo sobre surface-default y en controles
-   inactivos); los colores de feedback (error/warning/success/info) se usan solo para borde, fondo y punto, siempre junto a texto.
-   No se reutilizan .lp-alert-error ni .lp-input-error-msg (pintan texto con --lp-color-feedback-error: no pasa 4.5:1).
+   Contraste (WCAG 1.4.3/1.4.11): el DS ya cumple (tokens --lp-text-error|warning|success|info, --lp-border-control; ver
+   design-system/docs/usage.md, seccion Contraste). Aqui el texto de alertas y badges sigue en --lp-text-primary/-secondary por el aspecto
+   aprobado en Figma 90:2; los colores de feedback se usan solo para borde, fondo y punto, siempre junto a texto.
    ========================================================================== */
 .lp-sr-only {
   position: absolute;
@@ -296,7 +277,7 @@
 .lp-staff-lead { margin: 0; font-size: var(--lp-font-size-md); color: var(--lp-text-secondary); }
 .lp-staff-help { margin: 0; font-size: var(--lp-font-size-sm); color: var(--lp-text-secondary); }
 .lp-staff-note { margin: 0; font-size: var(--lp-font-size-sm); color: var(--lp-text-primary); }
-.lp-staff-muted { font-size: var(--lp-font-size-sm); color: var(--lp-text-muted); } /* solo sobre surface-default (4.76:1) */
+.lp-staff-muted { font-size: var(--lp-font-size-sm); color: var(--lp-text-muted); } /* --lp-text-muted pasa 4.5:1 sobre surface, bg-page y bg-subtle */
 .lp-staff-optional { font-weight: var(--lp-font-weight-regular); color: var(--lp-text-secondary); }
 
 .lp-staff-card {
@@ -403,13 +384,12 @@
   color: var(--lp-action-primary);
 }
 
-/* Formulario: borde en reposo --lp-text-muted (3:1, 1.4.11; border-default no pasa para controles). */
+/* Formulario: el borde en reposo (--lp-border-control, 3:1) lo aporta .lp-input del DS. */
 .lp-staff-label { font-size: var(--lp-font-size-md); font-weight: var(--lp-font-weight-medium); color: var(--lp-text-primary); }
 .lp-staff-input {
   min-height: 48px;
   padding: 0 var(--lp-spacing-16);
   font-size: var(--lp-font-size-md);
-  border: 1px solid var(--lp-text-muted);
 }
 .lp-staff-input:focus { border: 2px solid var(--lp-action-primary); box-shadow: 0 0 0 3px rgba(26, 92, 184, 0.35); }
 .lp-staff-input[aria-invalid="true"] { border: 2px solid var(--lp-color-feedback-error); }
