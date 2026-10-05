@@ -1085,6 +1085,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
           config,
           staffSessionKey,
           staffRosterCursorKey,
+          options.staffNowMs ?? Date.now,
         ),
       );
       return;
