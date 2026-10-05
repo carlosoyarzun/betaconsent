@@ -1,0 +1,131 @@
+// Gobierna: CA-138 (SEC-CNS-018 rev. 2 D-3), db/migrations/0021_staff_session.sql, INV-CM-02, ADR-006 §4-§6. Contra Postgres real (harness.ts):
+// TEST-CNS-1141/1142 (misma suite de contrato que in-memory, via PgUnitOfWork + app_rw) y TEST-CNS-1148 (esquema: FORCE RLS, grants
+// minimos, revocacion de un solo sentido, DELETE solo de expiradas, sin PII, aislamiento cross-tenant a nivel SQL). Solo sinteticos.
+
+import assert from "node:assert/strict";
+
+import { createPgStaffSessionStore } from "../../../src/infra/adapters/postgres/staff-session.adapter.ts";
+import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
+import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
+import { runStaffSessionStoreContract } from "../../contract/ports/staff-session-store.contract.ts";
+import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { pgTest } from "./harness.ts";
+
+runStaffSessionStoreContract((name, body) => {
+  pgTest(name, async (ctx) => {
+    const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 1 });
+    try {
+      await body(createPgStaffSessionStore(new PgUnitOfWork(pool, {})));
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
+const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
+const hex = (label: string): string => fixtureUuid(label).replaceAll("-", "").padEnd(64, "0").slice(0, 64);
+
+pgTest("TEST-CNS-1148 pg: app.staff_session con FORCE RLS por tenant, grants minimos (sin roles nuevos), revocacion de un solo sentido, DELETE solo de filas expiradas, CHECK sin PII y aislamiento cross-tenant", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const rel = (await admin.query<{ rls: boolean; force: boolean; owner: string }>(
+    "SELECT relrowsecurity AS rls, relforcerowsecurity AS force, pg_get_userbyid(relowner) AS owner FROM pg_class WHERE oid = 'app.staff_session'::regclass",
+  )).rows[0];
+  assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" });
+
+  const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
+    "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = 'staff_session'",
+  )).rows;
+  assert.deepEqual(policies.map((p) => p.cmd).sort(), ["DELETE", "INSERT", "SELECT", "UPDATE"]);
+  for (const p of policies) {
+    assert.deepEqual(p.roles, ["app_rw"]);
+    assert.match(`${p.qual ?? ""}${p.with_check ?? ""}`, /app\.current_tenant_id\(\)/);
+  }
+  assert.match(policies.find((p) => p.cmd === "DELETE")?.qual ?? "", /expires_at < now\(\)/);
+  for (const role of ["worker", "platform_rw"]) {
+    for (const privilege of ["SELECT", "INSERT", "UPDATE"]) {
+      const r = (await admin.query<{ p: boolean }>("SELECT has_any_column_privilege($1, 'app.staff_session', $2) AS p", [role, privilege])).rows[0];
+      assert.equal(r?.p, false, `${role} ${privilege}`);
+    }
+    assert.equal((await admin.query<{ p: boolean }>("SELECT has_table_privilege($1, 'app.staff_session', 'DELETE') AS p", [role])).rows[0]?.p, false, `${role} DELETE`);
+  }
+  for (const privilege of ["TRUNCATE", "REFERENCES", "TRIGGER"]) {
+    const r = (await admin.query<{ p: boolean }>("SELECT has_table_privilege('app_rw', 'app.staff_session', $1) AS p", [privilege])).rows[0];
+    assert.equal(r?.p, false, `app_rw ${privilege}`);
+  }
+  const cols = async (privilege: string): Promise<string[]> =>
+    (await admin.query<{ attname: string }>(
+      `SELECT a.attname FROM pg_attribute a WHERE a.attrelid = 'app.staff_session'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+          AND has_column_privilege('app_rw', a.attrelid, a.attnum, $1) ORDER BY a.attname`,
+      [privilege],
+    )).rows.map((r) => r.attname);
+  assert.deepEqual(await cols("INSERT"), ["expires_at", "issued_at", "last_seen_at", "principal_ref", "role", "sid_hash", "tenant_id"]);
+  assert.deepEqual(await cols("UPDATE"), ["last_seen_at", "revoked_at"], "tenant, sid, principal, rol y vida son inmutables");
+  // sin PII por construccion: las unicas columnas de texto son hash, ref opaca, rol y data_class
+  const textCols = (await admin.query<{ attname: string }>(
+    "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = 'app.staff_session'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'text'::regtype ORDER BY a.attname",
+  )).rows.map((r) => r.attname);
+  assert.deepEqual(textCols, ["data_class", "principal_ref", "role", "sid_hash"]);
+
+  const T = fixtureUuid("t1148");
+  const expectFail = async (label: string, values: unknown[], constraint: string): Promise<void> => {
+    await admin.query("SAVEPOINT s");
+    await assert.rejects(
+      () => admin.query("INSERT INTO app.staff_session (tenant_id, sid_hash, principal_ref, role, issued_at, expires_at, last_seen_at) VALUES ($1, $2, $3, $4, now(), now() + interval '1 hour', now())", values),
+      (e: unknown) => codeOf(e) === "23514" && (e as { constraint?: string }).constraint === constraint,
+      label,
+    );
+    await admin.query("ROLLBACK TO SAVEPOINT s");
+  };
+  await admin.query("BEGIN");
+  await expectFail("sid en claro / forma", [T, "no-es-un-hash", "staff-synthetic-01", "TENANT_ADMIN"], "staff_session_sid_hash_shape");
+  await expectFail("principal con PII (email)", [T, hex("a"), "persona@ejemplo.cl", "TENANT_ADMIN"], "staff_session_principal_ref_shape");
+  await expectFail("principal con RUT", [T, hex("a"), "12.345.678-5", "TENANT_ADMIN"], "staff_session_principal_ref_shape");
+  await expectFail("rol fuera del enum", [T, hex("a"), "staff-synthetic-01", "ROOT"], "staff_session_role_enum");
+  await admin.query("ROLLBACK");
+
+  // Como app_rw: aislamiento por tenant (RLS FORCE), revocacion de un solo sentido y DELETE solo de expiradas.
+  const A = fixtureUuid("tenant-a-1148");
+  const B = fixtureUuid("tenant-b-1148");
+  const rw = await ctx.connectAs("app_rw");
+  const asTenant = async (tenant: string, fn: () => Promise<void>): Promise<void> => {
+    await rw.query("BEGIN");
+    try {
+      await rw.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      await fn();
+    } finally {
+      await rw.query("ROLLBACK");
+    }
+  };
+  const ins = (tenant: string, sid: string, ttl: string) =>
+    rw.query(
+      `INSERT INTO app.staff_session (tenant_id, sid_hash, principal_ref, role, issued_at, expires_at, last_seen_at)
+       VALUES ($1, $2, 'staff-synthetic-01', 'TENANT_ADMIN', now() - interval '2 days', now() + $3::interval, now() - interval '2 days')`,
+      [tenant, hex(sid), ttl],
+    );
+  await asTenant(A, async () => {
+    await ins(A, "vigente", "1 hour");
+    await ins(A, "vencida", "-1 hour");
+    await assert.rejects(() => rw.query("SAVEPOINT x").then(() => ins(B, "ajena", "1 hour")), (e: unknown) => codeOf(e) === "42501", "no se inserta en otro tenant (RLS)");
+    await rw.query("ROLLBACK TO SAVEPOINT x");
+    assert.equal((await rw.query("SELECT 1 FROM app.staff_session")).rowCount, 2, "solo ve las suyas");
+    // revocacion de un solo sentido
+    await rw.query("UPDATE app.staff_session SET revoked_at = now() WHERE sid_hash = $1", [hex("vigente")]);
+    await rw.query("SAVEPOINT y");
+    await assert.rejects(() => rw.query("UPDATE app.staff_session SET revoked_at = NULL WHERE sid_hash = $1", [hex("vigente")]), (e: unknown) => codeOf(e) === "23000");
+    await rw.query("ROLLBACK TO SAVEPOINT y");
+    // DELETE: la vigente (revocada o no) nunca; la vencida si
+    assert.equal((await rw.query("DELETE FROM app.staff_session WHERE sid_hash = $1", [hex("vigente")])).rowCount, 0);
+    assert.equal((await rw.query("DELETE FROM app.staff_session WHERE sid_hash = $1", [hex("vencida")])).rowCount, 1);
+  });
+  await asTenant(B, async () => {
+    assert.equal((await rw.query("SELECT 1 FROM app.staff_session")).rowCount, 0, "B no ve nada de A");
+    assert.equal((await rw.query("UPDATE app.staff_session SET revoked_at = now()")).rowCount, 0);
+    assert.equal((await rw.query("DELETE FROM app.staff_session")).rowCount, 0);
+  });
+  // sin tenant fijado: fail-closed
+  await rw.query("BEGIN");
+  assert.equal((await rw.query("SELECT 1 FROM app.staff_session")).rowCount, 0);
+  await rw.query("ROLLBACK");
+  await rw.end();
+  await admin.end();
+});
