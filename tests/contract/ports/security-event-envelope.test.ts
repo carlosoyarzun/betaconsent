@@ -8,9 +8,13 @@ import test from "node:test";
 import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
 import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import { createInMemoryStaffSessionStore } from "../../../src/infra/adapters/in-memory-staff-session-store.adapter.ts";
-import { contractSecurityEventTypes, validateSecurityEvent } from "../../../src/server/modules/common/json-schema-lite.ts";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { contractLedgerEventTypes, contractSecurityEventTypes, validateSecurityEvent } from "../../../src/server/modules/common/json-schema-lite.ts";
 import { LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES } from "../../../src/server/modules/common/ledger-event-types.ts";
-import type { SecurityEventRecord } from "../../../src/server/ports/security-event.port.ts";
+import { SECURITY_EVENT_TYPES, type SecurityEventRecord } from "../../../src/server/ports/security-event.port.ts";
 import { fixtureUuid } from "../uuid-fixture.ts";
 
 export function toEnvelope(e: SecurityEventRecord): Record<string, unknown> {
@@ -62,4 +66,10 @@ test("TEST-CNS-1202 contrato API-CNS-184: cada evento de sesion proyectado al so
   // no son transitorios del ledger (0013 / ledger-event-types.ts siguen igual)
   assert.deepEqual([...LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES].sort(), contractSecurityEventTypes().sort());
   assert.ok(!contractSecurityEventTypes().includes("STAFF_LOGIN"));
+  // R2: x-ops-only es EXACTAMENTE el vocabulario del puerto y no comparte ningun tipo con el ledger (ni con los transitorios SECURITY).
+  const schema = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "contracts", "schemas", "security-event-payloads.schema.json"), "utf8")) as Record<string, unknown>;
+  const opsOnly = schema["x-ops-only"] as string[];
+  assert.deepEqual([...opsOnly].sort(), [...SECURITY_EVENT_TYPES].sort(), "x-ops-only == SECURITY_EVENT_TYPES");
+  const ledgerSide = new Set<string>([...contractLedgerEventTypes(), ...LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES]);
+  assert.deepEqual(opsOnly.filter((t) => ledgerSide.has(t)), [], "ningun tipo de sesion es del ledger");
 });

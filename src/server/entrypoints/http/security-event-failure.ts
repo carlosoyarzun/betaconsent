@@ -13,7 +13,7 @@ export function isSecurityEventWriteError(error: unknown): error is SecurityEven
 }
 
 /**
- * Contador de proceso `security_event_write_failed` SIN etiquetas de la request (sin tenant, principal, sesion ni tipo de evento): el repo no tiene
+ * SENAL DE LOG (no es una metrica ni un contador real) `security_event_write_failed` SIN etiquetas de la request (sin tenant, principal, sesion ni tipo de evento): el repo no tiene
  * infraestructura de metricas, asi que sigue el patron existente de senales de fallo (`staff_session_purge_failed`, `request_failed`): una linea
  * con solo `name` y el SQLSTATE opcional, nunca el mensaje ni valores.
  */

@@ -8,8 +8,11 @@
 import assert from "node:assert/strict";
 import type { Client } from "pg";
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { MIGRATIONS_DIR, pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const constraintOf = (error: unknown): string | undefined => (error as { constraint?: string }).constraint;
@@ -270,6 +273,43 @@ pgTest("TEST-CNS-1193 pg: session_ref de app.staff_session y app.case_session: D
     await admin.query("ROLLBACK TO SAVEPOINT u");
     await admin.query("SET LOCAL session_replication_role = replica");
     await assert.rejects(() => admin.query("UPDATE app.case_session SET session_ref = gen_random_uuid() WHERE sid_hash = $1", [hex("c1")]), (e: unknown) => codeOf(e) === "23000", "tambien con replica");
+  } finally {
+    await admin.query("ROLLBACK");
+  }
+});
+
+pgTest("TEST-CNS-1193 (0024) pg: la migracion 0024 elimina las sesiones CASE previas con case_ref no UUIDv4 (sin evento) y deja el CHECK VALIDADO; el DELETE funciona aun con FORCE RLS y el dueno", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const T = fixtureUuid("t0024");
+  // Estado previo a 0024: sin el CHECK y con una sesion efimera de case_ref no UUID mas una valida.
+  await admin.query("ALTER TABLE app.case_session DROP CONSTRAINT case_session_case_ref_uuidv4");
+  const ins = (sid: string, caseRef: string): Promise<unknown> =>
+    admin.query("INSERT INTO app.case_session (tenant_id, sid_hash, case_ref, principal_ref, role, issued_at, expires_at, last_seen_at) VALUES ($1, $2, $3, 'staff-synthetic-01', 'RIGHTS_OPERATOR', now(), now() + interval '1 hour', now())", [T, hex(sid), caseRef]);
+  await ins("viejo", "case-1163");
+  await ins("bueno", fixtureUuid("case-0024"));
+  const events = (await admin.query("SELECT 1 FROM ops.security_event")).rowCount;
+  // Se ejecuta el SQL de la migracion como el migrador/dueno (FORCE RLS aplica al dueno): SET ROLE consent_owner como en el runner.
+  const migrator = await ctx.connectAs("consent_migrator");
+  const sql = readFileSync(join(MIGRATIONS_DIR, "0024_case_session_case_ref_uuidv4.sql"), "utf8");
+  await migrator.query("BEGIN");
+  try {
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query(sql);
+    await migrator.query("COMMIT");
+  } catch (e) {
+    await migrator.query("ROLLBACK");
+    throw e;
+  }
+  const left = (await admin.query<{ sid_hash: string }>("SELECT sid_hash FROM app.case_session WHERE tenant_id = $1", [T])).rows.map((r) => r.sid_hash);
+  assert.deepEqual(left, [hex("bueno")], "la fila previa no UUID desaparecio y la valida se conserva");
+  assert.equal((await admin.query("SELECT 1 FROM ops.security_event")).rowCount, events, "cerrarlas no escribe evento");
+  const c = (await admin.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conrelid = 'app.case_session'::regclass AND conname = 'case_session_case_ref_uuidv4'")).rows[0];
+  assert.equal(c?.convalidated, true, "CHECK validado (sin NOT VALID)");
+  const rel = (await admin.query<{ force: boolean }>("SELECT relforcerowsecurity AS force FROM pg_class WHERE oid = 'app.case_session'::regclass")).rows[0];
+  assert.equal(rel?.force, true, "FORCE RLS restaurado");
+  await admin.query("BEGIN");
+  try {
+    await assert.rejects(() => ins("nuevo", "case-1"), (e: unknown) => codeOf(e) === "23514" && constraintOf(e) === "case_session_case_ref_uuidv4");
   } finally {
     await admin.query("ROLLBACK");
   }
