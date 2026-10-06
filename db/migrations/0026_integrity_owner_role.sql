@@ -11,8 +11,11 @@
 --                    con SET LOCAL ROLE integrity_owner y pasan por CODEOWNERS. Ningun rol de runtime es
 --                    miembro (lo verifican catalog.test.ts y startup-checks.ts).
 --
--- Residual aceptado para IT0 (F-X8-11): el migrador sigue pudiendo asumirlo con un SET ROLE explicito
--- (migrador -> consent_owner -> integrity_owner); impedirlo requiere un break-glass fuera del runner (ADR-010).
+-- Residual F-X8-11 (PENDIENTE de aceptacion de Carlos; caduca antes de datos reales/G6: ADR-010 break-glass +
+-- ancla externa): el migrador puede asumir integrity_owner con un SET ROLE explicito (migrador ->
+-- consent_owner -> integrity_owner) y entonces tiene control total del ledger (DISABLE TRIGGER, CREATE OR
+-- REPLACE de la funcion, DROP). La cadena SHA-256 sin ancla externa no lo detecta. Ademas consent_owner es
+-- datdba y puede DROP DATABASE. Esta migracion solo logra que el DDL del ledger deba declararse y revisarse.
 
 DO $role$
 BEGIN
@@ -25,4 +28,17 @@ $role$;
 
 GRANT integrity_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
 
-REVOKE integrity_owner FROM app_rw, worker, platform_rw;
+-- Solo si hay membresia (REVOKE sobre un no miembro emite un WARNING por corrida).
+DO $revoke$
+DECLARE
+  r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['app_rw', 'worker', 'platform_rw'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
+                 JOIN pg_catalog.pg_roles g ON g.oid = m.roleid JOIN pg_catalog.pg_roles u ON u.oid = m.member
+                WHERE g.rolname = 'integrity_owner' AND u.rolname = r) THEN
+      EXECUTE pg_catalog.format('REVOKE integrity_owner FROM %I', r);
+    END IF;
+  END LOOP;
+END
+$revoke$;

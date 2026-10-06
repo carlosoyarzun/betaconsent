@@ -51,8 +51,13 @@ pgTest("TEST-CNS-1231 pg: el ledger pertenece a integrity_owner, sin CREATE temp
   // Supuesto de 0027: consent_owner es dueno de la base (si no, el GRANT CREATE ON DATABASE aborta la migracion).
   const dba = (await admin.query<{ owner: string }>("SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()")).rows[0];
   assert.equal(dba?.owner, "consent_owner");
-  const create = (await admin.query<{ p: boolean }>("SELECT has_database_privilege('integrity_owner', current_database(), 'CREATE') AS p")).rows[0];
-  assert.equal(create?.p, false, "el CREATE temporal en la base debe estar revocado");
+  // La revocacion del CREATE temporal en la base la afirma 0027 dentro de su tx (la base de prueba nace con
+  // CREATE DATABASE ... TEMPLATE, que no copia datacl, asi que verificarlo aqui no probaria nada).
+  const wrong = (await admin.query<{ n: number }>(
+    `SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'integrity' AND pg_get_userbyid(c.relowner) <> 'integrity_owner')
+          + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'integrity' AND pg_get_userbyid(p.proowner) <> 'integrity_owner') AS n`,
+  )).rows[0];
+  assert.equal(Number(wrong?.n), 0, "todo objeto de integrity pertenece a integrity_owner");
   const triggers = (await admin.query<{ tgenabled: string }>(
     "SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'integrity.audit_event'::regclass AND tgname LIKE 'audit_event_no_%'",
   )).rows;

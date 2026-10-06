@@ -61,6 +61,13 @@ BEGIN
               WHERE n.nspname = 'integrity' AND pg_catalog.pg_get_userbyid(p.proowner) <> 'integrity_owner') THEN
     RAISE EXCEPTION 'hay funciones en integrity que no pertenecen a integrity_owner';
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'integrity' AND pg_catalog.pg_get_userbyid(c.relowner) <> 'integrity_owner') THEN
+    RAISE EXCEPTION 'hay relaciones (tablas, indices, secuencias, vistas) en integrity que no pertenecen a integrity_owner';
+  END IF;
+  IF pg_catalog.has_database_privilege('integrity_owner', pg_catalog.current_database(), 'CREATE') THEN
+    RAISE EXCEPTION 'integrity_owner conserva CREATE en la base (el grant temporal no quedo revocado)';
+  END IF;
 
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t
        WHERE t.tgrelid = ledger AND t.tgname LIKE 'audit_event\_no\_%' AND t.tgenabled = 'A') <> 2 THEN
