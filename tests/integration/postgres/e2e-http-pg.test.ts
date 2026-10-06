@@ -92,6 +92,7 @@ async function boot(ctx: PgTestContext) {
     environment: "LOCAL",
     staffIdentity,
     staffConsole: bundle.staffConsole,
+    caseSessions: bundle.caseSessions,
     storeMode: "postgres",
     devOutboxSink: () => store.uow.withTenantTx(T, (tx) => listOutboxEnvelopes(tx)),
   });

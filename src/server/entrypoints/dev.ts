@@ -262,6 +262,7 @@ const server = createConsentFlowHttpServer({
   environment: "LOCAL",
   staffIdentity,
   staffConsole,
+  ...(pgBundle ? { caseSessions: pgBundle.caseSessions } : {}),
   devStaffConsole: {
     principalRef: LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF,
     students: LOCAL_ONLY_DEV_STAFF_STUDENTS,
@@ -313,6 +314,8 @@ server.listen(port, "127.0.0.1", () => {
   console.log(
     `  curl -i -b /tmp/cns-case-op2.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation/cosign -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF2>" -H 'content-type: application/json' -d '{}'`,
   );
+  console.log(`Logout de la sesion CASE (API-CNS-193, revoca el sid en servidor; <CSRF1> del login de ese cookie jar):`);
+  console.log(`  curl -i -b /tmp/cns-case-op1.txt -X POST ${baseUrl}/platform/case-session/logout -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF1>"`);
   // CA-125: flujo iniciado por el colegio (login TENANT_ADMIN -> enrollment -> invitación -> sink -> /i/{token}).
   // Todos los pasos usan el mismo cookie jar; <CSRF> es el valor de __Host-cns-staff-csrf del Set-Cookie del
   // login; <ENROLLMENT_REF>/<INVITATION_REF> vienen de las respuestas JSON. El token NUNCA está en esas
