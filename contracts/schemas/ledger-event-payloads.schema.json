@@ -151,6 +151,12 @@
         "decisionMakerRef": {
           "$ref": "common.schema.json#/$defs/Ref"
         },
+        "decisionMakerRefKeyVersion": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1000,
+          "description": "OPEN-CM-09: version de la clave HMAC con que se derivo decisionMakerRef. Opcional solo para eventos previos (ausente = v2); los eventos nuevos siempre lo emiten."
+        },
         "bindingResult": {
           "type": "string",
           "pattern": "^[A-Z_]{1,40}$",
@@ -245,6 +251,12 @@
         },
         "decisionMakerRef": {
           "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "decisionMakerRefKeyVersion": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1000,
+          "description": "OPEN-CM-09: version de la clave HMAC con que se derivo decisionMakerRef. Opcional solo para eventos previos (ausente = v2); los eventos nuevos siempre lo emiten."
         },
         "scope": {
           "$ref": "common.schema.json#/$defs/OtpScope"

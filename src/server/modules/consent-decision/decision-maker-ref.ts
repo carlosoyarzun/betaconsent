@@ -16,11 +16,14 @@
 // contexto de sesion/invitacion, nunca de input del usuario. La v1 (sin tenant) queda reemplazada: los refs v1
 // eran sinteticos y no se migran.
 //
-// ROTACION (futura, no implementada): la version de clave `DECISION_MAKER_REF_KEY_VERSION` entra en el `info` de
-// HKDF y YA NO viaja en el valor. Rotar = subir la constante (nuevo secreto + nuevo `info`): los refs nuevos son
-// distintos; el ledger NO se re-escribe (append-only) y los refs historicos siguen siendo validos (el verificador
-// conserva la clave vieja para recomputarlos). Nunca se re-deriva un ref viejo con la clave nueva. NO decide nada
-// sobre quien es el decisionMaker (LEGAL DECISION de Carlos).
+// ROTACION (OPEN-CM-09, Carlos 2026-10-06): la version de clave `DECISION_MAKER_REF_KEY_VERSION` entra en el `info`
+// de HKDF y NO viaja en el valor (sigue siendo UUIDv4 opaco). Se registra en el payload de los eventos de ledger que
+// llevan decisionMakerRef (INVITATION_VERIFIED, DECISION_MAKER_CHANNEL_VERIFIED) como `decisionMakerRefKeyVersion`,
+// solo en eventos NUEVOS; los eventos previos sin el campo se interpretan como v2 (`LEGACY_DECISION_MAKER_REF_KEY_VERSION`,
+// ver `resolveDecisionMakerRefKeyVersion`). Rotar = subir la constante (nuevo secreto + nuevo `info`): los refs nuevos son
+// distintos; el ledger NO se re-escribe (append-only) y el verificador lee la version del evento y recomputa con la
+// clave de ESA version (`recomputeDecisionMakerRef`), sin probar todas. Nunca se re-deriva un ref viejo con la clave
+// nueva. NO decide nada sobre quien es el decisionMaker (LEGAL DECISION de Carlos).
 
 import { createHmac, hkdfSync } from "node:crypto";
 
@@ -30,11 +33,33 @@ import { uuidV4FromDigest } from "../common/opaque-ref.ts";
 /** Version de la clave: entra en el `info` de HKDF (rotar = subirla). */
 export const DECISION_MAKER_REF_KEY_VERSION = 2;
 /** `info` HKDF propio y separado del de chainRef, sesiones, handles y OTP. */
-export const DECISION_MAKER_REF_HKDF_INFO = `consent-app/decision-maker-ref/v${DECISION_MAKER_REF_KEY_VERSION}`;
+/** Version que se asume para eventos de ledger previos a OPEN-CM-09 (sin `decisionMakerRefKeyVersion`). La v1 (sin tenant) no se migra. */
+export const LEGACY_DECISION_MAKER_REF_KEY_VERSION = 2;
 
-export function deriveDecisionMakerRefKey(secret: Buffer): Buffer {
+function assertKeyVersion(version: unknown): asserts version is number {
+  if (typeof version !== "number" || !Number.isInteger(version) || version < LEGACY_DECISION_MAKER_REF_KEY_VERSION || version > 1000) {
+    throw new Error("decisionMakerRef: keyVersion invalida (entero >= 2, fail-closed).");
+  }
+}
+
+export function decisionMakerRefHkdfInfo(keyVersion: number): string {
+  assertKeyVersion(keyVersion);
+  return `consent-app/decision-maker-ref/v${keyVersion}`;
+}
+
+export const DECISION_MAKER_REF_HKDF_INFO = decisionMakerRefHkdfInfo(DECISION_MAKER_REF_KEY_VERSION);
+
+export function deriveDecisionMakerRefKey(secret: Buffer, keyVersion: number = DECISION_MAKER_REF_KEY_VERSION): Buffer {
   if (secret.length < 32) throw new Error("decisionMakerRef: el secreto raiz debe tener al menos 32 bytes (fail-closed).");
-  return Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), DECISION_MAKER_REF_HKDF_INFO, 32));
+  return Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), decisionMakerRefHkdfInfo(keyVersion), 32));
+}
+
+/** Version de clave de un ref historico a partir del payload del evento de ledger que lo registro (campo ausente = v2). */
+export function resolveDecisionMakerRefKeyVersion(payload: Readonly<Record<string, unknown>>): number {
+  const v = payload.decisionMakerRefKeyVersion;
+  if (v === undefined) return LEGACY_DECISION_MAKER_REF_KEY_VERSION;
+  assertKeyVersion(v);
+  return v;
 }
 
 /** Normaliza el canal (trim, NFC, minusculas) para que el mismo correo siempre produzca el mismo ref. */
@@ -58,6 +83,11 @@ export function deriveDecisionMakerRef(key: Buffer, tenantId: TenantId, channel:
     .update(tenant)
     .update(normalized, "utf8");
   return uuidV4FromDigest(mac.digest());
+}
+
+/** Verificador: recomputa un ref historico con la clave de la version registrada en su evento (no prueba todas). */
+export function recomputeDecisionMakerRef(secret: Buffer, payload: Readonly<Record<string, unknown>>, tenantId: TenantId, channel: string): string {
+  return deriveDecisionMakerRef(deriveDecisionMakerRefKey(secret, resolveDecisionMakerRefKeyVersion(payload)), tenantId, channel);
 }
 
 /** Secreto raiz. `CNS_DECISION_MAKER_REF_SECRET` (base64, >=32 bytes). Fuera de LOCAL, sin el: aborta

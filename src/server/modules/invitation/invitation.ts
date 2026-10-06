@@ -10,6 +10,7 @@
 // tenant-context). Ver reporte de la tarea para el detalle de lo diferido.
 
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03 } from "../common/opaque-ref.ts";
+import { DECISION_MAKER_REF_KEY_VERSION } from "../consent-decision/decision-maker-ref.ts";
 import { createHash, randomBytes } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
@@ -412,7 +413,7 @@ export async function markInvitationVerifiedTx(
     aggregateId: invitationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { invitationRef, verificationRef, decisionMakerRef, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
+    payload: { invitationRef, verificationRef, decisionMakerRef, decisionMakerRefKeyVersion: DECISION_MAKER_REF_KEY_VERSION, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
     idempotencyKey: `${invitationRef}:${verificationRef}`,
   });
   return verified;
