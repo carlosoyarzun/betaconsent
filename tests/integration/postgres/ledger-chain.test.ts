@@ -166,8 +166,8 @@ pgTest("TEST-CNS-915 pg: los triggers de inmutabilidad bloquean UPDATE/DELETE/TR
 
   // X8 dec. 3 (0026/0027): el ledger es de integrity_owner. El migrador, directo o con SET ROLE
   // consent_owner, ya no puede ni leer ni mutar el ledger (42501; ver TEST-CNS-1230).
-  // RESIDUAL F-X8-11 (PENDIENTE de aceptacion de Carlos; caduca antes de datos reales/G6: ADR-010 break-glass +
-  // ancla externa): con SET ROLE integrity_owner explicito el migrador tiene control total (DISABLE TRIGGER,
+  // RESIDUAL F-X8-11 (ACEPTADO solo para IT0 sintetico (Carlos, 2026-10-06); caduca antes de datos
+  // reales/G6; cierre: CA-144, ADR-010 break-glass + ancla externa): con SET ROLE integrity_owner explicito el migrador tiene control total (DISABLE TRIGGER,
   // CREATE OR REPLACE de la funcion, DROP) y la cadena SHA-256 sin ancla externa no lo detecta; ademas
   // consent_owner es datdba y puede DROP DATABASE. Lo que sigue solo documenta el comportamiento de los
   // controles por defecto (RLS FORCE, trigger ENABLE ALWAYS) mientras nadie los desactive; NO frena al residual.

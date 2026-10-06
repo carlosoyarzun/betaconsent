@@ -11,8 +11,8 @@
 --                    con SET LOCAL ROLE integrity_owner y pasan por CODEOWNERS. Ningun rol de runtime es
 --                    miembro (lo verifican catalog.test.ts y startup-checks.ts).
 --
--- Residual F-X8-11 (PENDIENTE de aceptacion de Carlos; caduca antes de datos reales/G6: ADR-010 break-glass +
--- ancla externa): el migrador puede asumir integrity_owner con un SET ROLE explicito (migrador ->
+-- Residual F-X8-11 (ACEPTADO solo para IT0 sintetico (Carlos, 2026-10-06); caduca antes de datos
+-- reales/G6; cierre: CA-144, ADR-010 break-glass + ancla externa): el migrador puede asumir integrity_owner con un SET ROLE explicito (migrador ->
 -- consent_owner -> integrity_owner) y entonces tiene control total del ledger (DISABLE TRIGGER, CREATE OR
 -- REPLACE de la funcion, DROP). La cadena SHA-256 sin ancla externa no lo detecta. Ademas consent_owner es
 -- datdba y puede DROP DATABASE. Esta migracion solo logra que el DDL del ledger deba declararse y revisarse.
