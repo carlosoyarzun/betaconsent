@@ -30,19 +30,33 @@ import {
   withdrawCaseVerificationProposal,
   type RevocationPorts,
 } from "../../modules/revocation/revocation.ts";
+import { APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS } from "../../modules/common/approved-parameters.ts";
+import type { CaseSessionStorePort } from "../../ports/case-session-store.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { StaffIdentityPort } from "../../ports/staff-identity.port.ts";
 import type { Environment } from "../../modules/common/types.ts";
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
-import { decodeCaseSession, encodeCaseSession, serializeCaseSessionCookie, type CaseSessionPayload } from "./case-session.ts";
-import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
+import {
+  caseCsrfMatchesSession,
+  decodeCaseSession,
+  hashCaseSid,
+  issueCaseSession,
+  revokeCaseSessionCookie,
+  serializeCaseSessionCookie,
+  type CaseSessionPayload,
+} from "./case-session.ts";
+import { serializeCsrfCookie } from "./csrf.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
 
 export interface CaseConfirmationPorts {
   /** SEC-CNS-016: el caso se lee por `revocation.uow.inTenant` (nunca un repo suelto fuera de una tx). */
   readonly revocation: RevocationPorts;
   readonly staffIdentity: StaffIdentityPort;
+  /** CA-139: registro servidor de sesiones CASE (sid hasheado; revocacion, inactividad). Sin el no hay sesion valida (fail-closed). */
+  readonly sessions: CaseSessionStorePort;
+  /** CA-139: reloj de la sesion CASE (inyectable en tests; por defecto Date.now). */
+  readonly nowMs?: () => number;
 }
 
 /** contracts/openapi API-CNS-138 responses: 403/409/4XX -> RightsProblem (allOf Problem +
@@ -104,6 +118,40 @@ function checkCaseCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig)
 }
 
 /**
+ * CA-139 + GRD-CM-01: sesion CASE vigente. Firma + iat/exp (expiracion absoluta), ligadura al caseRef del path y registro servidor
+ * (mismo tenant/caso/principal/rol, no revocada, sin exceder la inactividad; avanza la ultima actividad). Cualquier fallo es el mismo
+ * 404 uniforme, sin filtrar la causa. Si la sesion es valida, el token CSRF debe ser el de ESTA sesion (ligado al sid): 403 si no.
+ */
+async function authenticateCaseSession(
+  request: RawConsentRequest,
+  caseRefFromPath: string,
+  ports: Pick<CaseConfirmationPorts, "sessions" | "nowMs" | "staffIdentity">,
+  config: RightsCaseHttpConfig,
+  caseSessionKey: Buffer,
+): Promise<{ readonly ok: true; readonly session: CaseSessionPayload } | { readonly ok: false; readonly result: HttpResult }> {
+  const cookies = parseCookies(request.cookieHeader);
+  const nowMs = (ports.nowMs ?? Date.now)();
+  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName], nowMs);
+  if (!session || session.caseRef !== caseRefFromPath) return { ok: false, result: uniformNotFound() };
+  // CA-139 P2-1: membership vigente en cada request (como STAFF): el principal debe seguir en el roster con el mismo rol; si no, 404 uniforme.
+  const principal = await ports.staffIdentity.findByPrincipalRef(session.principalRef);
+  if (!principal || principal.role !== session.role) return { ok: false, result: uniformNotFound() };
+  // CA-139 P2-3: el CSRF ligado al sid se valida ANTES del touch: una cookie robada sin CSRF no prolonga la inactividad.
+  if (!caseCsrfMatchesSession(caseSessionKey, session.sid, cookies[config.caseCsrfCookieName])) return { ok: false, result: csrfRejected() };
+  const live = await ports.sessions.validateAndTouch({
+    tenantId: session.tenantId,
+    sidHash: hashCaseSid(session.sid),
+    caseRef: session.caseRef,
+    principalRef: session.principalRef,
+    role: session.role,
+    nowMs,
+    idleTimeoutMs: APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS,
+  });
+  if (!live) return { ok: false, result: uniformNotFound() };
+  return { ok: true, session };
+}
+
+/**
  * X6 (DEC-BR-014 rev. 8 §3; rights-case.spec INV-RC-04): toda lectura del caso por el operador queda en
  * ops.access_log (append-only, sin PII: solo refs opacas, rol y accion), NO en el ledger. El registro y la
  * lectura van en la MISMA tx del tenant y fail-closed: si el log falla, la lectura no se entrega.
@@ -136,10 +184,9 @@ export async function handleRecordCaseConfirmation(
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
-  const cookies = parseCookies(request.cookieHeader);
-  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
-  if (!session) return uniformNotFound(); // GRD-CM-01: sin sesión CASE, mismo criterio que el resto del repo.
-  if (session.caseRef !== caseRefFromPath) return uniformNotFound(); // caseRef debe coincidir con la sesión (contracts/openapi CaseRef).
+  const auth = await authenticateCaseSession(request, caseRefFromPath, ports, config, caseSessionKey);
+  if (!auth.ok) return auth.result; // GRD-CM-01: sin sesion CASE vigente o de otro caso, 404 uniforme.
+  const session = auth.session;
 
   if (session.role !== "RIGHTS_OPERATOR") {
     // GRD-CM-07 (actor_derived_and_allowed): solo RIGHTS_OPERATOR ejecuta record_case_confirmation.
@@ -198,10 +245,9 @@ export async function handleCosignCaseConfirmation(
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
 
-  const cookies = parseCookies(request.cookieHeader);
-  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
-  if (!session) return uniformNotFound();
-  if (session.caseRef !== caseRefFromPath) return uniformNotFound();
+  const auth = await authenticateCaseSession(request, caseRefFromPath, ports, config, caseSessionKey);
+  if (!auth.ok) return auth.result; // GRD-CM-01: sin sesion CASE vigente o de otro caso, 404 uniforme.
+  const session = auth.session;
 
   if (session.role !== "RIGHTS_OPERATOR") {
     // LEGAL DECISION LD-03: revocation.spec RH3 / API-CNS-139 exigen "segundo RIGHTS_OPERATOR
@@ -272,9 +318,9 @@ export async function handleProposeCaseVerification(
 ): Promise<HttpResult> {
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
-  const cookies = parseCookies(request.cookieHeader);
-  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
-  if (!session || session.caseRef !== caseRefFromPath) return uniformNotFound();
+  const auth = await authenticateCaseSession(request, caseRefFromPath, ports, config, caseSessionKey);
+  if (!auth.ok) return auth.result;
+  const session = auth.session;
   if (session.role !== "RIGHTS_OPERATOR") return actorNotAllowed(); // GRD-RV-09: propone el RIGHTS_OPERATOR
 
   const body = strictBody(request.body, ["verificationScriptVersion", "stepUpAssertion"]);
@@ -311,9 +357,9 @@ export async function handleApproveCaseVerification(
 ): Promise<HttpResult> {
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
-  const cookies = parseCookies(request.cookieHeader);
-  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
-  if (!session || session.caseRef !== caseRefFromPath) return uniformNotFound();
+  const auth = await authenticateCaseSession(request, caseRefFromPath, ports, config, caseSessionKey);
+  if (!auth.ok) return auth.result;
+  const session = auth.session;
   if (!UUID_V4_PATTERN.test(proposalRefFromPath)) return uniformNotFound();
   if (session.role !== "APPROVER") return actorNotAllowed(); // GRD-RV-09: aprueba PRIVACY_LEGAL/SECURITY (APPROVER en IT0)
 
@@ -353,9 +399,9 @@ export async function handleWithdrawCaseVerificationProposal(
 ): Promise<HttpResult> {
   const csrfFailure = checkCaseCsrf(request, config);
   if (csrfFailure) return csrfFailure;
-  const cookies = parseCookies(request.cookieHeader);
-  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
-  if (!session || session.caseRef !== caseRefFromPath) return uniformNotFound();
+  const auth = await authenticateCaseSession(request, caseRefFromPath, ports, config, caseSessionKey);
+  if (!auth.ok) return auth.result;
+  const session = auth.session;
   if (!UUID_V4_PATTERN.test(proposalRefFromPath)) return uniformNotFound();
   if (session.role !== "RIGHTS_OPERATOR") return actorNotAllowed(); // solo el proponente (RIGHTS_OPERATOR) retira
 
@@ -391,6 +437,9 @@ export async function handleWithdrawCaseVerificationProposal(
 // ---------------------------------------------------------------------------
 export interface DevStaffLoginPorts {
   readonly staffIdentity: StaffIdentityPort;
+  /** CA-139: registro servidor de sesiones CASE (mismo emisor que cualquier sesion CASE). */
+  readonly sessions: CaseSessionStorePort;
+  readonly nowMs?: () => number;
   /** SEC-CNS-016: lectura del caso bajo el tenant (inTenant). */
   readonly uow: UnitOfWorkPort;
 }
@@ -430,11 +479,44 @@ export async function handleDevStaffLogin(
     // CA-125: TENANT_ADMIN pertenece a la consola STAFF (staff-console.handler.ts), nunca a la CASE.
     return { status: 422, body: { status: 422 } };
   }
-  const session: CaseSessionPayload = { tenantId, caseRef, principalRef: principal.principalRef, role: principal.role };
+  // CA-139: MISMO mecanismo de emision que cualquier sesion CASE (sid nuevo + registro en servidor); si el navegador traia una sesion CASE
+  // previa, su sid se revoca (rotacion anti fixation). Sin privilegios extra respecto de la sesion normal. Solo LOCAL (GRD-CM-13).
+  const previous = parseCookies(request.cookieHeader)[config.caseSessionCookieName];
+  const issued = await issueCaseSession(
+    { sessions: ports.sessions, caseSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) },
+    { tenantId, caseRef, principalRef: principal.principalRef, role: principal.role },
+    previous,
+  );
   return {
     status: 200,
     body: { principalRef: principal.principalRef, role: principal.role },
-    setCaseSessionCookie: serializeCaseSessionCookie(config.caseSessionCookieName, encodeCaseSession(caseSessionKey, session)),
-    setCaseCsrfCookie: serializeCsrfCookie(config.caseCsrfCookieName, generateCsrfToken()),
+    setCaseSessionCookie: serializeCaseSessionCookie(config.caseSessionCookieName, issued.cookieValue, issued.maxAgeSec),
+    setCaseCsrfCookie: serializeCsrfCookie(config.caseCsrfCookieName, issued.csrfToken),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// POST /platform/case-session/logout (API-CNS-193; CA-139). GRD-CM-10 (CSRF double-submit + Origin) y, si la cookie trae una sesion firmada,
+// el token debe ser el de ESA sesion. REVOCA el sid en servidor (la cookie robada o copiada deja de servir en 136/137/138/139/140 de
+// inmediato) y borra las cookies del navegador. Idempotente: sin sesion valida solo borra cookies.
+// ---------------------------------------------------------------------------
+export async function handleCaseLogout(
+  request: RawConsentRequest,
+  ports: Pick<CaseConfirmationPorts, "sessions" | "nowMs">,
+  config: RightsCaseHttpConfig,
+  caseSessionKey: Buffer,
+): Promise<HttpResult> {
+  const csrfFailure = checkCaseCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+  const cookies = parseCookies(request.cookieHeader);
+  const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
+  if (session !== null && !caseCsrfMatchesSession(caseSessionKey, session.sid, cookies[config.caseCsrfCookieName])) return csrfRejected();
+  await revokeCaseSessionCookie({ sessions: ports.sessions, caseSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) }, cookies[config.caseSessionCookieName]);
+  const expire = "Path=/; Secure; SameSite=Lax; Max-Age=0";
+  return {
+    status: 200,
+    body: {},
+    extraHeaders: { "Cache-Control": "no-store" },
+    clearCaseCookies: [`${config.caseSessionCookieName}=; ${expire}; HttpOnly`, `${config.caseCsrfCookieName}=; ${expire}`],
   };
 }

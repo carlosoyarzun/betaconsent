@@ -8,7 +8,7 @@
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import { createConsentFlowHttpServer, createPostgresFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
@@ -92,6 +92,7 @@ async function boot(ctx: PgTestContext) {
     environment: "LOCAL",
     staffIdentity,
     staffConsole: bundle.staffConsole,
+    caseSessions: bundle.caseSessions,
     storeMode: "postgres",
     devOutboxSink: () => store.uow.withTenantTx(T, (tx) => listOutboxEnvelopes(tx)),
   });
@@ -537,5 +538,40 @@ pgTest("TEST-CNS-979 pg: paridad entre isReservedEmail (TS) y app.is_reserved_em
   for (const value of [...RESERVED_OK, ...RESERVED_BAD]) {
     const sql = (await admin.query<{ ok: boolean }>("SELECT app.is_reserved_email($1) AS ok", [value])).rows[0]?.ok;
     assert.equal(isReservedEmail(value), sql, `paridad TS/SQL: ${value}`);
+  }
+});
+
+pgTest("TEST-CNS-1174 e2e pg: sesion CASE en app.case_session (solo hash del sid); logout revoca en la BD y la cookie robada no sirve; sid de otro tenant no existe; BD sin sid en claro ni PII (CA-139)", async (ctx) => {
+  const env = await boot(ctx);
+  try {
+    await seedRh3DevCase(env.bundle.ports, env.bundle.revocationPorts, T);
+    const res = await fetch(`${env.baseUrl}/__dev/staff-login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tenantId: T, caseRef: RH3_DEV_CASE_REF, principalRef: fixtureUuid("staff-synthetic-01") }),
+    });
+    assert.equal(res.status, 200);
+    const c = cookiesOf(res);
+    const session = c["__Host-cns-case"]!;
+    const csrf = c["__Host-cns-case-csrf"]!;
+    const call = (path: string, body: unknown): Promise<Response> =>
+      fetch(`${env.baseUrl}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": csrf, cookie: `__Host-cns-case=${session}; __Host-cns-case-csrf=${csrf}` }, body: JSON.stringify(body) });
+    const sid = JSON.parse(Buffer.from(session.split(".")[0]!, "base64url").toString("utf8")).sid as string;
+    const sidHash = createHash("sha256").update(sid, "utf8").digest("hex");
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND case_ref = $2 AND sid_hash = $3 AND revoked_at IS NULL", [T, RH3_DEV_CASE_REF, sidHash]), 1);
+    // El caso RH3 ya pudo confirmarse en otro test de este archivo (misma base): 200 o 409; lo que importa es que la sesion se acepta (ni 404 ni 403).
+    assert.ok([200, 409].includes((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true })).status), "la sesion registrada sirve (RLS por tenant)");
+    const dump = (await env.admin.query<{ row: string }>("SELECT t::text AS row FROM app.case_session t")).rows.map((r) => r.row).join("\n");
+    assert.ok(!dump.includes(sid) && !dump.includes(session) && !dump.includes("@"), "la BD no guarda sid en claro, cookie ni correos");
+    assert.match(dump, /[0-9a-f]{64}/);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND sid_hash = $2", [LOCAL_ONLY_DEV_OTHER_TENANT_ID, sidHash]), 0, "otro tenant no tiene (ni ve) esa sesion");
+
+    const out = await call("/platform/case-session/logout", {});
+    assert.equal(out.status, 200);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND sid_hash = $2 AND revoked_at IS NOT NULL", [T, sidHash]), 1, "logout revoca en la BD");
+    assert.equal((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, {})).status, 404, "cookie robada tras logout");
+    assert.equal((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true })).status, 404);
+  } finally {
+    await env.close();
   }
 });

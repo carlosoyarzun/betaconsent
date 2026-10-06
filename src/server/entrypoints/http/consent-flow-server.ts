@@ -80,6 +80,7 @@ import {
 import {
   handleApproveCaseVerification,
   handleWithdrawCaseVerificationProposal,
+  handleCaseLogout,
   handleCosignCaseConfirmation,
   handleDevStaffLogin,
   handleProposeCaseVerification,
@@ -88,6 +89,9 @@ import {
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { deriveCaseSessionKey } from "./case-session.ts";
+import type { CaseSessionStorePort } from "../../ports/case-session-store.port.ts";
+import { createInMemoryCaseSessionStore } from "../../../infra/adapters/in-memory-case-session-store.adapter.ts";
+import { createPgCaseSessionStore } from "../../../infra/adapters/postgres/case-session.adapter.ts";
 import { deriveStaffSessionKey } from "./staff-session.ts";
 import { createInMemoryStaffSessionStore } from "../../../infra/adapters/in-memory-staff-session-store.adapter.ts";
 import { createPgStaffSessionStore } from "../../../infra/adapters/postgres/staff-session.adapter.ts";
@@ -193,6 +197,11 @@ export interface ConsentFlowHttpServerOptions {
   readonly staffUi?: StaffUiConfig;
   /** CA-138: reloj de la sesion STAFF (expiracion absoluta, inactividad, flash, cursor). Solo tests; por defecto Date.now. */
   readonly staffNowMs?: () => number;
+  /** CA-139: registro servidor de sesiones CASE (app.case_session en Postgres, RLS FORCE por tenant). Por defecto in-memory solo con
+   * storeMode=memory; con storeMode=postgres es OBLIGATORIO (fail-closed: nunca una sesion CASE en memoria sobre una base real). */
+  readonly caseSessions?: CaseSessionStorePort;
+  /** CA-139: reloj de la sesion CASE (expiracion absoluta, inactividad). Solo tests; por defecto Date.now. */
+  readonly caseNowMs?: () => number;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -385,6 +394,8 @@ export function createPostgresFlowPorts(
   ports: ConsentFlowPorts;
   revocationPorts: RevocationFlowPorts;
   staffConsole: StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink };
+  /** CA-139: registro servidor de sesiones CASE (app.case_session). */
+  caseSessions: CaseSessionStorePort;
 } {
   const o = store.outsideTx;
   const invitation: InvitationPorts = {
@@ -446,7 +457,7 @@ export function createPostgresFlowPorts(
     ...(cfg.subjectDirectory ? { subjectDirectory: cfg.subjectDirectory } : {}),
     invitationLinkSink,
   };
-  return { ports: { invitation, otp, decision, decisionMakerRefKey: cfg.decisionMakerRefKey }, revocationPorts, staffConsole };
+  return { ports: { invitation, otp, decision, decisionMakerRefKey: cfg.decisionMakerRefKey }, revocationPorts, staffConsole, caseSessions: createPgCaseSessionStore(store.uow) };
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
@@ -573,6 +584,7 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   if (result.setStaffSessionCookie) cookies.push(result.setStaffSessionCookie);
   if (result.setStaffCsrfCookie) cookies.push(result.setStaffCsrfCookie);
   if (result.clearStaffCookies) cookies.push(...result.clearStaffCookies);
+  if (result.clearCaseCookies) cookies.push(...result.clearCaseCookies);
   if (cookies.length > 0) {
     res.setHeader("Set-Cookie", cookies);
   }
@@ -629,9 +641,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffConsolePorts: StaffConsolePorts = options.staffNowMs ? { ...staffConsoleBase, nowMs: options.staffNowMs } : staffConsoleBase;
   // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion).
   const staffRosterCursorKey = options.staffRosterCursorKey ?? deriveStaffRosterCursorKey(randomBytes(32));
+  if (options.storeMode === "postgres" && !options.caseSessions) {
+    throw new Error("createConsentFlowHttpServer: storeMode=postgres requiere `caseSessions` (CA-139, app.case_session); sin registro de sesiones CASE no hay sesion valida.");
+  }
   const caseConfirmationPorts: CaseConfirmationPorts = {
     revocation: revocationPorts.revocation,
     staffIdentity,
+    sessions: options.caseSessions ?? createInMemoryCaseSessionStore(),
+    ...(options.caseNowMs ? { nowMs: options.caseNowMs } : {}),
   };
 
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -1120,11 +1137,17 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const result = await handleDevStaffLogin(
         request,
         options.environment ?? "DEV",
-        { staffIdentity, uow: revocationPorts.revocation.uow },
+        { staffIdentity, uow: revocationPorts.revocation.uow, sessions: caseConfirmationPorts.sessions, ...(options.caseNowMs ? { nowMs: options.caseNowMs } : {}) },
         config,
         caseSessionKey,
       );
       writeResult(res, config, result);
+      return;
+    }
+
+    if (path === "/platform/case-session/logout") {
+      // API-CNS-193 (CA-139): logout de la sesion CASE; revoca el sid en servidor.
+      writeResult(res, config, await handleCaseLogout(request, caseConfirmationPorts, config, caseSessionKey));
       return;
     }
 

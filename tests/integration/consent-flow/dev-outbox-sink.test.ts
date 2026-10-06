@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
+import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
@@ -57,6 +58,7 @@ test("TEST-CNS-881: storeMode=postgres sin devOutboxSink responde 404 (nunca Typ
       ports,
       environment: "LOCAL",
       storeMode: "postgres",
+      caseSessions: createInMemoryCaseSessionStore(), // CA-139: storeMode=postgres exige el registro de sesiones CASE
       ...(sink ? { devOutboxSink: sink } : {}),
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));

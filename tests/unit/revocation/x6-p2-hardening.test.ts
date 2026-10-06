@@ -10,7 +10,8 @@ import { createInMemoryDownstreamStub } from "../../../src/infra/adapters/in-mem
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import { handleApproveCaseVerification } from "../../../src/server/entrypoints/http/case-confirmation.handler.ts";
-import { encodeCaseSession } from "../../../src/server/entrypoints/http/case-session.ts";
+import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
+import { issueCaseSession } from "../../../src/server/entrypoints/http/case-session.ts";
 import { loadRightsCaseHttpConfig } from "../../../src/server/entrypoints/http/config.ts";
 import { deriveOtpChannelRefKey, opaqueChannelRef } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
 import { opaqueUuidV4 } from "../../../src/server/modules/common/opaque-ref.ts";
@@ -36,10 +37,12 @@ test("TEST-CNS-1004 P2-1: la aprobación RH2 HTTP solo queda ATTESTED en LOCAL; 
 
     const config = loadRightsCaseHttpConfig({ allowedOrigin: "http://consola.test.localhost" });
     const key = randomBytes(32);
-    const csrf = "csrf-token-sintetico-1004";
-    const cookie = `${config.caseSessionCookieName}=${encodeCaseSession(key, { tenantId: T, caseRef, principalRef: RH2_APPROVER, role: "APPROVER" })}; ${config.caseCsrfCookieName}=${csrf}`;
+    const sessions = createInMemoryCaseSessionStore();
+    const issued = await issueCaseSession({ sessions, caseSessionKey: key }, { tenantId: T, caseRef, principalRef: RH2_APPROVER, role: "APPROVER" });
+    const csrf = issued.csrfToken;
+    const cookie = `${config.caseSessionCookieName}=${issued.cookieValue}; ${config.caseCsrfCookieName}=${csrf}`;
     const request = { originHeader: config.allowedOrigin, csrfHeaderToken: csrf, cookieHeader: cookie, body: { stepUpAssertion: "stub" } };
-    const result = await handleApproveCaseVerification(request, caseRef, proposalRef, { revocation: env.ports, staffIdentity: RH2_ROSTER }, config, key, environment as Environment);
+    const result = await handleApproveCaseVerification(request, caseRef, proposalRef, { revocation: env.ports, staffIdentity: RH2_ROSTER, sessions }, config, key, environment as Environment);
     assert.equal(result.status, 200, environment);
     assert.deepEqual(result.body, { attestation: expected, revocationState: state }, environment);
     assert.equal((await env.ports.revocationRepo.findByRef(T, revocationRef))?.status, state, environment);

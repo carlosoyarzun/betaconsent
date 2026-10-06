@@ -22,3 +22,14 @@ export const APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS = 30 * 60_000;
 
 /** Las filas de sesión STAFF expiradas se conservan 24 h tras su `exp` antes de la limpieza (Carlos, 2026-10-05). */
 export const APPROVED_STAFF_SESSION_PURGE_RETENTION_MS = 24 * 60 * 60_000;
+
+// Sesión CASE (`__Host-cns-case`, case-session.ts; CA-139, SEC-CNS-018 rev. 2 D-3). Aprobados por Carlos, 2026-10-06 (mismos plazos que STAFF).
+
+/** Vida ABSOLUTA de la sesión CASE (exp = iat + este valor) = 8 h (Carlos, 2026-10-06). */
+export const APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS = 8 * 60 * 60_000;
+
+/** Expiración por INACTIVIDAD de la sesión CASE = 30 min sin request válido (Carlos, 2026-10-06). */
+export const APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS = 30 * 60_000;
+
+/** Las filas de sesión CASE expiradas se conservan 24 h tras su `exp` antes de la limpieza (Carlos, 2026-10-06). */
+export const APPROVED_CASE_SESSION_PURGE_RETENTION_MS = 24 * 60 * 60_000;
