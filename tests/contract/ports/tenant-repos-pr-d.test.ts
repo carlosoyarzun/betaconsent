@@ -31,3 +31,5 @@ function makeInMemoryHarness(): TenantReposPrDHarness {
 runTenantReposPrDContract("in-memory", (name, body) => {
   test(name, () => body(makeInMemoryHarness()));
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-102, TEST-CNS-831, TEST-CNS-832, TEST-CNS-833, TEST-CNS-834, TEST-CNS-835, TEST-CNS-836, TEST-CNS-837 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).

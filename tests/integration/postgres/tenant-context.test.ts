@@ -105,3 +105,5 @@ pgTest("TEST-CNS-750 pg: app.current_tenant_id() es NULL sin tenant, con '' y de
   await assert.rejects(() => client.query("SELECT app.current_tenant_id()"), (e: unknown) => (e as { code?: string }).code === "22P02");
   await client.query("ROLLBACK");
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-102 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).
