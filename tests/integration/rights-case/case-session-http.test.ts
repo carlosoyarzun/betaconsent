@@ -319,3 +319,17 @@ test("TEST-CNS-1177 P2-3: el CSRF se valida antes del touch; una cookie robada s
     await fx.close();
   }
 });
+
+test("TEST-CNS-1183 ERR-SE-03 CASE: una sesion CASE valida con rol sin permiso (APPROVER en record_case_confirmation) recibe 403 ACTOR_NOT_ALLOWED, sin efecto", async () => {
+  const fx = await setUp("1183");
+  try {
+    const ap = await login(fx, APPROVER);
+    const res = await confirm(fx, ap);
+    assert.equal(res.status, 403);
+    assert.equal((await res.json() as { code: string }).code, "ACTOR_NOT_ALLOWED");
+    const op = await login(fx, OP1);
+    assert.equal((await confirm(fx, op)).status, 200, "el rol permitido si ejecuta");
+  } finally {
+    await fx.close();
+  }
+});

@@ -158,10 +158,8 @@ async function authenticate(
     if (err instanceof DomainError && err.code === "ERR-CM-09") return { ok: false, result: csrfRejected() };
     throw err;
   }
-  const auth = await authenticateStaffSession(request.cookieHeader, ports, config, staffSessionKey);
-  // CA-138: el token CSRF debe ser el de ESTA sesion (ligado al sid), no solo igual en cookie y cabecera.
-  if (auth.ok && !staffCsrfMatchesSession(staffSessionKey, auth.staff.sid, cookies[config.staffCsrfCookieName])) return { ok: false, result: csrfRejected() };
-  return auth;
+  // CA-138/CA-140: el token CSRF debe ser el de ESTA sesion (ligado al sid) y se valida antes del touch (GRD-SE-08).
+  return authenticateStaffSession(request.cookieHeader, ports, config, staffSessionKey, { value: cookies[config.staffCsrfCookieName] });
 }
 
 /**
@@ -175,7 +173,9 @@ export async function authenticateStaffSession(
   ports: Pick<StaffConsolePorts, "staffIdentity" | "sessions" | "nowMs">,
   config: RightsCaseHttpConfig,
   staffSessionKey: Buffer,
-): Promise<{ readonly ok: true; readonly staff: AuthenticatedStaff } | { readonly ok: false; readonly result: HttpResult }> {
+  /** CA-140 (GRD-SE-08): en metodos con efectos, la cookie CSRF cuyo valor debe ser el de ESTA sesion; se valida ANTES del touch. */
+  csrfCookieToken?: { readonly value: string | undefined },
+): Promise<{ readonly ok: true; readonly staff: AuthenticatedStaff } | { readonly ok: false; readonly result: HttpResult; readonly csrfRejected?: true }> {
   const cookies = parseCookies(cookieHeader);
   const nowMs = (ports.nowMs ?? Date.now)();
   // CA-138: firma + iat/exp (expiracion absoluta). Cualquier fallo = el mismo 404 uniforme, sin filtrar la causa.
@@ -186,6 +186,10 @@ export async function authenticateStaffSession(
   const principal = await ports.staffIdentity.findByPrincipalRef(session.principalRef);
   if (!principal || principal.role !== session.role || principal.tenantId === undefined || principal.tenantId !== session.tenantId) {
     return { ok: false, result: uniformNotFound() };
+  }
+  // CA-140 (GRD-SE-08, igual que CASE P2-3): el CSRF ligado al sid se valida ANTES del touch: una cookie robada sin CSRF valido no prolonga la inactividad.
+  if (csrfCookieToken !== undefined && !staffCsrfMatchesSession(staffSessionKey, session.sid, csrfCookieToken.value)) {
+    return { ok: false, result: csrfRejected(), csrfRejected: true };
   }
   // CA-138: registro servidor (mismo tenant, principal y rol; no revocada; sin exceder la inactividad; avanza la ultima actividad).
   // Revocada, vencida por inactividad, desconocida o de otro tenant: el mismo 404 uniforme.
