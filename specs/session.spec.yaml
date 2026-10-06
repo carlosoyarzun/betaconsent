@@ -1,0 +1,287 @@
+# Sesiones de consola STAFF y CASE (IT0). Gobierna: JIRA CA-140 (aprobado por Carlos, 2026-10-06); origen: P2-1 de la
+# revision de seguridad de CA-138. Especifica el comportamiento YA implementado en CA-138 (PR #53, STAFF) y CA-139 (PR #54, CASE);
+# no cambia comportamiento. Vive en specs/ (no en specs/state-machines/): el ciclo de vida de la sesion no es una maquina del
+# dominio de consentimiento (no emite eventos al ledger ni transiciona agregados) y h01-sm-checker rechaza specs desconocidas en
+# ese directorio. Cero PII. IT0: solo datos sinteticos (DEC-BR-014 §4).
+specId: SPEC-CNS-SESSION
+title: "Sesiones de consola STAFF (__Host-cns-staff) y CASE (__Host-cns-case): emision, validacion, CSRF, logout, almacenamiento"
+version: "0.1.0"
+status: PROPOSED
+jiraStory: CA-140
+owner: lampone-dev
+reviewers:
+  - lampone-security # contenido de seguridad; los FINDINGs de findings[] requieren su revision
+  - lampone-qa # IDs de test; findings F-SE-01..F-SE-04
+  - carlosoyarzun # human gate: cierre de la spec
+humanGate: "Solo Carlos cierra esta spec (status PROPOSED hasta revision humana)."
+commonSpec: specs/state-machines/common.spec.yaml
+governedBy:
+  - "CA-138 (Carlos, 2026-10-05): sesion STAFF; SEC-CNS-018 rev. 2 D-3, SEC-CNS-020 P2-3"
+  - "CA-139 (Carlos, 2026-10-06): sesion CASE; P1-1 de la revision de seguridad de CA-138"
+  - "CA-140 (Carlos, 2026-10-06): esta especificacion"
+  - "common.spec.yaml GRD-CM-01 (404 uniforme), GRD-CM-07 (rol), GRD-CM-10 (CSRF + Origin), GRD-CM-12 (reloj del servidor), GRD-CM-13 (dev-login solo LOCAL), INV-CM-02 (tenant_id unica clave), INV-CM-08 (GET no transiciona)"
+  - "contracts/openapi/consent-it0.openapi.yaml securitySchemes.staffSession / caseSession; API-CNS-116, API-CNS-192, API-CNS-193"
+  - "ADR-006 §1/§4-§6 (RLS por tenant); ADR-001 §11 (puertos y adaptadores)"
+codeRefs:
+  - src/server/entrypoints/http/staff-session.ts
+  - src/server/entrypoints/http/case-session.ts
+  - src/server/entrypoints/http/staff-console.handler.ts
+  - src/server/entrypoints/http/case-confirmation.handler.ts
+  - src/server/ports/staff-session-store.port.ts
+  - src/server/ports/case-session-store.port.ts
+  - src/server/modules/common/approved-parameters.ts
+  - db/migrations/0021_staff_session.sql
+  - db/migrations/0022_case_session.sql
+
+scope:
+  included:
+    - "Sesion STAFF (roles TENANT_ADMIN, RIGHTS_OPERATOR, APPROVER; tenant derivado del roster atestado)"
+    - "Sesion CASE (roles RIGHTS_OPERATOR, APPROVER; ligada a un caseRef)"
+  excluded:
+    - "Sesion PLATFORM (platformSession) y consent-session / recovery-handle / link-handle: otros mecanismos"
+    - "IdP real, step-up criptografico y MFA: APR-IDP PENDING (Carlos / studio)"
+    - "Auditoria de login/logout: CA-141 (ver residuals R-SE-04)"
+    - "Quien tiene autoridad legal para operar la consola: LD-03, no se resuelve aqui (LEGAL DECISION)"
+
+# Parametros APROBADOS por Carlos. Fuente unica en codigo: approved-parameters.ts. Cualquier otro valor es fail-closed.
+parameters:
+  STAFF:
+    approvedBy: "Carlos, 2026-10-05"
+    absoluteTtl: "8 h (APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS = 8*60*60_000)"
+    idleTimeout: "30 min (APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS)"
+    purgeRetention: "24 h tras exp (APPROVED_STAFF_SESSION_PURGE_RETENTION_MS)"
+  CASE:
+    approvedBy: "Carlos, 2026-10-06"
+    absoluteTtl: "8 h (APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS)"
+    idleTimeout: "30 min (APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS)"
+    purgeRetention: "24 h tras exp (APPROVED_CASE_SESSION_PURGE_RETENTION_MS)"
+  common:
+    sidBytes: 32 # 256 bits CSPRNG, base64url, 43 caracteres (patron ^[A-Za-z0-9_-]{43}$)
+    touchGranularity: "60 s (STAFF_SESSION_TOUCH_GRANULARITY_MS; mismo valor en CASE)"
+    clock: "Reloj del servidor, inyectable en tests (GRD-CM-12); nunca el del cliente"
+    cookieAttributes: "Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age = TTL absoluto en segundos (prefijo __Host-)"
+    distinctKeys:
+      STAFF: "HKDF-SHA256(sessionSecret, info 'CNS-STAFF-SESSION-v1'); CSRF: HKDF(claveSesion, info 'CNS-STAFF-CSRF-v1'); flash: info 'CNS-STAFF-UI-FLASH-v1'"
+      CASE: "HKDF-SHA256(sessionSecret, info 'CNS-CASE-SESSION-v1'); CSRF: HKDF(claveSesion, info 'CNS-CASE-CSRF-v1')"
+
+cookies:
+  STAFF:
+    session: "__Host-cns-staff = base64url(JSON {sid, tenantId, principalRef, role, iat, exp}).HMAC-SHA256"
+    csrf: "__Host-cns-staff-csrf"
+    flash: "__Host-cns-staff-flash (solo UI; ligada a sha256(sid))"
+  CASE:
+    session: "__Host-cns-case = base64url(JSON {sid, tenantId, caseRef, principalRef, role, iat, exp}).HMAC-SHA256"
+    csrf: "__Host-cns-case-csrf"
+  payloadRule: "Solo refs opacas sinteticas; nunca correo, nombre, RUT ni sub de IdP."
+
+# El estado NO se almacena: solo existe revoked_at; los demas estados se derivan por request de (exp, last_seen_at, now).
+lifecycle:
+  note: >
+    ISSUED y ACTIVE son el mismo estado en la implementacion (el registro nace con last_seen_at = issued_at y valida de inmediato);
+    se declara una sola etapa ACTIVE. EXPIRED, IDLE_EXPIRED y REVOKED son terminales y nunca vuelven a ACTIVE (el reloj es monotono
+    por contrato y revoked_at es de un solo sentido). PURGED = fila borrada tras la retencion.
+  states: [ACTIVE, EXPIRED, IDLE_EXPIRED, REVOKED, PURGED]
+  initial: ACTIVE
+  terminal: [EXPIRED, IDLE_EXPIRED, REVOKED, PURGED]
+  transitions:
+    - id: SE0
+      name: issue
+      from: null
+      to: ACTIVE
+      trigger: "login (hoy solo dev-login LOCAL, GRD-CM-13; sin IdP: APR-IDP PENDING)"
+      effects: "Crea registro (solo sid_hash); si trae cookie previa de firma valida, revoca su sid (SE3); purga oportunista (SE5); Set-Cookie sesion + CSRF"
+      guards: [GRD-SE-01, GRD-SE-02, GRD-SE-10, GRD-SE-11, GRD-SE-13]
+    - id: SE1
+      name: validate_and_touch
+      from: ACTIVE
+      to: ACTIVE
+      trigger: "cualquier request autenticada"
+      effects: "Avanza last_seen_at a now solo si el valor guardado es anterior a now - 60 s"
+      guards: [GRD-SE-03, GRD-SE-04, GRD-SE-05, GRD-SE-06, GRD-SE-07, GRD-SE-08]
+    - id: SE2a
+      name: absolute_expiry
+      from: ACTIVE
+      to: EXPIRED
+      trigger: "now >= exp (derivado; la cookie firmada y el registro lo dicen)"
+      guards: [GRD-SE-03, GRD-SE-04]
+    - id: SE2b
+      name: idle_expiry
+      from: ACTIVE
+      to: IDLE_EXPIRED
+      trigger: "last_seen_at < now - 30 min (derivado)"
+      guards: [GRD-SE-04, GRD-SE-05]
+    - id: SE3
+      name: revoke
+      from: ACTIVE
+      to: REVOKED
+      trigger: "logout (API-CNS-192 / API-CNS-193) o rotacion en un login posterior del mismo navegador"
+      guards: [GRD-SE-02, GRD-SE-09, GRD-SE-11]
+    - id: SE5
+      name: purge
+      from: [EXPIRED, IDLE_EXPIRED, REVOKED]
+      to: PURGED
+      trigger: "purgeExpired del tenant en un login: filas con exp < now - 24 h"
+      guards: [GRD-SE-10, GRD-SE-11]
+  neverRevive: "Ninguna transicion sale de un estado terminal (INV-SE-02)."
+  uniformFailure: "Cualquier request cuya sesion no este ACTIVE recibe el mismo 404 uniforme (GRD-CM-01), sin filtrar la causa."
+
+guards:
+  - id: GRD-SE-01
+    name: sid_issuance
+    applies: [STAFF, CASE]
+    rule: "sid = 32 bytes CSPRNG (base64url, 43 car.), nuevo en cada login (nunca se reutiliza ni se adopta uno de la cookie); iat = now del servidor; exp = iat + 8 h. El registro persiste SOLO sha256 hex del sid (nunca el sid en claro). Cookie firmada HMAC con la clave HKDF propia de la consola."
+    onFail: "n/a (fallo de emision = error del servidor, sin cookie)"
+    governedBy: ["CA-138", "CA-139", "SEC-CNS-018 rev. 2 D-3", "GRD-CM-12"]
+    testIds: [TEST-CNS-1140, TEST-CNS-1160]
+  - id: GRD-SE-02
+    name: rotation_on_login
+    applies: [STAFF, CASE]
+    rule: "Login con cookie previa de firma valida revoca ese sid en servidor antes de emitir el nuevo (anti fixation). Login sin cookie, o con cookie de firma invalida impuesta por un atacante, no revoca ni adopta nada y no toca otras sesiones."
+    onFail: "n/a"
+    governedBy: ["CA-138", "CA-139", "SEC-CNS-018"]
+    testIds: [TEST-CNS-1146, TEST-CNS-1167]
+  - id: GRD-SE-03
+    name: cookie_signature_and_absolute_expiry
+    applies: [STAFF, CASE]
+    rule: "Formato body.mac; MAC HMAC-SHA256 comparado en tiempo constante; campos con tipo valido (sid con patron, rol conocido: STAFF {TENANT_ADMIN, RIGHTS_OPERATOR, APPROVER}, CASE {RIGHTS_OPERATOR, APPROVER}); exp > iat; iat <= now < exp. Cualquier fallo = sin sesion. El logout valida solo firma (sin now) para poder revocar una cookie ya vencida."
+    onFail: ERR-CM-01 # 404 uniforme (GRD-CM-01)
+    governedBy: ["GRD-CM-01", "GRD-CM-12", "CA-138", "CA-139"]
+    testIds: [TEST-CNS-1140, TEST-CNS-1160, TEST-CNS-1145, TEST-CNS-1165]
+  - id: GRD-SE-04
+    name: server_record_valid
+    applies: [STAFF, CASE]
+    rule: "validateAndTouch es ATOMICO y verdadero solo si el registro existe en ESE tenant (RLS; un sid de otro tenant no existe), principal y rol coinciden (CASE ademas caseRef), revoked_at es nulo, expires_at > now y la inactividad no se supero. CASE ademas exige que session.caseRef == caseRef del path. Cualquier otro caso devuelve false sin distinguir la causa."
+    onFail: ERR-CM-01 # 404 uniforme
+    governedBy: ["GRD-CM-01", "INV-CM-02", "CA-138", "CA-139"]
+    testIds: [TEST-CNS-1141, TEST-CNS-1142, TEST-CNS-1145, TEST-CNS-1161, TEST-CNS-1162, TEST-CNS-1165, TEST-CNS-1169]
+  - id: GRD-SE-05
+    name: idle_timeout_and_touch_granularity
+    applies: [STAFF, CASE]
+    rule: "Inactividad maxima 30 min (deslizante). last_seen_at solo se ESCRIBE si el valor guardado es anterior a now - 60 s; dentro de la ventana valida sin escribir. La sesion puede expirar hasta 60 s antes que lo exacto, nunca despues. exp absoluta no se extiende con la actividad."
+    onFail: ERR-CM-01
+    governedBy: ["CA-138 P2-4", "CA-139"]
+    testIds: [TEST-CNS-1153, TEST-CNS-1163, TEST-CNS-1175, TEST-CNS-1145, TEST-CNS-1165]
+  - id: GRD-SE-06
+    name: roster_reverification_per_request
+    applies: [STAFF, CASE]
+    rule: "En CADA request el principal debe seguir en el roster atestado (StaffIdentityPort.findByPrincipalRef) con el mismo rol. STAFF ademas exige principal.tenantId == session.tenantId. CASE no compara tenant del principal (los roles CASE no tienen tenant propio, staff-identity.port.ts); el tenant lo fija el registro (RLS) y el caseRef. Discrepancia = sin sesion."
+    onFail: ERR-CM-01
+    governedBy: ["GRD-CM-01", "GRD-CM-02", "GRD-CM-07", "CA-139 P2-1"]
+    testIds: [TEST-CNS-1176]
+    testNotes: "STAFF no tiene test dedicado de baja del roster con sesion vigente: ver F-SE-01."
+  - id: GRD-SE-07
+    name: csrf_bound_to_sid
+    applies: [STAFF, CASE]
+    rule: "CSRF = base64url(HMAC-SHA256(HKDF(claveSesion, info CSRF propia), sid)). Ademas del double-submit cookie==cabecera/campo y Origin exacto (GRD-CM-10), el valor debe ser el de ESTA sesion (comparacion en tiempo constante): un token de otra sesion, aunque cookie y cabecera coincidan, se rechaza. Un GET STAFF no exige CSRF (INV-CM-08; su defensa es Sec-Fetch-Site/Origin)."
+    onFail: ERR-CM-09 # 403 CSRF_REJECTED
+    governedBy: ["GRD-CM-10", "INV-CM-08", "CA-138", "CA-139", "SEC-CNS-020 P2-3"]
+    testIds: [TEST-CNS-1147, TEST-CNS-1168, TEST-CNS-1140, TEST-CNS-1160]
+  - id: GRD-SE-08
+    name: csrf_before_touch
+    applies: [CASE]
+    rule: "CASE: el CSRF ligado al sid se valida ANTES de validateAndTouch, tras firma, caseRef y roster: una cookie robada sin CSRF valido no prolonga la inactividad. STAFF: NO se cumple en POST (authenticateStaffSession toca antes de comprobar el CSRF ligado al sid): ver F-SE-02."
+    onFail: ERR-CM-09
+    governedBy: ["CA-139 P2-3", "GRD-CM-10"]
+    testIds: [TEST-CNS-1177]
+    testNotes: "STAFF: sin implementacion ni test (F-SE-02)."
+  - id: GRD-SE-09
+    name: logout
+    applies: [STAFF, CASE]
+    rule: "POST /staff/logout (API-CNS-192, JSON; la variante HTML de formulario responde 303 con el mismo gating) y POST /platform/case-session/logout (API-CNS-193): exigen CSRF double-submit + Origin (GRD-CM-10); si la cookie trae una sesion de firma valida, el token debe ser el de ESA sesion (403 y NO revoca). Revoca el sid en servidor (la cookie robada deja de servir de inmediato) y responde 200 con cuerpo {} (esquema additionalProperties:false), Cache-Control: no-store y Set-Cookie Max-Age=0 para sesion, CSRF y (STAFF) flash. Idempotente: sin sesion valida solo borra cookies."
+    onFail: ERR-CM-09 # 403 CSRF_REJECTED (cabecera/cookie ausente o desigual, o token de otra sesion)
+    governedBy: ["API-CNS-192", "API-CNS-193", "GRD-CM-10", "CA-138", "CA-139"]
+    testIds: [TEST-CNS-1143, TEST-CNS-1147, TEST-CNS-1166, TEST-CNS-1168]
+  - id: GRD-SE-10
+    name: purge_expired
+    applies: [STAFF, CASE]
+    rule: "En cada login se borran las filas del tenant con expires_at < now - 24 h (solo expiradas tras retencion; una vigente o revocada-no-expirada nunca se borra). Es best-effort: un fallo NO impide el login y se registra SOLO nombre y codigo del error (formato `<kind>_session_purge_failed name=<Error.name> code=<codigo opcional>`), nunca sid, hash, refs ni mensaje de la base."
+    onFail: "n/a (best-effort)"
+    governedBy: ["CA-138 P2-6", "CA-139", "DEC-BR-014 §4"]
+    testIds: [TEST-CNS-1142, TEST-CNS-1162, TEST-CNS-1145, TEST-CNS-1154, TEST-CNS-1164, TEST-CNS-1148, TEST-CNS-1172]
+  - id: GRD-SE-11
+    name: storage_integrity
+    applies: [STAFF, CASE]
+    rule: "app.staff_session (0021) / app.case_session (0022): PK (tenant_id, sid_hash); sid_hash ~ ^[0-9a-f]{64}$; principal_ref opaco con CHECK; rol enum; case_ref longitud 1..100 (solo CASE); RLS ENABLE + FORCE por app.current_tenant_id() (SELECT/INSERT/UPDATE/DELETE por policy); sin roles nuevos (app_rw); grants por columna: INSERT de columnas fijas y UPDATE solo de (last_seen_at, revoked_at); DELETE solo de filas con expires_at < now() (policy); revocacion de un solo sentido por trigger ENABLE ALWAYS; CHECK last_seen_at en [issued_at, expires_at] y expires_at > issued_at; data_class = 'SYNTHETIC' sin grant de columna. Una migracion mergeada nunca se reescribe (cambios en migracion nueva)."
+    onFail: "violacion de CHECK/trigger/RLS de la base (fail-closed)"
+    governedBy: ["INV-CM-02", "ADR-006", "ADR-002 §2", "CA-138 P2-5", "CA-139"]
+    testIds: [TEST-CNS-1148, TEST-CNS-1152, TEST-CNS-1172, TEST-CNS-1173, TEST-CNS-1151, TEST-CNS-1174]
+  - id: GRD-SE-12
+    name: derived_bindings
+    applies: [STAFF]
+    rule: "Cursor de GET /staff/roster (API-CNS-116) cifrado con AAD canonico [version, tenantId, principalRef, role, sid, 'GET /staff/roster']: el cursor de otra sesion no descifra (422 LIST_QUERY_INVALID, ERR-CM-13). Cookie flash lleva sha256(sid): no sirve con otra sesion ni tras un nuevo login."
+    onFail: ERR-CM-13 # cursor; flash invalida se ignora
+    governedBy: ["API-CNS-116", "SEC-CNS-018 rev. 2 D-3", "SEC-CNS-020"]
+    testIds: [TEST-CNS-1144, TEST-CNS-1149]
+  - id: GRD-SE-13
+    name: issuance_only_dev_login_local
+    applies: [STAFF, CASE]
+    rule: "Unica via de emision hoy: dev-login, solo LOCAL (GRD-CM-13), con el mismo emisor (issueStaffSession / issueCaseSession) y sin privilegios extra. Almacen y logs sin sid, cookie, correo ni PII. CASE: storeMode=postgres exige `caseSessions` inyectado (fail-closed; nunca sesion en memoria sobre una base real)."
+    onFail: "404 uniforme fuera de LOCAL; arranque falla sin caseSessions"
+    governedBy: ["GRD-CM-13", "DEC-BR-014 §4", "APR-IDP PENDING", "CA-138", "CA-139"]
+    testIds: [TEST-CNS-1150, TEST-CNS-1170, TEST-CNS-1171]
+
+errors:
+  - id: ERR-SE-01
+    response: "404 uniforme (cuerpo identico): firma/exp/idle/revocada/desconocida/otro tenant/otro principal/otro rol/otro caseRef/roster discrepante. Reusa GRD-CM-01 / ERR-CM-01."
+    testIds: [TEST-CNS-1145, TEST-CNS-1165, TEST-CNS-1169, TEST-CNS-1176]
+  - id: ERR-SE-02
+    response: "403 CSRF_REJECTED (ERR-CM-09): cabecera/cookie CSRF ausente o desigual, o token de OTRA sesion (valida de firma). Unico fallo distinguible del 404 uniforme; solo lo ve quien ya posee una cookie de firma valida."
+    testIds: [TEST-CNS-1147, TEST-CNS-1168]
+  - id: ERR-SE-03
+    response: "403 ACTOR_NOT_ALLOWED (ERR-CM-10): sesion valida con rol sin permiso para la ruta (p. ej. STAFF no TENANT_ADMIN en /staff/* de EN0/I1-I3; CASE APPROVER en record_case_confirmation), GRD-CM-07."
+    testIds: []
+    testNotes: "Sin test dedicado en TEST-CNS-1140..1177 (rol incorrecto con sesion valida): F-SE-01."
+
+invariants:
+  - id: INV-SE-01
+    statement: "El sid en claro vive solo en la cookie del navegador y en memoria del proceso por request; el servidor persiste y registra unicamente sha256(sid). Ni logs, ni almacen, ni URL, ni analytics, ni flash contienen el sid ni PII."
+    testIds: [TEST-CNS-1148, TEST-CNS-1150, TEST-CNS-1151, TEST-CNS-1170, TEST-CNS-1172, TEST-CNS-1174]
+  - id: INV-SE-02
+    statement: "Una sesion revocada o expirada nunca vuelve a ser valida: revoked_at es de un solo sentido (trigger) y validateAndTouch rechaza revocada, vencida e inactiva sin escribir."
+    testIds: [TEST-CNS-1141, TEST-CNS-1148, TEST-CNS-1161, TEST-CNS-1172, TEST-CNS-1175]
+  - id: INV-SE-03
+    statement: "Aislamiento por tenant_id: un sid de otro tenant no existe para este (ni valida ni revoca ni se purga); tenant_id es la unica clave (INV-CM-02)."
+    testIds: [TEST-CNS-1142, TEST-CNS-1148, TEST-CNS-1151, TEST-CNS-1162, TEST-CNS-1172, TEST-CNS-1174, TEST-CNS-1169]
+  - id: INV-SE-04
+    statement: "Separacion de claves: firma de sesion, CSRF y flash usan claves HKDF con info distintos entre STAFF, CASE y las demas cookies del repo; comprometer una firma no compromete las demas."
+    testIds: []
+    testNotes: "Sin test que compare las claves entre consolas (1140/1160 solo prueban 'otra clave de sesion' no valida): F-SE-03."
+
+residuals:
+  - id: R-SE-01
+    statement: "Carrera logout <-> dominio: una request en vuelo que ya paso la validacion puede completar su efecto de dominio tras el commit del logout; no hay bloqueo entre revocacion y unidad de trabajo de dominio."
+    acceptedFor: "IT0 sintetico"
+  - id: R-SE-02
+    statement: "case_ref de la sesion CASE solo se valida por longitud (1..100) en la base; la ligadura real al caso es la comparacion con el path y el registro, no un FK."
+    acceptedFor: "IT0 sintetico"
+  - id: R-SE-03
+    statement: "stepUp / MFA: sin verificacion criptografica hasta APR-IDP (PENDING - Carlos / studio); la sesion IT0 la emite solo dev-login LOCAL."
+    acceptedFor: "IT0 sintetico"
+  - id: R-SE-04
+    statement: "Login y logout no generan auditoria (ni ledger ni ops.access_log): se trata en CA-141."
+    acceptedFor: "IT0 sintetico; pendiente CA-141"
+  - id: R-SE-05
+    statement: "Los GET autenticados de STAFF no exigen CSRF (INV-CM-08), por lo que una cookie robada puede prolongar la inactividad con GET hasta la exp absoluta de 8 h; solo el logout y las escrituras estan protegidas por el CSRF ligado al sid."
+    acceptedFor: "IT0 sintetico; propuesto, requiere ratificacion de Carlos"
+
+findings:
+  - id: F-SE-01
+    severity: P2
+    kind: "guard sin test"
+    statement: "GRD-SE-06 en STAFF (re-verificacion del roster en cada request: principal dado de baja o con otro rol/tenant con sesion vigente = 404) esta implementado en authenticateStaffSession pero ningun TEST-CNS-1140..1154 lo ejercita; CASE si (TEST-CNS-1176). Tampoco hay test dedicado de ERR-SE-03 con sesion valida."
+    action: "lampone-qa: test de integracion STAFF analogo a TEST-CNS-1176."
+  - id: F-SE-02
+    severity: P2
+    kind: "asimetria spec<->code STAFF/CASE"
+    statement: "CASE valida el CSRF ligado al sid antes del touch (CA-139 P2-3); STAFF lo valida DESPUES (staff-console.handler.ts authenticate(): authenticateStaffSession toca last_seen_at y luego staffCsrfMatchesSession; igual en staff-ui.handler.ts). Una cookie STAFF robada sin CSRF valido prolonga la inactividad en POST. GRD-SE-08 queda especificado solo para CASE."
+    action: "lampone-dev/security: llevar el orden de CASE a STAFF (cambio de codigo + test) o aceptar como residual; decision de lampone-security."
+  - id: F-SE-03
+    severity: P2
+    kind: "invariante sin test"
+    statement: "INV-SE-04 (separacion de claves HKDF entre consolas/cookies) no tiene test."
+    action: "lampone-qa: test unit que verifique claves y tokens CSRF distintos para el mismo secreto entre STAFF y CASE."
+  - id: F-SE-04
+    severity: P2
+    kind: "contrato sin test dedicado"
+    statement: "No hay test de contrato OpenAPI que cubra API-CNS-192 (STAFF); API-CNS-193 se ejerce en case-session-http.test.ts (TEST-CNS-1166) y 192 en TEST-CNS-1143 como comportamiento, no como esquema."
+    action: "lampone-qa: ampliar el contrato HTTP (tests/contract/http) a 192/193."
