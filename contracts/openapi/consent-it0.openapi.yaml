@@ -1290,6 +1290,11 @@ paths:
             application/json:
               schema: {type: object, additionalProperties: false}
         '403': {$ref: '#/components/responses/CsrfRejected'}
+        '503':
+          description: CA-141 (ERR-SE-04, ERR-CM-12 GUARD_EVALUATOR_UNAVAILABLE) — no se pudo escribir el evento de seguridad del logout. La sesión NO se revoca y NO hay Set-Cookie ni borrado de cookies (fail-closed); reintentar.
+          content:
+            application/problem+json:
+              schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
   /platform/case-session/logout:
     post:
       operationId: logoutCaseSession
@@ -1317,6 +1322,11 @@ paths:
             application/json:
               schema: {type: object, additionalProperties: false}
         '403': {$ref: '#/components/responses/CsrfRejected'}
+        '503':
+          description: CA-141 (ERR-SE-04, ERR-CM-12 GUARD_EVALUATOR_UNAVAILABLE) — no se pudo escribir el evento de seguridad del logout. La sesión NO se revoca y NO hay Set-Cookie ni borrado de cookies (fail-closed); reintentar.
+          content:
+            application/problem+json:
+              schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
   /staff/rights-reports:
     post:
       operationId: reportSchoolRevocationIntent
