@@ -4,10 +4,12 @@ Código de producto de la Consent App.
 
 Gobierna: `REQ-CNS-###`, `API-CNS-###`, `RULE-CNS-###`.
 
-Estado: primeros slices verticales de dominio IT0 (CA-116), sin HTTP ni Postgres reales —
-solo puertos e implementaciones in-memory (ADR-003 rev. 7: sin infraestructura hasta la
-historia correspondiente). Capas: `server/modules` (dominio), `server/ports` (interfaces),
-`infra/adapters` (in-memory IT0), siguiendo el guardrail de `tools/guardrails/ports-adapters/`.
+Estado: slices verticales de dominio IT0 con servidor HTTP real (`node:http`, un solo proceso;
+HTML server-rendered sin JS; desvíos AD-1…AD-4 de ADR-001, ver `registers/findings-register-IT0.md`)
+y adaptadores Postgres reales (`infra/adapters/postgres`, migraciones en `db/`) además de los
+in-memory. Solo datos sintéticos (IT0, DEC-BR-014). Capas: `server/modules` (dominio),
+`server/ports` (interfaces), `infra/adapters` (in-memory y Postgres), siguiendo el guardrail de
+`tools/guardrails/ports-adapters/`.
 
 ## Servidor de desarrollo (LOCAL)
 

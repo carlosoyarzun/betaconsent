@@ -11,4 +11,4 @@ tests de checkers de gobierno de specs (p. ej. `TEST-CNS-906`, checker H01 de m�
 estado, `tools/spec-checks/h01-sm-check.ts`; decisión de Carlos, 2026-09-27), no
 de dominio, y se retira cuando se retiran esos tests de ejemplo. Los `TEST-CNS-###` de
 dominio (numeración fuera de 900-999) los asigna `lampone-qa` junto con la spec/ADR que
-gobierna cada test real; siguen sin existir (pre-build de dominio).
+gobierna cada test real; los tests de dominio ya existen y figuran en `test-matrix.csv`.
