@@ -10,7 +10,8 @@
     "otp-challenge.spec.yaml events (stream: SECURITY)",
     "revocation.spec.yaml RECOVERY_TOKEN_ISSUED",
     "DEC-BR-017 §6 (fuera del ledger)",
-    "ADR-002 §3"
+    "ADR-002 §3",
+    "CA-141 (Carlos, 2026-10-06): eventos de sesion STAFF/CASE en ops.security_event (migracion 0025); NO son transitorios del ledger"
   ],
   "$defs": {
     "OTP_ISSUED": {
@@ -215,6 +216,200 @@
         "trigger"
       ]
     },
+    "STAFF_LOGIN": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionKind": {
+          "const": "STAFF"
+        },
+        "sessionRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "actorRef": {
+          "type": "string",
+          "pattern": "^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+        },
+        "actorRole": {
+          "enum": [
+            "TENANT_ADMIN",
+            "RIGHTS_OPERATOR",
+            "APPROVER"
+          ]
+        }
+      },
+      "required": [
+        "sessionKind",
+        "sessionRef",
+        "actorRef",
+        "actorRole"
+      ],
+      "description": "CA-141: el actor va en el payload (el sobre no lo tiene, F-1). sessionRef es opaco (no sid ni hash)."
+    },
+    "STAFF_LOGOUT": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionKind": {
+          "const": "STAFF"
+        },
+        "sessionRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "actorRef": {
+          "type": "string",
+          "pattern": "^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+        },
+        "actorRole": {
+          "enum": [
+            "TENANT_ADMIN",
+            "RIGHTS_OPERATOR",
+            "APPROVER"
+          ]
+        }
+      },
+      "required": [
+        "sessionKind",
+        "sessionRef",
+        "actorRef",
+        "actorRole"
+      ],
+      "description": "CA-141: el actor va en el payload (el sobre no lo tiene, F-1). sessionRef es opaco (no sid ni hash)."
+    },
+    "CASE_LOGIN": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionKind": {
+          "const": "CASE"
+        },
+        "sessionRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "actorRef": {
+          "type": "string",
+          "pattern": "^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+        },
+        "actorRole": {
+          "enum": [
+            "RIGHTS_OPERATOR",
+            "APPROVER"
+          ]
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "sessionKind",
+        "sessionRef",
+        "actorRef",
+        "actorRole",
+        "caseRef"
+      ]
+    },
+    "CASE_LOGOUT": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionKind": {
+          "const": "CASE"
+        },
+        "sessionRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "actorRef": {
+          "type": "string",
+          "pattern": "^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+        },
+        "actorRole": {
+          "enum": [
+            "RIGHTS_OPERATOR",
+            "APPROVER"
+          ]
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "sessionKind",
+        "sessionRef",
+        "actorRef",
+        "actorRole",
+        "caseRef"
+      ]
+    },
+    "SESSION_REVOKED_BY_ROTATION": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionKind": {
+          "enum": [
+            "STAFF",
+            "CASE"
+          ]
+        },
+        "sessionRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "actorRef": {
+          "type": "string",
+          "pattern": "^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+        },
+        "actorRole": {
+          "enum": [
+            "TENANT_ADMIN",
+            "RIGHTS_OPERATOR",
+            "APPROVER"
+          ]
+        },
+        "caseRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "sessionKind",
+        "sessionRef",
+        "actorRef",
+        "actorRole"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sessionKind": {
+                "const": "CASE"
+              }
+            },
+            "required": [
+              "sessionKind"
+            ]
+          },
+          "then": {
+            "required": [
+              "caseRef"
+            ],
+            "properties": {
+              "actorRole": {
+                "enum": [
+                  "RIGHTS_OPERATOR",
+                  "APPROVER"
+                ]
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "caseRef"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "CA-141: ROTATION sin LOGIN en la misma tx significa 'revocada por un intento de login' (la rotacion corre en dos tx)."
+    },
     "SecurityEvent": {
       "type": "object",
       "additionalProperties": false,
@@ -230,7 +425,12 @@
             "OTP_EXPIRED",
             "OTP_BUDGET_EXHAUSTED",
             "MANAGEMENT_TOKEN_ROTATED",
-            "RECOVERY_TOKEN_ISSUED"
+            "RECOVERY_TOKEN_ISSUED",
+            "STAFF_LOGIN",
+            "STAFF_LOGOUT",
+            "CASE_LOGIN",
+            "CASE_LOGOUT",
+            "SESSION_REVOKED_BY_ROTATION"
           ]
         },
         "schemaVersion": {
@@ -397,6 +597,101 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "STAFF_LOGIN"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/STAFF_LOGIN"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "STAFF_LOGOUT"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/STAFF_LOGOUT"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CASE_LOGIN"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/CASE_LOGIN"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "CASE_LOGOUT"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/CASE_LOGOUT"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
+                "const": "SESSION_REVOKED_BY_ROTATION"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/SESSION_REVOKED_BY_ROTATION"
+              }
+            }
+          }
         }
       ],
       "x-pending": [
@@ -404,5 +699,12 @@
         "LD-15 (retención)"
       ]
     }
-  }
+  },
+  "x-ops-only": [
+    "STAFF_LOGIN",
+    "STAFF_LOGOUT",
+    "CASE_LOGIN",
+    "CASE_LOGOUT",
+    "SESSION_REVOKED_BY_ROTATION"
+  ]
 }

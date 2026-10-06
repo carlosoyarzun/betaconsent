@@ -59,6 +59,8 @@ export type StaffUiErrorVariant =
   | "not-current" // participacion o estudio no vigente (AC-20)
   | "not-configured" // servicio no configurado, ERR-CM-12 (AC-20)
   | "list-unavailable" // 503 al leer la lista
+  | "logout-failed" // 503 al cerrar sesion: no se pudo registrar el evento de seguridad, la sesion SIGUE abierta (CA-141, D-3)
+  | "login-failed" // 503 al iniciar sesion: no se pudo registrar el evento de seguridad, no se abrio sesion (CA-141)
   | "query"; // 422 de la lista (cursor invalido/expirado)
 
 export type StaffUiView =
@@ -437,6 +439,18 @@ const ERROR_COPY: Readonly<Record<StaffUiErrorVariant, ErrorCopy>> = {
     title: "Algo salió mal de nuestro lado.",
     body: "Vuelve a intentarlo en unos minutos. Si sigue pasando, contacta a soporte.",
     action: { text: "Volver a la lista", href: STAFF_LIST_PATH },
+  },
+  "logout-failed": {
+    h1: "No se pudo cerrar sesión",
+    title: "No se pudo cerrar sesión, reintenta.",
+    body: "Tu sesión sigue abierta. Vuelve a intentarlo en unos minutos; si sigue pasando, contacta a soporte.",
+    action: { text: "Volver a la lista", href: STAFF_LIST_PATH },
+  },
+  "login-failed": {
+    h1: "No pudimos iniciar sesión",
+    title: "Algo salió mal de nuestro lado.",
+    body: "No se abrió ninguna sesión. Vuelve a intentarlo en unos minutos; si sigue pasando, contacta a soporte.",
+    action: { text: "Ir a la entrada", href: STAFF_ENTRY_PATH },
   },
   query: {
     h1: "No pudimos mostrar esa página",

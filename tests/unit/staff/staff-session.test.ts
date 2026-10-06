@@ -84,7 +84,7 @@ test("TEST-CNS-1140 issueStaffSession: iat/exp del reloj inyectado, registro con
   const stored = JSON.stringify(sessions.rows());
   assert.ok(!stored.includes(first.sid) && !stored.includes(first.cookieValue), "el sid en claro nunca se persiste");
   assert.ok(stored.includes(hashStaffSid(first.sid)));
-  assert.deepEqual(Object.keys(sessions.rows()[0]!).sort(), ["expiresAtMs", "issuedAtMs", "lastSeenAtMs", "principalRef", "revokedAtMs", "role", "sidHash", "tenantId"]);
+  assert.deepEqual(Object.keys(sessions.rows()[0]!).sort(), ["expiresAtMs", "issuedAtMs", "lastSeenAtMs", "principalRef", "revokedAtMs", "role", "sessionRef", "sidHash", "tenantId"]);
 
   // rotacion: un login con la cookie previa revoca ese sid y emite uno nuevo distinto
   now = T0 + 60_000;

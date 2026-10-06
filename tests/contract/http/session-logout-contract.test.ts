@@ -57,6 +57,7 @@ test("TEST-CNS-1185 contrato API-CNS-192: POST /staff/logout declara 200 {} y 40
   const schema = (ok["application/json"] as Rec).schema as Rec;
   assert.deepEqual([schema.type, schema.additionalProperties], ["object", false]);
   assert.deepEqual(((op.responses as Rec)["403"] as Rec).$ref, "#/components/responses/CsrfRejected");
+  assert.ok((op.responses as Rec)["503"], "CA-141: el contrato declara el 503 fail-closed (evento de seguridad no escrito)");
   const h = await start();
   try {
     const key = deriveStaffSessionKey(SECRET);
@@ -89,6 +90,7 @@ test("TEST-CNS-1186 contrato API-CNS-193: POST /platform/case-session/logout dec
   const schema = (ok["application/json"] as Rec).schema as Rec;
   assert.deepEqual([schema.type, schema.additionalProperties], ["object", false]);
   assert.deepEqual(((op.responses as Rec)["403"] as Rec).$ref, "#/components/responses/CsrfRejected");
+  assert.ok((op.responses as Rec)["503"], "CA-141: el contrato declara el 503 fail-closed (evento de seguridad no escrito)");
   const h = await start();
   try {
     const key = deriveCaseSessionKey(SECRET);

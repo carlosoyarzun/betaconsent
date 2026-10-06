@@ -137,7 +137,7 @@ export async function issueStaffSession(
   const now = (deps.nowMs ?? Date.now)();
   const ttl = deps.absoluteTtlMs ?? APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS;
   const previous = decodeStaffSession(deps.staffSessionKey, previousCookie);
-  if (previous !== null) await deps.sessions.revoke(previous.tenantId, hashStaffSid(previous.sid), now);
+  if (previous !== null) await deps.sessions.revoke(previous.tenantId, hashStaffSid(previous.sid), now, "ROTATION");
   const sid = newStaffSid();
   const payload: StaffSessionPayload = { sid, tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role, iat: now, exp: now + ttl };
   await deps.sessions.create({ tenantId: payload.tenantId, sidHash: hashStaffSid(sid), principalRef: payload.principalRef, role: payload.role, issuedAtMs: payload.iat, expiresAtMs: payload.exp });
@@ -157,6 +157,6 @@ export async function revokeStaffSessionCookie(
 ): Promise<StaffSessionPayload | null> {
   const session = decodeStaffSession(deps.staffSessionKey, cookieValue);
   if (session === null) return null;
-  await deps.sessions.revoke(session.tenantId, hashStaffSid(session.sid), (deps.nowMs ?? Date.now)());
+  await deps.sessions.revoke(session.tenantId, hashStaffSid(session.sid), (deps.nowMs ?? Date.now)(), "USER_LOGOUT");
   return session;
 }

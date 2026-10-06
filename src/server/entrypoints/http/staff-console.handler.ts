@@ -50,6 +50,7 @@ import {
   staffCsrfMatchesSession,
 } from "./staff-session.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
+import { isSecurityEventWriteError, securityEventUnavailable } from "./security-event-failure.ts";
 
 export interface StaffConsolePorts {
   readonly issuance: StaffIssuancePorts;
@@ -437,11 +438,18 @@ export async function handleDevStaffConsoleLogin(
   // CA-138: MISMO mecanismo de emision que cualquier sesion (sid nuevo + registro en servidor); si el navegador traia una sesion previa,
   // su sid se revoca (rotacion anti fixation). Sin privilegios extra respecto de la sesion normal.
   const previous = parseCookies(request.cookieHeader)[config.staffSessionCookieName];
-  const issued = await issueStaffSession(
-    { sessions: ports.sessions, staffSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) },
-    { tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role },
-    previous,
-  );
+  let issued: Awaited<ReturnType<typeof issueStaffSession>>;
+  try {
+    issued = await issueStaffSession(
+      { sessions: ports.sessions, staffSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) },
+      { tenantId: principal.tenantId, principalRef: principal.principalRef, role: principal.role },
+      previous,
+    );
+  } catch (error) {
+    // CA-141 (P1-2, D-3): sin evento de seguridad no hay sesion nueva ni Set-Cookie (fail-closed): 503, sin cookies.
+    if (isSecurityEventWriteError(error)) return securityEventUnavailable(error);
+    throw error;
+  }
   return {
     status: 200,
     body: { principalRef: principal.principalRef, role: principal.role },
@@ -475,7 +483,13 @@ export async function handleStaffLogout(
   }
   const session = decodeStaffSession(staffSessionKey, cookies[config.staffSessionCookieName]);
   if (session !== null && !staffCsrfMatchesSession(staffSessionKey, session.sid, cookies[config.staffCsrfCookieName])) return csrfRejected();
-  await revokeStaffSessionCookie({ sessions: ports.sessions, staffSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) }, cookies[config.staffSessionCookieName]);
+  try {
+    await revokeStaffSessionCookie({ sessions: ports.sessions, staffSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) }, cookies[config.staffSessionCookieName]);
+  } catch (error) {
+    // CA-141 (P1-2, D-3): logout fail-closed. Sin evento no se revoca (la tx se revierte) y NO se borran las cookies: 503 sin Set-Cookie.
+    if (isSecurityEventWriteError(error)) return securityEventUnavailable(error);
+    throw error;
+  }
   const expire = "Path=/; Secure; SameSite=Lax; Max-Age=0";
   return {
     status: 200,

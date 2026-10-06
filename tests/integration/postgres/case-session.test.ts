@@ -70,7 +70,7 @@ pgTest("TEST-CNS-1172 pg: app.case_session con FORCE RLS por tenant, grants mini
   const expectFail = async (label: string, values: unknown[], constraint: string): Promise<void> => {
     await admin.query("SAVEPOINT s");
     await assert.rejects(
-      () => admin.query("INSERT INTO app.case_session (tenant_id, sid_hash, case_ref, principal_ref, role, issued_at, expires_at, last_seen_at) VALUES ($1, $2, 'case-1172', $3, $4, now(), now() + interval '1 hour', now())", values),
+      () => admin.query("INSERT INTO app.case_session (tenant_id, sid_hash, case_ref, principal_ref, role, issued_at, expires_at, last_seen_at) VALUES ($1, $2, '41ac243f-097e-473f-9a95-d3b54b1c60c1', $3, $4, now(), now() + interval '1 hour', now())", values),
       (e: unknown) => codeOf(e) === "23514" && (e as { constraint?: string }).constraint === constraint,
       label,
     );
@@ -111,7 +111,7 @@ pgTest("TEST-CNS-1172 pg: app.case_session con FORCE RLS por tenant, grants mini
   const ins = (tenant: string, sid: string, ttl: string) =>
     rw.query(
       `INSERT INTO app.case_session (tenant_id, sid_hash, case_ref, principal_ref, role, issued_at, expires_at, last_seen_at)
-       VALUES ($1, $2, 'case-1172', 'staff-synthetic-01', 'RIGHTS_OPERATOR', now() - interval '2 days', now() + $3::interval, now() - interval '2 days')`,
+       VALUES ($1, $2, '41ac243f-097e-473f-9a95-d3b54b1c60c1', 'staff-synthetic-01', 'RIGHTS_OPERATOR', now() - interval '2 days', now() + $3::interval, now() - interval '2 days')`,
       [tenant, hex(sid), ttl],
     );
   await asTenant(A, async () => {
@@ -150,7 +150,7 @@ pgTest("TEST-CNS-1173 pg: CHECK last_seen_at dentro de [issued_at, expires_at]: 
     await rw.query("SELECT set_config('app.tenant_id', $1, true)", [T]);
     await rw.query(
       `INSERT INTO app.case_session (tenant_id, sid_hash, case_ref, principal_ref, role, issued_at, expires_at, last_seen_at)
-       VALUES ($1, $2, 'case-1172', 'staff-synthetic-01', 'RIGHTS_OPERATOR', now(), now() + interval '8 hours', now())`,
+       VALUES ($1, $2, '41ac243f-097e-473f-9a95-d3b54b1c60c1', 'staff-synthetic-01', 'RIGHTS_OPERATOR', now(), now() + interval '8 hours', now())`,
       [T, hex("ok")],
     );
     for (const [label, value] of [["futuro lejano", "now() + interval '100 years'"], ["pasado la exp", "now() + interval '9 hours'"], ["antes de la emision", "now() - interval '1 day'"]] as const) {
@@ -166,7 +166,7 @@ pgTest("TEST-CNS-1173 pg: CHECK last_seen_at dentro de [issued_at, expires_at]: 
     await assert.rejects(
       () => rw.query(
         `INSERT INTO app.case_session (tenant_id, sid_hash, case_ref, principal_ref, role, issued_at, expires_at, last_seen_at)
-         VALUES ($1, $2, 'case-1172', 'staff-synthetic-01', 'RIGHTS_OPERATOR', now(), now() + interval '8 hours', now() + interval '100 years')`,
+         VALUES ($1, $2, '41ac243f-097e-473f-9a95-d3b54b1c60c1', 'staff-synthetic-01', 'RIGHTS_OPERATOR', now(), now() + interval '8 hours', now() + interval '100 years')`,
         [T, hex("fut")],
       ),
       (e: unknown) => codeOf(e) === "23514",
@@ -186,9 +186,9 @@ pgTest("TEST-CNS-1175 pg: validateAndTouch solo escribe last_seen_at si esta atr
     const store = createPgCaseSessionStore(new PgUnitOfWork(pool, {}));
     const now = Date.now();
     const sidHash = hex("g");
-    await store.create({ tenantId: T, sidHash, caseRef: "case-1175", principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR", issuedAtMs: now, expiresAtMs: now + 8 * 3_600_000 });
+    await store.create({ tenantId: T, sidHash, caseRef: fixtureUuid("case-1175"), principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR", issuedAtMs: now, expiresAtMs: now + 8 * 3_600_000 });
     const lastSeen = async (): Promise<number> => Number((await admin.query<{ ms: string }>("SELECT (extract(epoch FROM last_seen_at) * 1000)::bigint::text AS ms FROM app.case_session WHERE sid_hash = $1", [sidHash])).rows[0]?.ms);
-    const v = (nowMs: number) => store.validateAndTouch({ tenantId: T, sidHash, caseRef: "case-1175", principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR", nowMs, idleTimeoutMs: 30 * 60_000 });
+    const v = (nowMs: number) => store.validateAndTouch({ tenantId: T, sidHash, caseRef: fixtureUuid("case-1175"), principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR", nowMs, idleTimeoutMs: 30 * 60_000 });
     const before = await lastSeen();
     assert.equal(await v(now + 10_000), true);
     assert.equal(await lastSeen(), before, "dentro de 60 s no se escribe");
@@ -197,7 +197,7 @@ pgTest("TEST-CNS-1175 pg: validateAndTouch solo escribe last_seen_at si esta atr
     assert.equal(await v(now + 61_000), true);
     assert.equal(await lastSeen(), now + 61_000, "pasada la granularidad se avanza");
     assert.equal(await v(now + 61_000 + 30 * 60_000 + 1), false, "inactividad correcta con esa granularidad");
-    await store.revoke(T, sidHash, now + 62_000);
+    await store.revoke(T, sidHash, now + 62_000, "USER_LOGOUT");
     assert.equal(await v(now + 70_000), false, "revocada no valida aunque este dentro de la ventana");
   } finally {
     await pool.end();

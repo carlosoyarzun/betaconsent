@@ -185,7 +185,7 @@ pgTest("TEST-CNS-1153 pg: validateAndTouch solo escribe last_seen_at si esta atr
     assert.equal(await v(now + 61_000), true);
     assert.equal(await lastSeen(), now + 61_000, "pasada la granularidad se avanza");
     assert.equal(await v(now + 61_000 + 30 * 60_000 + 1), false, "inactividad correcta con esa granularidad");
-    await store.revoke(T, sidHash, now + 62_000);
+    await store.revoke(T, sidHash, now + 62_000, "USER_LOGOUT");
     assert.equal(await v(now + 70_000), false, "revocada no valida aunque este dentro de la ventana");
   } finally {
     await pool.end();

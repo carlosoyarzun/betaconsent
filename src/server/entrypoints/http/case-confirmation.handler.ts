@@ -48,6 +48,7 @@ import {
 } from "./case-session.ts";
 import { serializeCsrfCookie } from "./csrf.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
+import { isSecurityEventWriteError, securityEventUnavailable } from "./security-event-failure.ts";
 
 export interface CaseConfirmationPorts {
   /** SEC-CNS-016: el caso se lee por `revocation.uow.inTenant` (nunca un repo suelto fuera de una tx). */
@@ -444,6 +445,8 @@ export interface DevStaffLoginPorts {
   readonly uow: UnitOfWorkPort;
 }
 
+const CASE_REF_UUIDV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 export async function handleDevStaffLogin(
   request: RawConsentRequest,
   environment: Environment,
@@ -465,6 +468,10 @@ export async function handleDevStaffLogin(
     return { status: 422, body: { status: 422 } };
   }
 
+  // CA-141 (P1-1): el caseRef es una Ref UUIDv4 (mismo CHECK que app.case_session.case_ref, 0024, y que ops.security_event.case_ref): se valida
+  // ANTES de emitir; asi toda sesion CASE se proyecta a un evento valido (INV-SE-06) y no hay 503 por un caseRef mal formado.
+  if (!CASE_REF_UUIDV4.test(caseRef)) return { status: 422, body: { status: 422 } };
+
   const principal = await ports.staffIdentity.findByPrincipalRef(principalRef);
   if (!principal) {
     return { status: 422, body: { status: 422 } };
@@ -482,11 +489,18 @@ export async function handleDevStaffLogin(
   // CA-139: MISMO mecanismo de emision que cualquier sesion CASE (sid nuevo + registro en servidor); si el navegador traia una sesion CASE
   // previa, su sid se revoca (rotacion anti fixation). Sin privilegios extra respecto de la sesion normal. Solo LOCAL (GRD-CM-13).
   const previous = parseCookies(request.cookieHeader)[config.caseSessionCookieName];
-  const issued = await issueCaseSession(
-    { sessions: ports.sessions, caseSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) },
-    { tenantId, caseRef, principalRef: principal.principalRef, role: principal.role },
-    previous,
-  );
+  let issued: Awaited<ReturnType<typeof issueCaseSession>>;
+  try {
+    issued = await issueCaseSession(
+      { sessions: ports.sessions, caseSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) },
+      { tenantId, caseRef, principalRef: principal.principalRef, role: principal.role },
+      previous,
+    );
+  } catch (error) {
+    // CA-141 (P1-2, D-3): sin evento de seguridad no hay sesion nueva ni Set-Cookie (fail-closed): 503, sin cookies.
+    if (isSecurityEventWriteError(error)) return securityEventUnavailable(error);
+    throw error;
+  }
   return {
     status: 200,
     body: { principalRef: principal.principalRef, role: principal.role },
@@ -511,7 +525,13 @@ export async function handleCaseLogout(
   const cookies = parseCookies(request.cookieHeader);
   const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName]);
   if (session !== null && !caseCsrfMatchesSession(caseSessionKey, session.sid, cookies[config.caseCsrfCookieName])) return csrfRejected();
-  await revokeCaseSessionCookie({ sessions: ports.sessions, caseSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) }, cookies[config.caseSessionCookieName]);
+  try {
+    await revokeCaseSessionCookie({ sessions: ports.sessions, caseSessionKey, ...(ports.nowMs ? { nowMs: ports.nowMs } : {}) }, cookies[config.caseSessionCookieName]);
+  } catch (error) {
+    // CA-141 (P1-2, D-3): logout fail-closed. Sin evento no se revoca (la tx se revierte) y NO se borran las cookies: 503 sin Set-Cookie.
+    if (isSecurityEventWriteError(error)) return securityEventUnavailable(error);
+    throw error;
+  }
   const expire = "Path=/; Secure; SameSite=Lax; Max-Age=0";
   return {
     status: 200,

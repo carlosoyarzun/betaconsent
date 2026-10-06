@@ -382,12 +382,18 @@ export function validateLedgerEventPayload(eventType: string, payload: unknown):
   return validateAgainstDef("ledger-event-payloads.schema.json", eventType, payload);
 }
 
+/** CA-141: valida un sobre completo `SecurityEvent` (API-CNS-184) de ops.security_event, con el payload por tipo. */
+export function validateSecurityEvent(envelope: unknown): ValidationResult {
+  return validateAgainstDef("security-event-payloads.schema.json", "SecurityEvent", envelope);
+}
+
 /** Defs del contrato por eventType, o null si el contrato no declara el tipo (ledger o stream SECURITY). */
 export function validateLedgerOrSecurityPayload(eventType: string, payload: unknown): ValidationResult | null {
   const ledgerDefs = SCHEMA_FILES["ledger-event-payloads.schema.json"]?.$defs as Record<string, unknown> | undefined;
   if (ledgerDefs && eventType in ledgerDefs) return validateAgainstDef("ledger-event-payloads.schema.json", eventType, payload);
   const securityDefs = SCHEMA_FILES["security-event-payloads.schema.json"]?.$defs as Record<string, unknown> | undefined;
-  if (securityDefs && eventType in securityDefs && eventType !== "SecurityEvent") {
+  const opsOnly = ((SCHEMA_FILES["security-event-payloads.schema.json"] as Record<string, unknown>)["x-ops-only"] as string[] | undefined) ?? [];
+  if (securityDefs && eventType in securityDefs && eventType !== "SecurityEvent" && !opsOnly.includes(eventType)) {
     return validateAgainstDef("security-event-payloads.schema.json", eventType, payload);
   }
   return null;
@@ -403,5 +409,7 @@ export function contractLedgerEventTypes(): string[] {
 /** Tipos con $def en el contrato del stream SECURITY (transitorios en el ledger). */
 export function contractSecurityEventTypes(): string[] {
   const doc = SCHEMA_FILES["security-event-payloads.schema.json"] as Record<string, unknown>;
-  return Object.keys(doc.$defs as object).filter((k) => k !== "SecurityEvent");
+  // CA-141: los tipos de sesion (x-ops-only) viven solo en ops.security_event; nunca son transitorios del ledger.
+  const opsOnly = new Set((doc["x-ops-only"] as string[] | undefined) ?? []);
+  return Object.keys(doc.$defs as object).filter((k) => k !== "SecurityEvent" && !opsOnly.has(k));
 }

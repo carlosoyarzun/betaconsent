@@ -7,6 +7,7 @@
 // resuelto en servidor (RLS por tenant en Postgres; scope por tenant en memoria).
 
 import type { TenantId } from "../modules/common/types.ts";
+import type { SessionRevokeCause } from "./security-event.port.ts";
 import type { CaseStaffRole } from "./staff-identity.port.ts";
 
 /** Misma granularidad que la sesion STAFF (CA-138 P2-4): `last_seen_at` solo se escribe si esta atrasado mas de 60 s. */
@@ -35,15 +36,24 @@ export interface CaseSessionValidation {
 }
 
 export interface CaseSessionStorePort {
-  /** Registra una sesion nueva (un sid repetido es un error, nunca se reutiliza). */
-  create(record: CaseSessionRecord): Promise<void>;
+  /**
+   * Registra una sesion nueva (sid nuevo; un sid repetido es un error, nunca se reutiliza) y devuelve su `sessionRef` (UUIDv4 opaco que genera
+   * la base; no es el sid). CA-141: en la MISMA transaccion escribe CASE_LOGIN en ops.security_event; si el evento falla
+   * (SecurityEventWriteError) no queda sesion.
+   */
+  create(record: CaseSessionRecord): Promise<{ readonly sessionRef: string }>;
   /**
    * ATOMICO: true (y avanza la ultima actividad) solo si la sesion existe en ESE tenant, caso, principal y rol coinciden, no esta
    * revocada, no paso su expiracion absoluta y no supero la inactividad. Cualquier otro caso devuelve false sin distinguir la causa.
    */
   validateAndTouch(input: CaseSessionValidation): Promise<boolean>;
-  /** Revoca el sid en servidor (idempotente; nunca reactiva). Un sid desconocido o de otro tenant no hace nada. */
-  revoke(tenantId: TenantId, sidHash: string, nowMs: number): Promise<void>;
+  /**
+   * Revoca el sid en servidor (idempotente; solo marca, nunca reactiva). Un sid desconocido, de otro tenant o ya revocado no hace nada y devuelve
+   * false SIN escribir evento. CA-141: si el UPDATE revoco una fila (true), en la MISMA transaccion escribe CASE_LOGOUT (cause USER_LOGOUT) o
+   * SESSION_REVOKED_BY_ROTATION (cause ROTATION), con actor y caseRef tomados de la FILA (no de la cookie). Si el evento falla
+   * (SecurityEventWriteError) la revocacion se revierte: la sesion sigue activa.
+   */
+  revoke(tenantId: TenantId, sidHash: string, nowMs: number, cause: SessionRevokeCause): Promise<boolean>;
   /** Borra las sesiones del tenant cuya expiracion absoluta es anterior a `nowMs - retentionMs`. Devuelve cuantas. */
   purgeExpired(tenantId: TenantId, nowMs: number, retentionMs: number): Promise<number>;
 }
