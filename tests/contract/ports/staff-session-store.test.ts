@@ -23,3 +23,5 @@ test("TEST-CNS-1153 StaffSessionStore in-memory: solo avanza la ultima actividad
   assert.equal(store.rows()[0]!.lastSeenAtMs, t0 + 61_000);
   assert.equal(await v(t0 + 61_000 + 30 * 60_000 + 1), false);
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-1142 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).

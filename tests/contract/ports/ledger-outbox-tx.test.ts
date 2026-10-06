@@ -31,3 +31,5 @@ runLedgerOutboxContract("in-memory", (name, body) => {
 runLedgerChainContract("in-memory", (name, body) => {
   test(name, () => body(makeInMemoryHarness()));
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-102 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).
