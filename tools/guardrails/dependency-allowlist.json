@@ -25,7 +25,10 @@
       "kind": "devDependency",
       "owner": "carlosoyarzun",
       "proposedBy": "lampone-dev",
-      "status": "pending-human-review",
+      "status": "approved",
+      "approvedBy": "carlosoyarzun",
+      "approvedOn": "2026-10-06",
+      "decision": "Carlos, revisor humano, 2026-10-06 (cierre X7/X8, PD-4 / F-X8-08).",
       "reason": "Compilador/typecheck del repo (tsc --noEmit) y ejecución con type-stripping nativo de los .ts de tools/ y tests/ (ADR-001 §6.1, §11 implementation). Ya presente desde CA-136."
     },
     {
@@ -34,7 +37,10 @@
       "kind": "devDependency",
       "owner": "carlosoyarzun",
       "proposedBy": "lampone-dev",
-      "status": "pending-human-review",
+      "status": "approved",
+      "approvedBy": "carlosoyarzun",
+      "approvedOn": "2026-10-06",
+      "decision": "Carlos, revisor humano, 2026-10-06 (cierre X7/X8, PD-4 / F-X8-08).",
       "reason": "Tipos de Node para el toolchain (guardrail, runner de tests, reporter de evidencia). Ya presente desde CA-136."
     },
     {
