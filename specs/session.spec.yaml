@@ -179,10 +179,10 @@ guards:
   - id: GRD-SE-08
     name: csrf_before_touch
     applies: [STAFF, CASE]
-    rule: "En metodos con efectos (POST) el CSRF ligado al sid se valida ANTES de validateAndTouch, tras firma, roster (y caseRef en CASE): una cookie robada sin CSRF valido no prolonga la inactividad. STAFF lo implementa pasando la cookie CSRF a authenticateStaffSession (CA-140); los GET STAFF no exigen CSRF (INV-CM-08, residual R-SE-05)."
+    rule: "En metodos con efectos (POST) el CSRF ligado al sid se valida ANTES de validateAndTouch, tras firma, roster (y caseRef en CASE): una cookie robada sin CSRF valido no prolonga la inactividad. STAFF lo implementa pasando la cookie CSRF a authenticateStaffSession (CA-140; tambien en la consola dev, dev-staff-console.handler.ts); los GET STAFF no exigen CSRF (INV-CM-08, residual R-SE-05)."
     onFail: ERR-CM-09
     governedBy: ["CA-139 P2-3", "CA-140", "GRD-CM-10"]
-    testIds: [TEST-CNS-1177, TEST-CNS-1180]
+    testIds: [TEST-CNS-1177, TEST-CNS-1180, TEST-CNS-1188]
   - id: GRD-SE-09
     name: logout
     applies: [STAFF, CASE]
@@ -224,7 +224,7 @@ errors:
     response: "404 uniforme (cuerpo identico): firma/exp/idle/revocada/desconocida/otro tenant/otro principal/otro rol/otro caseRef/roster discrepante. Reusa GRD-CM-01 / ERR-CM-01."
     testIds: [TEST-CNS-1145, TEST-CNS-1165, TEST-CNS-1169, TEST-CNS-1176]
   - id: ERR-SE-02
-    response: "403 CSRF_REJECTED (ERR-CM-09): cabecera/cookie CSRF ausente o desigual, o token de OTRA sesion (valida de firma). Unico fallo distinguible del 404 uniforme; solo lo ve quien ya posee una cookie de firma valida."
+    response: "403 CSRF_REJECTED (ERR-CM-09): cabecera/cookie CSRF ausente o desigual, o token de OTRA sesion (valida de firma). Unico fallo distinguible del 404 uniforme; lo ve quien posee una cookie firmada y vigente (iat <= now < exp) cuyo principal sigue en el roster con el mismo rol, aunque el sid ya este revocado o inactivo en el servidor (el CSRF se valida antes de consultar el registro)."
     testIds: [TEST-CNS-1147, TEST-CNS-1168]
   - id: ERR-SE-03
     response: "403 ACTOR_NOT_ALLOWED (ERR-CM-10): sesion valida con rol sin permiso para la ruta (p. ej. STAFF no TENANT_ADMIN en /staff/* de EN0/I1-I3; CASE APPROVER en record_case_confirmation), GRD-CM-07."

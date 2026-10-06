@@ -112,7 +112,7 @@ export const STAFF_UI_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
 
 const FLASH_COOKIE_NAME = "__Host-cns-staff-flash";
 const FLASH_TTL_MS = 120_000;
-const FLASH_HKDF_INFO = "CNS-STAFF-UI-FLASH-v1";
+export const FLASH_HKDF_INFO = "CNS-STAFF-UI-FLASH-v1";
 
 const REF_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 /** Forma minima nombre@dominio (sin espacios, comas ni separadores). El dominio reservado lo decide isReservedEmail (dominio). */

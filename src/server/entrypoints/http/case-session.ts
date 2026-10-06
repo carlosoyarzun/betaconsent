@@ -26,8 +26,8 @@ import { APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS, APPROVED_CASE_SESSION_PURGE_RETE
 import type { CaseSessionStorePort } from "../../ports/case-session-store.port.ts";
 import type { CaseStaffRole } from "../../ports/staff-identity.port.ts";
 
-const CASE_SESSION_HKDF_INFO = "CNS-CASE-SESSION-v1";
-const CASE_CSRF_HKDF_INFO = "CNS-CASE-CSRF-v1";
+export const CASE_SESSION_HKDF_INFO = "CNS-CASE-SESSION-v1";
+export const CASE_CSRF_HKDF_INFO = "CNS-CASE-CSRF-v1";
 /** sid: 32 bytes aleatorios (256 bits >= 128) en base64url (43 caracteres). */
 const SID_BYTES = 32;
 const SID_PATTERN = /^[A-Za-z0-9_-]{43}$/;

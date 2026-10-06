@@ -25,4 +25,8 @@ test("TEST-CNS-1187 session-spec-check: detecta testId inexistente, guard sin te
   assert.ok(checkSessionSpec(dup, MATRIX, exists).some((e) => e.includes("duplicado")));
   assert.ok(checkSessionSpec(SPEC, MATRIX, () => false).some((e) => e.includes("archivo inexistente")));
   assert.ok(checkSessionSpec("specId: otra", MATRIX, exists).some((e) => e.includes("specId")));
+  const absolute = parseMatrix("TEST-CNS-1140,unit,/etc/passwd,\"x\",\"g\",ACTIVE");
+  assert.ok(checkSessionSpec(SPEC, absolute, () => true).some((e) => e.includes("ruta no permitida")));
+  const dotdot = parseMatrix("TEST-CNS-1140,unit,tests/../../fuera.test.ts,\"x\",\"g\",ACTIVE");
+  assert.ok(checkSessionSpec(SPEC, dotdot, () => true).some((e) => e.includes("ruta no permitida")));
 });

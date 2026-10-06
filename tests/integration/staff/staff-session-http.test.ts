@@ -390,7 +390,10 @@ test("TEST-CNS-1180 GRD-SE-08 STAFF: el CSRF ligado al sid se valida antes del t
     h.clock.now += 29 * MIN;
     const foreignCookie = `${STAFF_COOKIE}=${a.sessionValue}; ${CSRF_COOKIE}=${b.csrf}`;
     const form = { subject: students[0]!.subjectRef, participation: students[0]!.participationRef };
-    assert.equal((await postForm(h, "/staff/students/invite", { ...form, csrf_token: b.csrf }, foreignCookie)).status, 403);
+    const ui = await postForm(h, "/staff/students/invite", { ...form, csrf_token: b.csrf }, foreignCookie);
+    assert.equal(ui.status, 403);
+    assert.match(ui.body, /verificación de seguridad/, "variante UI: 403 csrf, no permission");
+    assert.doesNotMatch(ui.body, /No tienes permiso/);
     assert.equal((await postJson(h, "/staff/enrollments", { subjectRef: form.subject, participationRef: form.participation }, foreignCookie, b.csrf)).status, 403);
     assert.equal(lastSeenOf(h, a.sid), issuedAt, "sin CSRF valido no se avanza last_seen_at");
     h.clock.now += 2 * MIN;
@@ -444,7 +447,10 @@ test("TEST-CNS-1182 ERR-SE-03 STAFF: una sesion valida con rol sin permiso (RIGH
     assert.equal(api.status, 403);
     assert.equal((JSON.parse(api.body) as { code: string }).code, "ACTOR_NOT_ALLOWED");
     assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, form.subject, form.participation), null);
-    assert.equal((await postForm(h, "/staff/students/invite", { ...form, csrf_token: issued.csrfToken }, cookie)).status, 403);
+    const ui = await postForm(h, "/staff/students/invite", { ...form, csrf_token: issued.csrfToken }, cookie);
+    assert.equal(ui.status, 403);
+    assert.match(ui.body, /No tienes permiso/, "variante UI: 403 permission, no csrf");
+    assert.doesNotMatch(ui.body, /verificación de seguridad/);
   } finally {
     await h.close();
   }

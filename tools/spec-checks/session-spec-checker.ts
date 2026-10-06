@@ -46,6 +46,7 @@ export function checkSessionSpec(specText: string, matrix: readonly MatrixRow[],
       if (id === null || !TEST_ID_RE.test(id)) { err(`${owner}: testId invalido`); continue; }
       const row = byId.get(id);
       if (!row) err(`${owner}: ${id} no existe en traceability/test-matrix.csv`);
+      else if (row.file.startsWith("/") || row.file.split("/").includes("..")) err(`${owner}: ${id} ruta no permitida en la matriz (${row.file}); debe ser relativa a la raiz sin '..'`);
       else if (!fileExists(row.file)) err(`${owner}: ${id} apunta a un archivo inexistente (${row.file})`);
     }
     if (mustHaveTestsOrNote && ids.length === 0 && asStr(node.testNotes) === null) err(`${owner}: sin tests ni testNotes (FINDING no declarado)`);
