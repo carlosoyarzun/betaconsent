@@ -138,7 +138,7 @@ async function bringToPendingDecision(ports: Ports, suffix: string): Promise<Pen
   await requestOtp(ports.otp, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
   const sink = ports.otp.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
   const code = sink.sent[sink.sent.length - 1]?.code ?? "";
-  await submitOtp(ports.otp, TENANT_ID, verificationRef, code, decisionMakerRef);
+  await submitOtp(ports.otp, TENANT_ID, verificationRef, code, decisionMakerRef, 2);
 
   await startDecision(ports.decision, TENANT_ID, "DECISION_MAKER", {
     consentId,

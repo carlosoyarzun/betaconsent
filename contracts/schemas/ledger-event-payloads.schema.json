@@ -155,7 +155,7 @@
           "type": "integer",
           "minimum": 2,
           "maximum": 1000,
-          "description": "OPEN-CM-09: version de la clave HMAC con que se derivo decisionMakerRef. Opcional solo para eventos previos (ausente = v2); los eventos nuevos siempre lo emiten."
+          "description": "OPEN-CM-09: version de la clave HMAC con que se derivo decisionMakerRef. Obligatorio en eventos nuevos (Carlos 2026-10-06); ausente = v2 solo aplica al LEER eventos previos (resolveDecisionMakerRefKeyVersion)."
         },
         "bindingResult": {
           "type": "string",
@@ -169,6 +169,7 @@
         "invitationRef",
         "verificationRef",
         "decisionMakerRef",
+        "decisionMakerRefKeyVersion",
         "bindingResult"
       ]
     },
@@ -256,7 +257,7 @@
           "type": "integer",
           "minimum": 2,
           "maximum": 1000,
-          "description": "OPEN-CM-09: version de la clave HMAC con que se derivo decisionMakerRef. Opcional solo para eventos previos (ausente = v2); los eventos nuevos siempre lo emiten."
+          "description": "OPEN-CM-09: version de la clave HMAC con que se derivo decisionMakerRef. Obligatorio en eventos nuevos (Carlos 2026-10-06); ausente = v2 solo aplica al LEER eventos previos (resolveDecisionMakerRefKeyVersion)."
         },
         "scope": {
           "$ref": "common.schema.json#/$defs/OtpScope"
@@ -276,6 +277,7 @@
         "verificationRef",
         "parentRef",
         "decisionMakerRef",
+        "decisionMakerRefKeyVersion",
         "scope",
         "method",
         "bindingResult"

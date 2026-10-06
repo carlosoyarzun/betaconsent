@@ -10,7 +10,6 @@
 // tenant-context). Ver reporte de la tarea para el detalle de lo diferido.
 
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03 } from "../common/opaque-ref.ts";
-import { DECISION_MAKER_REF_KEY_VERSION } from "../consent-decision/decision-maker-ref.ts";
 import { createHash, randomBytes } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
@@ -385,9 +384,10 @@ export function markInvitationVerified(
   tenantId: TenantId,
   invitationRef: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
   verificationRef: string,
 ): Promise<InvitationRecord> {
-  return inTx(ports, tenantId, (p) => markInvitationVerifiedTx(p, tenantId, invitationRef, decisionMakerRef, verificationRef));
+  return inTx(ports, tenantId, (p) => markInvitationVerifiedTx(p, tenantId, invitationRef, decisionMakerRef, decisionMakerRefKeyVersion, verificationRef));
 }
 
 /** Variante para una unidad de trabajo ya abierta (la dispara otp-challenge / consent-decision en su tx). */
@@ -396,6 +396,7 @@ export async function markInvitationVerifiedTx(
   tenantId: TenantId,
   invitationRef: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
   verificationRef: string,
 ): Promise<InvitationRecord> {
   const base = await invitationSequence(ports, tenantId, invitationRef);
@@ -413,7 +414,7 @@ export async function markInvitationVerifiedTx(
     aggregateId: invitationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { invitationRef, verificationRef, decisionMakerRef, decisionMakerRefKeyVersion: DECISION_MAKER_REF_KEY_VERSION, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
+    payload: { invitationRef, verificationRef, decisionMakerRef, decisionMakerRefKeyVersion, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
     idempotencyKey: `${invitationRef}:${verificationRef}`,
   });
   return verified;

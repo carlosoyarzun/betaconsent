@@ -113,7 +113,7 @@ async function verifiedInvitation(
   await requestOtp(ports.otpPorts, TENANT_ID, verificationRef, invitationRef, CHANNEL_REF);
   const sink = ports.otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
   const code = sink.sent[sink.sent.length - 1]?.code ?? "";
-  await submitOtp(ports.otpPorts, TENANT_ID, verificationRef, code, decisionMakerRef);
+  await submitOtp(ports.otpPorts, TENANT_ID, verificationRef, code, decisionMakerRef, 2);
 }
 
 test("TEST-CNS-490: C1 crea PENDING solo si la Invitation está VERIFIED con este decisionMakerRef (GRD-CD-01/02)", async () => {

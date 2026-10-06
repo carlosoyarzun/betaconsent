@@ -44,7 +44,7 @@ test("TEST-CNS-572: submitRightsOtp con el código correcto (scope REVOCATION) -
   await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-1"), "REVOCATION", fixtureUuid("chain-1"), "mgmt:chain-1");
   const code = ports.channel.sent[0]?.code ?? "";
   assert.ok(code.length > 0);
-  const verified = await submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-1"), "REVOCATION", code, fixtureUuid("dm-fixture"));
+  const verified = await submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-1"), "REVOCATION", code, fixtureUuid("dm-fixture"), 2);
   assert.equal(verified.state, "VERIFIED");
   const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", fixtureUuid("ver-rev-1"));
   assert.ok(events.some((e) => e.eventType === "DECISION_MAKER_CHANNEL_VERIFIED"));
@@ -55,7 +55,7 @@ test("TEST-CNS-573: submitRightsOtp agota los intentos (maxAttempts) -> LOCKED (
   await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-2"), "REVOCATION", fixtureUuid("chain-1"), "mgmt:chain-1");
   for (let i = 0; i < 3; i += 1) {
     await assert.rejects(
-      () => submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-2"), "REVOCATION", "000000", fixtureUuid("dm-fixture")),
+      () => submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-rev-2"), "REVOCATION", "000000", fixtureUuid("dm-fixture"), 2),
       (err: unknown) => err instanceof DomainError,
     );
   }
@@ -68,7 +68,7 @@ test("TEST-CNS-574: submitRightsOtp con el scope equivocado (VERIFIED MANAGE no 
   await requestRightsOtp(ports, "tenant-1", fixtureUuid("ver-manage-2"), "MANAGE", fixtureUuid("chain-1"), "mgmt:chain-1");
   const code = ports.channel.sent[0]?.code ?? "";
   await assert.rejects(
-    () => submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-manage-2"), "REVOCATION", code, fixtureUuid("dm-fixture")),
+    () => submitRightsOtp(ports, "tenant-1", fixtureUuid("ver-manage-2"), "REVOCATION", code, fixtureUuid("dm-fixture"), 2),
     (err: unknown) => err instanceof DomainError,
   );
 });

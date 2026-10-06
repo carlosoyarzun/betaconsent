@@ -111,7 +111,7 @@ pgTest("TEST-CNS-845 pg: OTP verify ∥ verify en dos conexiones: exactamente un
       await seedOpenedInvitation(outside, T, inv, fixtureUuid(`s845-${round}`));
       await requestOtp(otp, T, ver, inv, CHANNEL);
       const code = sink.sent[sink.sent.length - 1]!.code;
-      const results = await Promise.allSettled([submitOtp(otp, T, ver, code, fixtureUuid("dm-845")), submitOtp(otp, T, ver, code, fixtureUuid("dm-845"))]);
+      const results = await Promise.allSettled([submitOtp(otp, T, ver, code, fixtureUuid("dm-845"), 2), submitOtp(otp, T, ver, code, fixtureUuid("dm-845"), 2)]);
       assert.equal(results.filter((r) => r.status === "fulfilled").length, 1, `ronda ${round}: exactamente una gana`);
       assert.ok(results.some((r) => isDomain(r, "ERR-OT-03")), `ronda ${round}: la perdedora falla con ERR-OT-03 (no con conflicto de secuencia): ${JSON.stringify(results.map((r) => r.status === "rejected" ? String(r.reason) : "ok"))}`);
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.state, "VERIFIED");
@@ -162,7 +162,7 @@ pgTest("TEST-CNS-849 pg: N submits incorrectos concurrentes sobre el mismo chall
       const good = sink.sent[sink.sent.length - 1]!.code;
       const wrong = good === "000000" ? "111111" : "000000";
       const N = otp.policy.maxAttempts; // 3 incorrectos concurrentes: el ultimo bloquea
-      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, fixtureUuid("dm-849"))));
+      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, fixtureUuid("dm-849"), 2)));
       const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
       assert.deepEqual([...codes].sort(), ["ERR-OT-02", "ERR-OT-02", "ERR-OT-04"], `ronda ${round}: ${codes.join(",")}`);
       const rec = await outside.otpRepo.findByRef(T, ver);
@@ -171,7 +171,7 @@ pgTest("TEST-CNS-849 pg: N submits incorrectos concurrentes sobre el mismo chall
       assert.equal(await eventCount(count, T, ver, "OTP_LOCKED"), 1);
       assert.equal(await eventCount(count, T, ver, "OTP_FAILED"), N - 1);
       // Tras LOCKED, ni el codigo correcto verifica (GRD-OT-04).
-      await assert.rejects(() => submitOtp(otp, T, ver, good, fixtureUuid("dm-849")), (e: unknown) => e instanceof DomainError && e.code === "ERR-OT-04");
+      await assert.rejects(() => submitOtp(otp, T, ver, good, fixtureUuid("dm-849"), 2), (e: unknown) => e instanceof DomainError && e.code === "ERR-OT-04");
     }
   }, 8); // reintentos del UoW: la perdedora con base vieja relee y reintenta (el intento no se pierde)
 });
@@ -243,7 +243,7 @@ pgTest("TEST-CNS-861 pg: 10 submits incorrectos concurrentes sobre el mismo chal
       await requestOtp(otp, T, ver, inv, CHANNEL);
       const good = sink.sent[sink.sent.length - 1]!.code;
       const wrong = good === "000000" ? "111111" : "000000";
-      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, fixtureUuid("dm-861"))));
+      const results = await Promise.allSettled(Array.from({ length: N }, () => submitOtp(otp, T, ver, wrong, fixtureUuid("dm-861"), 2)));
       const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
       assert.ok(codes.every((c) => c === "ERR-OT-02"), `ronda ${round}: todos rechazados por codigo incorrecto, ninguno por reintentos agotados: ${codes.join(",")}`);
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.attempts, N, "ningun intento se pierde");

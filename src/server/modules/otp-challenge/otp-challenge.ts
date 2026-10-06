@@ -17,7 +17,6 @@
 // en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
 
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03, opaqueUuidV4 } from "../common/opaque-ref.ts";
-import { DECISION_MAKER_REF_KEY_VERSION } from "../consent-decision/decision-maker-ref.ts";
 import { createHmac, hkdfSync, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { DomainError, type DomainErrorCode } from "../common/errors.ts";
@@ -345,14 +344,15 @@ export async function submitOtp(
   verificationRef: string,
   code: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
 ): Promise<OtpVerificationRecord> {
   const outcome = await inTx(ports, tenantId, (p) =>
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: null,
       eventScope: "DECISION",
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion: DECISION_MAKER_REF_KEY_VERSION, scope: "DECISION", method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, scope: "DECISION", method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
       onVerified: async (found) => {
-        await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, verificationRef); // I5
+        await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, verificationRef); // I5
       },
     }),
   );
@@ -406,12 +406,13 @@ export async function submitRightsOtp(
   scope: "REVOCATION" | "MANAGE",
   code: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
 ): Promise<OtpVerificationRecord> {
   const outcome = await inTx(ports, tenantId, (p) =>
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: scope,
       eventScope: scope,
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion: DECISION_MAKER_REF_KEY_VERSION, scope, method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, scope, method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
     }),
   );
   return settle(outcome);
