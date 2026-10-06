@@ -84,3 +84,5 @@ test("TEST-CNS-1084 in-memory: si el access log falla, la lectura no devuelve da
   );
   assert.equal((await real.listByTenant(tenantId)).length, 0);
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-1071, TEST-CNS-1072, TEST-CNS-1073, TEST-CNS-1074 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).

@@ -431,3 +431,5 @@ pgTest("TEST-CNS-1092 pg: ops.access_log admite STAFF_ROSTER_READ/STAFF_ROSTER s
   // Sigue siendo append-only.
   await assert.rejects(() => admin.query("UPDATE ops.access_log SET actor_ref = actor_ref WHERE tenant_id = $1", [tenant]), (e: unknown) => codeOf(e) === "23000");
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-1071, TEST-CNS-1072, TEST-CNS-1073, TEST-CNS-1074 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).

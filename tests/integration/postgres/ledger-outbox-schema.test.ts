@@ -370,3 +370,5 @@ pgTest("TEST-CNS-793 pg: outbox_claimer es NOLOGIN/NOBYPASSRLS, sin membresias, 
   assert.equal((await admin.query<{ p: boolean }>("SELECT has_schema_privilege('outbox_claimer', 'app', 'CREATE') AS p")).rows[0]?.p, false);
   assert.equal((await admin.query<{ p: boolean }>("SELECT has_table_privilege('outbox_claimer', 'integrity.audit_event', 'SELECT') AS p")).rows[0]?.p, false);
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-100 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).
