@@ -139,7 +139,7 @@ ledgerEnvelope:
     Refs = UUIDv4 aleatorios mapeados a PII solo en pii (SM §1; ADR-002 §3).
   streams:
     LEDGER: "integrity.audit_event (append-only; cadena SHA-256 por tenant en IT0; ADR-011/DEC-BR-009 para HMAC/ancla)"
-    SECURITY: "ops.security_event (RLS por tenant, solo refs; no es ledger de consentimiento; SEC F03; retención LD-15)"
+    SECURITY: "ops.security_event (RLS por tenant, solo refs; no es ledger de consentimiento; SEC F03; retención LD-15). CA-141 (0025): login/logout/rotación de sesiones STAFF y CASE (STAFF_LOGIN, STAFF_LOGOUT, CASE_LOGIN, CASE_LOGOUT, SESSION_REVOKED_BY_ROTATION; session.spec GRD-SE-14); OTP_*, MANAGEMENT_TOKEN_ROTATED y RECOVERY_TOKEN_ISSUED siguen TRANSITORIOS en el ledger (0013); retención PENDING - Carlos (LD-15), sin purga en IT0"
     OUTBOX: "outbox transaccional at-least-once con dedupe por eventId; entrega firmada anti-replay (SM §7)"
     PLATFORM_AUDIT: "auditoría de transiciones de catálogo PLATFORM (ConsentContext); tabla y encadenado OPEN (ADR-011 / H02)"
 
