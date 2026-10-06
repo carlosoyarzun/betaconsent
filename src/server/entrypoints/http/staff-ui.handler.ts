@@ -112,7 +112,7 @@ export const STAFF_UI_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
 
 const FLASH_COOKIE_NAME = "__Host-cns-staff-flash";
 const FLASH_TTL_MS = 120_000;
-const FLASH_HKDF_INFO = "CNS-STAFF-UI-FLASH-v1";
+export const FLASH_HKDF_INFO = "CNS-STAFF-UI-FLASH-v1";
 
 const REF_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 /** Forma minima nombre@dominio (sin espacios, comas ni separadores). El dominio reservado lo decide isReservedEmail (dominio). */
@@ -388,14 +388,16 @@ async function handlePost(req: StaffUiRequest, deps: StaffUiDeps, nowMs: () => n
 
   let auth: Awaited<ReturnType<typeof authenticateStaffSession>>;
   try {
-    auth = await authenticateStaffSession(req.cookieHeader, { ...deps.staffConsole, nowMs }, deps.config, deps.staffSessionKey);
+    // CA-138/CA-140: el token CSRF debe ser el de ESTA sesion (ligado al sid) y se valida antes del touch (GRD-SE-08).
+    auth = await authenticateStaffSession(req.cookieHeader, { ...deps.staffConsole, nowMs }, deps.config, deps.staffSessionKey, { value: csrfCookie });
   } catch {
     return errorPage(503, "generic");
   }
-  if (!auth.ok) return auth.result.status === 403 ? errorPage(403, "permission") : errorPage(404, "session");
+  if (!auth.ok) {
+    if (auth.csrfRejected === true) return errorPage(403, "csrf");
+    return auth.result.status === 403 ? errorPage(403, "permission") : errorPage(404, "session");
+  }
   const staff = auth.staff;
-  // CA-138: el token CSRF debe ser el de ESTA sesion (ligado al sid), no solo igual en cookie y campo.
-  if (!staffCsrfMatchesSession(deps.staffSessionKey, staff.sid, csrfCookie)) return errorPage(403, "csrf");
 
   const subjectRef = form.get("subject") ?? "";
   const participationRef = form.get("participation") ?? "";

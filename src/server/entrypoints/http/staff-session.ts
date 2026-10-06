@@ -20,8 +20,8 @@ import { APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS, APPROVED_STAFF_SESSION_PURGE_RE
 import type { StaffRole } from "../../ports/staff-identity.port.ts";
 import type { StaffSessionStorePort } from "../../ports/staff-session-store.port.ts";
 
-const STAFF_SESSION_HKDF_INFO = "CNS-STAFF-SESSION-v1";
-const STAFF_CSRF_HKDF_INFO = "CNS-STAFF-CSRF-v1";
+export const STAFF_SESSION_HKDF_INFO = "CNS-STAFF-SESSION-v1";
+export const STAFF_CSRF_HKDF_INFO = "CNS-STAFF-CSRF-v1";
 const KNOWN_ROLES: readonly StaffRole[] = ["TENANT_ADMIN", "RIGHTS_OPERATOR", "APPROVER"];
 /** sid: 32 bytes aleatorios (256 bits >= 128) en base64url (43 caracteres). */
 const SID_BYTES = 32;

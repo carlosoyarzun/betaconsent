@@ -2,7 +2,8 @@
 // Recorrido HTTP (CONSENT_STORE=memory) de la sesion STAFF con registro en servidor, reloj inyectado (staffNowMs):
 // TEST-CNS-1143 logout revoca en servidor (cookie robada tras logout no sirve; UI y JSON), 1145 expiracion absoluta e inactividad,
 // 1146 rotacion de sid al iniciar sesion, 1147 CSRF de otra sesion rechazado, 1149 cursor y flash de otra sesion rechazados,
-// 1150 dev-login solo LOCAL, mismo mecanismo, sin PII ni sid en almacen/logs. Solo datos sinteticos.
+// 1150 dev-login solo LOCAL, mismo mecanismo, sin PII ni sid en almacen/logs; CA-140: 1180 CSRF antes del touch, 1181 roster por request,
+// 1182 rol sin permiso con sesion valida (GRD-SE-06/08, ERR-SE-03). Solo datos sinteticos.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,7 +26,7 @@ import {
   createDefaultConsentFlowPorts,
   createDefaultStaffConsolePorts,
 } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
-import { decodeStaffSession, deriveStaffSessionKey, hashStaffSid } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { decodeStaffSession, deriveStaffSessionKey, hashStaffSid, issueStaffSession, staffCsrfTokenFor } from "../../../src/server/entrypoints/http/staff-session.ts";
 import { APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS, APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS } from "../../../src/server/modules/common/approved-parameters.ts";
 import { loadIdempotencyPolicyConfig } from "../../../src/server/modules/common/idempotency-policy.config.ts";
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
@@ -65,10 +66,12 @@ interface Harness {
   close(): Promise<void>;
 }
 
-async function start(opts: { environment?: "LOCAL" | "DEV"; subjectCount?: number } = {}): Promise<Harness> {
+async function start(opts: { environment?: "LOCAL" | "DEV"; subjectCount?: number; removed?: Set<string>; roster?: readonly StaffPrincipal[] } = {}): Promise<Harness> {
   const subjects = opts.subjectCount === undefined ? students : Array.from({ length: opts.subjectCount }, (_, i) => ({ subjectRef: fixtureUuid(`sess-subj-${i + 1}`), participationRef: fixtureUuid(`sess-part-${i + 1}`), label: `Alumno de prueba ${i + 1}` }));
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
-  const staffIdentity = createInMemoryStaffIdentityAdapter(ROSTER);
+  const baseIdentity = createInMemoryStaffIdentityAdapter(opts.roster ?? ROSTER);
+  // CA-140: roster mutable en el test (baja de un principal con sesion vigente); sin `removed` se comporta igual que el adaptador.
+  const staffIdentity: typeof baseIdentity = { findByPrincipalRef: async (ref) => (opts.removed?.has(ref) ? null : baseIdentity.findByPrincipalRef(ref)), listRoster: () => baseIdentity.listRoster() };
   const staff = createDefaultStaffConsolePorts(
     ports.invitation,
     staffIdentity,
@@ -373,5 +376,82 @@ test("TEST-CNS-1150 dev-login solo en LOCAL con el mismo mecanismo y sin privile
     Object.assign(console, orig);
     await dev.close();
     await local.close();
+  }
+});
+
+const lastSeenOf = (h: Harness, sid: string): number => rowsOf(h).find((r) => r.sidHash === hashStaffSid(sid))!.lastSeenAtMs;
+
+test("TEST-CNS-1180 GRD-SE-08 STAFF: el CSRF ligado al sid se valida antes del touch; una cookie robada sin CSRF valido no prolonga la inactividad (UI y JSON)", async () => {
+  const h = await start();
+  try {
+    const a = await login(h);
+    const b = await login(h);
+    const issuedAt = lastSeenOf(h, a.sid);
+    h.clock.now += 29 * MIN;
+    const foreignCookie = `${STAFF_COOKIE}=${a.sessionValue}; ${CSRF_COOKIE}=${b.csrf}`;
+    const form = { subject: students[0]!.subjectRef, participation: students[0]!.participationRef };
+    const ui = await postForm(h, "/staff/students/invite", { ...form, csrf_token: b.csrf }, foreignCookie);
+    assert.equal(ui.status, 403);
+    assert.match(ui.body, /verificación de seguridad/, "variante UI: 403 csrf, no permission");
+    assert.doesNotMatch(ui.body, /No tienes permiso/);
+    assert.equal((await postJson(h, "/staff/enrollments", { subjectRef: form.subject, participationRef: form.participation }, foreignCookie, b.csrf)).status, 403);
+    assert.equal(lastSeenOf(h, a.sid), issuedAt, "sin CSRF valido no se avanza last_seen_at");
+    h.clock.now += 2 * MIN;
+    assert.equal((await list(h, a.cookie)).status, 404, "31 min desde la ultima actividad real: inactividad");
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1181 GRD-SE-06 STAFF: un principal dado de baja del roster (o con otro rol u otro tenant) con sesion vigente recibe 404 uniforme", async () => {
+  const removed = new Set<string>();
+  const h = await start({ removed });
+  try {
+    const a = await login(h);
+    assert.equal((await list(h, a.cookie)).status, 200, "con membership vigente sirve");
+    removed.add(ADMIN_A);
+    const form = { subject: students[0]!.subjectRef, participation: students[0]!.participationRef };
+    assert.equal((await list(h, a.cookie)).status, 404);
+    assert.equal((await roster(h, a.cookie)).status, 404);
+    assert.equal((await postForm(h, "/staff/students/invite", { ...form, csrf_token: a.csrf }, a.cookie)).status, 404);
+    const api = await postJson(h, "/staff/enrollments", { subjectRef: form.subject, participationRef: form.participation }, a.cookie, a.csrf);
+    assert.equal(api.status, 404);
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, form.subject, form.participation), null);
+  } finally {
+    await h.close();
+  }
+  // sesion emitida para un rol/tenant que el roster ya no atesta: otro rol y otro tenant
+  const h2 = await start();
+  try {
+    const deps = { sessions: h2.staff.sessions, staffSessionKey: KEY, nowMs: () => h2.clock.now };
+    for (const [role, tenantId] of [["APPROVER", TENANT_A], ["TENANT_ADMIN", TENANT_B]] as const) {
+      const issued = await issueStaffSession(deps, { tenantId, principalRef: ADMIN_A, role });
+      const cookie = `${STAFF_COOKIE}=${issued.cookieValue}; ${CSRF_COOKIE}=${issued.csrfToken}`;
+      assert.equal((await list(h2, cookie)).status, 404, `${role}/${tenantId}`);
+      assert.equal((await postJson(h2, "/staff/enrollments", { subjectRef: students[0]!.subjectRef, participationRef: students[0]!.participationRef }, cookie, issued.csrfToken)).status, 404);
+    }
+  } finally {
+    await h2.close();
+  }
+});
+
+test("TEST-CNS-1182 ERR-SE-03 STAFF: una sesion valida con rol sin permiso (RIGHTS_OPERATOR) recibe 403 ACTOR_NOT_ALLOWED y no ejecuta la operacion", async () => {
+  const OPERATOR = fixtureUuid("sess-operator-a");
+  const h = await start({ roster: [...ROSTER, { principalRef: OPERATOR, role: "RIGHTS_OPERATOR", tenantId: TENANT_A }] });
+  try {
+    const issued = await issueStaffSession({ sessions: h.staff.sessions, staffSessionKey: KEY, nowMs: () => h.clock.now }, { tenantId: TENANT_A, principalRef: OPERATOR, role: "RIGHTS_OPERATOR" });
+    assert.equal(issued.csrfToken, staffCsrfTokenFor(KEY, issued.sid));
+    const cookie = `${STAFF_COOKIE}=${issued.cookieValue}; ${CSRF_COOKIE}=${issued.csrfToken}`;
+    const form = { subject: students[0]!.subjectRef, participation: students[0]!.participationRef };
+    const api = await postJson(h, "/staff/enrollments", { subjectRef: form.subject, participationRef: form.participation }, cookie, issued.csrfToken);
+    assert.equal(api.status, 403);
+    assert.equal((JSON.parse(api.body) as { code: string }).code, "ACTOR_NOT_ALLOWED");
+    assert.equal(await h.staff.enrollment.enrollmentRepo.findActive(TENANT_A, form.subject, form.participation), null);
+    const ui = await postForm(h, "/staff/students/invite", { ...form, csrf_token: issued.csrfToken }, cookie);
+    assert.equal(ui.status, 403);
+    assert.match(ui.body, /No tienes permiso/, "variante UI: 403 permission, no csrf");
+    assert.doesNotMatch(ui.body, /verificación de seguridad/);
+  } finally {
+    await h.close();
   }
 });

@@ -251,3 +251,22 @@ test("TEST-CNS-1066: cuerpo > 8 KiB -> 413 y corte (solo LOCAL); fuera de LOCAL 
     await d.close();
   }
 });
+
+test("TEST-CNS-1188: GRD-SE-08 en la consola dev: el CSRF ligado al sid se valida antes del touch; una cookie robada sin CSRF valido no prolonga la inactividad", async () => {
+  const h = await startServer("LOCAL");
+  try {
+    const a = await loginViaForm(h);
+    const b = await loginViaForm(h);
+    const store = h.staff.sessions as unknown as { rows(): readonly { lastSeenAtMs: number }[] };
+    const before = store.rows().map((r) => r.lastSeenAtMs);
+    (h.staff as { nowMs?: () => number }).nowMs = () => Date.now() + 29 * 60_000;
+    const sessionOfA = a.cookie.split("; ").find((c) => c.startsWith(`${STAFF_COOKIE}=`))!;
+    const foreign = `${sessionOfA}; ${STAFF_CSRF_COOKIE}=${b.csrf}`;
+    const res = await form(h, `${BASE}/invite`, { csrf_token: b.csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie: foreign });
+    assert.equal(res.status, 403);
+    assert.deepEqual(store.rows().map((r) => r.lastSeenAtMs), before, "sin CSRF valido no se avanza last_seen_at");
+    assert.equal(h.staff.invitationLinkSink.sent.length, 0);
+  } finally {
+    await h.close();
+  }
+});

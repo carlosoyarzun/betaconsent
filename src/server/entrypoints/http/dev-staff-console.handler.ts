@@ -105,7 +105,8 @@ export async function handleDevStaffConsole(req: DevStaffConsoleRequest, deps: D
   const cookies = parseCookies(req.cookieHeader);
   const csrfCookie = cookies[config.staffCsrfCookieName];
   // CA-138: "con sesion" = sesion valida en servidor (firma, exp, no revocada, inactividad), no solo una cookie con firma correcta.
-  const auth = await authenticateStaffSession(req.cookieHeader, deps.staffConsole, config, deps.staffSessionKey).catch(() => null);
+  // CA-140 (GRD-SE-08): en POST el CSRF ligado al sid se valida antes del touch (una cookie robada sin CSRF valido no prolonga la inactividad).
+  const auth = await authenticateStaffSession(req.cookieHeader, deps.staffConsole, config, deps.staffSessionKey, req.method === "POST" ? { value: csrfCookie } : undefined).catch(() => null);
   const loggedIn = auth !== null && auth.ok && csrfCookie !== undefined && csrfCookie.length > 0;
   const formView = (extra: Partial<DevStaffConsoleFormView> = {}): DevStaffConsoleFormView => ({
     kind: "form",
