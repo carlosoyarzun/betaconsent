@@ -48,7 +48,7 @@ interface Fx {
   close(): Promise<void>;
 }
 
-async function setUp(label: string, environment: Environment = "LOCAL"): Promise<Fx> {
+async function setUp(label: string, environment: Environment = "LOCAL", removed: Set<string> = new Set()): Promise<Fx> {
   const chainRef = fixtureUuid(`chain-${label}`);
   const caseRef = fixtureUuid(`case-${label}`);
   const revocationRef = fixtureUuid(`rv-${label}`);
@@ -70,7 +70,7 @@ async function setUp(label: string, environment: Environment = "LOCAL"): Promise
   const clock = { now: 1_900_000_000_000 };
   const server: Server = createConsentFlowHttpServer({
     config: { allowedOrigin: ORIGIN }, ports, revocationPorts, sessionSecret: SECRET, environment,
-    staffIdentity: createInMemoryStaffIdentityAdapter(ROSTER), caseSessions: store, caseNowMs: () => clock.now,
+    staffIdentity: ((inner) => ({ ...inner, findByPrincipalRef: async (ref: string) => (removed.has(ref) ? null : inner.findByPrincipalRef(ref)) }))(createInMemoryStaffIdentityAdapter(ROSTER)), caseSessions: store, caseNowMs: () => clock.now,
   });
   const baseUrl = await new Promise<string>((resolve) => server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
   return { baseUrl, store, clock, caseRef, close: () => new Promise((resolve) => server.close(() => resolve())) };
@@ -276,4 +276,46 @@ test("TEST-CNS-1171 storeMode=postgres exige un registro de sesiones CASE inyect
     () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, sessionSecret: SECRET, environment: "LOCAL", storeMode: "postgres", ports: createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }) }),
     /caseSessions/,
   );
+});
+
+test("TEST-CNS-1176 P2-1: un operador dado de baja del roster con sesion vigente (o con otro rol) recibe 404 uniforme en 136/137/138/139/140", async () => {
+  const removed = new Set<string>();
+  const fx = await setUp("1176", "LOCAL", removed);
+  try {
+    const op = await login(fx, OP1);
+    const ap = await login(fx, APPROVER);
+    const base = `/platform/rights-cases/${fx.caseRef}`;
+    assert.equal((await confirm(fx, op)).status, 200, "con membership vigente sirve");
+    removed.add(OP1);
+    removed.add(APPROVER);
+    const calls: [string, unknown, Login][] = [
+      [`${base}/verification-proposals`, { verificationScriptVersion: "g1", stepUpAssertion: "stub" }, op],
+      [`${base}/verification-proposals/${PROPOSAL}/approval`, { stepUpAssertion: "stub" }, ap],
+      [`${base}/confirmation`, { confirmationGivenOnCasePage: true }, op],
+      [`${base}/confirmation/cosign`, {}, op],
+      [`${base}/verification-proposals/${PROPOSAL}/withdrawal`, { stepUpAssertion: "stub" }, op],
+    ];
+    for (const [path, body, who] of calls) {
+      const res = await call(fx, path, who, body);
+      assert.deepEqual([res.status, await res.json()], [404, { status: 404 }], path);
+    }
+  } finally {
+    await fx.close();
+  }
+});
+
+test("TEST-CNS-1177 P2-3: el CSRF se valida antes del touch; una cookie robada sin CSRF valido no prolonga la inactividad", async () => {
+  const fx = await setUp("1177");
+  try {
+    const op = await login(fx, OP1);
+    const other = await login(fx, OP2);
+    const issuedAt = fx.store.rows().find((r) => r.principalRef === OP1)!.lastSeenAtMs;
+    fx.clock.now += 29 * MIN;
+    assert.equal((await confirm(fx, op, { csrfHeader: other.csrf })).status, 403);
+    assert.equal(fx.store.rows().find((r) => r.principalRef === OP1)!.lastSeenAtMs, issuedAt, "sin CSRF valido no se avanza last_seen_at");
+    fx.clock.now += 2 * MIN;
+    assert.equal((await confirm(fx, op)).status, 404, "31 min desde la ultima actividad real: inactividad");
+  } finally {
+    await fx.close();
+  }
 });

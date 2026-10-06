@@ -125,7 +125,7 @@ function checkCaseCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig)
 async function authenticateCaseSession(
   request: RawConsentRequest,
   caseRefFromPath: string,
-  ports: Pick<CaseConfirmationPorts, "sessions" | "nowMs">,
+  ports: Pick<CaseConfirmationPorts, "sessions" | "nowMs" | "staffIdentity">,
   config: RightsCaseHttpConfig,
   caseSessionKey: Buffer,
 ): Promise<{ readonly ok: true; readonly session: CaseSessionPayload } | { readonly ok: false; readonly result: HttpResult }> {
@@ -133,6 +133,11 @@ async function authenticateCaseSession(
   const nowMs = (ports.nowMs ?? Date.now)();
   const session = decodeCaseSession(caseSessionKey, cookies[config.caseSessionCookieName], nowMs);
   if (!session || session.caseRef !== caseRefFromPath) return { ok: false, result: uniformNotFound() };
+  // CA-139 P2-1: membership vigente en cada request (como STAFF): el principal debe seguir en el roster con el mismo rol; si no, 404 uniforme.
+  const principal = await ports.staffIdentity.findByPrincipalRef(session.principalRef);
+  if (!principal || principal.role !== session.role) return { ok: false, result: uniformNotFound() };
+  // CA-139 P2-3: el CSRF ligado al sid se valida ANTES del touch: una cookie robada sin CSRF no prolonga la inactividad.
+  if (!caseCsrfMatchesSession(caseSessionKey, session.sid, cookies[config.caseCsrfCookieName])) return { ok: false, result: csrfRejected() };
   const live = await ports.sessions.validateAndTouch({
     tenantId: session.tenantId,
     sidHash: hashCaseSid(session.sid),
@@ -143,7 +148,6 @@ async function authenticateCaseSession(
     idleTimeoutMs: APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS,
   });
   if (!live) return { ok: false, result: uniformNotFound() };
-  if (!caseCsrfMatchesSession(caseSessionKey, session.sid, cookies[config.caseCsrfCookieName])) return { ok: false, result: csrfRejected() };
   return { ok: true, session };
 }
 
