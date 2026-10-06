@@ -21,7 +21,7 @@ info:
   x-human-gate: "Ningún contrato está aprobado; cierre = human gate de Carlos."
   description: |
     Transcripción del diseño de rutas de `contracts/README.md` y de las `x-transitions`
-    de las proyecciones JSON Schema (API-CNS-186…191). Operaciones API-CNS-101…160.
+    de las proyecciones JSON Schema (API-CNS-186…191). Operaciones API-CNS-101…160, 192, 193.
 
     Reglas transversales (verificables por lint):
     - Cero PII en path y query: solo referencias opacas UUIDv4 (INV-CM-09) o tokens
@@ -123,7 +123,12 @@ components:
       type: apiKey
       in: cookie
       name: __Host-cns-case
-      description: Sesión CASE del RIGHTS_OPERATOR ligada a un caseRef (ADR-006 §6.3); el actor se deriva de la sesión, nunca de un parámetro.
+      description: >-
+        Sesión CASE del RIGHTS_OPERATOR/APPROVER ligada a un caseRef (ADR-006 §6.3); el actor se deriva de la sesión, nunca de un parámetro.
+        CA-139 (SEC-CNS-018 rev. 2 D-3): la cookie lleva sid aleatorio (256 bits), iat y exp firmados (HMAC) y cada request se valida además contra el
+        registro de sesiones del servidor (solo el hash del sid, RLS por tenant): firma, no vencida (8 h absolutas), no revocada, sin superar 30 min de
+        inactividad, y tenant, caseRef, principal y rol coincidentes. Cualquier fallo es el mismo 404 uniforme. El token CSRF queda ligado al sid
+        (otro token de sesión: 403 CSRF_REJECTED). Logout (API-CNS-193) revoca el sid en servidor. Cada login emite un sid nuevo (rotación).
       x-pending: ["P-26 (nombre de cookie)", "APR-IDP"]
   parameters:
     CsrfToken:
@@ -1282,6 +1287,34 @@ paths:
       responses:
         '200':
           description: Sesión revocada en servidor (o ya no había sesión válida). Cache-Control no-store; Set-Cookie Max-Age=0 para __Host-cns-staff, __Host-cns-staff-csrf y __Host-cns-staff-flash.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: false}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+  /platform/case-session/logout:
+    post:
+      operationId: logoutCaseSession
+      x-api-id: API-CNS-193
+      tags: [platform]
+      summary: Cerrar la sesión CASE (CA-139) — revoca el sid en servidor y borra las cookies
+      description: >-
+        Revoca en servidor el sid de la cookie CASE (la cookie copiada o robada deja de servir de inmediato en API-CNS-136/137/138/139/140) y responde
+        Set-Cookie con Max-Age=0 para __Host-cns-case y __Host-cns-case-csrf. Idempotente: sin sesión válida solo borra cookies. Si la cookie trae una
+        sesión firmada, el token CSRF debe ser el de ESA sesión (403 si no; no revoca en ese caso).
+      x-governed-by: ["CA-139", "SEC-CNS-018 rev. 2 D-3", "common.spec GRD-CM-10"]
+      x-route-class: RIGHTS
+      x-guards: [GRD-CM-10]
+      x-pending: ["CA-139: API-CNS-193 es el siguiente ID libre (maximo previo API-CNS-192); respuesta fijada en 200 con cuerpo {} (igual que API-CNS-192), pendiente de confirmacion de lampone-architect"]
+      security: [{caseSession: []}]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
+      responses:
+        '200':
+          description: Sesión revocada en servidor (o ya no había sesión válida). Cache-Control no-store; Set-Cookie Max-Age=0 para __Host-cns-case y __Host-cns-case-csrf.
           content:
             application/json:
               schema: {type: object, additionalProperties: false}

@@ -35,4 +35,8 @@ La cookie `__Host-cns-staff` lleva `sid` (32 bytes aleatorios), `iat` y `exp` fi
 
 Parámetros aprobados por Carlos el 2026-10-05 (`server/modules/common/approved-parameters.ts`, prefijo `APPROVED_STAFF_SESSION_`): vida absoluta 8 h, inactividad 30 min, retención de filas expiradas 24 h.
 
+### Sesión CASE (CA-139, SEC-CNS-018 rev. 2 D-3; P1-1 de la revisión de CA-138)
+
+Misma mecánica para `__Host-cns-case` (RIGHTS_OPERATOR/APPROVER), con la ligadura al `caseRef` conservada: `entrypoints/http/case-session.ts` (sid/iat/exp firmados, CSRF `HMAC(clave HKDF propia, sid)`, `issueCaseSession`, `revokeCaseSessionCookie`), puerto `ports/case-session-store.port.ts`, adaptadores in-memory y Postgres `app.case_session` (migración `0022`, RLS FORCE por tenant, solo hash del sid, `case_ref` en el registro). Diseño: tabla y puerto propios (no se generalizó `app.staff_session` con `session_kind`) para no tocar `0021` ni el código STAFF ya mergeado. Validación por request en `case-confirmation.handler.ts` (`authenticateCaseSession`): firma + `exp`, caseRef del path, registro servidor (tenant/caso/principal/rol, no revocada, inactividad) y CSRF del sid; cualquier fallo = 404 uniforme (el CSRF ajeno, 403). `POST /platform/case-session/logout` (API-CNS-193) revoca el sid y borra las cookies. `storeMode=postgres` exige inyectar `caseSessions` (fail-closed). Parámetros aprobados por Carlos el 2026-10-06 (`APPROVED_CASE_SESSION_*`): 8 h absoluta, 30 min de inactividad, 24 h de retención.
+
 La consola `/__dev/staff-console` se mantiene. El copy legal es un marcador (`COPY LEGAL PENDIENTE — Carlos`).
