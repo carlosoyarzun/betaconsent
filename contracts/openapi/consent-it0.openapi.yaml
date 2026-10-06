@@ -1276,7 +1276,6 @@ paths:
       x-governed-by: ["CA-138", "SEC-CNS-018 rev. 2 D-3", "SEC-CNS-020 P2-3", "common.spec GRD-CM-10"]
       x-route-class: STAFF_ADMIN
       x-guards: [GRD-CM-10]
-      x-pending: ["CA-138: API-CNS-192 es el siguiente ID libre (maximo previo API-CNS-191); respuesta fijada en 200 con cuerpo {} (no 204), pendiente de confirmacion de lampone-architect"]
       security: [{staffSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
@@ -1304,7 +1303,6 @@ paths:
       x-governed-by: ["CA-139", "SEC-CNS-018 rev. 2 D-3", "common.spec GRD-CM-10"]
       x-route-class: RIGHTS
       x-guards: [GRD-CM-10]
-      x-pending: ["CA-139: API-CNS-193 es el siguiente ID libre (maximo previo API-CNS-192); respuesta fijada en 200 con cuerpo {} (igual que API-CNS-192), pendiente de confirmacion de lampone-architect"]
       security: [{caseSession: []}]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       requestBody:
