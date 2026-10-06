@@ -21,8 +21,8 @@ import type { InvitationLinkMessage } from "../../ports/invitation-link-channel.
 import type { RightsCaseHttpConfig } from "./config.ts";
 import { parseCookies } from "./cookies.ts";
 import type { HttpResult, RawConsentRequest } from "./consent-flow.handler.ts";
-import { decodeStaffSession } from "./staff-session.ts";
 import {
+  authenticateStaffSession,
   handleCreateInvitation,
   handleDevStaffConsoleLogin,
   handleMarkInvitationReady,
@@ -104,8 +104,9 @@ export async function handleDevStaffConsole(req: DevStaffConsoleRequest, deps: D
   const { fixture, config } = deps;
   const cookies = parseCookies(req.cookieHeader);
   const csrfCookie = cookies[config.staffCsrfCookieName];
-  const session = decodeStaffSession(deps.staffSessionKey, cookies[config.staffSessionCookieName]);
-  const loggedIn = session !== null && session.role === "TENANT_ADMIN" && csrfCookie !== undefined && csrfCookie.length > 0;
+  // CA-138: "con sesion" = sesion valida en servidor (firma, exp, no revocada, inactividad), no solo una cookie con firma correcta.
+  const auth = await authenticateStaffSession(req.cookieHeader, deps.staffConsole, config, deps.staffSessionKey).catch(() => null);
+  const loggedIn = auth !== null && auth.ok && csrfCookie !== undefined && csrfCookie.length > 0;
   const formView = (extra: Partial<DevStaffConsoleFormView> = {}): DevStaffConsoleFormView => ({
     kind: "form",
     loggedIn,
@@ -124,7 +125,7 @@ export async function handleDevStaffConsole(req: DevStaffConsoleRequest, deps: D
     // Sin sesión previa no hay token CSRF: solo se exige Origin exacto (los navegadores lo envían en todo POST).
     if (req.originHeader !== config.allowedOrigin) return page(403, formView({ error: "Origen no permitido para este formulario." }));
     const loginRequest: RawConsentRequest = { originHeader: req.originHeader, csrfHeaderToken: undefined, cookieHeader: req.cookieHeader, body: { principalRef: fixture.principalRef } };
-    const result = await handleDevStaffConsoleLogin(loginRequest, "LOCAL", deps.staffIdentity, config, deps.staffSessionKey);
+    const result = await handleDevStaffConsoleLogin(loginRequest, "LOCAL", deps.staffConsole, config, deps.staffSessionKey);
     if (result.status !== 200 || !result.setStaffSessionCookie || !result.setStaffCsrfCookie) {
       return page(422, formView({ error: "No se pudo entrar: el administrador sintético no está en el roster de este servidor." }));
     }

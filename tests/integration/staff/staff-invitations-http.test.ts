@@ -21,6 +21,7 @@ import {
 } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow.handler.ts";
 import { deriveStaffSessionKey, encodeStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { mintStaffSession } from "./staff-session-helper.ts";
 import {
   LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY,
   LOCAL_ONLY_DEV_OTP_POLICY,
@@ -197,7 +198,7 @@ test("TEST-CNS-714: sin sesión STAFF (sin cookie, cookie basura, firma ajena o 
       [`/staff/invitations/${ref}/ready`, readyBody],
       [`/staff/invitations/${ref}/send`, {}],
     ];
-    const foreign = encodeStaffSession(deriveStaffSessionKey(randomBytes(32)), { tenantId: TENANT_A, principalRef: ADMIN_A, role: "TENANT_ADMIN" });
+    const foreign = encodeStaffSession(deriveStaffSessionKey(randomBytes(32)), { sid: "A".repeat(43), tenantId: TENANT_A, principalRef: ADMIN_A, role: "TENANT_ADMIN", iat: Date.now(), exp: Date.now() + 60_000 });
     for (const [path, body] of routes) {
       for (const sessionOverride of [undefined, "basura", foreign]) {
         const res = await post(h.baseUrl, path, body, {
@@ -222,8 +223,9 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
   try {
     // Sesión con firma del servidor pero rol APPROVER (defensa en profundidad de GRD-CM-07).
     const key = deriveStaffSessionKey(h.sessionSecret);
-    const viewerSession = encodeStaffSession(key, { tenantId: TENANT_A, principalRef: TEST_VIEWER.principalRef, role: "APPROVER" });
-    const csrf = "csrf-token-715-aaaaaaaa";
+    const viewerMinted = mintStaffSession(h.staff.sessions, key, { tenantId: TENANT_A, principalRef: TEST_VIEWER.principalRef, role: "APPROVER" });
+    const viewerSession = viewerMinted.cookieValue;
+    const csrf = viewerMinted.csrf;
     const denied = await post(h.baseUrl, "/staff/enrollments", enrollBody, { sessionOverride: viewerSession, csrfHeader: csrf, csrfCookie: csrf });
     assert.equal(denied.status, 403);
     assert.equal(denied.json.code, "ACTOR_NOT_ALLOWED");
@@ -248,7 +250,7 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
       { tenantId: TENANT_B, principalRef: ADMIN_A, role: "TENANT_ADMIN" as const },
     ]) {
       const res = await post(h.baseUrl, "/staff/enrollments", enrollBody, {
-        sessionOverride: encodeStaffSession(key, forged),
+        sessionOverride: mintStaffSession(h.staff.sessions, key, forged).cookieValue,
         csrfHeader: csrf,
         csrfCookie: csrf,
       });

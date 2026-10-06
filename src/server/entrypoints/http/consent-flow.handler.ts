@@ -107,6 +107,8 @@ export interface HttpResult {
   readonly setStaffSessionCookie?: string;
   /** CA-125: cookie CSRF de la consola STAFF, emitida junto con setStaffSessionCookie. */
   readonly setStaffCsrfCookie?: string;
+  /** CA-138: `Set-Cookie` de expiracion (Max-Age=0) de las cookies STAFF tras el logout (la revocacion es en servidor). */
+  readonly clearStaffCookies?: readonly string[];
   /** Solo 303 (RedeemSeeOther): ruta relativa sin token (contracts/openapi Location header). */
   readonly location?: string;
   /** Cabeceras adicionales exigidas por el contrato para esta respuesta (p. ej. RedemptionToken

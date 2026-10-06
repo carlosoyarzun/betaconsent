@@ -11,3 +11,14 @@ export const APPROVED_P10_INVITATION_EXPIRES_IN_MS = 7 * 24 * 60 * 60_000;
 
 /** TTL de los handles /i y /m (cookies `__Host-cns-i-handle` / `__Host-cns-m-handle`) = 10 min (Carlos, 2026-10-01). */
 export const APPROVED_LINK_HANDLE_TTL_MS = 10 * 60_000;
+
+// Sesión STAFF (`__Host-cns-staff`, staff-session.ts; CA-138, SEC-CNS-018 rev. 2 D-3, SEC-CNS-020 P2-3). Aprobados por Carlos, 2026-10-05.
+
+/** Vida ABSOLUTA de la sesión STAFF (exp = iat + este valor) = 8 h (Carlos, 2026-10-05). */
+export const APPROVED_STAFF_SESSION_ABSOLUTE_TTL_MS = 8 * 60 * 60_000;
+
+/** Expiración por INACTIVIDAD de la sesión STAFF = 30 min sin request válido (Carlos, 2026-10-05). */
+export const APPROVED_STAFF_SESSION_IDLE_TIMEOUT_MS = 30 * 60_000;
+
+/** Las filas de sesión STAFF expiradas se conservan 24 h tras su `exp` antes de la limpieza (Carlos, 2026-10-05). */
+export const APPROVED_STAFF_SESSION_PURGE_RETENTION_MS = 24 * 60 * 60_000;

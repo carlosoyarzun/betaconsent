@@ -30,7 +30,8 @@ import {
 } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import type { StaffConsolePorts } from "../../../src/server/entrypoints/http/staff-console.handler.ts";
 import { handleListStaffRoster } from "../../../src/server/entrypoints/http/staff-roster.handler.ts";
-import { deriveStaffSessionKey, encodeStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { deriveStaffSessionKey } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { mintStaffSession } from "./staff-session-helper.ts";
 import { loadRightsCaseHttpConfig } from "../../../src/server/entrypoints/http/config.ts";
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
@@ -116,7 +117,7 @@ async function start(opts: { subjects?: Array<{ tenantId: string; subjectRef: st
 }
 
 function sessionFor(h: Harness, principalRef: string, tenantId: string, role: StaffPrincipal["role"] = "TENANT_ADMIN"): string {
-  return encodeStaffSession(deriveStaffSessionKey(h.sessionSecret), { tenantId, principalRef, role });
+  return mintStaffSession(h.console.sessions, deriveStaffSessionKey(h.sessionSecret), { tenantId, principalRef, role }).cookieValue;
 }
 
 interface GetOptions { session?: string | undefined; site?: string | undefined | null; origin?: string | undefined }
@@ -272,7 +273,7 @@ test("TEST-CNS-1082 cursor: pagina sin duplicar; manipulado, de otro principal, 
     // Expirado: el handler recibe un reloj 16 min adelante.
     const key = deriveStaffSessionKey(h.sessionSecret);
     const late = await handleListStaffRoster(
-      { cookieHeader: `${STAFF_COOKIE}=${encodeStaffSession(key, { tenantId: TENANT_A, principalRef: ADMIN_A, role: "TENANT_ADMIN" })}`, originHeader: undefined, secFetchSiteHeader: "same-origin", rawQuery: `cursor=${first}` },
+      { cookieHeader: `${STAFF_COOKIE}=${sessionFor(h, ADMIN_A, TENANT_A)}`, originHeader: undefined, secFetchSiteHeader: "same-origin", rawQuery: `cursor=${first}` },
       h.console,
       loadRightsCaseHttpConfig({ allowedOrigin: ORIGIN }),
       key,

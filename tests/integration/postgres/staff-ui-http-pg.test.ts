@@ -2,7 +2,8 @@
 // (pantallas del colegio), DEC-BR-019 (Notion), SEC-CNS-018 rev. 2 (R3, R5), invitation.spec INV-IV-09. CONSENT_STORE=postgres:
 // el servidor se arma igual que dev.ts con createPostgresFlowPorts (vista app.staff_roster_invitation_status tras SET LOCAL ROLE
 // staff_roster_reader; ops.access_log como app_rw). TEST-CNS-1123 (GET /staff/roster JSON), 1124 (pagina HTML de la lista),
-// 1125 (recorrido HTML completo: dev-login -> lista -> formulario -> resumen -> envio -> confirmacion -> lista Enviada).
+// 1125 (recorrido HTML completo: dev-login -> lista -> formulario -> resumen -> envio -> confirmacion -> lista Enviada),
+// 1151 (CA-138: sesion STAFF con registro en app.staff_session: logout revoca en la BD, sid de otro tenant no existe, sin sid en claro ni PII).
 // Requiere Postgres real (harness.ts). Solo datos sinteticos, cero PII.
 
 import assert from "node:assert/strict";
@@ -27,7 +28,7 @@ import {
   LOCAL_ONLY_DEV_TENANT_ID,
 } from "../../../src/server/entrypoints/dev-local-config.ts";
 import { createConsentFlowHttpServer, createPostgresFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
-import { deriveStaffSessionKey, encodeStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { deriveStaffSessionKey, encodeStaffSession, hashStaffSid, issueStaffSession, decodeStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import { loadDecisionRelationshipConfig } from "../../../src/server/modules/consent-decision/decision-relationship.config.ts";
@@ -37,6 +38,7 @@ import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/
 import { loadOtpPolicyConfig } from "../../../src/server/modules/otp-challenge/otp-policy.config.ts";
 import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revocation/recovery-token-policy.config.ts";
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
+import type { StaffSessionStorePort } from "../../../src/server/ports/staff-session-store.port.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest, type PgTestContext } from "./harness.ts";
@@ -45,13 +47,13 @@ const ORIGIN = "http://consola-staff-ui-pg.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
 const CSRF_COOKIE = "__Host-cns-staff-csrf";
 const FLASH_COOKIE = "__Host-cns-staff-flash";
-const CSRF = "csrf-ui-pg-0123456789abcdef";
 const NAV = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } as const;
 const GOOD_EMAIL = "apoderado1@example.invalid";
 
 interface Boot {
   readonly baseUrl: string;
   readonly sessionSecret: Buffer;
+  readonly sessions: StaffSessionStorePort;
   readonly failed: string[];
   close(): Promise<void>;
 }
@@ -101,6 +103,7 @@ async function boot(ctx: PgTestContext, roster: readonly StaffPrincipal[], direc
   return {
     baseUrl,
     sessionSecret,
+    sessions: bundle.staffConsole.sessions,
     failed,
     async close() {
       console.error = realConsoleError;
@@ -141,12 +144,16 @@ async function postForm(env: Boot, path: string, fields: Record<string, string>,
   return { status: res.status, body: await res.text(), headers: res.headers };
 }
 
-const session = (env: Boot, principalRef: string, tenantId: string): string =>
-  `${STAFF_COOKIE}=${encodeStaffSession(deriveStaffSessionKey(env.sessionSecret), { tenantId, principalRef, role: "TENANT_ADMIN" })}; ${CSRF_COOKIE}=${CSRF}`;
+/** CA-138: la cookie sola ya no basta; la sesion se emite (y registra en app.staff_session) con el mismo mecanismo que el login. */
+const session = async (env: Boot, principalRef: string, tenantId: string): Promise<string> => {
+  const issued = await issueStaffSession({ sessions: env.sessions, staffSessionKey: deriveStaffSessionKey(env.sessionSecret) }, { tenantId, principalRef, role: "TENANT_ADMIN" });
+  return `${STAFF_COOKIE}=${issued.cookieValue}; ${CSRF_COOKIE}=${issued.csrfToken}`;
+};
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g;
 /** Normaliza refs y el correlationId: lo unico que puede diferir entre COMPLETED y DECLINED. */
-const normalize = (s: string): string => s.replace(UUID, "REF");
+// CA-138: el token CSRF esta ligado al sid (distinto por sesion), asi que tambien es "lo unico que puede diferir".
+const normalize = (s: string): string => s.replace(UUID, "REF").replace(/(name="csrf_token" value=")[A-Za-z0-9_-]+/g, "$1CSRF");
 const stableHeaders = (h: Headers): Array<[string, string]> => [...h.entries()].filter(([k]) => !["date", "content-length", "connection", "keep-alive", "set-cookie"].includes(k)).sort();
 
 async function accessLogCount(admin: Client, tenantId: string): Promise<number> {
@@ -191,7 +198,7 @@ pgTest("TEST-CNS-1123 pg http: GET /staff/roster -> 200, exactamente 1 fila en o
   const s = await twoDecisionTenants(ctx, "json");
   const env = await boot(ctx, s.roster, s.directory, false);
   try {
-    const ask = (principal: string, tenant: string) => get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, session(env, principal, tenant));
+    const ask = async (principal: string, tenant: string) => get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, await session(env, principal, tenant));
     assert.equal(await accessLogCount(s.admin, s.tenantC), 0);
     const completed = await ask(s.adminC, s.tenantC);
     const declined = await ask(s.adminD, s.tenantD);
@@ -208,7 +215,7 @@ pgTest("TEST-CNS-1123 pg http: GET /staff/roster -> 200, exactamente 1 fila en o
     // un segundo GET suma exactamente otra fila; un gating fallido no suma
     await ask(s.adminC, s.tenantC);
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2);
-    const noSite = await get(env, "/staff/roster", {}, session(env, s.adminC, s.tenantC));
+    const noSite = await get(env, "/staff/roster", {}, await session(env, s.adminC, s.tenantC));
     assert.equal(noSite.status, 404);
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2);
   } finally {
@@ -221,7 +228,7 @@ pgTest("TEST-CNS-1124 pg http: GET /staff/students (HTML) -> 200, exactamente 1 
   const s = await twoDecisionTenants(ctx, "html");
   const env = await boot(ctx, s.roster, s.directory, false);
   try {
-    const ask = (principal: string, tenant: string, headers: Record<string, string> = NAV) => get(env, "/staff/students", headers, session(env, principal, tenant));
+    const ask = async (principal: string, tenant: string, headers: Record<string, string> = NAV) => get(env, "/staff/students", headers, await session(env, principal, tenant));
     const completed = await ask(s.adminC, s.tenantC);
     const declined = await ask(s.adminD, s.tenantD);
     assert.equal(completed.status, 200);
@@ -241,7 +248,7 @@ pgTest("TEST-CNS-1124 pg http: GET /staff/students (HTML) -> 200, exactamente 1 
     }
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2, "un gating fallido no escribe access_log");
     // el HTML y el JSON de la misma peticion comparten proyeccion: mismo numero de filas y mismos estados
-    const json = JSON.parse((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, session(env, s.adminC, s.tenantC))).body) as { items: unknown[] };
+    const json = JSON.parse((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, await session(env, s.adminC, s.tenantC))).body) as { items: unknown[] };
     assert.equal(json.items.length, completed.body.split('<th scope="row">').length - 1);
   } finally {
     await env.close();
@@ -327,5 +334,44 @@ pgTest("TEST-CNS-1125 pg http (+ P2-2: participacion ajena -> 404): recorrido HT
     console.log = realLog;
     await env.close();
     await admin.end();
+  }
+});
+
+pgTest("TEST-CNS-1151 pg http (CA-138): la sesion STAFF vive en app.staff_session; logout revoca en la BD y la cookie robada deja de servir; un sid registrado en otro tenant no existe para este; la BD no guarda el sid en claro ni PII", async (ctx) => {
+  const s = await twoDecisionTenants(ctx, "sess");
+  const env = await boot(ctx, s.roster, s.directory, false);
+  const key = deriveStaffSessionKey(env.sessionSecret);
+  const rowsOf = async (tenantId: string) => (await s.admin.query<{ sid_hash: string; principal_ref: string; role: string; revoked_at: Date | null; row_text: string }>(
+    "SELECT sid_hash, principal_ref, role, revoked_at, t::text AS row_text FROM app.staff_session t WHERE tenant_id = $1 ORDER BY issued_at", [tenantId])).rows;
+  try {
+    const issued = await issueStaffSession({ sessions: env.sessions, staffSessionKey: key }, { tenantId: s.tenantC, principalRef: s.adminC, role: "TENANT_ADMIN" });
+    const cookie = `${STAFF_COOKIE}=${issued.cookieValue}; ${CSRF_COOKIE}=${issued.csrfToken}`;
+    assert.equal((await get(env, "/staff/students", NAV, cookie)).status, 200);
+    assert.equal((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, cookie)).status, 200);
+    // la BD tiene UNA fila: hash del sid, ref opaca y rol; ni el sid, ni la cookie, ni el token CSRF en claro
+    const rows = await rowsOf(s.tenantC);
+    assert.equal(rows.length, 1);
+    assert.deepEqual([rows[0]!.sid_hash, rows[0]!.principal_ref, rows[0]!.role], [hashStaffSid(issued.sid), s.adminC, "TENANT_ADMIN"]);
+    assert.ok(!rows[0]!.row_text.includes(issued.sid) && !rows[0]!.row_text.includes(issued.cookieValue) && !rows[0]!.row_text.includes(issued.csrfToken) && !/@/.test(rows[0]!.row_text));
+    assert.equal((await rowsOf(s.tenantD)).length, 0, "el otro tenant no tiene filas");
+
+    // cross-tenant: cookie con firma valida y principal valido de D, pero con el sid registrado en C -> en D ese sid no existe
+    const payload = decodeStaffSession(key, issued.cookieValue)!;
+    const crossCookie = encodeStaffSession(key, { ...payload, tenantId: s.tenantD, principalRef: s.adminD });
+    assert.equal((await get(env, "/staff/students", NAV, `${STAFF_COOKIE}=${crossCookie}; ${CSRF_COOKIE}=${issued.csrfToken}`)).status, 404);
+    assert.equal((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, `${STAFF_COOKIE}=${crossCookie}`)).status, 404);
+    assert.equal(await accessLogCount(s.admin, s.tenantD), 0, "un gating fallido no escribe access_log");
+
+    // logout: revoca en la BD y la cookie "robada" deja de servir en lectura y escritura
+    const out = await postForm(env, "/staff/logout", { csrf_token: issued.csrfToken }, cookie);
+    assert.equal(out.status, 303);
+    assert.notEqual((await rowsOf(s.tenantC))[0]!.revoked_at, null, "revocada en la BD");
+    assert.equal((await get(env, "/staff/students", NAV, cookie)).status, 404);
+    assert.equal((await get(env, "/staff/roster", { "sec-fetch-site": "same-origin" }, cookie)).status, 404);
+    assert.equal((await postForm(env, "/staff/students/invite", { csrf_token: issued.csrfToken, subject: s.directory[0]!.subjectRef, participation: s.directory[0]!.participationRef! }, cookie)).status, 404);
+    assert.equal((await postForm(env, "/staff/logout", { csrf_token: issued.csrfToken }, cookie)).status, 303, "logout idempotente");
+  } finally {
+    await env.close();
+    await s.admin.end();
   }
 });

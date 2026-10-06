@@ -27,7 +27,8 @@ import {
   createDefaultConsentFlowPorts,
   createDefaultStaffConsolePorts,
 } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
-import { deriveStaffSessionKey, encodeStaffSession } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { deriveStaffSessionKey } from "../../../src/server/entrypoints/http/staff-session.ts";
+import { mintStaffSession } from "./staff-session-helper.ts";
 import { loadIdempotencyPolicyConfig } from "../../../src/server/modules/common/idempotency-policy.config.ts";
 import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/invitation/invitation-issuance-policy.config.ts";
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
@@ -52,7 +53,12 @@ const ROSTER: readonly StaffPrincipal[] = [
 ];
 const CONTEXT = "BETA_2026_01";
 const GOOD_EMAIL = "apoderado1@example.invalid";
-const CSRF = "csrf-ui-0123456789abcdef";
+/** Secreto fijo del harness: el token CSRF esta ligado al sid (CA-138), asi que se deriva de la sesion de ADMIN_A y es una constante estable. */
+const SESSION_SECRET = Buffer.alloc(32, 7);
+const KEY = deriveStaffSessionKey(SESSION_SECRET);
+const csrfOf = (h: { staff: { sessions: Parameters<typeof mintStaffSession>[0] } }, principalRef: string, tenantId: string, role: StaffPrincipal["role"] = "TENANT_ADMIN"): string => mintStaffSession(h.staff.sessions, KEY, { tenantId, principalRef, role }).csrf;
+/** Token CSRF de la sesion de ADMIN_A en TENANT_A (sid deterministico: no depende del harness). */
+const CSRF = mintStaffSession({ create: async () => {} } as never, KEY, { tenantId: LOCAL_ONLY_DEV_TENANT_ID, principalRef: fixtureUuid("ui-admin-a") }).csrf;
 const NAV = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } as const;
 
 interface Student { subjectRef: string; participationRef: string; label: string }
@@ -88,7 +94,7 @@ async function start(opts: StartOptions = {}): Promise<Harness> {
     staff.catalog.seedParticipation(TENANT_A, { participationRef: s.participationRef, contextRef: CONTEXT, productRef: "LECTORPRO", status: "ACTIVE" });
   }
   const directory = createInMemorySubjectDirectory("LOCAL", students.map((s) => ({ tenantId: TENANT_A, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })));
-  const sessionSecret = randomBytes(32);
+  const sessionSecret = SESSION_SECRET;
   const server: Server = createConsentFlowHttpServer({
     config: { allowedOrigin: ORIGIN },
     ports,
@@ -110,7 +116,8 @@ async function start(opts: StartOptions = {}): Promise<Harness> {
 }
 
 function session(h: Harness, principalRef = ADMIN_A, tenantId = TENANT_A, role: StaffPrincipal["role"] = "TENANT_ADMIN"): string {
-  return `${STAFF_COOKIE}=${encodeStaffSession(deriveStaffSessionKey(h.sessionSecret), { tenantId, principalRef, role })}; ${CSRF_COOKIE}=${CSRF}`;
+  const minted = mintStaffSession(h.staff.sessions, KEY, { tenantId, principalRef, role });
+  return `${STAFF_COOKIE}=${minted.cookieValue}; ${CSRF_COOKIE}=${minted.csrf}`;
 }
 
 interface Res { status: number; html: string; headers: Headers }
@@ -355,7 +362,7 @@ test("TEST-CNS-1109 formulario: POST invite con CSRF/Origin muestra el alumno de
     // refs malformadas / alumno de otro tenant: 404 uniforme ("sesion vencida o alumno no disponible")
     const malformed = await postForm(h, "/staff/students/invite", { ...fields(s), subject: "no-es-ref" }, { cookie });
     assert.equal(malformed.status, 404);
-    const otherTenant = await postForm(h, "/staff/students/send", fields(s, { guardian_email: GOOD_EMAIL }), { cookie: session(h, ADMIN_B, TENANT_B) });
+    const otherTenant = await postForm(h, "/staff/students/send", fields(s, { guardian_email: GOOD_EMAIL, csrf_token: csrfOf(h, ADMIN_B, TENANT_B) }), { cookie: session(h, ADMIN_B, TENANT_B) });
     assert.equal(otherTenant.status, 404, "el tenant sale de la sesion: el alumno de A no existe para B");
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
   } finally {
@@ -587,7 +594,7 @@ test("TEST-CNS-1116 envio sin sesion o con rol sin permiso: 404 'sesion vencida 
     assert.equal(noSession.status, 404);
     assert.equal(h1Of(noSession.html), "No pudimos abrir esta página");
     assert.ok(noSession.html.includes("Tu sesión venció o el alumno ya no está disponible."));
-    const viewer = await postForm(h, "/staff/students/send", fields(s, { guardian_email: GOOD_EMAIL }), { cookie: session(h, VIEWER, TENANT_A, "APPROVER") });
+    const viewer = await postForm(h, "/staff/students/send", fields(s, { guardian_email: GOOD_EMAIL, csrf_token: csrfOf(h, VIEWER, TENANT_A, "APPROVER") }), { cookie: session(h, VIEWER, TENANT_A, "APPROVER") });
     assert.equal(viewer.status, 403);
     assert.equal(h1Of(viewer.html), "No tienes permiso para esta acción");
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);

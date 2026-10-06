@@ -89,12 +89,15 @@ import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
 import { deriveCaseSessionKey } from "./case-session.ts";
 import { deriveStaffSessionKey } from "./staff-session.ts";
+import { createInMemoryStaffSessionStore } from "../../../infra/adapters/in-memory-staff-session-store.adapter.ts";
+import { createPgStaffSessionStore } from "../../../infra/adapters/postgres/staff-session.adapter.ts";
 import {
   handleCreateInvitation,
   handleDevStaffConsoleLogin,
   handleMarkInvitationReady,
   handleOpenEnrollment,
   handleSendInvitation,
+  handleStaffLogout,
   type StaffConsolePorts,
 } from "./staff-console.handler.ts";
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
@@ -110,6 +113,7 @@ import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
+import { STAFF_LOGOUT_PATH } from "./staff-ui-pages.ts";
 import { handleStaffUi, isStaffUiRoute, STAFF_UI_RESPONSE_HEADERS, type StaffUiConfig } from "./staff-ui.handler.ts";
 import { deriveStaffRosterCursorKey } from "../../modules/staff-roster/roster-cursor.ts";
 import { createInMemoryAccessLogAdapter, type InMemoryAccessLog } from "../../../infra/adapters/in-memory-access-log.adapter.ts";
@@ -187,6 +191,8 @@ export interface ConsentFlowHttpServerOptions {
    * Contexto y version de consentimiento los fija el servidor. Sin esto, esas rutas no existen (404). El login dev de la
    * entrada ("Entrar (solo desarrollo)", POST /staff/dev-login) solo existe con environment=LOCAL y `devStaffConsole`. */
   readonly staffUi?: StaffUiConfig;
+  /** CA-138: reloj de la sesion STAFF (expiracion absoluta, inactividad, flash, cursor). Solo tests; por defecto Date.now. */
+  readonly staffNowMs?: () => number;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -219,6 +225,7 @@ export function createDefaultStaffConsolePorts(
     enrollment: { enrollmentRepo, tenantCatalog, ledger: invitation.ledger, uow: tenancy.uow },
     uow: tenancy.uow,
     staffIdentity,
+    sessions: createInMemoryStaffSessionStore(),
     ...(roster ? { roster } : {}),
     invitationLinkSink,
     catalog: tenantCatalog,
@@ -432,6 +439,8 @@ export function createPostgresFlowPorts(
     enrollment: { enrollmentRepo: o.enrollmentRepo, tenantCatalog: o.tenantCatalog, ledger: o.ledger, uow: store.uow },
     uow: store.uow,
     staffIdentity: cfg.staffIdentity,
+    // CA-138: registro servidor de sesiones STAFF (app.staff_session, RLS FORCE por tenant).
+    sessions: createPgStaffSessionStore(store.uow),
     // API-CNS-116: la lectura va por la vista tras SET LOCAL ROLE staff_roster_reader (adaptador Postgres).
     roster: createPgStaffRosterReader(store.uow),
     ...(cfg.subjectDirectory ? { subjectDirectory: cfg.subjectDirectory } : {}),
@@ -563,6 +572,7 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   if (result.setCaseCsrfCookie) cookies.push(result.setCaseCsrfCookie);
   if (result.setStaffSessionCookie) cookies.push(result.setStaffSessionCookie);
   if (result.setStaffCsrfCookie) cookies.push(result.setStaffCsrfCookie);
+  if (result.clearStaffCookies) cookies.push(...result.clearStaffCookies);
   if (cookies.length > 0) {
     res.setHeader("Set-Cookie", cookies);
   }
@@ -614,7 +624,9 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffIdentity: StaffIdentityPort = options.staffIdentity ?? createInMemoryStaffIdentityAdapter([]);
   // CA-125: clave propia de la sesión STAFF (staff-session.ts), aislada de las de arriba.
   const staffSessionKey = deriveStaffSessionKey(sessionSecret);
-  const staffConsolePorts: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
+  const staffConsoleBase: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
+  // CA-138: un reloj inyectado (tests) viaja en los puertos para que TODA validacion de sesion use el mismo instante.
+  const staffConsolePorts: StaffConsolePorts = options.staffNowMs ? { ...staffConsoleBase, nowMs: options.staffNowMs } : staffConsoleBase;
   // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion).
   const staffRosterCursorKey = options.staffRosterCursorKey ?? deriveStaffRosterCursorKey(randomBytes(32));
   const caseConfirmationPorts: CaseConfirmationPorts = {
@@ -988,6 +1000,28 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "POST" && path === STAFF_LOGOUT_PATH && (headerValue(req.headers["content-type"]) ?? "").toLowerCase().startsWith("application/json")) {
+      // CA-138: equivalente JSON del logout (CSRF por cabecera). Revoca el sid en servidor y borra cookies. El formulario HTML de la
+      // consola (x-www-form-urlencoded) sigue por staff-ui.handler.ts.
+      const logoutBody = await readBody(req);
+      writeResult(
+        res,
+        config,
+        await handleStaffLogout(
+          {
+            originHeader: headerValue(req.headers.origin),
+            csrfHeaderToken: headerValue(req.headers[config.csrfHeaderName]),
+            cookieHeader: headerValue(req.headers.cookie),
+            body: logoutBody,
+          },
+          staffConsolePorts,
+          config,
+          staffSessionKey,
+        ),
+      );
+      return;
+    }
+
     if (options.staffUi && isStaffUiRoute(req.method ?? "", path)) {
       // REQ-CNS-036: pantallas HTML del colegio. El cuerpo del formulario y el query (cursor cifrado) NUNCA se registran.
       const formBody = req.method === "POST" ? await readFormBody(req) : "";
@@ -1018,6 +1052,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
           config,
           staffSessionKey,
           cursorKey: staffRosterCursorKey,
+          ...(options.staffNowMs ? { nowMs: options.staffNowMs } : {}),
         },
       );
       if (uiResponse.html === undefined && uiResponse.status === 404) {
@@ -1050,6 +1085,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
           config,
           staffSessionKey,
           staffRosterCursorKey,
+          options.staffNowMs ?? Date.now,
         ),
       );
       return;
@@ -1076,7 +1112,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const requestedPrincipal = (request.body as { principalRef?: unknown } | undefined)?.principalRef;
       const requestedRole = typeof requestedPrincipal === "string" ? (await staffIdentity.findByPrincipalRef(requestedPrincipal))?.role : undefined;
       if (requestedRole === "TENANT_ADMIN") {
-        writeResult(res, config, await handleDevStaffConsoleLogin(request, options.environment ?? "DEV", staffIdentity, config, staffSessionKey));
+        writeResult(res, config, await handleDevStaffConsoleLogin(request, options.environment ?? "DEV", staffConsolePorts, config, staffSessionKey));
         return;
       }
       // CA-128 (Carlos 2026-09-28, opción (ii)): mismo guard GRD-CM-13 que /__dev/otp-sink;
