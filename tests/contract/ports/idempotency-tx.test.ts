@@ -11,3 +11,5 @@ import { runIdempotencyTxContract } from "./idempotency-tx.contract.ts";
 runIdempotencyTxContract((name, body) => {
   test(name, () => body({ uow: createInMemoryTenancy({ ledger: createInMemoryLedgerAdapter() }).uow }));
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-102, TEST-CNS-863, TEST-CNS-864 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).

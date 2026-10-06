@@ -132,3 +132,5 @@ pgTest("TEST-CNS-867 pg: dos requests concurrentes con la misma Idempotency-Key 
     await pool.end();
   }
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-101 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).

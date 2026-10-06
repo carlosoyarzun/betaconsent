@@ -24,3 +24,5 @@ runSessionSecurityEventsContract((name, body) => {
     });
   });
 });
+
+// Trazabilidad X8: este archivo ejecuta/agrupa las suites de TEST-CNS-1195, TEST-CNS-1196, TEST-CNS-1197, TEST-CNS-1200 (el texto de cada ID vive en la suite compartida o es fila paraguas de traceability/test-matrix.csv).
