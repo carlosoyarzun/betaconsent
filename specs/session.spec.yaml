@@ -5,13 +5,13 @@
 # ese directorio. Cero PII. IT0: solo datos sinteticos (DEC-BR-014 §4).
 specId: SPEC-CNS-SESSION
 title: "Sesiones de consola STAFF (__Host-cns-staff) y CASE (__Host-cns-case): emision, validacion, CSRF, logout, almacenamiento"
-version: "0.1.0"
+version: "0.2.0"
 status: PROPOSED
 jiraStory: CA-140
 owner: lampone-dev
 reviewers:
-  - lampone-security # contenido de seguridad; los FINDINGs de findings[] requieren su revision
-  - lampone-qa # IDs de test; findings F-SE-01..F-SE-04
+  - lampone-security # contenido de seguridad
+  - lampone-qa # IDs de test
   - carlosoyarzun # human gate: cierre de la spec
 humanGate: "Solo Carlos cierra esta spec (status PROPOSED hasta revision humana)."
 commonSpec: specs/state-machines/common.spec.yaml
@@ -32,6 +32,7 @@ codeRefs:
   - src/server/modules/common/approved-parameters.ts
   - db/migrations/0021_staff_session.sql
   - db/migrations/0022_case_session.sql
+  - tools/spec-checks/session-spec-checker.ts # valida esta spec en CI (TEST-CNS-1187)
 
 scope:
   included:
@@ -166,9 +167,8 @@ guards:
     applies: [STAFF, CASE]
     rule: "En CADA request el principal debe seguir en el roster atestado (StaffIdentityPort.findByPrincipalRef) con el mismo rol. STAFF ademas exige principal.tenantId == session.tenantId. CASE no compara tenant del principal (los roles CASE no tienen tenant propio, staff-identity.port.ts); el tenant lo fija el registro (RLS) y el caseRef. Discrepancia = sin sesion."
     onFail: ERR-CM-01
-    governedBy: ["GRD-CM-01", "GRD-CM-02", "GRD-CM-07", "CA-139 P2-1"]
-    testIds: [TEST-CNS-1176]
-    testNotes: "STAFF no tiene test dedicado de baja del roster con sesion vigente: ver F-SE-01."
+    governedBy: ["GRD-CM-01", "GRD-CM-02", "GRD-CM-07", "CA-139 P2-1", "CA-140"]
+    testIds: [TEST-CNS-1176, TEST-CNS-1181]
   - id: GRD-SE-07
     name: csrf_bound_to_sid
     applies: [STAFF, CASE]
@@ -178,19 +178,18 @@ guards:
     testIds: [TEST-CNS-1147, TEST-CNS-1168, TEST-CNS-1140, TEST-CNS-1160]
   - id: GRD-SE-08
     name: csrf_before_touch
-    applies: [CASE]
-    rule: "CASE: el CSRF ligado al sid se valida ANTES de validateAndTouch, tras firma, caseRef y roster: una cookie robada sin CSRF valido no prolonga la inactividad. STAFF: NO se cumple en POST (authenticateStaffSession toca antes de comprobar el CSRF ligado al sid): ver F-SE-02."
+    applies: [STAFF, CASE]
+    rule: "En metodos con efectos (POST) el CSRF ligado al sid se valida ANTES de validateAndTouch, tras firma, roster (y caseRef en CASE): una cookie robada sin CSRF valido no prolonga la inactividad. STAFF lo implementa pasando la cookie CSRF a authenticateStaffSession (CA-140); los GET STAFF no exigen CSRF (INV-CM-08, residual R-SE-05)."
     onFail: ERR-CM-09
-    governedBy: ["CA-139 P2-3", "GRD-CM-10"]
-    testIds: [TEST-CNS-1177]
-    testNotes: "STAFF: sin implementacion ni test (F-SE-02)."
+    governedBy: ["CA-139 P2-3", "CA-140", "GRD-CM-10"]
+    testIds: [TEST-CNS-1177, TEST-CNS-1180]
   - id: GRD-SE-09
     name: logout
     applies: [STAFF, CASE]
     rule: "POST /staff/logout (API-CNS-192, JSON; la variante HTML de formulario responde 303 con el mismo gating) y POST /platform/case-session/logout (API-CNS-193): exigen CSRF double-submit + Origin (GRD-CM-10); si la cookie trae una sesion de firma valida, el token debe ser el de ESA sesion (403 y NO revoca). Revoca el sid en servidor (la cookie robada deja de servir de inmediato) y responde 200 con cuerpo {} (esquema additionalProperties:false), Cache-Control: no-store y Set-Cookie Max-Age=0 para sesion, CSRF y (STAFF) flash. Idempotente: sin sesion valida solo borra cookies."
     onFail: ERR-CM-09 # 403 CSRF_REJECTED (cabecera/cookie ausente o desigual, o token de otra sesion)
     governedBy: ["API-CNS-192", "API-CNS-193", "GRD-CM-10", "CA-138", "CA-139"]
-    testIds: [TEST-CNS-1143, TEST-CNS-1147, TEST-CNS-1166, TEST-CNS-1168]
+    testIds: [TEST-CNS-1143, TEST-CNS-1147, TEST-CNS-1166, TEST-CNS-1168, TEST-CNS-1185, TEST-CNS-1186]
   - id: GRD-SE-10
     name: purge_expired
     applies: [STAFF, CASE]
@@ -229,8 +228,7 @@ errors:
     testIds: [TEST-CNS-1147, TEST-CNS-1168]
   - id: ERR-SE-03
     response: "403 ACTOR_NOT_ALLOWED (ERR-CM-10): sesion valida con rol sin permiso para la ruta (p. ej. STAFF no TENANT_ADMIN en /staff/* de EN0/I1-I3; CASE APPROVER en record_case_confirmation), GRD-CM-07."
-    testIds: []
-    testNotes: "Sin test dedicado en TEST-CNS-1140..1177 (rol incorrecto con sesion valida): F-SE-01."
+    testIds: [TEST-CNS-1182, TEST-CNS-1183]
 
 invariants:
   - id: INV-SE-01
@@ -244,8 +242,7 @@ invariants:
     testIds: [TEST-CNS-1142, TEST-CNS-1148, TEST-CNS-1151, TEST-CNS-1162, TEST-CNS-1172, TEST-CNS-1174, TEST-CNS-1169]
   - id: INV-SE-04
     statement: "Separacion de claves: firma de sesion, CSRF y flash usan claves HKDF con info distintos entre STAFF, CASE y las demas cookies del repo; comprometer una firma no compromete las demas."
-    testIds: []
-    testNotes: "Sin test que compare las claves entre consolas (1140/1160 solo prueban 'otra clave de sesion' no valida): F-SE-03."
+    testIds: [TEST-CNS-1184, TEST-CNS-1140, TEST-CNS-1160]
 
 residuals:
   - id: R-SE-01
@@ -258,30 +255,15 @@ residuals:
     statement: "stepUp / MFA: sin verificacion criptografica hasta APR-IDP (PENDING - Carlos / studio); la sesion IT0 la emite solo dev-login LOCAL."
     acceptedFor: "IT0 sintetico"
   - id: R-SE-04
-    statement: "Login y logout no generan auditoria (ni ledger ni ops.access_log): se trata en CA-141."
+    statement: "Login y logout no generan auditoria (ni ledger ni ops.access_log). CA-141 los registrara en un registro de eventos de seguridad NUEVO, separado de ops.access_log (decision de Carlos, 2026-10-06)."
     acceptedFor: "IT0 sintetico; pendiente CA-141"
   - id: R-SE-05
-    statement: "Los GET autenticados de STAFF no exigen CSRF (INV-CM-08), por lo que una cookie robada puede prolongar la inactividad con GET hasta la exp absoluta de 8 h; solo el logout y las escrituras estan protegidas por el CSRF ligado al sid."
-    acceptedFor: "IT0 sintetico; propuesto, requiere ratificacion de Carlos"
+    statement: "Los GET autenticados de STAFF no exigen CSRF (INV-CM-08), por lo que una cookie robada puede mantener viva la sesion con GET hasta la exp absoluta de 8 h; solo el logout y las escrituras estan protegidas por el CSRF ligado al sid."
+    acceptedFor: "IT0 sintetico"
+    status: "ACEPTADO (Carlos, 2026-10-06); revisar antes de APR-IDP"
 
-findings:
-  - id: F-SE-01
-    severity: P2
-    kind: "guard sin test"
-    statement: "GRD-SE-06 en STAFF (re-verificacion del roster en cada request: principal dado de baja o con otro rol/tenant con sesion vigente = 404) esta implementado en authenticateStaffSession pero ningun TEST-CNS-1140..1154 lo ejercita; CASE si (TEST-CNS-1176). Tampoco hay test dedicado de ERR-SE-03 con sesion valida."
-    action: "lampone-qa: test de integracion STAFF analogo a TEST-CNS-1176."
-  - id: F-SE-02
-    severity: P2
-    kind: "asimetria spec<->code STAFF/CASE"
-    statement: "CASE valida el CSRF ligado al sid antes del touch (CA-139 P2-3); STAFF lo valida DESPUES (staff-console.handler.ts authenticate(): authenticateStaffSession toca last_seen_at y luego staffCsrfMatchesSession; igual en staff-ui.handler.ts). Una cookie STAFF robada sin CSRF valido prolonga la inactividad en POST. GRD-SE-08 queda especificado solo para CASE."
-    action: "lampone-dev/security: llevar el orden de CASE a STAFF (cambio de codigo + test) o aceptar como residual; decision de lampone-security."
-  - id: F-SE-03
-    severity: P2
-    kind: "invariante sin test"
-    statement: "INV-SE-04 (separacion de claves HKDF entre consolas/cookies) no tiene test."
-    action: "lampone-qa: test unit que verifique claves y tokens CSRF distintos para el mismo secreto entre STAFF y CASE."
-  - id: F-SE-04
-    severity: P2
-    kind: "contrato sin test dedicado"
-    statement: "No hay test de contrato OpenAPI que cubra API-CNS-192 (STAFF); API-CNS-193 se ejerce en case-session-http.test.ts (TEST-CNS-1166) y 192 en TEST-CNS-1143 como comportamiento, no como esquema."
-    action: "lampone-qa: ampliar el contrato HTTP (tests/contract/http) a 192/193."
+findings: []
+
+specCheck:
+  checker: tools/spec-checks/session-spec-checker.ts
+  testIds: [TEST-CNS-1187]
