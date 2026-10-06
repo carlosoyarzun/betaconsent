@@ -344,14 +344,15 @@ export async function submitOtp(
   verificationRef: string,
   code: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
 ): Promise<OtpVerificationRecord> {
   const outcome = await inTx(ports, tenantId, (p) =>
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: null,
       eventScope: "DECISION",
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, scope: "DECISION", method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, scope: "DECISION", method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
       onVerified: async (found) => {
-        await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, verificationRef); // I5
+        await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, verificationRef); // I5
       },
     }),
   );
@@ -405,12 +406,13 @@ export async function submitRightsOtp(
   scope: "REVOCATION" | "MANAGE",
   code: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
 ): Promise<OtpVerificationRecord> {
   const outcome = await inTx(ports, tenantId, (p) =>
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: scope,
       eventScope: scope,
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, scope, method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
+      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, scope, method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
     }),
   );
   return settle(outcome);

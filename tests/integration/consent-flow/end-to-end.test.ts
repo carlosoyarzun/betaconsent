@@ -85,7 +85,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
   await requestOtp(otpPorts, TENANT_ID, fixtureUuid("ver-1"), fixtureUuid("inv-1"), CHANNEL_REF);
   const sink = otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
   const code = sink.sent[0]?.code ?? "";
-  await submitOtp(otpPorts, TENANT_ID, fixtureUuid("ver-1"), code, fixtureUuid("dm-1"));
+  await submitOtp(otpPorts, TENANT_ID, fixtureUuid("ver-1"), code, fixtureUuid("dm-1"), 2);
 
   // consent-decision: C1 -> C2 -> C3 (dispara I6 sobre Invitation).
   await startDecision(consentPorts, TENANT_ID, "DECISION_MAKER", {

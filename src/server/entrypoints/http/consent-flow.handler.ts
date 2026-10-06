@@ -24,7 +24,7 @@
 // DecisionStepRequest tampoco define ese campo en el contrato).
 
 import { randomUUID } from "node:crypto";
-import { deriveDecisionMakerRef as deriveKeyedDecisionMakerRef } from "../../modules/consent-decision/decision-maker-ref.ts";
+import { deriveDecisionMakerRef as deriveKeyedDecisionMakerRef, type DecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
 
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
@@ -67,7 +67,7 @@ export interface ConsentFlowPorts {
   readonly otp: OtpChallengePorts;
   readonly decision: ConsentDecisionPorts;
   /** CA-128 (Carlos, 2026-10-01): clave HMAC del decisionMakerRef (decision-maker-ref.ts), por entorno. */
-  readonly decisionMakerRefKey: Buffer;
+  readonly decisionMakerRefKey: DecisionMakerRefKey;
 }
 
 export interface RawConsentRequest {
@@ -183,7 +183,7 @@ function checkCsrf(request: RawConsentRequest, config: RightsCaseHttpConfig): Ht
 /** decisionMakerRef derivado del canal ya ligado a la invitación (nunca del cliente, GRD-OT-02
  * + D5). Es una ref opaca UUIDv4 derivado de un HMAC con clave de entorno (decision-maker-ref.ts; Carlos,
  * 2026-10-01), no el canal en claro ni un hash sin sal. */
-function deriveDecisionMakerRef(key: Buffer, tenantId: string, channelRef: string): string {
+function deriveDecisionMakerRef(key: DecisionMakerRefKey, tenantId: string, channelRef: string): string {
   // LEGAL DECISION, Carlos 2026-10-01, (a) por tenant: tenantId del contexto de sesion, nunca del cliente.
   return deriveKeyedDecisionMakerRef(key, tenantId, channelRef);
 }
@@ -455,7 +455,7 @@ export async function handleSubmitOtp(
     const verificationRef = scope === "MANAGE" ? session.manageVerificationRef : session.revocationVerificationRef;
     if (!verificationRef) return uniformNotFound();
     try {
-      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, manageChannelRef(session.chainRef ?? "")));
+      await submitRightsOtp(ports.otp, session.tenantId, verificationRef, scope, code, deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, manageChannelRef(session.chainRef ?? "")), ports.decisionMakerRefKey.keyVersion);
       const verifiedSession: ConsentSessionPayload =
         scope === "MANAGE"
           ? { ...session, manageDecisionMakerRef: deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, manageChannelRef(session.chainRef ?? "")) }
@@ -487,7 +487,7 @@ export async function handleSubmitOtp(
   const decisionMakerRef = deriveDecisionMakerRef(ports.decisionMakerRefKey, session.tenantId, invitation.recipientChannelRef);
 
   try {
-    await submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef);
+    await submitOtp(ports.otp, session.tenantId, session.verificationRef, code, decisionMakerRef, ports.decisionMakerRefKey.keyVersion);
     const verifiedSession: ConsentSessionPayload = { ...session, decisionMakerRef };
     return {
       // OtpVerified (contracts/api-payloads.schema.json $defs/OtpVerified): scope es requerido

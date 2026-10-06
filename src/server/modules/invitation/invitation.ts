@@ -384,9 +384,10 @@ export function markInvitationVerified(
   tenantId: TenantId,
   invitationRef: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
   verificationRef: string,
 ): Promise<InvitationRecord> {
-  return inTx(ports, tenantId, (p) => markInvitationVerifiedTx(p, tenantId, invitationRef, decisionMakerRef, verificationRef));
+  return inTx(ports, tenantId, (p) => markInvitationVerifiedTx(p, tenantId, invitationRef, decisionMakerRef, decisionMakerRefKeyVersion, verificationRef));
 }
 
 /** Variante para una unidad de trabajo ya abierta (la dispara otp-challenge / consent-decision en su tx). */
@@ -395,6 +396,7 @@ export async function markInvitationVerifiedTx(
   tenantId: TenantId,
   invitationRef: string,
   decisionMakerRef: string,
+  decisionMakerRefKeyVersion: number,
   verificationRef: string,
 ): Promise<InvitationRecord> {
   const base = await invitationSequence(ports, tenantId, invitationRef);
@@ -412,7 +414,7 @@ export async function markInvitationVerifiedTx(
     aggregateId: invitationRef,
     actorType: "HUMAN",
     actorRole: "DECISION_MAKER",
-    payload: { invitationRef, verificationRef, decisionMakerRef, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
+    payload: { invitationRef, verificationRef, decisionMakerRef, decisionMakerRefKeyVersion, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
     idempotencyKey: `${invitationRef}:${verificationRef}`,
   });
   return verified;

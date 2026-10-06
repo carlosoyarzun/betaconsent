@@ -118,7 +118,7 @@ test("TEST-CNS-842: otp V3: expectedSequence = base capturada antes del lock (OT
     const flow = makeFlow(ledger);
     const code = await openedWithOtp(flow);
     seen.length = 0;
-    await submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"));
+    await submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2);
     const byType = Object.fromEntries(seen.map((e) => [e.eventType, e.expectedSequence]));
     assert.equal(byType.DECISION_MAKER_CHANNEL_VERIFIED, 1, "tras OTP_ISSUED (seq 1)");
     assert.equal(typeof byType.INVITATION_VERIFIED, "number");
@@ -131,7 +131,7 @@ test("TEST-CNS-842: otp V3: expectedSequence = base capturada antes del lock (OT
     const flow = makeFlow(ledger, { otpLock: async () => { if (interfere) { interfere = false; await advanceAggregate(ledger, fixtureUuid("ver-842"), "DecisionMakerVerification"); } } });
     const code = await openedWithOtp(flow);
     interfere = true;
-    await assert.rejects(() => submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842")), (e: unknown) => e instanceof LedgerSequenceConflictError);
+    await assert.rejects(() => submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2), (e: unknown) => e instanceof LedgerSequenceConflictError);
     const rec = await flow.otpRepo.findByRef(T, fixtureUuid("ver-842"));
     assert.equal(rec?.state, "CODE_SENT");
     assert.equal(rec?.attempts, 0);
@@ -146,7 +146,7 @@ test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequ
     const { ledger, seen } = recordingLedger();
     const flow = makeFlow(ledger, hooks);
     const code = await openedWithOtp(flow);
-    await submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"));
+    await submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2);
     await startDecision(flow.decision, T, "DECISION_MAKER", { consentId: fixtureUuid("consent-842"), invitationRef: fixtureUuid("inv-842"), verificationRef: fixtureUuid("ver-842"), decisionMakerRef: fixtureUuid("dm-842") });
     await recordDecisionStep(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), { stepKind: "CONSENT_VERSION_VIEWED" });
     await recordDecisionStep(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true });

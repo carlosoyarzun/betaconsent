@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { deriveChainRefKey } from "../../modules/consent-decision/chain-ref.ts";
-import { deriveDecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
+import { deriveDecisionMakerRefKey, type DecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
 import type { OutboxEnvelope } from "../../ports/outbox.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
@@ -249,7 +249,7 @@ export function createDefaultConsentFlowPorts(
   otpPolicy: OtpPolicy,
   relationshipConfig: DecisionRelationshipConfig,
   chainRefKey: Buffer = deriveChainRefKey(randomBytes(32)),
-  decisionMakerRefKey: Buffer = deriveDecisionMakerRefKey(randomBytes(32)),
+  decisionMakerRefKey: DecisionMakerRefKey = deriveDecisionMakerRefKey(randomBytes(32)),
 ): ConsentFlowPorts {
   const ledger = createInMemoryLedgerAdapter();
   const invitationRepo = createInMemoryInvitationRepository();
@@ -378,7 +378,7 @@ export interface PostgresFlowConfig {
   /** SEC-CNS-017 F2: clave HMAC del chainRef (chain-ref.ts), derivada de CNS_CHAIN_REF_SECRET. */
   readonly chainRefKey: Buffer;
   /** CA-128: clave HMAC del decisionMakerRef (decision-maker-ref.ts), de CNS_DECISION_MAKER_REF_SECRET. */
-  readonly decisionMakerRefKey: Buffer;
+  readonly decisionMakerRefKey: DecisionMakerRefKey;
   readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
   /** API-CNS-116: directorio SINTETICO de etiquetas (solo LOCAL/CI). Sin el, subjectLabel = null. */
   readonly subjectDirectory?: SubjectDirectoryPort;
