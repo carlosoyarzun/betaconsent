@@ -32,6 +32,7 @@ import { parseCookies } from "./cookies.ts";
 import type { HttpResult } from "./consent-flow.handler.ts";
 import { serializeCsrfCookie } from "./csrf.ts";
 import { evaluateStaffRoster, secFetchAllowed } from "./staff-roster.handler.ts";
+import { isSecurityEventWriteError, reportSecurityEventWriteFailure } from "./security-event-failure.ts";
 import { decodeStaffSession, hashStaffSid, revokeStaffSessionCookie, staffCsrfMatchesSession, staffCsrfTokenFor } from "./staff-session.ts";
 import {
   authenticateStaffSession,
@@ -343,6 +344,7 @@ async function handleDevLogin(req: StaffUiRequest, deps: StaffUiDeps, enabled: b
     deps.config,
     deps.staffSessionKey,
   );
+  if (result.status === 503) return errorPage(503, "login-failed"); // CA-141: sin evento de seguridad no hay sesion ni Set-Cookie
   if (result.status !== 200 || !result.setStaffSessionCookie || !result.setStaffCsrfCookie) return errorPage(403, "permission");
   return redirect(STAFF_LIST_PATH, [result.setStaffSessionCookie, result.setStaffCsrfCookie]);
 }
@@ -375,8 +377,10 @@ async function handlePost(req: StaffUiRequest, deps: StaffUiDeps, nowMs: () => n
     if (closing !== null && !staffCsrfMatchesSession(deps.staffSessionKey, closing.sid, csrfCookie)) return errorPage(403, "csrf");
     try {
       await revokeStaffSessionCookie({ sessions: deps.staffConsole.sessions, staffSessionKey: deps.staffSessionKey, nowMs }, cookieValue);
-    } catch {
-      return errorPage(503, "generic"); // no se pudo revocar: NO se finge un cierre exitoso
+    } catch (error) {
+      // CA-141 (D-3): sin evento de seguridad no se revoca (la tx se revierte): la sesion SIGUE abierta, no se borran cookies y NUNCA se muestra exito.
+      if (isSecurityEventWriteError(error)) reportSecurityEventWriteFailure(error);
+      return errorPage(503, "logout-failed", false, csrfToken); // no se pudo revocar: NO se finge un cierre exitoso
     }
     const expire = "Path=/; Secure; SameSite=Lax; Max-Age=0";
     return redirect(STAFF_ENTRY_PATH, [

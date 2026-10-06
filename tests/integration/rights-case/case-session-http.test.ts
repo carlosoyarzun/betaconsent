@@ -260,7 +260,7 @@ test("TEST-CNS-1170 dev-login solo LOCAL y sin privilegios extra (mismo emisor, 
       assert.equal(rows[0]!.sidHash, hashCaseSid(sid));
       const stored = JSON.stringify(rows);
       for (const secret of [sid, op.session, op.csrf, "@"]) assert.ok(!stored.includes(secret), "el almacen no guarda sid, cookie, csrf ni correos");
-      assert.deepEqual(Object.keys(rows[0]!).sort(), ["caseRef", "expiresAtMs", "issuedAtMs", "lastSeenAtMs", "principalRef", "revokedAtMs", "role", "sidHash", "tenantId"]);
+      assert.deepEqual(Object.keys(rows[0]!).sort(), ["caseRef", "expiresAtMs", "issuedAtMs", "lastSeenAtMs", "principalRef", "revokedAtMs", "role", "sessionRef", "sidHash", "tenantId"]);
       for (const line of printed) for (const secret of [sid, op.session, op.csrf]) assert.ok(!line.includes(secret), "logs sin sid ni cookie");
     } finally {
       await fx.close();

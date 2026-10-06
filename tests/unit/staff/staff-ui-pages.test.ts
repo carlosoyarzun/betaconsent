@@ -26,7 +26,7 @@ const LABELS: Record<StaffInvitationStatus, string> = {
   CLOSED_WITHOUT_DECISION: "Cerrada sin decisión",
 };
 
-const ERROR_VARIANTS: readonly StaffUiErrorVariant[] = ["generic", "session", "csrf", "permission", "not-current", "not-configured", "list-unavailable", "query"];
+const ERROR_VARIANTS: readonly StaffUiErrorVariant[] = ["generic", "session", "csrf", "permission", "not-current", "not-configured", "list-unavailable", "logout-failed", "login-failed", "query"];
 
 function allViews(): Array<{ name: string; view: StaffUiView }> {
   const listItems = STAFF_INVITATION_STATUSES.map((status, i) => ({

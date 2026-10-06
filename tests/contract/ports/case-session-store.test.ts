@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
+import { fixtureUuid } from "../uuid-fixture.ts";
 import { runCaseSessionStoreContract } from "./case-session-store.contract.ts";
 
 runCaseSessionStoreContract((name, body) => {
@@ -15,7 +16,7 @@ test("TEST-CNS-1163 CaseSessionStore in-memory: solo avanza la ultima actividad 
   const store = createInMemoryCaseSessionStore();
   const T = "00000000-0000-4000-8000-000000001163";
   const t0 = Date.now();
-  const base = { tenantId: T, sidHash: "a".repeat(64), caseRef: "case-1163", principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" as const };
+  const base = { tenantId: T, sidHash: "a".repeat(64), caseRef: fixtureUuid("case-1163"), principalRef: "staff-synthetic-01", role: "RIGHTS_OPERATOR" as const };
   await store.create({ ...base, issuedAtMs: t0, expiresAtMs: t0 + 8 * 3_600_000 });
   const v = (nowMs: number) => store.validateAndTouch({ ...base, nowMs, idleTimeoutMs: 30 * 60_000 });
   assert.equal(await v(t0 + 10_000), true);

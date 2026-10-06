@@ -56,7 +56,7 @@ const CONTEXT = "BETA_2026_01";
 
 /** Principal de prueba con rol distinto de TENANT_ADMIN pero con tenant: solo existe para alcanzar
  * la rama GRD-CM-07 (rol no permitido) sin romper la membership vigente (GRD-CM-01). */
-const TEST_VIEWER: StaffPrincipal = { principalRef: "staff-test-viewer", role: "APPROVER", tenantId: TENANT_A };
+const TEST_VIEWER: StaffPrincipal = { principalRef: "staff-synthetic-91", role: "APPROVER", tenantId: TENANT_A };
 
 function assertValid(result: ValidationResult): void {
   assert.ok(result.ok, `violaciones de esquema:\n${result.errors.join("\n")}`);
@@ -246,7 +246,7 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
     // Membership no vigente (GRD-CM-01/02): sesión firmada por el servidor pero de un principal fuera
     // del roster, o cuyo tenant ya no coincide con el del roster, deja de valer (404 uniforme).
     for (const forged of [
-      { tenantId: TENANT_A, principalRef: "staff-test-retirado", role: "TENANT_ADMIN" as const },
+      { tenantId: TENANT_A, principalRef: "staff-synthetic-92", role: "TENANT_ADMIN" as const },
       { tenantId: TENANT_B, principalRef: ADMIN_A, role: "TENANT_ADMIN" as const },
     ]) {
       const res = await post(h.baseUrl, "/staff/enrollments", enrollBody, {

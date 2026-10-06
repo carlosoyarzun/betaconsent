@@ -7,6 +7,7 @@
 // Postgres; scope por tenant en memoria): un sid de otro tenant no existe para este.
 
 import type { TenantId } from "../modules/common/types.ts";
+import type { SessionRevokeCause } from "./security-event.port.ts";
 import type { StaffRole } from "./staff-identity.port.ts";
 
 /**
@@ -38,16 +39,25 @@ export interface StaffSessionValidation {
 }
 
 export interface StaffSessionStorePort {
-  /** Registra una sesion nueva (sid nuevo; un sid repetido es un error, nunca se reutiliza). */
-  create(record: StaffSessionRecord): Promise<void>;
+  /**
+   * Registra una sesion nueva (sid nuevo; un sid repetido es un error, nunca se reutiliza) y devuelve su `sessionRef` (UUIDv4 opaco que genera
+   * la base; no es el sid). CA-141: en la MISMA transaccion escribe STAFF_LOGIN en ops.security_event; si el evento falla
+   * (SecurityEventWriteError) no queda sesion.
+   */
+  create(record: StaffSessionRecord): Promise<{ readonly sessionRef: string }>;
   /**
    * ATOMICO: true (y avanza la ultima actividad a `nowMs`) solo si la sesion existe en ESE tenant, el principal y el rol
    * coinciden, no esta revocada, no paso su expiracion absoluta (`expiresAtMs > nowMs`) y no supero la inactividad.
    * Cualquier otro caso devuelve false sin distinguir la causa.
    */
   validateAndTouch(input: StaffSessionValidation): Promise<boolean>;
-  /** Revoca el sid en servidor (idempotente; solo marca, nunca la reactiva). Un sid desconocido o de otro tenant no hace nada. */
-  revoke(tenantId: TenantId, sidHash: string, nowMs: number): Promise<void>;
+  /**
+   * Revoca el sid en servidor (idempotente; solo marca, nunca reactiva). Un sid desconocido, de otro tenant o ya revocado no hace nada y devuelve
+   * false SIN escribir evento. CA-141: si el UPDATE revoco una fila (true), en la MISMA transaccion escribe STAFF_LOGOUT (cause USER_LOGOUT) o
+   * SESSION_REVOKED_BY_ROTATION (cause ROTATION), con actor tomados de la FILA (no de la cookie). Si el evento falla
+   * (SecurityEventWriteError) la revocacion se revierte: la sesion sigue activa.
+   */
+  revoke(tenantId: TenantId, sidHash: string, nowMs: number, cause: SessionRevokeCause): Promise<boolean>;
   /** Limpieza: borra las sesiones del tenant cuya expiracion absoluta es anterior a `nowMs - retentionMs`. Devuelve cuantas. */
   purgeExpired(tenantId: TenantId, nowMs: number, retentionMs: number): Promise<number>;
 }

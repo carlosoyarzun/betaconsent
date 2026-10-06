@@ -145,7 +145,7 @@ export async function issueCaseSession(
   const now = (deps.nowMs ?? Date.now)();
   const ttl = deps.absoluteTtlMs ?? APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS;
   const previous = decodeCaseSession(deps.caseSessionKey, previousCookie);
-  if (previous !== null) await deps.sessions.revoke(previous.tenantId, hashCaseSid(previous.sid), now);
+  if (previous !== null) await deps.sessions.revoke(previous.tenantId, hashCaseSid(previous.sid), now, "ROTATION");
   const sid = newCaseSid();
   const payload: CaseSessionPayload = { sid, tenantId: principal.tenantId, caseRef: principal.caseRef, principalRef: principal.principalRef, role: principal.role, iat: now, exp: now + ttl };
   await deps.sessions.create({ tenantId: payload.tenantId, sidHash: hashCaseSid(sid), caseRef: payload.caseRef, principalRef: payload.principalRef, role: payload.role, issuedAtMs: payload.iat, expiresAtMs: payload.exp });
@@ -165,6 +165,6 @@ export async function revokeCaseSessionCookie(
 ): Promise<CaseSessionPayload | null> {
   const session = decodeCaseSession(deps.caseSessionKey, cookieValue);
   if (session === null) return null;
-  await deps.sessions.revoke(session.tenantId, hashCaseSid(session.sid), (deps.nowMs ?? Date.now)());
+  await deps.sessions.revoke(session.tenantId, hashCaseSid(session.sid), (deps.nowMs ?? Date.now)(), "USER_LOGOUT");
   return session;
 }

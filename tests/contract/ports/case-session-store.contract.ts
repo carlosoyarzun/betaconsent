@@ -56,19 +56,19 @@ export function runCaseSessionStoreContract(register: RegisterCaseSessionStoreTe
     assert.equal(await check(store, "s3", T0 + MIN, { role: "APPROVER" }), false);
     assert.equal(await check(store, "s3", T0 + MIN, { caseRef: fixtureUuid("otro-caso-1161") }), false, "la sesion esta ligada a su caseRef");
     assert.equal(await check(store, "s3", T0 + MIN), true);
-    await store.revoke(TENANT_A, hex("s3"), T0 + 2 * MIN);
+    assert.equal(await store.revoke(TENANT_A, hex("s3"), T0 + 2 * MIN, "USER_LOGOUT"), true, "la primera revocacion devuelve true");
     assert.equal(await check(store, "s3", T0 + 3 * MIN), false, "revocada");
-    await store.revoke(TENANT_A, hex("s3"), T0 + 4 * MIN); // idempotente
+    assert.equal(await store.revoke(TENANT_A, hex("s3"), T0 + 4 * MIN, "USER_LOGOUT"), false, "idempotente: ya revocada devuelve false"); 
     assert.equal(await check(store, "s3", T0 + 5 * MIN), false);
     assert.equal(await check(store, "desconocido", T0), false);
-    await store.revoke(TENANT_A, hex("desconocido"), T0); // no lanza
+    assert.equal(await store.revoke(TENANT_A, hex("desconocido"), T0, "USER_LOGOUT"), false); // no lanza
     await assert.rejects(() => store.create(record("s1")), "un sid no se reutiliza");
   });
 
   register("TEST-CNS-1162 CaseSessionStore: un sid de otro tenant no existe (ni valida ni se revoca); purgeExpired solo borra expiradas del tenant, tras la retencion", async (store) => {
     await store.create(record("s4", TENANT_A));
     assert.equal(await check(store, "s4", T0 + MIN, { tenantId: TENANT_B }), false, "tenant B no ve la sesion de A");
-    await store.revoke(TENANT_B, hex("s4"), T0 + MIN); // no afecta a A
+    assert.equal(await store.revoke(TENANT_B, hex("s4"), T0 + MIN, "USER_LOGOUT"), false); // no afecta a A
     assert.equal(await check(store, "s4", T0 + 2 * MIN), true);
 
     await store.create(record("s5", TENANT_A));
@@ -79,7 +79,7 @@ export function runCaseSessionStoreContract(register: RegisterCaseSessionStoreTe
     assert.equal(await store.purgeExpired(TENANT_A, T0 + DAY, DAY), 1, "solo la expirada de A, fuera de la retencion");
     assert.equal(await store.purgeExpired(TENANT_A, T0 + DAY, DAY), 0);
     assert.equal(await check(store, "s5", T0 + 3 * MIN), true, "una sesion vigente nunca se borra");
-    await store.revoke(TENANT_A, hex("s5"), T0 + 4 * MIN);
+    await store.revoke(TENANT_A, hex("s5"), T0 + 4 * MIN, "USER_LOGOUT");
     assert.equal(await store.purgeExpired(TENANT_A, T0 + DAY, DAY), 0, "revocada pero no expirada: se conserva");
     assert.equal(await store.purgeExpired(TENANT_B, T0 + DAY, DAY), 1, "la de B solo la borra B");
   });
