@@ -23,6 +23,7 @@ import type { InvitationRepositoryPort } from "../../../src/server/ports/invitat
 import type { TenantHandlePort } from "../../../src/server/ports/tenant-handle.port.ts";
 import type { TenantResolverPort } from "../../../src/server/ports/tenant-resolver.port.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
@@ -52,7 +53,7 @@ interface Harness {
 }
 
 function startHarness(): Promise<Harness> {
-  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const revocationPorts = createDefaultRevocationFlowPorts({ ttlMs: 60_000 }, ports.decision.ledger, ports.decision.repo);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   return new Promise((resolve) => {

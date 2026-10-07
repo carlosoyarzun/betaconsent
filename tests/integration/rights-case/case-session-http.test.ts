@@ -20,6 +20,7 @@ import type { Environment } from "../../../src/server/modules/common/types.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-case-session.test.localhost";
 const SESSION = "__Host-cns-case";
@@ -53,7 +54,7 @@ async function setUp(label: string, environment: Environment = "LOCAL", removed:
   const caseRef = fixtureUuid(`case-${label}`);
   const revocationRef = fixtureUuid(`rv-${label}`);
   const consentId = `consent-${chainRef}`;
-  const ports = createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] });
+  const ports = createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   await ports.decision.repo.save({
     consentId, tenantId: TENANT, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef, subjectRef: fixtureUuid(`subject-${label}`),
     decisionMakerRef: "dm:case-session", invitationRef: fixtureUuid(`inv-${label}`), verificationRef: fixtureUuid(`ver-${label}`), chainRef, state: "GRANTED",
@@ -273,7 +274,7 @@ test("TEST-CNS-1170 dev-login solo LOCAL y sin privilegios extra (mismo emisor, 
 
 test("TEST-CNS-1171 storeMode=postgres exige un registro de sesiones CASE inyectado (fail-closed: nunca una sesion CASE en memoria sobre una base real)", () => {
   assert.throws(
-    () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, sessionSecret: SECRET, environment: "LOCAL", storeMode: "postgres", ports: createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }) }),
+    () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, sessionSecret: SECRET, environment: "LOCAL", storeMode: "postgres", ports: createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY) }),
     /caseSessions/,
   );
 });

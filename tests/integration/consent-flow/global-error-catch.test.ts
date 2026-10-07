@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 
 import { encodeSession } from "../../../src/server/entrypoints/http/consent-session.ts";
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
@@ -16,7 +17,7 @@ const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 const REL = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 test("TEST-CNS-877: un throw con detail de pg responde 500 uniforme sin message/detail y el servidor sigue vivo", async () => {
-  const real = createDefaultConsentFlowPorts(OTP, REL);
+  const real = createDefaultConsentFlowPorts(OTP, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const leaky = Object.assign(new Error("SECRETO_MESSAGE row (a@b.test)"), { code: "23505", detail: "Key (email)=(SECRETO_DETAIL) already exists" });
   let armed = false;
   const ports = new Proxy(real, {

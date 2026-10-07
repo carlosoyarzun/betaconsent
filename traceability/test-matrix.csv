@@ -634,3 +634,6 @@ TEST-CNS-1242,unit,tests/unit/consent-decision/decision-maker-ref-keyring.test.t
 TEST-CNS-1243,unit,tests/unit/consent-decision/decision-maker-ref-keyring.test.ts,"decisionMakerRef keyring: KAT de regresion v2 con secreto, tenant y canal sinteticos","OPEN-CM-10;INV-CM-09;review C2",ACTIVE
 TEST-CNS-1244,unit,tests/unit/consent-decision/decision-maker-ref-keyring.test.ts,"decisionMakerRef keyring: base64 estricto (ida y vuelta) para v2 y vN","OPEN-CM-10;INV-CM-09;review P2-2",ACTIVE
 TEST-CNS-1245,unit,tests/unit/consent-decision/decision-maker-ref-keyring.test.ts,"decisionMakerRef keyring: validacion de tenant/canal antes del keyring; clave congelada sin exposicion por JSON/inspect","OPEN-CM-10;INV-CM-09;review P2-3;P2-4",ACTIVE
+TEST-CNS-1246,unit,tests/unit/consent-decision/dmref-key-required.test.ts,"createDefaultConsentFlowPorts sin decisionMakerRefKey/chainRefKey falla sin filtrar secretos","OPEN-CM-10;INV-CM-09;review P2-6",ACTIVE
+TEST-CNS-1247,unit,tests/unit/consent-decision/dmref-key-required.test.ts,"createConsentFlowHttpServer sin claves no arranca; con claves explicitas funciona","OPEN-CM-10;INV-CM-09;review P2-6",ACTIVE
+TEST-CNS-1248,unit,tests/unit/consent-decision/dmref-key-required.test.ts,"ports inyectados sin decisionMakerRefKey hacen fallar el arranque","OPEN-CM-10;INV-CM-09;review P2-6",ACTIVE

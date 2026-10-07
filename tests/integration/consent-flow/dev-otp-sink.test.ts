@@ -11,6 +11,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
@@ -23,7 +24,7 @@ async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTIO
   baseUrl: string;
   close(): Promise<void>;
 }> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports, environment });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {

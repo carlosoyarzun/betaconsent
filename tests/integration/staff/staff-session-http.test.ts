@@ -33,6 +33,7 @@ import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff-session.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -68,7 +69,7 @@ interface Harness {
 
 async function start(opts: { environment?: "LOCAL" | "DEV"; subjectCount?: number; removed?: Set<string>; roster?: readonly StaffPrincipal[] } = {}): Promise<Harness> {
   const subjects = opts.subjectCount === undefined ? students : Array.from({ length: opts.subjectCount }, (_, i) => ({ subjectRef: fixtureUuid(`sess-subj-${i + 1}`), participationRef: fixtureUuid(`sess-part-${i + 1}`), label: `Alumno de prueba ${i + 1}` }));
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const baseIdentity = createInMemoryStaffIdentityAdapter(opts.roster ?? ROSTER);
   // CA-140: roster mutable en el test (baja de un principal con sesion vigente); sin `removed` se comporta igual que el adaptador.
   const staffIdentity: typeof baseIdentity = { findByPrincipalRef: async (ref) => (opts.removed?.has(ref) ? null : baseIdentity.findByPrincipalRef(ref)), listRoster: () => baseIdentity.listRoster() };

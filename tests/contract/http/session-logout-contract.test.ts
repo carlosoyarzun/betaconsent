@@ -20,6 +20,7 @@ import { deriveStaffSessionKey, issueStaffSession, staffCsrfTokenFor } from "../
 import { parseYaml, type YamlValue } from "../../../tools/spec-checks/yaml-lite.ts";
 import { validateCommon } from "../schema-lite.ts";
 import { fixtureUuid } from "../uuid-fixture.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 type Rec = Record<string, YamlValue>;
@@ -34,7 +35,7 @@ const OPERATOR = fixtureUuid("logout-contract-operator");
 const CASE_REF = fixtureUuid("logout-contract-case");
 
 async function start(): Promise<{ baseUrl: string; staffSessions: ReturnType<typeof createInMemoryStaffSessionStore>; caseSessions: ReturnType<typeof createInMemoryCaseSessionStore>; close(): Promise<void> }> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const revocationPorts = createDefaultRevocationFlowPorts({ ttlMs: 60_000 }, ports.decision.ledger, ports.decision.repo);
   const staffIdentity = createInMemoryStaffIdentityAdapter([
     { principalRef: ADMIN, role: "TENANT_ADMIN", tenantId: TENANT },
