@@ -1008,7 +1008,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
       }
       res.setHeader("Cache-Control", "no-store");
-      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("Referrer-Policy", "same-origin"); // formularios sin JS: con no-referrer Chromium manda Origin: null
       res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
       if (consoleResponse.setCookies && consoleResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...consoleResponse.setCookies]);
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);

@@ -100,10 +100,12 @@ export interface StaffUiResponse {
   readonly location?: string;
 }
 
-/** Cabeceras de TODA respuesta HTML de /staff/...: CSP estricta sin scripts ni estilos inline. */
+/** Cabeceras de TODA respuesta HTML de /staff/...: CSP estricta sin scripts ni estilos inline.
+ * Referrer-Policy same-origin (no no-referrer): con no-referrer Chromium envia `Origin: null` en el POST de un
+ * formulario sin JS y el chequeo estricto de Origin lo rechaza; same-origin no filtra nada a otros origenes. */
 export const STAFF_UI_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
   "Cache-Control": "no-store",
-  "Referrer-Policy": "no-referrer",
+  "Referrer-Policy": "same-origin",
   "X-Content-Type-Options": "nosniff",
   "Cross-Origin-Resource-Policy": "same-origin",
   "Vary": "Cookie",

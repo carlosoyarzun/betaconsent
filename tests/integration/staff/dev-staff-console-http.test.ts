@@ -270,3 +270,21 @@ test("TEST-CNS-1188: GRD-SE-08 en la consola dev: el CSRF ligado al sid se valid
     await h.close();
   }
 });
+
+test("TEST-CNS-1232: la consola dev (formularios POST sin JS) responde Referrer-Policy same-origin (Chromium manda Origin: null con no-referrer) y Origin: null sigue dando 403", async () => {
+  const h = await startServer("LOCAL");
+  try {
+    const page = await fetch(`${h.baseUrl}${BASE}`);
+    assert.equal(page.headers.get("referrer-policy"), "same-origin");
+    const login = await form(h, `${BASE}/login`, {});
+    assert.equal(login.status, 303);
+    const nullLogin = await form(h, `${BASE}/login`, {}, { origin: "null" });
+    assert.equal(nullLogin.status, 403);
+    const { cookie, csrf } = await loginViaForm(h);
+    const nullInvite = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie, origin: "null" });
+    assert.equal(nullInvite.status, 403);
+    assert.equal(h.staff.invitationLinkSink.sent.length, 0);
+  } finally {
+    await h.close();
+  }
+});

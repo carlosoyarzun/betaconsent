@@ -707,7 +707,7 @@ test("TEST-CNS-1121 CSP estricta y cabeceras de seguridad en TODA respuesta HTML
       for (const d of ["default-src 'self'", "script-src 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), `${r.status}: ${d}`);
       assert.ok(!/unsafe-inline|unsafe-eval|\*|https?:/.test(csp));
       assert.equal(r.headers.get("cache-control"), "no-store");
-      assert.equal(r.headers.get("referrer-policy"), "no-referrer");
+      assert.equal(r.headers.get("referrer-policy"), "same-origin");
       assert.equal(r.headers.get("x-content-type-options"), "nosniff");
       assert.equal(r.headers.get("cross-origin-resource-policy"), "same-origin");
       assert.equal(r.headers.get("etag"), null);
@@ -734,6 +734,19 @@ test("TEST-CNS-1122 las rutas JSON existentes no chocan: GET /staff/roster sigue
     const noSession = await fetch(`${h.baseUrl}/staff/invitations`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN } , body: "{}" });
     assert.equal(noSession.status, 403);
     assert.equal((await fetch(`${h.baseUrl}/staff/students/otra`, { headers: NAV })).status, 404);
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1233: /staff (formulario dev-login sin JS) responde Referrer-Policy same-origin y un POST con Origin: null sigue dando 403 sin cookies", async () => {
+  const h = await start();
+  try {
+    const entry = await getPage(h, "/staff", { "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" });
+    assert.equal(entry.headers.get("referrer-policy"), "same-origin");
+    const nullOrigin = await postForm(h, "/staff/dev-login", {}, { origin: "null" });
+    assert.equal(nullOrigin.status, 403);
+    assert.equal(nullOrigin.headers.get("set-cookie"), null);
   } finally {
     await h.close();
   }
