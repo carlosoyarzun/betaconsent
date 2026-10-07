@@ -1,7 +1,7 @@
 # Registro de riesgos — Iteración 0 (IT0)
 
 Gobierna: SEC-CNS-005 (threat model IT0, scratchpad `SEC-threat-model-IT0.md` §5, rev. 5 ACCEPTED 2026-09-26 por Carlos, R11) · DEC-BR-014 (Iteración 0, ACCEPTED — scope IT0 sintético) · ADR-003 rev. 7 ACCEPTED 2026-09-26 (Deployment Target IT0).
-Estado: PROPOSED. Cierre formal de SEC-CNS-005 pendiente; este registro traslada la tabla de aceptación de riesgos residuales que Carlos aprobó en chat (R6-7, R7-4, R7-6, R11-B1, R11-B4, 2026-09-25/26) para permitir G-IT0-ENTRY. No sustituye el threat model G5 completo, que sigue siendo requisito antes de cualquier dato real.
+Estado: ACCEPTED (Carlos, 2026-09-26). Cierre formal de SEC-CNS-005 en Notion pendiente; este registro traslada la tabla de aceptación de riesgos residuales que Carlos aprobó en chat (R6-7, R7-4, R7-6, R11-B1, R11-B4, 2026-09-25/26) para permitir G-IT0-ENTRY. No sustituye el threat model G5 completo, que sigue siendo requisito antes de cualquier dato real.
 
 Cero PII en este documento.
 
@@ -10,7 +10,7 @@ Cero PII en este documento.
 | ID | Riesgo (amenaza) | Estado de aceptación para IT0 | Restricción para datos reales |
 |---|---|---|---|
 | R-01 | Enlace = credencial (T-06, F01) | Aceptado | **Rechazado** (LD-01) |
-| R-02 | Tipeo de dato real (T-44) | Aceptado con DLP, congelamiento y CHECK de `case_contact` | Re-evaluar en G5 |
+| R-02 | Tipeo de dato real (T-44) | Aceptado solo con congelamiento y avisos de UI. El DLP está DIFERIDO (CA-137, R11-B6) y `pii.case_contact` no existe (DF-9, fuera del slice IT0); no hay CHECK de `case_contact` (F-X8-14) | Re-evaluar en G5 |
 | R-03 | Superusuario local / root del host (T-48; antes "del proveedor"; F18 = hecho) — re-alcanzado al host dedicado (R11-B1) | **Aceptado solo para IT0 sintético por Carlos (R11-B4, 2026-09-26); no se hereda a STAGING con datos reales ni a producción.** Con break-glass de A3 C17 y P-42 | **Rechazado** en producción; con datos reales en STAGING, reevaluar (R11-B4) |
 | R-04 | Ledger sin HMAC ni ancla (T-37) | Solo NON-EVIDENTIARY | **Rechazado** (ADR-011) |
 | R-05 | Retiro no querido por tercero con el buzón (T-21) | Aceptado | **Rechazado** (LD-04) |
@@ -18,7 +18,7 @@ Cero PII en este documento.
 | R-07 | Cola humana sin SLA (T-24) | Aceptado con P-19/P-35 | Re-evaluar (LD-04) |
 | R-08 | Dependencia maliciosa aprobada (T-05) | Aceptado | Re-evaluar en G5 |
 | R-09 | RLS por GUC ante RCE (T-26) | Aceptado | **Rechazado** |
-| R-10 | `platform` fabrica el doble control (T-52) | Solo con verificador + step-up (aplicado) | **Rechazado** sin ADR-010 |
+| R-10 | `platform` fabrica el doble control (T-52) | **Corregido (F-X8-10, F-X8-15):** no hay verificador ni doble control impuesto por la BD (DF-4/DF-7/DF-8 diferidos); todo corre en un solo proceso (AD-3). El step-up de RH2 es interino: cuenta la sola presencia de `stepUpAssertion`, sin verificación criptográfica (decisión de Carlos 2026-09-28, P1 hasta APR-IDP). RH3 no tiene step-up (OPEN-RV-10 abierto). Aceptado solo para IT0 sintético | **Rechazado** sin ADR-010 |
 | R-11 | Un humano con dos principals (T-56) | Aceptado con `sub` único y lista atestada | Re-evaluar en G5 |
 | R-12 | Stub propio no prueba borrado (T-57) | Aceptado | Re-evaluar con consumidor real |
 | R-13 | Revocación HUMAN_ASSISTED inducida por portador sin buzón (T-51) | Aceptado | **Rechazado** (LD-02 + LD-04) |
@@ -54,3 +54,4 @@ Cero PII en este documento.
 ## Nota de versión
 
 - 2026-09-26 (lampone-dev, R11 aprobado por Carlos): incorpora SEC-threat-model-IT0.md §5 rev. 5 ACCEPTED 2026-09-26. R-03 re-alcanzado a "superusuario local / root del host" (antes "del proveedor gestionado"); R-16, R-18, R-19, R-20 y R-21 agregados y aceptados solo para IT0 sintético (R11-B4); R-17 agregado como N/A (host dedicado, R11-B1). Se mantiene el rechazo de todos estos riesgos para datos reales/STAGING con datos reales/producción.
+- 2026-10-06 (lampone-dev, Carlos): estado ACCEPTED; R-10 corregido a lo implementado (F-X8-10, F-X8-15) y R-02 alineado con DLP diferido y sin `case_contact` (F-X8-14). Ver `findings-register-IT0.md`.

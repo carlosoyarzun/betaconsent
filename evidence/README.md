@@ -5,8 +5,9 @@ críticas.
 
 Gobierna: `SEC-CNS-###`, `PRIV-CNS-###`.
 
-Estado: vacía de evidencia de dominio (pre-build; el ledger de integridad de
-consentimiento/revocación llega con ADR-002 y el código de `src/`).
+Estado: solo contiene los manifiestos de evidencia IT0 (X3/X5/X6) en `evidence/it0/` (ver más
+abajo). Aún no hay evidencia de runtime de consentimiento/revocación de producción (IT0 es solo
+datos sintéticos).
 
 ## Evidencia de test runs (CA-118/H03)
 
