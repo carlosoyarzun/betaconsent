@@ -1,0 +1,384 @@
+{
+  "condition": "X6",
+  "commit": "062464037f6e8d74ba0d8cb63fe9d28f52a96321",
+  "branch": "chore/x8-evidence-head",
+  "runAt": "2026-10-07T14:08:15.393Z",
+  "environment": "LOCAL",
+  "postgres": {
+    "imageDigest": "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54"
+  },
+  "tests": [
+    {
+      "id": "TEST-CNS-1000",
+      "title": "Ledger fail-closed: reissueOfRef/managementLinkIssued/subscriptionRefs/dependentRequired con PII o forma inválida -> ERR-RV-13; reissueOfRef UUID válido pasa",
+      "file": "tests/unit/common/json-schema-lite-failclosed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1001",
+      "title": "Seed LOCAL del ledger: solo payload vacío; string arbitrario rechazado",
+      "file": "tests/unit/common/json-schema-lite-failclosed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1002",
+      "title": "Validador: anyOf, if/then/else, not, minLength/maxLength y date-time RFC 3339 estricto",
+      "file": "tests/unit/common/json-schema-lite-failclosed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1003",
+      "title": "Validador fail-closed: keyword/format/type desconocido lanza; todos los $defs de ledger y security soportados",
+      "file": "tests/unit/common/json-schema-lite-failclosed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1004",
+      "title": "X6 P2-1: aprobación RH2 HTTP ATTESTED solo en LOCAL; DEV/STAGING/PRODUCTION = PENDING sin transición",
+      "file": "tests/unit/revocation/x6-p2-hardening.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1005",
+      "title": "X6 P2-3: propuesta RH2 pendiente con otro proposalRef = ERR-CM-06 (sin reemplazo silencioso); misma ref idempotente",
+      "file": "tests/unit/revocation/x6-p2-hardening.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1006",
+      "title": "X6 P2-4: MAC del stub downstream incluye tenant; firma debe ser 64 hex exactos",
+      "file": "tests/unit/revocation/x6-p2-hardening.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1007",
+      "title": "X6 P2-5: channelRef de OTP_ISSUED con subclave HKDF distinta del secreto del hash del código",
+      "file": "tests/unit/revocation/x6-p2-hardening.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1008",
+      "title": "X6 P2-6: roster in-memory rechaza principalRef duplicado entre roles al construirse",
+      "file": "tests/unit/revocation/x6-p2-hardening.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1009",
+      "title": "X6 P2-7 pg: CHECK de proposal_ref/proposed_by_ref/second_approver_ref con patrón UUIDv4/staff; email y RUT rechazados",
+      "file": "tests/integration/postgres/x6-rh2-ref-shape.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-100",
+      "title": "X6 parte BD del ledger: ledger append-only con triggers ENABLE ALWAYS (788), UNIQUE(tenant,aggregate,sequence) (789), append+proyeccion+outbox en una tx (786, 773). X6 completo en main (PR #43, CA-128): revocacion hasta COMPLETED, RH2 y hardening en TEST-CNS-960 a 985 y 1000 a 1009 (D6 segun DEC-BR-014 §3, Carlos 2026-10-01; cierre de la condicion lo decide Carlos)",
+      "file": "tests/integration/postgres/ledger-outbox-schema.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1010",
+      "title": "X6 P2: payload {} solo valido para TENANT_SEEDED/SCHOOL_PARTICIPATION_SEEDED; cualquier otro tipo falla con ERR-RV-13",
+      "file": "tests/unit/common/ledger-empty-payload.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1011",
+      "title": "X6 P2: invitation.schema recipientChannelRef = email sintetico de dominio reservado (EXT-B (i)); UUID/email real/telefono/RUT rechazados",
+      "file": "tests/contract/schemas/projection-schemas.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1012",
+      "title": "X6 P2: consent-decision.schema acepta los campos que el dominio persiste; refs/estado/pasos invalidos rechazados",
+      "file": "tests/contract/schemas/projection-schemas.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1013",
+      "title": "retiro RH2 (API-CNS-140): el proponente retira su propuesta PENDING; Revocation sigue REQUESTED sin FAILED; evento REVOCATION_PROPOSAL_WITHDRAWN con payload solo refs validado por contrato y assertLedgerPayload",
+      "file": "tests/unit/revocation/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1014",
+      "title": "retiro RH2: otro staff (operador, aprobador, desconocido) rechazado ERR-RV-07; propuesta o caso ajeno ERR-CM-01; sin efecto",
+      "file": "tests/unit/revocation/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1015",
+      "title": "retiro RH2: propuesta no PENDING (Revocation VERIFIED) rechazada ERR-CM-06; ya retirada ERR-CM-01; sin evento nuevo",
+      "file": "tests/unit/revocation/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1016",
+      "title": "retiro RH2: aprobar tras el retiro rechazado ERR-CM-01; misma proposalRef no reproponible ERR-CM-06",
+      "file": "tests/unit/revocation/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1017",
+      "title": "retiro RH2: nueva propuesta tras el retiro (otro proponente) se aprueba hasta VERIFIED",
+      "file": "tests/unit/revocation/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1018",
+      "title": "retiro RH2 HTTP: 200 WITHDRAWN del proponente; otro operador/aprobador 403; sin sesion o propuesta ajena 404; body con campos 422; aprobar tras retiro 404; nueva propuesta OK; ack valida contra contrato",
+      "file": "tests/integration/rights-case/x6-rh2-withdraw-http.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1019",
+      "title": "retiro RH2 en Postgres: columnas de propuesta NULL, evento en ledger (CHECK 0017), aprobar tras retiro falla, propuesta nueva aprobable",
+      "file": "tests/integration/postgres/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1020",
+      "title": "retiro RH2 en Postgres: aislamiento cross-tenant (RLS FORCE de app.revocation); B no ve ni retira la propuesta de A",
+      "file": "tests/integration/postgres/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1021",
+      "title": "retiro RH2 idempotente por (revocationRef, proposal_ref): mismo proponente mismo resultado sin evento nuevo; otro actor ERR-CM-01; Revocation avanzada ERR-CM-06",
+      "file": "tests/unit/revocation/x6-rh2-withdraw.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1022",
+      "title": "retiro RH2 idempotente en Postgres: repetir por el proponente sin segundo evento; otro principal ERR-CM-01",
+      "file": "tests/integration/postgres/x6-rh2-withdraw.test.ts",
+      "status": "skip"
+    },
+    {
+      "id": "TEST-CNS-1023",
+      "title": "retiro RH2 HTTP sin stepUpAssertion o invalido: 422 INVALID_TRANSITION (ERR-CM-06) sin evento ni cambio de fila; con stepUp valido retira",
+      "file": "tests/integration/rights-case/x6-rh2-withdraw-http.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1024",
+      "title": "retiro RH2 HTTP idempotente: reintento del proponente sin stepUp rechazado 422 sin evento nuevo; con stepUp mismo ack",
+      "file": "tests/integration/rights-case/x6-rh2-withdraw-http.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1074",
+      "title": "StaffRoster contract (in-memory): participation_ref de matricula ACTIVE y una fila access_log por lectura",
+      "file": "tests/contract/ports/staff-roster.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1074",
+      "title": "StaffRoster contract (postgres): participation_ref de matricula ACTIVE y una fila access_log por lectura",
+      "file": "tests/integration/postgres/staff-roster.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-1092",
+      "title": "pg: ops.access_log admite STAFF_ROSTER_READ/STAFF_ROSTER emparejados",
+      "file": "tests/integration/postgres/staff-roster.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-910",
+      "title": "X6 (memoria y Postgres): cadena SHA-256 por tenant (genesis, chainSeq 1..n, hashes recomputables, tenants independientes, dedupe no extiende) y verifyLedgerChain",
+      "file": "tests/contract/ports/ledger-chain.contract.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-911",
+      "title": "X6 (memoria y Postgres): lista blanca de eventType; un tipo fuera de lista se rechaza (ERR-RV-13) sin escribir ni avanzar la cadena",
+      "file": "tests/contract/ports/ledger-chain.contract.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-912",
+      "title": "X6: canonicalJson determinista, vector fijo, verifyChainRows detecta el primer eslabon roto por cada mutacion y lista blanca TS = CHECK de 0013 = eventos de las specs",
+      "file": "tests/unit/common/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-913",
+      "title": "X6 pg: verifyLedgerChain detecta mutacion/borrado hechos como superusuario con triggers desactivados; CHECK/UNIQUE de la cadena; lista blanca igual al CHECK de la BD",
+      "file": "tests/integration/postgres/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-914",
+      "title": "X6 pg: appends concurrentes del mismo tenant no rompen la cadena (advisory xact lock por tenant); tenants independientes",
+      "file": "tests/integration/postgres/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-915",
+      "title": "X6 pg: triggers de inmutabilidad UPDATE/DELETE/TRUNCATE tambien para consent_migrator (SET ROLE consent_owner) y superusuario con session_replication_role=replica",
+      "file": "tests/integration/postgres/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-916",
+      "title": "X6 pg: CLI ledger-verify-cli: exit 0 cadena integra, 2 eslabon roto, 1 sin LOCAL o tenant invalido; salida sin PII",
+      "file": "tests/integration/postgres/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-917",
+      "title": "X6 pg: ops.access_log con FORCE RLS por tenant, grants minimos, CHECK SYNTHETIC y sin PII, append-only para runtime, migrator y superusuario (replica)",
+      "file": "tests/integration/postgres/access-log.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-918",
+      "title": "AccessLogPort contract (memoria y Postgres): record/list con aislamiento por tenant, rechazo de PII y vocabulario, atomicidad",
+      "file": "tests/contract/ports/access-log.contract.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-919",
+      "title": "X6: la lectura del caso por el operador queda en ops.access_log (refs opacas, sin PII), no en el ledger; sin lectura no hay registro",
+      "file": "tests/integration/rights-case/rh3-case-confirmation-http.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-920",
+      "title": "X6 pg: CLI verificador falla ante fila sin eslabon posterior al inicio de la cadena (el legado previo no cuenta)",
+      "file": "tests/integration/postgres/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-921",
+      "title": "X6 pg: app_rw no puede falsear occurred_at/environment (CHECK); eventHash v2 los cubre",
+      "file": "tests/integration/postgres/ledger-chain.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-922",
+      "title": "assertLedgerPayload valida el payload contra el contrato (ERR-RV-13); cableado en los adaptadores de ledger (X6 P1-A)",
+      "file": "tests/unit/common/ledger-payload-contract.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-960",
+      "title": "X6: GRD-RV-04 R1 con otra revocationRef sobre la misma decisión se adjunta a la abierta (misma ref y estado, sin eventos duplicados)",
+      "file": "tests/unit/revocation/x6-attach-open-revocation.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-961",
+      "title": "X6: GRD-RV-02 precede a GRD-RV-04 (decisión REVOKED = ERR-RV-02) y otra decisión crea su propia revocación",
+      "file": "tests/unit/revocation/x6-attach-open-revocation.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-962",
+      "title": "X6: revocación hasta COMPLETED contra el stub interno (R5-1) en las vías OTP, enlace y caso humano; DELIVERED no es COMPLETED; destinos congelados; idempotencia; payloads válidos",
+      "file": "tests/unit/revocation/x6-downstream-completed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-963",
+      "title": "X6: ACK/atestación falsos, incompletos, ajenos o fuera de orden no avanzan el estado (ERR-RV-10 / ERR-CM-06), sin eventos",
+      "file": "tests/unit/revocation/x6-downstream-completed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-964",
+      "title": "X6: sin DownstreamStubPort R5 falla cerrado (ERR-CM-12) y la revocación sigue APPLIED",
+      "file": "tests/unit/revocation/x6-downstream-completed.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-965",
+      "title": "X6 INV-6 (D5): con participación SUSPENDED/CLOSED, enrollment cerrado, inelegible y OTP LOCKED agotado la revocación llega a APPLIED y emite consent.revoked en las tres vías (+ estructural)",
+      "file": "tests/unit/revocation/x6-inv6-expiry-vocabulary.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-966",
+      "title": "X6 INV-10: la expiración (OTP, token de enlace, caso) nunca produce FAILED; solo R8 escribe FAILED",
+      "file": "tests/unit/revocation/x6-inv6-expiry-vocabulary.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-967",
+      "title": "X6: eventos de revocación/downstream en lista blanca, en events: de la spec (DEC-BR-017 §6) y con payload válido contra el contrato",
+      "file": "tests/unit/revocation/x6-inv6-expiry-vocabulary.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-969",
+      "title": "X6 pg: la revocación llega hasta COMPLETED con el stub interno en las tres vías; ledger sin huecos; COMPLETED deja de ser abierta",
+      "file": "tests/integration/postgres/x6-revocation.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-970",
+      "title": "X6 pg: 0015 CHECK de estados e índice único GRD-RV-04 con COMPLETED",
+      "file": "tests/integration/postgres/x6-revocation.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-971",
+      "title": "X6 pg INV-6: con participación SUSPENDED/CLOSED, enrollment CLOSED y OTP LOCKED la revocación llega a APPLIED y encola consent.revoked",
+      "file": "tests/integration/postgres/x6-revocation.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-972",
+      "title": "X6 P1-A: el append del ledger en memoria rechaza un campo extra con PII sintética (ERR-RV-13) sin persistir ni reservar la idempotencyKey",
+      "file": "tests/unit/common/ledger-payload-contract.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-973",
+      "title": "X6 P1-A pg: el append del ledger rechaza un campo extra con PII sintética sin fila ni avance de cadena",
+      "file": "tests/integration/postgres/x6-revocation.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-980",
+      "title": "X6 RH2: propone RIGHTS_OPERATOR (sin efecto) y aprueba APPROVER distinto: VERIFIED HUMAN_ASSISTED con verifiedByRef/secondApproverRef distintos y payload válido; idempotente",
+      "file": "tests/unit/revocation/x6-rh2-dual-control.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-981",
+      "title": "X6 RH2 GRD-RV-09: rol inválido, desconocido o aprobador = proponente -> ERR-RV-07 sin efecto ni evento",
+      "file": "tests/unit/revocation/x6-rh2-dual-control.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-982",
+      "title": "X6 RH2: aserción no ATTESTED = PENDING sin efecto; propuesta/caso ajeno ERR-CM-01; dotación < 4 ERR-RC-10",
+      "file": "tests/unit/revocation/x6-rh2-dual-control.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-983",
+      "title": "X6 RH2: REVOCATION_VERIFIED HUMAN_ASSISTED nunca se emite sin verifiedByRef y secondApproverRef (comprobación explícita del emisor, ERR-RV-13)",
+      "file": "tests/unit/revocation/x6-rh2-dual-control.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-984",
+      "title": "X6 RH2 HTTP (API-CNS-136/137): propone RIGHTS_OPERATOR, aprueba APPROVER, luego RH3 hasta APPLIED con refs de las sesiones",
+      "file": "tests/integration/rights-case/x6-rh2-http.test.ts",
+      "status": "pass"
+    },
+    {
+      "id": "TEST-CNS-985",
+      "title": "X6 RH2 HTTP guards: 403 rol que no corresponde, 404 sin sesión/caso ajeno, 422 cuerpo inválido, actor nunca del body",
+      "file": "tests/integration/rights-case/x6-rh2-http.test.ts",
+      "status": "pass"
+    }
+  ],
+  "summary": {
+    "pass": 60,
+    "fail": 0,
+    "skip": 1
+  },
+  "exitCode": 0
+}
