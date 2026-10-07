@@ -7,7 +7,7 @@
 // src/README.md.
 
 import { deriveChainRefKey, loadChainRefSecret } from "../modules/consent-decision/chain-ref.ts";
-import { deriveDecisionMakerRefKey, loadDecisionMakerRefSecret } from "../modules/consent-decision/decision-maker-ref.ts";
+import { loadDecisionMakerRefKeyring } from "../modules/consent-decision/decision-maker-ref.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
@@ -113,7 +113,9 @@ const staffIssuancePolicy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_IN
 // SEC-CNS-017 F2: clave HMAC del chainRef opaco (CNS_CHAIN_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
 const chainRefKey = deriveChainRefKey(loadChainRefSecret(process.env, environment));
 // CA-128 (Carlos, 2026-10-01): clave HMAC del decisionMakerRef (CNS_DECISION_MAKER_REF_SECRET; LOCAL sin env: constante LOCAL_ONLY).
-const decisionMakerRefKey = deriveDecisionMakerRefKey(loadDecisionMakerRefSecret(process.env, environment));
+// OPEN-CM-10: keyring versionado; los refs nuevos usan la version activa.
+const decisionMakerRefKeyring = loadDecisionMakerRefKeyring(process.env, environment);
+const decisionMakerRefKey = decisionMakerRefKeyring.active();
 // API-CNS-116 (R4): clave del cursor de GET /staff/roster (CNS_STAFF_ROSTER_CURSOR_SECRET; LOCAL sin env: constante LOCAL_ONLY).
 const staffRosterCursorKey = deriveStaffRosterCursorKey(loadStaffRosterCursorSecret(process.env, environment));
 // API-CNS-116 (P2-d): directorio SINTETICO de etiquetas "Alumno de prueba N" por (tenant, sujeto), inyectado desde este composition
