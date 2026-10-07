@@ -20,14 +20,13 @@
 // de HKDF y NO viaja en el valor (sigue UUIDv4 opaco). La clave viaja como `{ key, keyVersion }` y el evento de ledger
 // emite `decisionMakerRefKeyVersion` desde ahi (INVITATION_VERIFIED, DECISION_MAKER_CHANNEL_VERIFIED; obligatorio en
 // eventos nuevos). Un evento previo sin el campo se interpreta como v2 SOLO al leer (`resolveDecisionMakerRefKeyVersion`).
-// Hoy hay UN solo secreto raiz (CNS_DECISION_MAKER_REF_SECRET): rotar la version cambia el `info` de HKDF, es decir,
-// separacion de dominio entre versiones, NO recuperacion ante compromiso del secreto (quien tenga el secreto raiz
-// deriva todas las versiones). Un keyring version->secreto, con fallo cerrado si falta el secreto de una version, queda
-// como OPEN-CM-10 (common.spec.yaml), antes de la primera rotacion. El verificador falla cerrado si la version
-// registrada es mayor que la conocida. El ledger NO se re-escribe (append-only). NO decide nada sobre quien es el
+// OPEN-CM-10 (keyring): cada version tiene SU secreto (`createDecisionMakerRefKeyring`/`loadDecisionMakerRefKeyring`); una
+// version activa calcula refs nuevos y las demas solo verifican eventos que la registraron. Version ausente, desconocida o
+// invalida -> error uniforme fail-closed (`recomputeDecisionMakerRef`), sin probar otras versiones. Rotar con secreto nuevo
+// SI es recuperacion ante compromiso del secreto anterior para refs nuevos. El ledger NO se re-escribe (append-only). NO decide nada sobre quien es el
 // decisionMaker (LEGAL DECISION de Carlos).
 
-import { createHmac, hkdfSync } from "node:crypto";
+import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
 
 import type { TenantId } from "../common/types.ts";
 import { uuidV4FromDigest } from "../common/opaque-ref.ts";
@@ -93,17 +92,56 @@ export function deriveDecisionMakerRef(dmKey: DecisionMakerRefKey, tenantId: Ten
   return uuidV4FromDigest(mac.digest());
 }
 
+/** Error uniforme del keyring (OPEN-CM-10): no distingue version ausente, desconocida o invalida, ni incluye claves. */
+const KEYRING_UNAVAILABLE = "decisionMakerRef: clave de la version registrada no disponible (fail-closed).";
+
+/**
+ * Keyring version->secreto (OPEN-CM-10, INV-CM-09). Una version ACTIVA calcula refs nuevos; las demas solo
+ * sirven para verificar/recomputar eventos que registraron esa version. Version ausente/desconocida/invalida -> error
+ * uniforme (fail-closed), sin revelar cuales versiones existen. Nunca expone secretos (ni en toString/JSON).
+ */
+export interface DecisionMakerRefKeyring {
+  /** Clave de la version activa (`{key, keyVersion}`), para emitir refs nuevos. */
+  active(): DecisionMakerRefKey;
+  /** Clave de una version para verificar; lanza error uniforme si no esta en el keyring o la version es invalida. */
+  keyFor(version: unknown): DecisionMakerRefKey;
+}
+
+export function createDecisionMakerRefKeyring(secrets: ReadonlyMap<number, Buffer>, activeVersion: number): DecisionMakerRefKeyring {
+  assertKeyVersion(activeVersion);
+  const keys = new Map<number, DecisionMakerRefKey>();
+  const raws: Buffer[] = [];
+  for (const [version, secret] of secrets) {
+    assertKeyVersion(version);
+    for (const other of raws) {
+      if (other.length === secret.length && timingSafeEqual(other, secret)) {
+        throw new Error("decisionMakerRef: dos versiones del keyring comparten secreto (rotar exige un secreto distinto, fail-closed).");
+      }
+    }
+    raws.push(Buffer.from(secret));
+    keys.set(version, deriveDecisionMakerRefKey(secret, version));
+  }
+  if (!keys.has(activeVersion)) throw new Error("decisionMakerRef: la version activa no tiene secreto en el keyring (fail-closed).");
+  const keyring: DecisionMakerRefKeyring = {
+    active: () => keys.get(activeVersion) as DecisionMakerRefKey,
+    keyFor(version: unknown): DecisionMakerRefKey {
+      const k = typeof version === "number" ? keys.get(version) : undefined;
+      if (k === undefined) throw new Error(KEYRING_UNAVAILABLE);
+      return k;
+    },
+  };
+  return Object.freeze(keyring);
+}
+
 /** Verificador: recomputa un ref historico con la clave de la version registrada en su evento (no prueba todas). */
-export function recomputeDecisionMakerRef(
-  secret: Buffer,
-  payload: Readonly<Record<string, unknown>>,
-  tenantId: TenantId,
-  channel: string,
-  maxKnownVersion: number = DECISION_MAKER_REF_KEY_VERSION,
-): string {
-  const version = resolveDecisionMakerRefKeyVersion(payload);
-  if (version > maxKnownVersion) throw new Error("decisionMakerRef: keyVersion registrada mayor que la conocida (fail-closed).");
-  return deriveDecisionMakerRef(deriveDecisionMakerRefKey(secret, version), tenantId, channel);
+export function recomputeDecisionMakerRef(keyring: DecisionMakerRefKeyring, payload: Readonly<Record<string, unknown>>, tenantId: TenantId, channel: string): string {
+  let version: number;
+  try {
+    version = resolveDecisionMakerRefKeyVersion(payload);
+  } catch {
+    throw new Error(KEYRING_UNAVAILABLE);
+  }
+  return deriveDecisionMakerRef(keyring.keyFor(version), tenantId, channel);
 }
 
 /** Secreto raiz. `CNS_DECISION_MAKER_REF_SECRET` (base64, >=32 bytes). Fuera de LOCAL, sin el: aborta
@@ -119,4 +157,44 @@ export function loadDecisionMakerRefSecret(env: Readonly<Record<string, string |
   const secret = Buffer.from(raw, "base64");
   if (secret.length < 32) throw new Error("CNS_DECISION_MAKER_REF_SECRET debe ser base64 de al menos 32 bytes. Abortando (fail-closed).");
   return secret;
+}
+
+const VERSIONED_SECRET_RE = /^CNS_DECISION_MAKER_REF_SECRET_V(\d{1,4})$/;
+
+function decodeSecret(raw: string, name: string): Buffer {
+  const secret = Buffer.from(raw, "base64");
+  if (secret.length < 32) throw new Error(`${name} debe ser base64 de al menos 32 bytes. Abortando (fail-closed).`);
+  return secret;
+}
+
+/**
+ * Keyring desde el entorno (OPEN-CM-10). Misma forma de carga que la clave actual:
+ *  - `CNS_DECISION_MAKER_REF_SECRET`: secreto de la v2 (legado; sin otras variables, el keyring es {2} activo 2).
+ *  - `CNS_DECISION_MAKER_REF_SECRET_V<N>` (N >= 3): secreto de la version N (base64, >= 32 bytes, distinto de los demas).
+ *  - `CNS_DECISION_MAKER_REF_ACTIVE_VERSION`: version activa; obligatoria si hay variables versionadas; por defecto 2.
+ * Fuera de LOCAL, cualquier falta aborta. En LOCAL sin variables: claves sinteticas de dev (v2, y la activa si es > 2).
+ * Los mensajes de error nunca incluyen valores de secretos.
+ */
+export function loadDecisionMakerRefKeyring(env: Readonly<Record<string, string | undefined>>, environment: string): DecisionMakerRefKeyring {
+  const secrets = new Map<number, Buffer>();
+  secrets.set(2, loadDecisionMakerRefSecret(env, environment));
+  let hasVersioned = false;
+  for (const [name, raw] of Object.entries(env)) {
+    const m = VERSIONED_SECRET_RE.exec(name);
+    if (m === null || raw === undefined || raw === "") continue;
+    const version = Number(m[1]);
+    if (version < 3) throw new Error("decisionMakerRef: la v2 se configura solo con CNS_DECISION_MAKER_REF_SECRET (fail-closed).");
+    hasVersioned = true;
+    secrets.set(version, decodeSecret(raw, name));
+  }
+  const rawActive = env.CNS_DECISION_MAKER_REF_ACTIVE_VERSION;
+  if (hasVersioned && (rawActive === undefined || rawActive === "")) {
+    throw new Error("CNS_DECISION_MAKER_REF_ACTIVE_VERSION es obligatoria si hay secretos versionados. Abortando (fail-closed).");
+  }
+  const active = rawActive === undefined || rawActive === "" ? 2 : Number(rawActive);
+  if (!Number.isInteger(active)) throw new Error("CNS_DECISION_MAKER_REF_ACTIVE_VERSION invalida. Abortando (fail-closed).");
+  if (environment === "LOCAL" && !secrets.has(active) && active >= 3 && active <= 1000) {
+    secrets.set(active, Buffer.from(`LOCAL_ONLY_DEV_DECISION_MAKER_REF_SECRET_V${active}_SYNTHETIC_DATA_ONLY`));
+  }
+  return createDecisionMakerRefKeyring(secrets, active);
 }
