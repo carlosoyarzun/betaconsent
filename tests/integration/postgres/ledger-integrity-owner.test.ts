@@ -9,7 +9,7 @@ import { pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
-pgTest("TEST-CNS-1230 pg: consent_owner (migrador) no puede alterar ni escribir el ledger sin SET ROLE integrity_owner (42501)", async (ctx) => {
+pgTest("TEST-CNS-1230 pg: consent_owner (migrador) no puede alterar ni escribir el ledger sin asumir el rol dueño del ledger (42501)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const members = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
     `SELECT m.rolname AS member, a.inherit_option, a.set_option
