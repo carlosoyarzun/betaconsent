@@ -36,7 +36,8 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2`,
       [schema, table],
     )).rows[0];
-    assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, `${schema}.${table}`);
+    // X8 dec. 3 (0027): el ledger pertenece a integrity_owner; el outbox sigue en consent_owner.
+    assert.deepEqual(rel, { rls: true, force: true, owner: schema === "integrity" ? "integrity_owner" : "consent_owner" }, `${schema}.${table}`);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
       "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = $1 AND tablename = $2",

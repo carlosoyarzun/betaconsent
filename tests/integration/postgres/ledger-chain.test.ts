@@ -164,25 +164,35 @@ pgTest("TEST-CNS-915 pg: los triggers de inmutabilidad bloquean UPDATE/DELETE/TR
   const hashes = async (): Promise<string> => JSON.stringify((await admin.query("SELECT payload, event_hash FROM integrity.audit_event WHERE tenant_id = $1 ORDER BY chain_seq", [tenant])).rows);
   const before = await hashes();
 
-  // El migrador es miembro del dueno: tiene los privilegios de UPDATE/DELETE/TRUNCATE. Bajo RLS FORCE
-  // y sin policy para el dueno no ve filas (la mutacion no alcanza nada); si ademas quita FORCE RLS
-  // (puede, es el dueno) la fila SI es visible y el trigger ENABLE ALWAYS la rechaza. TRUNCATE no pasa
-  // por RLS: lo ataja el trigger de sentencia.
+  // X8 dec. 3 (0026/0027): el ledger es de integrity_owner. El migrador, directo o con SET ROLE
+  // consent_owner, ya no puede ni leer ni mutar el ledger (42501; ver TEST-CNS-1230).
+  // RESIDUAL F-X8-11 (ACEPTADO solo para IT0 sintetico (Carlos, 2026-10-06); caduca antes de datos
+  // reales/G6; cierre: CA-144, ADR-010 break-glass + ancla externa): con SET ROLE integrity_owner explicito el migrador tiene control total (DISABLE TRIGGER,
+  // CREATE OR REPLACE de la funcion, DROP) y la cadena SHA-256 sin ancla externa no lo detecta; ademas
+  // consent_owner es datdba y puede DROP DATABASE. Lo que sigue solo documenta el comportamiento de los
+  // controles por defecto (RLS FORCE, trigger ENABLE ALWAYS) mientras nadie los desactive; NO frena al residual.
   const mutations = ["UPDATE integrity.audit_event SET payload = '{}'::jsonb", "DELETE FROM integrity.audit_event", "UPDATE integrity.audit_event SET event_hash = repeat('b', 64)"];
-  for (const viaSetRole of [false, true]) {
+  for (const via of [null, "consent_owner"]) {
     const mig = await ctx.connectAs("consent_migrator");
-    if (viaSetRole) await mig.query("SET ROLE consent_owner");
+    if (via !== null) await mig.query(`SET ROLE ${via}`);
+    for (const sql of [...mutations, "TRUNCATE integrity.audit_event", "ALTER TABLE integrity.audit_event NO FORCE ROW LEVEL SECURITY"]) {
+      await assert.rejects(() => mig.query(sql), (e: unknown) => codeOf(e) === "42501", `migrador (via=${via}) sin privilegios sobre el ledger: ${sql}`);
+    }
+  }
+  {
+    const mig = await ctx.connectAs("consent_migrator");
+    await mig.query("SET ROLE integrity_owner");
     for (const sql of mutations) {
       const r = await mig.query(sql);
-      assert.equal(r.rowCount, 0, `migrador (setRole=${viaSetRole}) bajo FORCE RLS no alcanza filas: ${sql}`);
+      assert.equal(r.rowCount, 0, `residual SET ROLE integrity_owner bajo FORCE RLS no alcanza filas: ${sql}`);
     }
     for (const sql of mutations) {
       await mig.query("BEGIN");
       await mig.query("ALTER TABLE integrity.audit_event NO FORCE ROW LEVEL SECURITY");
-      await assert.rejects(() => mig.query(sql), (e: unknown) => codeOf(e) === "23000", `migrador sin FORCE RLS (setRole=${viaSetRole}): ${sql}`);
+      await assert.rejects(() => mig.query(sql), (e: unknown) => codeOf(e) === "23000", `residual sin FORCE RLS: ${sql}`);
       await mig.query("ROLLBACK");
     }
-    await assert.rejects(() => mig.query("TRUNCATE integrity.audit_event"), (e: unknown) => codeOf(e) === "23000", `migrador (setRole=${viaSetRole}): TRUNCATE`);
+    await assert.rejects(() => mig.query("TRUNCATE integrity.audit_event"), (e: unknown) => codeOf(e) === "23000", "residual: TRUNCATE");
   }
   const force = (await admin.query<{ f: boolean }>("SELECT relforcerowsecurity AS f FROM pg_class WHERE oid = 'integrity.audit_event'::regclass")).rows[0]?.f;
   assert.equal(force, true, "FORCE RLS restaurado (los ALTER fueron transaccionales)");

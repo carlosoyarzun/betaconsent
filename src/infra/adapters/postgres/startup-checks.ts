@@ -86,9 +86,9 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 
   const membership = await db.query<{ owner: string; member: boolean }>(
     `SELECT o.rolname AS owner, pg_catalog.pg_has_role(current_user, o.oid, 'MEMBER') AS member
-       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner', 'staff_roster_owner')`,
+       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner', 'staff_roster_owner', 'integrity_owner')`,
   );
-  if (membership.rows.length < 3) failures.push("faltan los roles owner (base sin migrar)");
+  if (membership.rows.length < 4) failures.push("faltan los roles owner (base sin migrar)");
   for (const row of membership.rows) {
     if (row.member) failures.push(`el rol de la conexión es miembro de ${row.owner}`);
   }
