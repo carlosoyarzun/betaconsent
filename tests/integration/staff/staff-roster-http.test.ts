@@ -39,6 +39,7 @@ import type { InvitationState } from "../../../src/server/ports/invitation-repos
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { validateApiPayload } from "../../contract/schema-lite.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -67,7 +68,7 @@ interface Harness {
 }
 
 async function start(opts: { subjects?: Array<{ tenantId: string; subjectRef: string; label?: string; participationRef?: string | null }>; failingAccessLog?: boolean } = {}): Promise<Harness> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const staffIdentity = createInMemoryStaffIdentityAdapter(ROSTER);
   const staff = createDefaultStaffConsolePorts(ports.invitation, staffIdentity, loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY));
   const subjects = opts.subjects ?? [];
@@ -316,7 +317,7 @@ test("TEST-CNS-1084 http: si el access_log falla -> 503 sin datos; el GET no cre
     // Sin lector configurado: tambien 503 (fail-closed).
     const { roster: _omit, ...withoutRoster } = h.console;
     void _omit;
-    const server = createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, ports: createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG), sessionSecret: h.sessionSecret, environment: "LOCAL", staffIdentity: createInMemoryStaffIdentityAdapter(ROSTER), staffConsole: withoutRoster });
+    const server = createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, ports: createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY), sessionSecret: h.sessionSecret, environment: "LOCAL", staffIdentity: createInMemoryStaffIdentityAdapter(ROSTER), staffConsole: withoutRoster });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     try {
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/staff/roster`;

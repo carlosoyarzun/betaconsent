@@ -36,6 +36,7 @@ import type { InvitationListing } from "../../../src/infra/adapters/in-memory-in
 import type { InvitationState } from "../../../src/server/ports/invitation-repository.port.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff-ui.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -81,7 +82,7 @@ interface StartOptions {
 
 async function start(opts: StartOptions = {}): Promise<Harness> {
   const students = opts.students ?? [student(1), student(2), student(3)];
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const staffIdentity = createInMemoryStaffIdentityAdapter(ROSTER);
   const staff = createDefaultStaffConsolePorts(
     ports.invitation,

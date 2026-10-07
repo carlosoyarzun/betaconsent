@@ -33,6 +33,7 @@ import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-ro
 import type { Environment } from "../../../src/server/modules/common/types.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-security-event.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -68,7 +69,7 @@ async function start(environment: Environment = "LOCAL"): Promise<Harness> {
   const events = createInMemorySecurityEventLog();
   const staffSessions = createInMemoryStaffSessionStore({ securityEvents: events });
   const caseSessions = createInMemoryCaseSessionStore({ securityEvents: events });
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const revocationPorts = createDefaultRevocationFlowPorts({ ttlMs: 60_000 }, ports.decision.ledger, ports.decision.repo);
   await revocationPorts.rightsCase.rightsCaseRepo.save({ caseRef: CASE_REF, tenantId: TENANT_A, chainRef: fixtureUuid("se-chain"), revokedDecisionRef: fixtureUuid("se-dec"), status: "OPEN" });
   const staffIdentity = createInMemoryStaffIdentityAdapter(ROSTER);

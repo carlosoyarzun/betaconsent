@@ -10,13 +10,14 @@ import type { AddressInfo } from "node:net";
 
 import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTION" | undefined): Promise<{ baseUrl: string; close(): Promise<void> }> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const server: Server = createConsentFlowHttpServer({ config: { allowedOrigin: ALLOWED_ORIGIN }, ports, environment });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -52,7 +53,7 @@ test("TEST-CNS-696: GET /__dev/outbox-sink existe (200, {enqueued: []}) en LOCAL
 
 test("TEST-CNS-881: storeMode=postgres sin devOutboxSink responde 404 (nunca TypeError del Proxy); con el lector responde sus sobres", async () => {
   for (const [sink, expected] of [[undefined, 404], [async () => [], 200]] as const) {
-    const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+    const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
     const server: Server = createConsentFlowHttpServer({
       config: { allowedOrigin: ALLOWED_ORIGIN },
       ports,

@@ -5,8 +5,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 
-import { deriveChainRefKey } from "../../modules/consent-decision/chain-ref.ts";
-import { deriveDecisionMakerRefKey, type DecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
+import type { DecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
 import type { OutboxEnvelope } from "../../ports/outbox.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../infra/adapters/in-memory-eligibility.adapter.ts";
@@ -126,6 +125,10 @@ import { createPgStaffRosterReader } from "../../../infra/adapters/postgres/staf
 import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 
 export interface ConsentFlowHttpServerOptions {
+  /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave HMAC del chainRef. */
+  readonly chainRefKey?: Buffer;
+  /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave del decisionMakerRef (INV-CM-09). */
+  readonly decisionMakerRefKey?: DecisionMakerRefKey;
   readonly config?: Partial<RightsCaseHttpConfig>;
   readonly ports?: ConsentFlowPorts;
   /** CA-116 (revocación IT0): ports de GET /m/{token} y el flujo self-service R1-R3/R8/RV0/RC1.
@@ -248,9 +251,17 @@ export function createDefaultStaffConsolePorts(
 export function createDefaultConsentFlowPorts(
   otpPolicy: OtpPolicy,
   relationshipConfig: DecisionRelationshipConfig,
-  chainRefKey: Buffer = deriveChainRefKey(randomBytes(32)),
-  decisionMakerRefKey: DecisionMakerRefKey = deriveDecisionMakerRefKey(randomBytes(32)),
+  chainRefKey: Buffer,
+  decisionMakerRefKey: DecisionMakerRefKey,
 ): ConsentFlowPorts {
+  // P2-6 (OPEN-CM-10, INV-CM-09): sin default aleatorio. Una clave efimera produce chainRef/decisionMakerRef
+  // irrecomputables tras reiniciar (fail-open). Fail-closed y sin volcar material de clave en el mensaje.
+  if (!Buffer.isBuffer(chainRefKey) || chainRefKey.length === 0) {
+    throw new Error("createDefaultConsentFlowPorts: chainRefKey es obligatoria (CNS_CHAIN_REF_SECRET); no hay clave por defecto.");
+  }
+  if (!decisionMakerRefKey) {
+    throw new Error("createDefaultConsentFlowPorts: decisionMakerRefKey es obligatoria (CNS_DECISION_MAKER_REF_SECRET / keyring); no hay clave por defecto.");
+  }
   const ledger = createInMemoryLedgerAdapter();
   const invitationRepo = createInMemoryInvitationRepository();
   const otpRepo = createInMemoryOtpVerificationRepository();
@@ -615,8 +626,12 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
             "`relationshipConfig` (GRD-CD-04, decision-relationship.config.ts).",
         );
       }
-      return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig);
+      return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig, options.chainRefKey as Buffer, options.decisionMakerRefKey as DecisionMakerRefKey);
     })();
+  // P2-6: tambien con `ports` inyectados (p. ej. desde JS o un cast) la clave del decisionMakerRef es obligatoria.
+  if (!ports.decisionMakerRefKey) {
+    throw new Error("createConsentFlowHttpServer: ports.decisionMakerRefKey es obligatoria (INV-CM-09); no hay clave por defecto.");
+  }
   const revocationPorts =
     options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
   const recoveryHandlePolicy = options.recoveryHandlePolicy ?? DEFAULT_TEST_RECOVERY_HANDLE_POLICY;

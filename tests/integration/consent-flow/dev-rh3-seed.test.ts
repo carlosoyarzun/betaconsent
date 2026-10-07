@@ -19,6 +19,7 @@ import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
 import { validateApiPayload, validateOutboxEvent } from "../../contract/schema-lite.ts";
 import type { InMemoryOutbox } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 const ORIGIN = "http://127.0.0.1:3000";
@@ -36,7 +37,7 @@ function cookiesOf(res: Response): Record<string, string> {
 }
 
 async function runSeededRh3Flow() {
-  const ports = createDefaultConsentFlowPorts(loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY), loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG));
+  const ports = createDefaultConsentFlowPorts(loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY), loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG), TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   const revocationPorts = createDefaultRevocationFlowPorts(loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY), ports.decision.ledger, ports.decision.repo);
   await seedRh3DevCase(ports, revocationPorts, TENANT_ID);
   const server = createConsentFlowHttpServer({

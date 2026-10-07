@@ -15,6 +15,7 @@ import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decis
 import type { StaffIdentityPort, StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import type { Environment } from "../../../src/server/modules/common/types.ts";
 import { validateApiPayload, validateCommon, type ValidationResult } from "../../contract/schema-lite.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CASE_SESSION_COOKIE_NAME = "__Host-cns-case";
@@ -79,7 +80,7 @@ async function setUp(
   opts: { chainRef: string; caseRef: string; revocationRef: string; environment?: Environment; roster?: readonly StaffPrincipal[] },
 ): Promise<Fixture> {
   const consentId = fixtureUuid(`consent-${opts.chainRef}`);
-  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   await ports.decision.repo.save({
     consentId,
     tenantId: TENANT_ID,

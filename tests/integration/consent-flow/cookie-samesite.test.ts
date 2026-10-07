@@ -17,6 +17,7 @@ import type { AddressInfo } from "node:net";
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const SESSION_COOKIE_NAME = "__Host-cns-session";
@@ -40,7 +41,7 @@ function parseSetCookie(res: Response): Record<string, string> {
 }
 
 test("TEST-CNS-599: __Host-cns-session y __Host-cns-csrf se fijan con SameSite=Lax (Secure/HttpOnly/Path=/ intactos); un POST sin token CSRF o con Origin ajeno sigue rechazado (GRD-CM-10)", async () => {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
   await createInvitation(ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
     invitationRef: fixtureUuid("inv-599"),
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
