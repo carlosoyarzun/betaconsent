@@ -27,6 +27,7 @@
 // decisionMaker (LEGAL DECISION de Carlos).
 
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+import { inspect } from "node:util";
 
 import type { TenantId } from "../common/types.ts";
 import { uuidV4FromDigest } from "../common/opaque-ref.ts";
@@ -58,7 +59,14 @@ export interface DecisionMakerRefKey {
 
 export function deriveDecisionMakerRefKey(secret: Buffer, keyVersion: number = DECISION_MAKER_REF_KEY_VERSION): DecisionMakerRefKey {
   if (secret.length < 32) throw new Error("decisionMakerRef: el secreto raiz debe tener al menos 32 bytes (fail-closed).");
-  return { key: Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), decisionMakerRefHkdfInfo(keyVersion), 32)), keyVersion };
+  const dmKey: DecisionMakerRefKey = {
+    key: Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), decisionMakerRefHkdfInfo(keyVersion), 32)),
+    keyVersion,
+  };
+  // OPEN-CM-10 P2-4: inmutable y sin exponer la clave por JSON/inspect (props no enumerables: no afectan deepEqual).
+  Object.defineProperty(dmKey, "toJSON", { value: () => ({ keyVersion }), enumerable: false });
+  Object.defineProperty(dmKey, inspect.custom, { value: () => `DecisionMakerRefKey { keyVersion: ${keyVersion} }`, enumerable: false });
+  return Object.freeze(dmKey);
 }
 
 /** Version de clave de un ref historico a partir del payload del evento de ledger que lo registro (campo ausente = v2). */
@@ -76,11 +84,16 @@ export function normalizeChannelForRef(channel: string): string {
 
 const TENANT_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export function deriveDecisionMakerRef(dmKey: DecisionMakerRefKey, tenantId: TenantId, channel: string): string {
+function assertRefInputs(tenantId: TenantId, channel: string): string {
   if (typeof tenantId !== "string" || tenantId.length === 0) throw new Error("decisionMakerRef: tenantId es obligatorio (fail-closed).");
   if (!TENANT_REF_RE.test(tenantId)) throw new Error("decisionMakerRef: tenantId debe tener forma Ref UUIDv4 en minusculas (fail-closed).");
   const normalized = normalizeChannelForRef(channel);
   if (normalized.length === 0) throw new Error("decisionMakerRef: canal normalizado vacio (fail-closed).");
+  return normalized;
+}
+
+export function deriveDecisionMakerRef(dmKey: DecisionMakerRefKey, tenantId: TenantId, channel: string): string {
+  const normalized = assertRefInputs(tenantId, channel);
   const tenant = Buffer.from(tenantId, "utf8");
   const len = Buffer.alloc(4);
   len.writeUInt32BE(tenant.length);
@@ -141,6 +154,7 @@ export function recomputeDecisionMakerRef(keyring: DecisionMakerRefKeyring, payl
   } catch {
     throw new Error(KEYRING_UNAVAILABLE);
   }
+  assertRefInputs(tenantId, channel); // P2-3: entradas invalidas fallan igual con cualquier version, antes de consultar el keyring.
   return deriveDecisionMakerRef(keyring.keyFor(version), tenantId, channel);
 }
 
@@ -154,16 +168,20 @@ export function loadDecisionMakerRefSecret(env: Readonly<Record<string, string |
     }
     return Buffer.from("LOCAL_ONLY_DEV_DECISION_MAKER_REF_SECRET_SYNTHETIC_DATA_ONLY");
   }
-  const secret = Buffer.from(raw, "base64");
-  if (secret.length < 32) throw new Error("CNS_DECISION_MAKER_REF_SECRET debe ser base64 de al menos 32 bytes. Abortando (fail-closed).");
-  return secret;
+  return decodeSecret(raw, "CNS_DECISION_MAKER_REF_SECRET");
 }
 
-const VERSIONED_SECRET_RE = /^CNS_DECISION_MAKER_REF_SECRET_V(\d{1,4})$/;
+const VERSIONED_SECRET_PREFIX = "CNS_DECISION_MAKER_REF_SECRET_V";
+const VERSIONED_SECRET_RE = /^CNS_DECISION_MAKER_REF_SECRET_V([1-9]\d{0,3})$/;
+const VERSION_RE = /^[1-9]\d{0,3}$/;
 
+/** Base64 estricto: ida y vuelta (re-encode == entrada sin padding ni espacios de borde) y al menos 32 bytes. */
 function decodeSecret(raw: string, name: string): Buffer {
   const secret = Buffer.from(raw, "base64");
-  if (secret.length < 32) throw new Error(`${name} debe ser base64 de al menos 32 bytes. Abortando (fail-closed).`);
+  const norm = (x: string): string => x.trim().replace(/=+$/, "");
+  if (norm(secret.toString("base64")) !== norm(raw) || secret.length < 32) {
+    throw new Error(`${name} debe ser base64 valido de al menos 32 bytes. Abortando (fail-closed).`);
+  }
   return secret;
 }
 
@@ -180,16 +198,23 @@ export function loadDecisionMakerRefKeyring(env: Readonly<Record<string, string 
   secrets.set(2, loadDecisionMakerRefSecret(env, environment));
   let hasVersioned = false;
   for (const [name, raw] of Object.entries(env)) {
+    if (!name.startsWith(VERSIONED_SECRET_PREFIX)) continue;
     const m = VERSIONED_SECRET_RE.exec(name);
-    if (m === null || raw === undefined || raw === "") continue;
+    // C1: una variable con el prefijo versionado que no es canonica (ceros a la izquierda, no numerica...) falla cerrado.
+    if (m === null) throw new Error("decisionMakerRef: nombre de variable versionada invalido (fail-closed).");
+    if (raw === undefined || raw === "") continue;
     const version = Number(m[1]);
     if (version < 3) throw new Error("decisionMakerRef: la v2 se configura solo con CNS_DECISION_MAKER_REF_SECRET (fail-closed).");
+    if (secrets.has(version)) throw new Error("decisionMakerRef: version repetida en la configuracion (fail-closed).");
     hasVersioned = true;
     secrets.set(version, decodeSecret(raw, name));
   }
   const rawActive = env.CNS_DECISION_MAKER_REF_ACTIVE_VERSION;
   if (hasVersioned && (rawActive === undefined || rawActive === "")) {
     throw new Error("CNS_DECISION_MAKER_REF_ACTIVE_VERSION es obligatoria si hay secretos versionados. Abortando (fail-closed).");
+  }
+  if (rawActive !== undefined && rawActive !== "" && !VERSION_RE.test(rawActive)) {
+    throw new Error("CNS_DECISION_MAKER_REF_ACTIVE_VERSION invalida. Abortando (fail-closed).");
   }
   const active = rawActive === undefined || rawActive === "" ? 2 : Number(rawActive);
   if (!Number.isInteger(active)) throw new Error("CNS_DECISION_MAKER_REF_ACTIVE_VERSION invalida. Abortando (fail-closed).");
