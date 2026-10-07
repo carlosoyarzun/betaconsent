@@ -9,3 +9,68 @@ Gobierna: `RULE-CNS-###`, `SEC-CNS-###` (tenancy, integridad).
   `applyLocalFixtures` como `consent_migrator` (nunca superusuario, nunca desde el proceso web); se niega si
   `CNS_ENVIRONMENT != LOCAL` o `ops.db_catalog` no es LOCAL/SYNTHETIC. CLI:
   `CNS_ENVIRONMENT=LOCAL CNS_MIGRATOR_DATABASE_URL=... node src/infra/adapters/postgres/local-fixtures-cli.ts`.
+
+## Ownership del ledger (CA-143; tras PR #60, X8 decisión 3 de Carlos, 2026-10-06, F-X8-11)
+
+Gobierna: DEC-BR-014 §6 (owner NOLOGIN distinto del migrador), ADR-002 §2, INV-CM-01 (append-only). Las citas son
+`archivo:línea` sobre `main` (34a52de); si una migración cambia, hay que actualizarlas.
+
+### Roles y qué puede cada uno
+
+| Rol | Atributos / membresía | `integrity.audit_event` (ledger) | `ops.security_event` |
+|---|---|---|---|
+| `app_rw` (runtime) | LOGIN, NOSUPERUSER, NOBYPASSRLS, no miembro de ningún owner (`0000_roles.sql:15-17`, `:30-35`, `:48-49`) | SELECT + INSERT solo por columnas, filtrado por RLS de tenant (`0002_ledger.sql:75-77`; columnas de cadena y `occurred_at/environment` añadidas en `0013_ledger_chain.sql:77,84`). Sin UPDATE/DELETE/TRUNCATE | Solo INSERT por columnas y policy de INSERT por tenant; sin SELECT (`0025_ops_security_event.sql:73-78`) |
+| `worker`, `platform_rw` | LOGIN, mismos atributos que `app_rw` (`0000_roles.sql:30-35`) | Nada (`0002_ledger.sql:13`) | Ningún grant en `0025` (solo `app_rw`) |
+| `consent_migrator` | LOGIN, miembro de `consent_owner` con INHERIT TRUE, SET TRUE (`0000_roles.sql:41`) | Ver `consent_owner` (hereda) | Ver `consent_owner` |
+| `consent_owner` (rol del migrador) | NOLOGIN, NOSUPERUSER (`0000_roles.sql:11`, `:27`); el runner corre cada migración de base como este rol (`0000_roles.sql:39-40`). Es dueño de la base (`0027_ledger_integrity_owner.sql:10`) | Sin ningún privilegio ni CREATE tras `0027` (aserciones en `0027_ledger_integrity_owner.sql:81-86`). Puede `SET ROLE integrity_owner` (ver residual) | **Sigue siendo el dueño** (esquema `ops` con `AUTHORIZATION consent_owner`, `0001_schemas_catalog.sql:15`; `0025` no transfiere propiedad). Lo protegen solo triggers `ENABLE ALWAYS` y FORCE RLS (`0025_ops_security_event.sql:60-72`) |
+| `integrity_owner` | NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOBYPASSRLS; `consent_owner` es miembro con INHERIT FALSE, SET TRUE (`0026_integrity_owner_role.sql:20-29`); ningún rol de runtime es miembro (`0026:31-44`; `startup-checks.ts:87-95`) | Dueño de la tabla, de `integrity.audit_event_immutable()` y del esquema `integrity` (`0027_ledger_integrity_owner.sql:24-28`). Sin USAGE/EXECUTE sobre `app`/`ops` (`0027:8-9`) | Ninguno |
+| `staff_roster_owner` / `staff_roster_reader` | NOLOGIN (`0018_staff_roster_roles.sql:20-24`); `consent_owner` puede SET sin heredar (`:30`); `app_rw` puede SET `staff_roster_reader` sin heredar (`:32`) | Ninguno: la vista del roster no hace JOIN a ledger (`0019_staff_roster_projection.sql:20-21`) | Ninguno |
+| `tenant_resolve_owner`, `outbox_claimer` | Fuera del alcance de este modelo (`0000_roles.sql:12`, `0004_outbox_claimer_role.sql:9`) | Ninguno | Ninguno |
+
+Dueño del ledger: `integrity_owner` es dueño de `integrity.audit_event` (arrastra índices, triggers y policies),
+de `integrity.audit_event_immutable()` y del esquema `integrity` (`0027_ledger_integrity_owner.sql:5-7`). Los objetos
+se transfieren antes que el esquema porque al revés `consent_owner` pierde USAGE (`0027:15`). El CREATE temporal
+sobre la base se concede y revoca dentro de la misma migración (`0027:16-21`, `:31-35`), y los privilegios por
+defecto de `integrity_owner` no dan EXECUTE a PUBLIC (`0027:37-40`). Todo DDL futuro sobre `integrity.*` debe
+declarar `SET LOCAL ROLE integrity_owner` y pasar por CODEOWNERS (`0026_integrity_owner_role.sql:10-11`;
+`/db/migrations/` está en `.github/CODEOWNERS`). `0027` aborta si algo no queda como se declara
+(`0027:42-87`: dueños, triggers `ENABLE ALWAYS`, FORCE RLS, sin privilegios de `consent_owner`).
+
+### Qué protege
+
+- Append-only: sin grant de UPDATE/DELETE/TRUNCATE al runtime y triggers `ENABLE ALWAYS`, que bloquean incluso al
+  dueño y con `session_replication_role=replica` (`0002_ledger.sql:7-8`, `:62-64`); `ops.security_event`
+  igual (`0025_ops_security_event.sql:60-67`). Tras `0027`, el migrador (directo o con `SET ROLE consent_owner`)
+  recibe 42501 al intentar DROP, ALTER, DISABLE TRIGGER, OWNER TO, GRANT, SELECT, INSERT, DELETE o TRUNCATE
+  sobre el ledger.
+- Cadena SHA-256 por tenant (`payload_hash`, `previous_event_hash`, `event_hash`; sin bifurcaciones por
+  `UNIQUE (tenant_id, previous_event_hash)`; CHECK que rechaza INSERT sin eslabón), recomputable con
+  `verifyLedgerChain` (`0013_ledger_chain.sql:3-4`, `:12-16`, `:22-24`;
+  `src/server/modules/common/ledger-chain.ts:174`).
+- No protege: la cadena no tiene HMAC ni ancla externa (`0013_ledger_chain.sql:3-4`; R-04 en
+  `registers/risk-register-IT0.md:15`: solo NON-EVIDENTIARY, rechazado para datos reales).
+
+### Residual P1 (aceptado solo para IT0 sintético)
+
+Aceptado por Carlos el 2026-10-06 solo para IT0 sintético (texto en `0026_integrity_owner_role.sql:14-18`,
+`tests/integration/postgres/ledger-chain.test.ts:169-174`). Caduca antes de datos reales / G6.
+
+1. El migrador puede `SET ROLE integrity_owner` explícito (migrador -> `consent_owner` -> `integrity_owner`) y
+   entonces tiene control total del ledger: DISABLE TRIGGER, CREATE OR REPLACE de la función, DROP. Como la cadena no
+   tiene ancla externa, no detectaría una reescritura con los hashes recalculados.
+2. `consent_owner` es dueño de la base (datdba) y puede `DROP DATABASE`.
+
+Cierre: CA-144 (ADR-010 break-glass, dueño de la base distinto y ancla externa). Esta migración solo logra que el
+DDL del ledger deba declararse y revisarse (`0026:18`).
+
+### Cómo se verifica
+
+- TEST-CNS-1230 (matriz de 42501 del migrador y membresía de `integrity_owner` = `consent_owner` INHERIT FALSE,
+  SET TRUE) y TEST-CNS-1231 (dueños, sin CREATE temporal, triggers `ENABLE ALWAYS`, append e idempotencia de
+  `app_rw`): `tests/integration/postgres/ledger-integrity-owner.test.ts:12`, `:42`;
+  `traceability/test-matrix.csv:621-622`.
+- TEST-CNS-915 documenta el residual (`ledger-chain.test.ts:159-190`); también `catalog.test.ts:13`,
+  `ledger-outbox-schema.test.ts:39-40`.
+- En arranque: `startup-checks.ts:87-95` falla si la conexión es miembro de `integrity_owner`.
+- CA-142 (spec-check `SET LOCAL ROLE integrity_owner` en `tools/spec-checks/`): en curso, no forma parte de este doc.
+  Estas pruebas requieren Postgres real (`npm run test:integration`).
