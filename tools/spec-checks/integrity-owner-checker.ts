@@ -4,6 +4,8 @@
 // explicita, abajo) hagan `SET [LOCAL|SESSION] ROLE integrity_owner` o concedan la membresia de integrity_owner.
 // Funcion pura: recibe {path, text}; el llamador (test unit) recorre el repo. Ampliar la allowlist exige cambio
 // revisado en este archivo (y CODEOWNERS/DEC si cambia la superficie).
+// FUERA DE ALCANCE (limitacion conocida, cubierta por CA-144): SQL armado dinamicamente (p.ej. format('SET ROLE %I', ...)
+// o concatenacion de strings) y SET SESSION AUTHORIZATION no se detectan; el cierre de fondo es CA-144 (ADR-010).
 
 export type UsageKind = "set-role" | "grant-membership";
 export interface SourceFile { readonly path: string; readonly text: string }
@@ -17,8 +19,6 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0027_ledger_integrity_owner.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
-  // TEST-CNS-1230: el titulo del test nombra "SET ROLE integrity_owner" (falso positivo aceptado; sin ejecucion real).
-  "tests/integration/postgres/ledger-integrity-owner.test.ts": ["set-role"],
 };
 
 /** Extensiones que pueden ejecutar SQL / abrir sesiones (el checker se ignora a si mismo y a su test, ver SELF_EXCLUDED). */

@@ -42,7 +42,7 @@ test("TEST-CNS-1235 integrity-owner-check: detecta SET [LOCAL|SESSION] ROLE inte
   }
   // el mismo SET ROLE en un archivo de la allowlist pasa; en otro archivo (p.ej. una migracion nueva) falla
   const real = "db/migrations/0027_ledger_integrity_owner.sql";
-  const base = [{ path: real, text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0026_integrity_owner_role.sql", text: "GRANT integrity_owner TO consent_owner;" }, { path: "tests/integration/postgres/ledger-chain.test.ts", text: "SET ROLE integrity_owner" }, { path: "tests/integration/postgres/ledger-integrity-owner.test.ts", text: "// t\nx(\"sin SET ROLE integrity_owner\")" }];
+  const base = [{ path: real, text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0026_integrity_owner_role.sql", text: "GRANT integrity_owner TO consent_owner;" }, { path: "tests/integration/postgres/ledger-chain.test.ts", text: "SET ROLE integrity_owner" }];
   assert.deepEqual(checkIntegrityOwnerUsage(base), []);
   assert.equal(checkIntegrityOwnerUsage([...base, { path: "db/migrations/0028_otra.sql", text: "SET LOCAL ROLE integrity_owner;" }]).filter((e) => e.includes("0028")).length, 1);
 });
