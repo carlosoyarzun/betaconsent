@@ -30,7 +30,7 @@ import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in
 import type { InMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import type { RecoveryTokenRepositoryPort } from "../../../src/server/ports/recovery-token.port.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
@@ -106,7 +106,7 @@ interface Fixture {
 }
 
 async function setUp(chainRef: string, consentId: string, mgmtToken: string): Promise<Fixture> {
-  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
+  const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   await ports.decision.repo.save({
     consentId,
     tenantId: TENANT_ID,
@@ -131,7 +131,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     revokedDecisionRef: consentId,
   });
 
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     revocationPorts,
@@ -428,7 +428,7 @@ test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) p
     // Expirado: TTL del handle (P-18) vencido -> decodeRecoveryHandle ya lo trata como ausente.
     const expiringServer = await setUp(fixtureUuid("chain-601b"), fixtureUuid("consent-601b"), "mgmt-token-601b");
     try {
-      const almostExpiredServer = createConsentFlowHttpServer({
+      const almostExpiredServer = createConsentFlowHttpServer({ sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
         config: { allowedOrigin: ALLOWED_ORIGIN },
         ports: expiringServer.ports,
         revocationPorts: expiringServer.revocationPorts,

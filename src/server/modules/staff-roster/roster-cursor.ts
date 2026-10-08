@@ -15,6 +15,7 @@
 // CNS_STAFF_ROSTER_CURSOR_SECRET; en LOCAL sin el, constante LOCAL_ONLY; fuera de LOCAL no arranca sin el (patron
 // CNS_CHAIN_REF_SECRET). No es la sesion: no rota con ella.
 
+import { decodeStrictSecret } from "../secrets/strict-secret.ts";
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
 export const STAFF_ROSTER_CURSOR_HKDF_INFO = "CNS-STAFF-ROSTER-CURSOR-v1";
@@ -64,9 +65,7 @@ export function loadStaffRosterCursorSecret(env: Readonly<Record<string, string 
     }
     return Buffer.from("LOCAL_ONLY_DEV_STAFF_ROSTER_CURSOR_SECRET_SYNTHETIC_DATA_ONLY");
   }
-  const secret = Buffer.from(raw, "base64");
-  if (secret.length < 32) throw new Error("CNS_STAFF_ROSTER_CURSOR_SECRET debe ser base64 de al menos 32 bytes. Abortando (fail-closed).");
-  return secret;
+  return decodeStrictSecret(raw, "CNS_STAFF_ROSTER_CURSOR_SECRET");
 }
 
 function aadOf(scope: RosterCursorScope): Buffer {

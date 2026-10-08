@@ -43,6 +43,7 @@ import { isReservedEmail } from "../../../src/server/modules/common/synthetic-re
 import { RESERVED_BAD, RESERVED_OK } from "../../unit/common/synthetic-recipient-vectors.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
+import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-consent.test.localhost";
 const CSRF = { origin: ORIGIN, csrf: "csrf-token-abcdefgh" };
@@ -81,10 +82,11 @@ async function boot(ctx: PgTestContext) {
     recoveryTokenPolicy: loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY),
     staffIdentity,
     chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
+    otpSecret: TEST_OTP_SECRET,
     decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN },
     ports: bundle.ports,
     revocationPorts: bundle.revocationPorts,

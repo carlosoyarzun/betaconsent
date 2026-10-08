@@ -53,6 +53,7 @@ import { openPostgresStore, type PostgresStore } from "../../infra/adapters/post
 import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
 import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
+import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
 import type { StaffConsolePorts } from "./http/staff-console.handler.ts";
 import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
@@ -120,6 +121,9 @@ const decisionMakerRefKey = decisionMakerRefKeyring.active();
 const staffRosterCursorKey = deriveStaffRosterCursorKey(loadStaffRosterCursorSecret(process.env, environment));
 // API-CNS-116 (P2-d): directorio SINTETICO de etiquetas "Alumno de prueba N" por (tenant, sujeto), inyectado desde este composition
 // root. Solo LOCAL/CI (la fabrica aborta si el entorno no es LOCAL; el store Postgres ya valido el catalogo de la BD).
+const otpSecret = loadOtpSecret(process.env, environment, () => Buffer.from("LOCAL_ONLY_DEV_OTP_SECRET_SYNTHETIC_DATA_ONLY"));
+// P2-6 (C2): los secretos crudos CNS_*_SECRET presentes deben ser distintos entre si (sesion, OTP, cursor, chainRef, dmref).
+assertDistinctServerSecrets(process.env);
 const subjectDirectory = createInMemorySubjectDirectory(
   environment,
   LOCAL_ONLY_DEV_STAFF_STUDENTS.map((s) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })),
@@ -133,15 +137,20 @@ if (pgStore) {
     recoveryTokenPolicy,
     staffIdentity,
     chainRefKey,
+    otpSecret,
     decisionMakerRefKey,
     invitationIssuancePolicy: staffIssuancePolicy,
     subjectDirectory,
   });
   ports = pgBundle.ports;
 } else {
-  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig, chainRefKey, decisionMakerRefKey);
+  ports = createDefaultConsentFlowPorts(otpPolicy, relationshipConfig, chainRefKey, decisionMakerRefKey, otpSecret);
 }
-const sessionSecret = randomBytes(32);
+// P2-6: claves de sesion y OTP explicitas (ya no hay default oculto en el servidor). CNS_SESSION_SECRET / CNS_OTP_SECRET
+// (base64 >= 32 bytes) tienen prioridad. LOCAL sin env: la sesion usa una clave aleatoria POR PROCESO (un reinicio en LOCAL
+// cierra todas las sesiones; aceptable con datos sinteticos); el OTP usa una constante LOCAL_ONLY estable (los OTP pendientes
+// persistidos en Postgres siguen verificandose tras reiniciar). Cada proposito tiene su propia clave.
+const sessionSecret = loadSessionSecret(process.env, environment, () => randomBytes(32));
 
 const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 // En Postgres el seed persiste entre arranques: ref y sujeto nuevos por proceso (GRD-IV-01: una sola
@@ -282,6 +291,7 @@ server.listen(port, "127.0.0.1", () => {
   const address = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}`;
   console.log(`Consent App (IT0, LOCAL, CONSENT_STORE=${storeMode}) escuchando en ${baseUrl}`);
+  if (!process.env.CNS_SESSION_SECRET) console.log("Aviso LOCAL: sin CNS_SESSION_SECRET la clave de sesion es efimera; reiniciar este proceso cierra todas las sesiones.");
   // API-CNS-101 (P-12): el flujo empieza con el GET de canje, nunca con el token suelto (cero
   // PII/credenciales en logs fuera de esta URL sintética de LOCAL, dominio example.invalid).
   // UX-CNS-001: el canje redirige a /welcome (INV-CM-08, no transiciona ahí).
