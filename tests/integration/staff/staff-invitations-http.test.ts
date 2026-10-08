@@ -36,7 +36,7 @@ import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { validateApiPayload, validateCommon, validateLedgerEventPayload, type ValidationResult } from "../../contract/schema-lite.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-staff.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -72,7 +72,7 @@ interface Harness {
 }
 
 function startServer(opts: { environment?: "LOCAL" | "DEV"; withPolicy?: boolean; roster?: readonly StaffPrincipal[] } = {}): Promise<Harness> {
-  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY);
+  const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const staffIdentity = createInMemoryStaffIdentityAdapter(opts.roster ?? [...LOCAL_ONLY_DEV_STAFF_ROSTER, TEST_VIEWER]);
   const policy = opts.withPolicy === false ? undefined : loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY);
   const staff = createDefaultStaffConsolePorts(ports.invitation, staffIdentity, policy);
@@ -81,7 +81,7 @@ function startServer(opts: { environment?: "LOCAL" | "DEV"; withPolicy?: boolean
   staff.catalog.seedSubject(TENANT_B, SUBJECT_B);
   staff.catalog.seedParticipation(TENANT_B, { participationRef: PARTICIPATION_B, contextRef: CONTEXT, productRef: "LECTORPRO", status: "ACTIVE" });
   const sessionSecret = randomBytes(32);
-  const server: Server = createConsentFlowHttpServer({
+  const server: Server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     sessionSecret,

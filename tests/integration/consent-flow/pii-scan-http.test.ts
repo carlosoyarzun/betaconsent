@@ -43,7 +43,7 @@ import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revoc
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { SCAN_ORIGIN, assertNonVacuous, describeStats, newCorpus, runAllFlows, scanForLeaks, startCapture } from "./pii-scan-driver.ts";
 import type { ScanEnv } from "./pii-scan-driver.ts";
-import { TEST_DECISION_MAKER_REF_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
 const T = LOCAL_ONLY_DEV_TENANT_ID;
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
@@ -51,7 +51,7 @@ const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ pur
 test("TEST-CNS-952 PII scan e2e (memoria): /i -> OTP -> decision, /m -> retiro, /r, RH3 y STAFF no dejan emails, OTP, tokens, cookies __Host-*, secretos ni dm: en logs ni URLs", async () => {
   const sessionSecret = randomBytes(32);
   const chainSecret = Buffer.alloc(32, 9);
-  const ports = createDefaultConsentFlowPorts(loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY), loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG), deriveChainRefKey(chainSecret), TEST_DECISION_MAKER_REF_KEY);
+  const ports = createDefaultConsentFlowPorts(loadOtpPolicyConfig(LOCAL_ONLY_DEV_OTP_POLICY), loadDecisionRelationshipConfig(LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG), deriveChainRefKey(chainSecret), TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const revocationPorts = createDefaultRevocationFlowPorts(loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY), ports.decision.ledger, ports.decision.repo);
   const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
   const issuancePolicy = loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY);
@@ -63,7 +63,7 @@ test("TEST-CNS-952 PII scan e2e (memoria): /i -> OTP -> decision, /m -> retiro, 
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     status: "ACTIVE",
   });
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: SCAN_ORIGIN },
     ports,
     revocationPorts,

@@ -3,7 +3,7 @@
 // puro (sin frameworks, sin dependencias nuevas), análogo a server.ts (RC2u).
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type { DecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
 import type { OutboxEnvelope } from "../../ports/outbox.port.ts";
@@ -118,7 +118,6 @@ import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixtu
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
 import { STAFF_LOGOUT_PATH } from "./staff-ui-pages.ts";
 import { handleStaffUi, isStaffUiRoute, STAFF_UI_RESPONSE_HEADERS, type StaffUiConfig } from "./staff-ui.handler.ts";
-import { deriveStaffRosterCursorKey } from "../../modules/staff-roster/roster-cursor.ts";
 import { createInMemoryAccessLogAdapter, type InMemoryAccessLog } from "../../../infra/adapters/in-memory-access-log.adapter.ts";
 import { createInMemoryStaffRosterReader } from "../../../infra/adapters/in-memory-staff-roster.adapter.ts";
 import { createPgStaffRosterReader } from "../../../infra/adapters/postgres/staff-roster.adapter.ts";
@@ -136,9 +135,11 @@ export interface ConsentFlowHttpServerOptions {
    * ledger que `ports.decision.ledger`, TenantHandlePort in-memory vacío: dev.ts/los tests
    * siembran handles explícitamente con `.issue()`). */
   readonly revocationPorts?: RevocationFlowPorts;
-  /** Secreto HMAC de la sesión (D5). Si se omite, se genera uno aleatorio por proceso (solo
-   * válido mientras el proceso vive; nunca se persiste ni se loguea). */
+  /** Secreto HMAC de la sesión (D5, CNS_SESSION_SECRET). P2-6: obligatorio (>= 32 bytes), sin default aleatorio;
+   * el servidor no arranca sin él. Distinto de `otpSecret` y de `staffRosterCursorKey`. */
   readonly sessionSecret?: Buffer;
+  /** P2-6: secreto HMAC del OTP (CNS_OTP_SECRET); obligatorio si no se pasa `ports`. */
+  readonly otpSecret?: Buffer;
   /** P-01/P-02/P-03 (otp-policy.config.ts); requerido si no se inyectan `ports` propios. */
   readonly otpPolicy?: OtpPolicy;
   /** GRD-CD-04 (decision-relationship.config.ts); requerido si no se inyectan `ports` propios. */
@@ -192,7 +193,7 @@ export interface ConsentFlowHttpServerOptions {
    * LOCAL, la ruta no existe (404, GRD-CM-13). */
   readonly devStaffConsole?: DevStaffConsoleFixture;
   /** API-CNS-116 (R4): clave del cursor de GET /staff/roster (HKDF de CNS_STAFF_ROSTER_CURSOR_SECRET, propia por entorno).
-   * Si se omite, se genera una aleatoria por proceso (los cursores mueren con el proceso; TTL 15 min). */
+   * P2-6: obligatoria (>= 32 bytes), sin default aleatorio; el servidor no arranca sin ella. */
   readonly staffRosterCursorKey?: Buffer;
   /** REQ-CNS-036 / UX-CNS-005: pantallas HTML del colegio bajo /staff/... (entrada, lista, formulario, resumen, confirmacion).
    * Contexto y version de consentimiento los fija el servidor. Sin esto, esas rutas no existen (404). El login dev de la
@@ -245,6 +246,14 @@ export function createDefaultStaffConsolePorts(
   };
 }
 
+/** P2-6: material de clave obligatorio (Buffer de al menos 32 bytes). El mensaje nombra la opcion y la variable,
+ * nunca el valor. */
+function assertKeyMaterial(key: unknown, option: string, envVar: string): asserts key is Buffer {
+  if (!Buffer.isBuffer(key) || key.length < 32) {
+    throw new Error(`${option} es obligatoria (${envVar}) y debe tener al menos 32 bytes; no hay clave por defecto.`);
+  }
+}
+
 /** `relationshipConfig` es obligatorio, mismo patrón fail-closed que `otpPolicy` (D4,
  * decision-relationship.config.ts): sin default de producción en esta función; el caller
  * (dev.ts LOCAL, o tests) siempre pasa un override explícito. */
@@ -253,7 +262,9 @@ export function createDefaultConsentFlowPorts(
   relationshipConfig: DecisionRelationshipConfig,
   chainRefKey: Buffer,
   decisionMakerRefKey: DecisionMakerRefKey,
+  otpSecret: Buffer,
 ): ConsentFlowPorts {
+  assertKeyMaterial(otpSecret, "otpSecret", "CNS_OTP_SECRET");
   // P2-6 (OPEN-CM-10, INV-CM-09): sin default aleatorio. Una clave efimera produce chainRef/decisionMakerRef
   // irrecomputables tras reiniciar (fail-open). Fail-closed y sin volcar material de clave en el mensaje.
   if (!Buffer.isBuffer(chainRefKey) || chainRefKey.length === 0) {
@@ -281,7 +292,7 @@ export function createDefaultConsentFlowPorts(
     invitation,
     uow: tenancy.uow,
     policy: otpPolicy,
-    secret: randomBytes(32),
+    secret: otpSecret,
   };
   const decision: ConsentDecisionPorts = {
     repo: decisionRepo,
@@ -299,8 +310,7 @@ export function createDefaultConsentFlowPorts(
  * adaptadores in-memory): a diferencia de `loadRecoveryTokenPolicyConfig` (fail-closed, D4, sin
  * default), la mayoría de los tests HTTP de este repo no ejercitan recovery y no deberían tener
  * que pasar un P-15 explícito solo para construir el servidor. Mismo criterio que el default
- * `sessionSecret ?? randomBytes(32)` de createConsentFlowHttpServer: válido solo mientras el
- * proceso vive, nunca persistido ni usado como recomendación de producto. dev.ts y los tests que
+ * default de TTL de los handles: LOCAL/test-only, nunca recomendación de producto. dev.ts y los tests que
  * SÍ prueban recovery pasan su propio override vía `loadRecoveryTokenPolicyConfig`. */
 const DEFAULT_TEST_RECOVERY_TOKEN_POLICY: RecoveryTokenPolicy = { ttlMs: 15 * 60_000 };
 
@@ -388,6 +398,8 @@ export interface PostgresFlowConfig {
   readonly staffIdentity: StaffIdentityPort;
   /** SEC-CNS-017 F2: clave HMAC del chainRef (chain-ref.ts), derivada de CNS_CHAIN_REF_SECRET. */
   readonly chainRefKey: Buffer;
+  /** P2-6: secreto HMAC del OTP (CNS_OTP_SECRET); obligatorio, sin default aleatorio. Propio: no es la sesion. */
+  readonly otpSecret: Buffer;
   /** CA-128: clave HMAC del decisionMakerRef (decision-maker-ref.ts), de CNS_DECISION_MAKER_REF_SECRET. */
   readonly decisionMakerRefKey: DecisionMakerRefKey;
   readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
@@ -408,6 +420,7 @@ export function createPostgresFlowPorts(
   /** CA-139: registro servidor de sesiones CASE (app.case_session). */
   caseSessions: CaseSessionStorePort;
 } {
+  assertKeyMaterial(cfg.otpSecret, "otpSecret", "CNS_OTP_SECRET");
   const o = store.outsideTx;
   const invitation: InvitationPorts = {
     invitationRepo: o.invitationRepo,
@@ -423,7 +436,7 @@ export function createPostgresFlowPorts(
     invitation,
     uow: store.uow,
     policy: cfg.otpPolicy,
-    secret: randomBytes(32),
+    secret: cfg.otpSecret,
   };
   const decision: ConsentDecisionPorts = {
     repo: o.consentDecisionRepo,
@@ -616,7 +629,11 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
 
 export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOptions = {}): Server {
   const config = loadRightsCaseHttpConfig(options.config);
-  const sessionSecret = options.sessionSecret ?? randomBytes(32);
+  // P2-6: sin default aleatorio; fail-closed y sin volcar material de clave.
+  const sessionSecret = options.sessionSecret;
+  assertKeyMaterial(sessionSecret, "sessionSecret", "CNS_SESSION_SECRET");
+  const staffRosterCursorKey = options.staffRosterCursorKey;
+  assertKeyMaterial(staffRosterCursorKey, "staffRosterCursorKey", "CNS_STAFF_ROSTER_CURSOR_SECRET");
   const ports =
     options.ports ??
     (() => {
@@ -626,8 +643,12 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
             "`relationshipConfig` (GRD-CD-04, decision-relationship.config.ts).",
         );
       }
-      return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig, options.chainRefKey as Buffer, options.decisionMakerRefKey as DecisionMakerRefKey);
+      return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig, options.chainRefKey as Buffer, options.decisionMakerRefKey as DecisionMakerRefKey, options.otpSecret as Buffer);
     })();
+  // P2-6: separacion de claves: el secreto OTP no puede ser el de sesion ni el del cursor.
+  if (ports.otp.secret.equals(sessionSecret) || ports.otp.secret.equals(staffRosterCursorKey) || sessionSecret.equals(staffRosterCursorKey)) {
+    throw new Error("createConsentFlowHttpServer: sessionSecret, otpSecret y staffRosterCursorKey deben ser claves distintas (una por proposito).");
+  }
   // P2-6: tambien con `ports` inyectados (p. ej. desde JS o un cast) la clave del decisionMakerRef es obligatoria.
   if (!ports.decisionMakerRefKey) {
     throw new Error("createConsentFlowHttpServer: ports.decisionMakerRefKey es obligatoria (INV-CM-09); no hay clave por defecto.");
@@ -654,8 +675,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffConsoleBase: StaffConsolePorts = options.staffConsole ?? createDefaultStaffConsolePorts(ports.invitation, staffIdentity);
   // CA-138: un reloj inyectado (tests) viaja en los puertos para que TODA validacion de sesion use el mismo instante.
   const staffConsolePorts: StaffConsolePorts = options.staffNowMs ? { ...staffConsoleBase, nowMs: options.staffNowMs } : staffConsoleBase;
-  // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion).
-  const staffRosterCursorKey = options.staffRosterCursorKey ?? deriveStaffRosterCursorKey(randomBytes(32));
+  // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion); validada arriba.
   if (options.storeMode === "postgres" && !options.caseSessions) {
     throw new Error("createConsentFlowHttpServer: storeMode=postgres requiere `caseSessions` (CA-139, app.case_session); sin registro de sesiones CASE no hay sesion valida.");
   }

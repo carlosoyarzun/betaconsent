@@ -42,6 +42,7 @@ import type { StaffSessionStorePort } from "../../../src/server/ports/staff-sess
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest, type PgTestContext } from "./harness.ts";
+import { TEST_OTP_SECRET } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff-ui-pg.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -79,6 +80,7 @@ async function boot(ctx: PgTestContext, roster: readonly StaffPrincipal[], direc
     recoveryTokenPolicy: loadRecoveryTokenPolicyConfig(LOCAL_ONLY_DEV_RECOVERY_TOKEN_POLICY),
     staffIdentity,
     chainRefKey: deriveChainRefKey(Buffer.alloc(32, 9)),
+    otpSecret: TEST_OTP_SECRET,
     decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
     subjectDirectory: createInMemorySubjectDirectory("LOCAL", directory),
