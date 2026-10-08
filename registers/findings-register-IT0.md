@@ -54,6 +54,9 @@ Vocabulario de estado (Carlos, 2026-10-08): DEFERRED-IT0b para los que se retoma
 | ID | Sev. | Hallazgo (fuente A vs B) | Estado | Owner | Respaldo | Cierre |
 |---|---|---|---|---|---|---|
 | F-X8-16 | P2 | `.github/CODEOWNERS` tiene un único code owner humano; el segundo code owner de seguridad (ADR-001 §5/§11, allowlist de dependencias, guardrails) no está designado | DEFERRED-IT0b (2º code owner de seguridad para IT0b) | Carlos | Carlos 2026-10-06 (no se cambia CODEOWNERS en IT0) | Segundo code owner designado en `.github/CODEOWNERS` (PR con revisión de Carlos); antes de IT0b |
+| F-LD-01 | P2 | P-34 tiene dos valores: 30 días (placeholder en LD-15, Notion 03) vs ≤7 días de retención del sink (ADR-003 §3(b)); usos en `specs/state-machines/rights-case.spec.yaml` y `specs/state-machines/otp-challenge.spec.yaml` | OPEN | lampone-architect | Carlos 2026-10-08 (LD-17/18/19) | Unificar ID y valor de P-34 por almacén en ADR-003, LD-15 y specs |
+| F-LD-02 | P2 | ADR-003 Status y filas LD-18/LD-19 del Registro global (Notion 03) desactualizados tras la decisión LD-17 (opción B, 2026-10-08) | OPEN | lampone-architect | Carlos 2026-10-08 (LD-17/18/19) | ADR-003 Status y filas LD-18/LD-19 actualizados |
+| F-LD-03 | P2 | El truncado de IP de LD-17 cubre logs pero no `pii.network_signal` (HMAC en DB) | OPEN | lampone-security | Carlos 2026-10-08 (LD-17/18/19) | Cubierto en PIA-STG-IT0b |
 
 ## Notas
 
