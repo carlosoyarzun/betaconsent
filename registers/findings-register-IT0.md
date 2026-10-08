@@ -1,7 +1,7 @@
 # Registro de FINDINGs — Iteración 0 (IT0)
 
 Gobierna: ADR-001 rev. 7 (ACCEPTED IT0 LOCAL+CI; enmienda rev. 8 ACEPTADA para IT0 (Carlos, 2026-10-06): AD-1..AD-4; pendientes CSP, lints §6.1 y SBOM/SAST) · ADR-002/006 r6 · SEC-CNS-005 rev. 5 · DEC-BR-014 (Iteración 0) · Master Plan §36 (Contradiction Protocol). Origen: retrospectiva X8 (lampone-architect, 2026-10-06); decisiones 2, 3 y 5 confirmadas por Carlos el 2026-10-06.
-Estado: registrado por decisión de Carlos del 2026-10-06 ("registrar desvíos y step-up interino como FINDING en registers/"); el estado de cada hallazgo está en la columna Estado. Los desvíos AD-1…AD-4 y los DEFER DF-1…DF-13 se detallan en la enmienda ADR-001 rev. 8 (Notion).
+Estado: registrado por decisión de Carlos del 2026-10-06 ("registrar desvíos y step-up interino como FINDING en registers/"); el estado de cada hallazgo está en la columna Estado. Los desvíos AD-1…AD-4 se detallan en la enmienda ADR-001 rev. 8 (Notion). DF-1…DF-13: detalle pendiente de registrar (no está en ADR-001 rev. 8).
 
 Cero PII en este documento.
 
@@ -36,7 +36,7 @@ Total: 15 FINDINGs (P1: 5, P2: 10, P0: 0). Ningún P0.
 ## Notas
 
 - F-X8-10 (P1) es contradicción registro↔implementación; se corrige el texto de R-10 en `risk-register-IT0.md` (esta PR). El rechazo de R-10 para datos reales sin ADR-010 se mantiene.
-- F-X8-14: se corrige el texto de R-02 en `risk-register-IT0.md` (esta PR); el FINDING sigue OPEN hasta que lo acuse el owner.
+- F-X8-14: se corrige el texto de R-02 en `risk-register-IT0.md` (esta PR); el FINDING quedó DEFERRED-IT0b (Carlos, 2026-10-08; no afecta IT0 sintético).
 - F-X8-11: la remediación (migraciones 0026/0027, owner `integrity_owner` del ledger) quedó resuelta por la PR #60. Residual P1 (el migrador puede asumir `integrity_owner` con `SET ROLE` explícito y tener control total; `consent_owner` datdba puede `DROP DATABASE`): aceptado por Carlos el 2026-10-06 (opción a) solo para IT0 sintético; caduca antes de datos reales/G6 y se cierra en CA-144. Riesgo asociado: R-22.
 - F-X8-08: las dos dependencias (`typescript` 6.0.3, `@types/node` 24.13.4) quedan `approved` en `tools/guardrails/dependency-allowlist.json` por Carlos el 2026-10-06 (revisor humano).
 - F-X8-15: la decisión del 2026-09-28 cubre solo RH2; RH3 no tiene step-up (OPEN-RV-10). La autoridad de RH3 es LEGAL DECISION (LD-03).
