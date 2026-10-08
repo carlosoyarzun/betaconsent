@@ -22,3 +22,4 @@
 /.npmrc                                     @carlosoyarzun
 /db/migrations/                             @carlosoyarzun
 /src/infra/adapters/postgres/               @carlosoyarzun
+/infra/                                     @carlosoyarzun
