@@ -4,6 +4,8 @@ Registros operativos exigidos por Ley 21.719 (p.ej. registro de actividades de t
 
 Gobierna: `PRIV-CNS-###`.
 
-Estado: `risk-register-IT0.md` (2026-09-25) registra los riesgos residuales R-01…R-21 de SEC-CNS-005 (threat model IT0) aceptados por Carlos para la Iteración 0. No existe aún un registro de LEGAL DECISION ni el registro de actividades de tratamiento de la Ley 21.719: ambos siguen pendientes (pre-build).
+Estado: `risk-register-IT0.md` (2026-09-25) registra los riesgos residuales R-01…R-21 de SEC-CNS-005 (threat model IT0) aceptados por Carlos para la Iteración 0. No existe aún un registro de LEGAL DECISION ni el registro de actividades de tratamiento de la Ley 21.719: ambos siguen pendientes.
+
+IT0 cerró como EXIT-LOCAL (Carlos, 2026-10-06/07; solo datos sintéticos).
 
 `findings-register-IT0.md` (2026-10-06) registra los FINDINGs F-X8-01…F-X8-16 de la retrospectiva X8 (desvíos de ADR-001 aceptados para IT0, DEFER de ADR-002/006, contradicciones del registro de riesgos y pendientes de CI/CODEOWNERS).
