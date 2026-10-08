@@ -7,19 +7,9 @@
 // Valor: base64 estricto de al menos 32 bytes. Los mensajes de error nunca incluyen valores de secretos.
 // Sin proveedor de secretos ni SDK: solo variables de entorno.
 
-export const SERVER_SECRET_MIN_BYTES = 32;
+import { decodeStrictSecret } from "../../modules/secrets/strict-secret.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
-
-/** Base64 estricto: ida y vuelta (re-encode == entrada, sin padding ni espacios de borde) y >= 32 bytes. */
-function decodeStrictSecret(raw: string, name: string): Buffer {
-  const secret = Buffer.from(raw, "base64");
-  const norm = (x: string): string => x.trim().replace(/=+$/, "");
-  if (norm(secret.toString("base64")) !== norm(raw) || secret.length < SERVER_SECRET_MIN_BYTES) {
-    throw new Error(`${name} debe ser base64 valido de al menos ${SERVER_SECRET_MIN_BYTES} bytes. Abortando (fail-closed).`);
-  }
-  return secret;
-}
 
 /** Fuera de LOCAL, sin la variable: aborta. En LOCAL sin ella: `localFallback()` (explicito en el caller; datos sinteticos). */
 export function loadRequiredServerSecret(env: Env, environment: string, name: string, localFallback: () => Buffer): Buffer {
@@ -39,4 +29,23 @@ export function loadSessionSecret(env: Env, environment: string, localFallback: 
 
 export function loadOtpSecret(env: Env, environment: string, localFallback: () => Buffer): Buffer {
   return loadRequiredServerSecret(env, environment, "CNS_OTP_SECRET", localFallback);
+}
+
+const SECRET_VAR_RE = /^CNS_[A-Z0-9_]*_SECRET(_V[1-9]\d{0,3})?$/;
+
+/** P2-6 (C2): los secretos CRUDOS de todas las CNS_*_SECRET presentes (sesion, OTP, cursor, chainRef y todas las
+ * versiones de decisionMakerRef) deben ser distintos entre si: una clave por proposito. Compara los bytes
+ * decodificados, no el texto. El error nombra las variables, nunca los valores. */
+export function assertDistinctServerSecrets(env: Env): void {
+  const seen = new Map<string, string>();
+  for (const name of Object.keys(env).sort()) {
+    const raw = env[name];
+    if (!SECRET_VAR_RE.test(name) || raw === undefined || raw === "") continue;
+    const id = decodeStrictSecret(raw, name).toString("hex");
+    const other = seen.get(id);
+    if (other !== undefined) {
+      throw new Error(`${other} y ${name} tienen el mismo secreto; cada proposito debe usar su propia clave. Abortando (fail-closed).`);
+    }
+    seen.set(id, name);
+  }
 }

@@ -8,7 +8,8 @@ import type { AddressInfo } from "node:net";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import { encodeSession } from "../../../src/server/entrypoints/http/consent-session.ts";
-import { loadOtpSecret, loadSessionSecret } from "../../../src/server/entrypoints/http/server-secrets.config.ts";
+import { loadStaffRosterCursorSecret } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
+import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "../../../src/server/entrypoints/http/server-secrets.config.ts";
 import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
 const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
@@ -20,8 +21,8 @@ const COOKIE = "__Host-cns-session";
 function ports(otpSecret: Buffer = TEST_OTP_SECRET) {
   return createDefaultConsentFlowPorts(OTP, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, otpSecret);
 }
-type Opts = Parameters<typeof createConsentFlowHttpServer>[0];
-function make(over: Partial<NonNullable<Opts>> = {}): Server {
+// `over` admite claves ausentes/invalidas a proposito (el tipo ya las exige; aqui se prueba el runtime).
+function make(over: Record<string, unknown> = {}): Server {
   return createConsentFlowHttpServer({
     config: { allowedOrigin: ORIGIN },
     ports: ports(),
@@ -29,7 +30,7 @@ function make(over: Partial<NonNullable<Opts>> = {}): Server {
     sessionSecret: TEST_SESSION_SECRET,
     staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     ...over,
-  });
+  } as never);
 }
 function leaks(e: Error, ...keys: Buffer[]): boolean {
   return keys.some((k) => e.message.includes(k.toString("hex")) || e.message.includes(k.toString("base64")) || e.message.includes(k.toString("utf8")));
@@ -41,7 +42,7 @@ test("TEST-CNS-1249: sin sessionSecret, otpSecret o staffRosterCursorKey el serv
   assert.throws(() => createDefaultConsentFlowPorts(OTP, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, undefined as unknown as Buffer), (e: Error) => /otpSecret es obligatoria \(CNS_OTP_SECRET\)/.test(e.message));
   // Sin `ports`: el otpSecret faltante tambien aborta el arranque.
   assert.throws(
-    () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, chainRefKey: TEST_CHAIN_REF_KEY, decisionMakerRefKey: TEST_DECISION_MAKER_REF_KEY, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }),
+    () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, chainRefKey: TEST_CHAIN_REF_KEY, decisionMakerRefKey: TEST_DECISION_MAKER_REF_KEY, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY } as never),
     (e: Error) => /otpSecret es obligatoria/.test(e.message) && !leaks(e, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY),
   );
   // Material demasiado corto: tambien aborta, sin volcarlo.
@@ -53,8 +54,42 @@ test("TEST-CNS-1249: sin sessionSecret, otpSecret o staffRosterCursorKey el serv
 test("TEST-CNS-1250: con claves explicitas arranca; una clave por proposito (no se reutiliza sesion para OTP ni cursor)", () => {
   assert.ok(make());
   assert.throws(() => make({ ports: ports(TEST_SESSION_SECRET) }), (e: Error) => /claves distintas/.test(e.message) && !leaks(e, TEST_SESSION_SECRET));
-  assert.throws(() => make({ staffRosterCursorKey: TEST_SESSION_SECRET }), /claves distintas/);
   assert.throws(() => make({ ports: ports(TEST_STAFF_ROSTER_CURSOR_KEY) }), /claves distintas/);
+  // Caso real (C2): los secretos CRUDOS de entorno iguales entre propositos (la clave del cursor se deriva con HKDF,
+  // asi que comparar contra la derivada no lo detecta). Cubre sesion, OTP, cursor, chainRef y versiones de dmref.
+  const v = Buffer.alloc(32, 11).toString("base64");
+  const w = Buffer.alloc(32, 12).toString("base64");
+  const pairs: Array<[string, string]> = [
+    ["CNS_STAFF_ROSTER_CURSOR_SECRET", "CNS_SESSION_SECRET"],
+    ["CNS_OTP_SECRET", "CNS_SESSION_SECRET"],
+    ["CNS_CHAIN_REF_SECRET", "CNS_OTP_SECRET"],
+    ["CNS_DECISION_MAKER_REF_SECRET_V3", "CNS_SESSION_SECRET"],
+    ["CNS_DECISION_MAKER_REF_SECRET", "CNS_DECISION_MAKER_REF_SECRET_V3"],
+  ];
+  for (const [x, y] of pairs) {
+    assert.throws(
+      () => assertDistinctServerSecrets({ [x]: v, [y]: v }),
+      (e: Error) => e.message.includes(x) && e.message.includes(y) && !e.message.includes(v),
+    );
+  }
+  assert.doesNotThrow(() => assertDistinctServerSecrets({ CNS_SESSION_SECRET: v, CNS_OTP_SECRET: w, CNS_DATABASE_URL: "x", CNS_ENVIRONMENT: "LOCAL" }));
+});
+
+test("TEST-CNS-1253: con ports inyectados, ports.otp.secret ausente o corto hace fallar el arranque sin volcar la clave", () => {
+  const base = ports();
+  const short = Buffer.from("corta-pero-secreta");
+  const missing = { ...base, otp: { ...base.otp, secret: undefined as unknown as Buffer } };
+  const tooShort = { ...base, otp: { ...base.otp, secret: short } };
+  assert.throws(() => make({ ports: missing }), (e: Error) => e instanceof Error && !(e instanceof TypeError) && /otpSecret es obligatoria \(CNS_OTP_SECRET\)/.test(e.message));
+  assert.throws(() => make({ ports: tooShort }), (e: Error) => /al menos 32 bytes/.test(e.message) && !leaks(e, short));
+});
+
+test("TEST-CNS-1254: CNS_STAFF_ROSTER_CURSOR_SECRET usa base64 estricto (>= 32 bytes) y no vuelca el valor", () => {
+  const good = Buffer.alloc(32, 2).toString("base64");
+  assert.deepEqual(loadStaffRosterCursorSecret({ CNS_STAFF_ROSTER_CURSOR_SECRET: good }, "PRODUCTION"), Buffer.alloc(32, 2));
+  for (const raw of ["!!!no-base64!!!", Buffer.alloc(16, 1).toString("base64"), `${good}\u0000x`, `${good}!!`]) {
+    assert.throws(() => loadStaffRosterCursorSecret({ CNS_STAFF_ROSTER_CURSOR_SECRET: raw }, "PRODUCTION"), (e: Error) => /base64 valido de al menos 32 bytes/.test(e.message) && !e.message.includes(raw));
+  }
 });
 
 async function listen(server: Server): Promise<{ baseUrl: string; close: () => Promise<void> }> {

@@ -123,13 +123,12 @@ import { createInMemoryStaffRosterReader } from "../../../infra/adapters/in-memo
 import { createPgStaffRosterReader } from "../../../infra/adapters/postgres/staff-roster.adapter.ts";
 import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 
-export interface ConsentFlowHttpServerOptions {
+interface ConsentFlowHttpServerBaseOptions {
   /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave HMAC del chainRef. */
   readonly chainRefKey?: Buffer;
   /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave del decisionMakerRef (INV-CM-09). */
   readonly decisionMakerRefKey?: DecisionMakerRefKey;
   readonly config?: Partial<RightsCaseHttpConfig>;
-  readonly ports?: ConsentFlowPorts;
   /** CA-116 (revocación IT0): ports de GET /m/{token} y el flujo self-service R1-R3/R8/RV0/RC1.
    * Si se omite junto con `ports`, se construye con createDefaultRevocationFlowPorts (mismo
    * ledger que `ports.decision.ledger`, TenantHandlePort in-memory vacío: dev.ts/los tests
@@ -137,9 +136,7 @@ export interface ConsentFlowHttpServerOptions {
   readonly revocationPorts?: RevocationFlowPorts;
   /** Secreto HMAC de la sesión (D5, CNS_SESSION_SECRET). P2-6: obligatorio (>= 32 bytes), sin default aleatorio;
    * el servidor no arranca sin él. Distinto de `otpSecret` y de `staffRosterCursorKey`. */
-  readonly sessionSecret?: Buffer;
-  /** P2-6: secreto HMAC del OTP (CNS_OTP_SECRET); obligatorio si no se pasa `ports`. */
-  readonly otpSecret?: Buffer;
+  readonly sessionSecret: Buffer;
   /** P-01/P-02/P-03 (otp-policy.config.ts); requerido si no se inyectan `ports` propios. */
   readonly otpPolicy?: OtpPolicy;
   /** GRD-CD-04 (decision-relationship.config.ts); requerido si no se inyectan `ports` propios. */
@@ -194,7 +191,7 @@ export interface ConsentFlowHttpServerOptions {
   readonly devStaffConsole?: DevStaffConsoleFixture;
   /** API-CNS-116 (R4): clave del cursor de GET /staff/roster (HKDF de CNS_STAFF_ROSTER_CURSOR_SECRET, propia por entorno).
    * P2-6: obligatoria (>= 32 bytes), sin default aleatorio; el servidor no arranca sin ella. */
-  readonly staffRosterCursorKey?: Buffer;
+  readonly staffRosterCursorKey: Buffer;
   /** REQ-CNS-036 / UX-CNS-005: pantallas HTML del colegio bajo /staff/... (entrada, lista, formulario, resumen, confirmacion).
    * Contexto y version de consentimiento los fija el servidor. Sin esto, esas rutas no existen (404). El login dev de la
    * entrada ("Entrar (solo desarrollo)", POST /staff/dev-login) solo existe con environment=LOCAL y `devStaffConsole`. */
@@ -627,7 +624,11 @@ function writeResult(res: ServerResponse, config: RightsCaseHttpConfig, result: 
   res.end(JSON.stringify(result.body));
 }
 
-export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOptions = {}): Server {
+/** P2-6 (C3): con `ports` inyectados el secreto OTP viaja en `ports.otp.secret`; sin ellos, `otpSecret` es obligatorio. */
+export type ConsentFlowHttpServerOptions = ConsentFlowHttpServerBaseOptions &
+  ({ readonly ports: ConsentFlowPorts; readonly otpSecret?: undefined } | { readonly ports?: undefined; readonly otpSecret: Buffer });
+
+export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOptions): Server {
   const config = loadRightsCaseHttpConfig(options.config);
   // P2-6: sin default aleatorio; fail-closed y sin volcar material de clave.
   const sessionSecret = options.sessionSecret;
@@ -645,6 +646,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig, options.chainRefKey as Buffer, options.decisionMakerRefKey as DecisionMakerRefKey, options.otpSecret as Buffer);
     })();
+  // P2-6 (C1): tambien con `ports` inyectados el secreto OTP debe ser material de clave valido (>= 32 bytes).
+  assertKeyMaterial(ports.otp?.secret, "otpSecret", "CNS_OTP_SECRET");
   // P2-6: separacion de claves: el secreto OTP no puede ser el de sesion ni el del cursor.
   if (ports.otp.secret.equals(sessionSecret) || ports.otp.secret.equals(staffRosterCursorKey) || sessionSecret.equals(staffRosterCursorKey)) {
     throw new Error("createConsentFlowHttpServer: sessionSecret, otpSecret y staffRosterCursorKey deben ser claves distintas (una por proposito).");

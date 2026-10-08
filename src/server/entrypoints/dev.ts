@@ -53,7 +53,7 @@ import { openPostgresStore, type PostgresStore } from "../../infra/adapters/post
 import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
 import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
-import { loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
+import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
 import type { StaffConsolePorts } from "./http/staff-console.handler.ts";
 import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
@@ -122,6 +122,8 @@ const staffRosterCursorKey = deriveStaffRosterCursorKey(loadStaffRosterCursorSec
 // API-CNS-116 (P2-d): directorio SINTETICO de etiquetas "Alumno de prueba N" por (tenant, sujeto), inyectado desde este composition
 // root. Solo LOCAL/CI (la fabrica aborta si el entorno no es LOCAL; el store Postgres ya valido el catalogo de la BD).
 const otpSecret = loadOtpSecret(process.env, environment, () => Buffer.from("LOCAL_ONLY_DEV_OTP_SECRET_SYNTHETIC_DATA_ONLY"));
+// P2-6 (C2): los secretos crudos CNS_*_SECRET presentes deben ser distintos entre si (sesion, OTP, cursor, chainRef, dmref).
+assertDistinctServerSecrets(process.env);
 const subjectDirectory = createInMemorySubjectDirectory(
   environment,
   LOCAL_ONLY_DEV_STAFF_STUDENTS.map((s) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })),
