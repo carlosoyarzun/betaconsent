@@ -1,7 +1,7 @@
 # Registro de FINDINGs — Iteración 0 (IT0)
 
 Gobierna: ADR-001 rev. 7 (ACCEPTED IT0 LOCAL+CI; enmienda rev. 8 ACEPTADA para IT0 (Carlos, 2026-10-06): AD-1..AD-4; pendientes CSP, lints §6.1 y SBOM/SAST) · ADR-002/006 r6 · SEC-CNS-005 rev. 5 · DEC-BR-014 (Iteración 0) · Master Plan §36 (Contradiction Protocol). Origen: retrospectiva X8 (lampone-architect, 2026-10-06); decisiones 2, 3 y 5 confirmadas por Carlos el 2026-10-06.
-Estado: registrado por decisión de Carlos del 2026-10-06 ("registrar desvíos y step-up interino como FINDING en registers/"); el estado de cada hallazgo está en la columna Estado. Los desvíos AD-1…AD-4 se detallan en la enmienda ADR-001 rev. 8 (Notion). DF-1…DF-13: detalle pendiente de registrar (no está en ADR-001 rev. 8).
+Estado: registrado por decisión de Carlos del 2026-10-06 ("registrar desvíos y step-up interino como FINDING en registers/"); el estado de cada hallazgo está en la columna Estado. Los desvíos AD-1…AD-4 se detallan en la enmienda ADR-001 rev. 8 (Notion). DF-1…DF-13 (DEFER de ADR-002/006, no de ADR-001): detalle en la sección «DF-1…DF-13» más abajo; origen DEC-BR-019 (Notion).
 
 Cero PII en este documento.
 
@@ -26,6 +26,28 @@ Cero PII en este documento.
 | F-X8-15 | P1 | Step-up RH2 interino: la presencia de `stepUpAssertion` cuenta como ATTESTED sin verificación criptográfica (`case-confirmation.handler.ts:295-297`; API-CNS-136/137/140). RH3 (API-CNS-138/139) **no tiene step-up** (OPEN-RV-10 OPEN) | ACCEPTED-IT0 LOCAL | lampone-security → Carlos | Carlos 2026-09-28 opción (ii) (solo RH2) | APR-IDP aprobado y aserción verificada; OPEN-RV-10 decidido; autoridad RH3 = **LEGAL DECISION** LD-03 |
 
 Total: 15 FINDINGs (P1: 5, P2: 10, P0: 0). Ningún P0.
+
+## DF-1…DF-13 (DEFER de ADR-002/006 hacia ADR-010 y IT0b)
+
+Fuentes: S1 = DEC-BR-019 (https://app.notion.com/p/3edee09a7fbc8197aed6c9748aa87124), sección "2026-10-06 — Cierre X7/X8", subsección "DEFER de ADR-002/006 hacia ADR-010 y IT0b". S2 = borrador x8-adr-findings.md §B (lampone-architect, 2026-10-06, base fee70d4; ya no existe como archivo). Severidad = la del FINDING que cubre cada DF. Ningún DF tiene ticket CA propio. Notion (DEC-BR-019, verificada en vivo 2026-10-08, última edición 2026-10-06T19:31Z) solo registra Ítem, Depende de y Se reabre en; Severidad y Estado vienen de este registro (F-X8-10/12/13/14; decisiones de Carlos 2026-10-06 dec. 3 y 2026-10-08, PR #71) y la descripción del borrador S2. El enlace de DEC-BR-019 a x8-adr-findings.md está roto; esta sección lo sustituye.
+
+| ID | Título | Descripción | Fuente | Severidad | Estado | Ticket |
+|---|---|---|---|---|---|---|
+| DF-1 | Esquema `pii` (canal, channel_hmac, network_signal) | Objetos (borrador S2): `v_case_contact`. Datos de contacto aislados, a futuro en instancia aparte. IT0 usa email reservado en `app.invitation` (EXT-B (i)). Depende de: LD-03, EXT-B, instancia pii (LD-15 según borrador S2) | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre: antes de datos reales; historia IT1 | — |
+| DF-2 | Esquema `suppression` (lista de no contacto) | Objetos (borrador S2): `suppression_owner`, tombstone. Supresión y no contacto. IT0 sin proceso de supresión; BD se recrea. Depende de LD-13/14 y ADR-009 | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en G5 / ADR-009 | — |
+| DF-3 | Esquema `platform` (asignación de roles) | Objetos (borrador S2): `platform_role_assignment`. Roles de plataforma impuestos por BD. IT0 usa roster fixture (0018/0019) y un solo proceso (AD-3). Depende de APR-IDP y ADR-010 | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en ADR-010; IT0b si hay IdP | — |
+| DF-4 | Rol `integrity_verifier` • servicio verificador | Atestar aserciones del IdP (INV-13) y verificación independiente de la cadena. Hoy solo CLI como `app_rw` (`src/infra/adapters/postgres/ledger-verify-cli.ts`). Depende de: APR-IDP, ADR-010, ADR-011 | S1; S2 §B; risk-register R-10 | P1 (F-X8-10) | DEFERRED-IT0b (Carlos 2026-10-08). Reabre en ADR-010, antes de datos reales | — |
+| DF-5 | Rol de DB `rights_operator` | Operador de derechos con grants propios. Hoy en dominio con sesión CASE + roster. Depende de DF-7 y ADR-010 | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en ADR-010 | — |
+| DF-6 | Rol `diagnostic_reader` y grants | Objetos (borrador S2): `diagnostic_grant`. Lectura de diagnóstico acotada con grant. Sin soporte/diagnóstico en IT0. Depende de ADR-010 y LD-03 | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en IT1 / G5 | — |
+| DF-7 | Tablas de grant y aserción | Objetos (borrador S2): `grant_request`, `rights_case_grant`, `grant_assertion`, `case_verification`, `resolve_case_grants`. Grants por caso y aserciones IdP como hash. RH2 vive en `app.revocation`/`rights_case` (0016) con step-up interino | S1; S2 §B; risk-register R-10 | P1 (F-X8-10) | DEFERRED-IT0b (Carlos 2026-10-08). Reabre en ADR-010 | — |
+| DF-8 | Doble control impuesto por DB | Frente a web/worker. Ningún proceso fabrica RH2 o un grant solo. Hoy RH2 (3 humanos) se impone en un solo proceso (AD-3). Depende de: DF-3, DF-4, DF-7, procesos separados | S1; S2 §B; risk-register R-10 | P1 (F-X8-10) | DEFERRED-IT0b. **Condición antes de datos reales** (R-10 rechazado sin ADR-010) | — |
+| DF-9 | `pii.case_contact` | Contacto opcional si canal inalcanzable (GRD-RC-05). Rama CHANNEL_UNREACHABLE fuera del slice (`src/server/modules/rights-case/rights-case.ts:7`) | S1; S2 §B | P2 (F-X8-14) | DEFERRED-IT0b (Carlos 2026-10-08). Reabre en historia rights-case completa (IT1) | — |
+| DF-10 | `ops.otp_budget` (presupuesto OTP) | Presupuesto OTP por clave (V6/V6a de SEC-CNS-006). Hoy solo intentos por challenge (`src/server/modules/otp-challenge/otp-challenge.ts:6`) | S1; S2 §B | P1 (F-X8-13) | DEFERRED-IT0 (F-X8-13). **Antes de datos reales**; IT0b si hay envío real | — |
+| DF-11 | `authorization_check` | Registro/decisión de autorización por acción. Hoy guardas en dominio, registro en `access_log`/`security_event` | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en ADR-010 | — |
+| DF-12 | `tenant_membership` / pertenencia staff↔tenant | Objetos (borrador S2): `resolve_tenant_memberships`, `list_tenants_for`. Pertenencia staff↔tenant impuesta por BD. Hoy roster fixture + sesión STAFF ligada a tenant. Depende de APR-IDP y DF-3 | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en IT0b (IdP) / ADR-010 | — |
+| DF-13 | Roles `grant_owner`, `tenant_resolver` | Dueños/resolutores de DF-7/DF-12; no existen porque sus tablas no existen | S1; S2 §B | P2 (F-X8-12) | DEFERRED (dec. 3). Reabre en ADR-010 | — |
+
+Vocabulario de estado (DEFERRED / DEFERRED-IT0 / DEFERRED-IT0b) pendiente de unificar por Carlos.
 
 ## Hallazgos añadidos
 
