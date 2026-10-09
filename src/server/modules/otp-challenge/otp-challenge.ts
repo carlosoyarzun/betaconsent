@@ -5,14 +5,15 @@
 // (expiración por barrido, solo se evalúa perezosamente al comparar), V6/V6a (presupuesto
 // por clave, requiere ops.otp_budget) ni GRD-OT-08/13 (ligar el challenge al
 // handle/sesión que lo pidió: sin infraestructura de handles HTTP en este slice). Los
-// parámetros P-01 (longitud), P-02 (TTL) y P-03 (intentos máx.) de SEC-CNS-006 no se fijan
-// aquí (esta spec no fija valores); el llamador los inyecta vía `OtpPolicy`. Ver reporte de
-// la tarea para el detalle de lo diferido.
+// parámetros P-01 (6 dígitos), P-02 (10 min) y P-03 (5 intentos) de SEC-CNS-006 rev. 5 §1 están
+// APROBADOS por Carlos (approved-parameters.ts) y son el default de otp-policy.config.ts; el llamador
+// los inyecta vía `OtpPolicy`. Lo diferido sigue arriba (V2r aparte, V5, V6/V6a, GRD-OT-08/13).
 //
 // V2r (resendOtp, Carlos 2026-09-27): agrega el subconjunto mínimo de V2r (reemplaza el
-// código sin reiniciar `attempts` ni el presupuesto, GRD-OT-06). P-06 (límite de reenvíos) no
-// tiene valor aprobado en SEC-CNS-006: se modela como `maxResends` en `OtpPolicy`, exigido por
-// `otp-policy.config.ts` y sin default de producción (mismo patrón que P-01/P-02/P-03). No
+// código sin reiniciar `attempts` ni el presupuesto, GRD-OT-06). P-06 está APROBADO (>=60 s entre
+// envíos, <=3/hora por verificación) pero PENDIENTE de aplicar en el PR de ops.otp_budget (junto con
+// P-04/04a/b/c, P-05 y P-07): falta registrar timestamps de envío. Mientras tanto se modela como
+// `maxResends` en `OtpPolicy`, exigido por `otp-policy.config.ts` y sin default. No
 // implementa GRD-OT-13 (challenge_bound_to_request_handle: sin infraestructura de handles HTTP
 // en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
 
@@ -31,13 +32,13 @@ import { invitationPortsInTx, markInvitationVerifiedTx } from "../invitation/inv
 import { lastLedgerSequence } from "../common/ledger-append.ts";
 
 export interface OtpPolicy {
-  /** P-01 (no fijado aquí): dígitos del código. */
+  /** P-01 (aprobado: 6; approved-parameters.ts): dígitos del código. */
   readonly codeLength: number;
-  /** P-03 (no fijado aquí): intentos máximos antes de LOCKED. */
+  /** P-03 (aprobado: 5): intentos máximos antes de LOCKED. */
   readonly maxAttempts: number;
-  /** P-02 (no fijado aquí): vigencia del código en milisegundos. */
+  /** P-02 (aprobado: 10 min): vigencia del código en milisegundos. */
   readonly ttlMs: number;
-  /** P-06 (no fijado aquí, sin valor aprobado en SEC-CNS-006): reenvíos máximos (V2r,
+  /** P-06 (aprobado >=60 s entre envíos y <=3/hora, pendiente de aplicar en ops.otp_budget; hoy contador): reenvíos máximos (V2r,
    * GRD-OT-06) antes de ERR-OT-09. */
   readonly maxResends: number;
 }

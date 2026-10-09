@@ -1,6 +1,6 @@
 // Gobierna: decisiones de Carlos del 2026-10-01 ("confirmo el paquete con D6 segun DEC-BR-014"), CA-128.
 // Unica fuente de los parametros que pasaron de "sin valor aprobado" a APROBADOS. Aplican en CUALQUIER
-// entorno (no solo LOCAL). Todo parametro que no figure aqui sigue fail-closed (P-15, P-18, OTP P-01..03,
+// entorno (no solo LOCAL). Todo parametro que no figure aqui sigue fail-closed (P-15, P-18, OTP P-06,
 // deliveryChannel EXT-B, etc.). Ver tambien manage-handle-policy.config.ts (TTL de /m, ver FINDING en CA-128).
 
 /** P-33: TTL de la Idempotency-Key = 24 h (Carlos, 2026-10-01). */
@@ -33,3 +33,22 @@ export const APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS = 30 * 60_000;
 
 /** Las filas de sesión CASE expiradas se conservan 24 h tras su `exp` antes de la limpieza (Carlos, 2026-10-06). */
 export const APPROVED_CASE_SESSION_PURGE_RETENTION_MS = 24 * 60 * 60_000;
+
+// OTP (SEC-CNS-006 rev. 5 §1; decisión de Carlos 2026-10-08, D3 de SEC-CNS-021). Aplican en cualquier entorno.
+
+/** P-01: longitud del código OTP = 6 dígitos, generados con crypto.randomInt sin sesgo (aprobado por Carlos). */
+export const APPROVED_P01_OTP_CODE_LENGTH = 6;
+
+/** P-02: vigencia del código OTP = 10 min, medida con hora de servidor (aprobado por Carlos). */
+export const APPROVED_P02_OTP_TTL_MS = 10 * 60_000;
+
+/** P-03: intentos fallidos máximos antes de LOCKED = 5 (aprobado por Carlos). */
+export const APPROVED_P03_OTP_MAX_ATTEMPTS = 5;
+
+/** P-06 (aprobado por Carlos): separación mínima entre envíos de una misma verificación = 60 s.
+ * SIN CONSUMIDOR todavía: requiere timestamps de envío en OtpVerificationRecord (migración nueva); ver FINDING. */
+export const APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS = 60_000;
+
+/** P-06 (aprobado por Carlos): máximo de envíos por hora por verificación = 3. SIN CONSUMIDOR todavía
+ * (ver APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS; además queda abierto si el 3 incluye el envío inicial). */
+export const APPROVED_P06_OTP_MAX_SENDS_PER_HOUR = 3;
