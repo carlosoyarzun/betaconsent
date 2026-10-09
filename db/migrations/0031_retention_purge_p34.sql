@@ -24,7 +24,7 @@
 -- 4. ops.purge_p34(store, esperado) SECURITY DEFINER (dueno security_event_owner): verifica que la politica coincide con lo esperado, borra solo
 --    lo vencido, verifica la post-condicion (0 vencidas restantes, borradas = elegibles) e inserta purge_run en la misma tx. EXECUTE solo worker.
 --    Stores habilitados en este PR: security_event, otp_verification, purge_run. otp_budget llega con SEC-CNS-021 PR-4 (su tabla no existe aun).
--- 5. ops.purge_run_summary(run_id) (solo worker; conteos para el CLI) y ops.retention_status(): lectura de la politica y de la ultima corrida por store, para los chequeos de arranque del runtime (app_rw y
+-- 5. ops.purge_run_summary(purge_id) (solo worker; conteos para el CLI) y ops.retention_status(): lectura de la politica y de la ultima corrida por store, para los chequeos de arranque del runtime (app_rw y
 --    worker no tienen acceso directo a retention_policy/purge_run). Sin datos de tenant.
 -- 6. app.otp_verification: security_event_owner recibe SELECT por columnas (tenant_id, expires_at) y DELETE, acotados por policy a filas vencidas.
 --    No lee code_hash ni channel_ref (correo).
@@ -84,7 +84,7 @@ INSERT INTO ops.retention_policy (store, retention, decision_ref) VALUES
 
 CREATE TABLE ops.purge_run (
   row_id                      uuid        NOT NULL DEFAULT pg_catalog.gen_random_uuid() CONSTRAINT purge_run_pkey PRIMARY KEY,
-  run_id                      uuid        NOT NULL,
+  purge_id                      uuid        NOT NULL,
   store                       text        NOT NULL CONSTRAINT purge_run_store_enum CHECK (store IN ('security_event', 'otp_budget', 'otp_verification', 'purge_run')),
   tenant_id                   uuid,
   cutoff                      timestamptz NOT NULL,
@@ -102,9 +102,9 @@ CREATE TABLE ops.purge_run (
   CONSTRAINT purge_run_deleted_range CHECK ((deleted_count = 0) = (min_deleted_at IS NULL AND max_deleted_at IS NULL) AND (min_deleted_at IS NULL OR min_deleted_at <= max_deleted_at)),
   CONSTRAINT purge_run_time_order CHECK (finished_at >= started_at)
 );
--- tenant_id NULL = fila resumen de la corrida (una por run_id y store); no hay dos filas por (run, store, tenant).
-CREATE UNIQUE INDEX purge_run_tenant_uq ON ops.purge_run (run_id, store, tenant_id) WHERE tenant_id IS NOT NULL;
-CREATE UNIQUE INDEX purge_run_summary_uq ON ops.purge_run (run_id, store) WHERE tenant_id IS NULL;
+-- tenant_id NULL = fila resumen de la corrida (una por purge_id y store); no hay dos filas por (run, store, tenant).
+CREATE UNIQUE INDEX purge_run_tenant_uq ON ops.purge_run (purge_id, store, tenant_id) WHERE tenant_id IS NOT NULL;
+CREATE UNIQUE INDEX purge_run_summary_uq ON ops.purge_run (purge_id, store) WHERE tenant_id IS NULL;
 CREATE INDEX purge_run_store_finished_idx ON ops.purge_run (store, finished_at);
 
 -- ops.security_event_guard(): UPDATE siempre falla. DELETE de fila solo pasa para security_event_owner dentro de ops.purge_p34 y solo si la fila esta
@@ -249,13 +249,13 @@ BEGIN
   END IF;
 
   -- Una fila por tenant con filas vencidas y una fila resumen (tenant_id NULL), aun si no habia nada que borrar (prueba de que la corrida ocurrio).
-  INSERT INTO ops.purge_run (run_id, store, tenant_id, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff,
+  INSERT INTO ops.purge_run (purge_id, store, tenant_id, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff,
                              min_deleted_at, max_deleted_at, started_at)
   SELECT v_run, p_store, (r.j ->> 'tenant_id')::uuid, v_cutoff, v_policy, (r.j ->> 'eligible')::bigint, (r.j ->> 'deleted')::bigint, 0,
          (r.j ->> 'min')::timestamptz, (r.j ->> 'max')::timestamptz, v_started
     FROM pg_catalog.jsonb_array_elements(v_rows) AS r(j)
    WHERE (r.j ->> 'tenant_id') IS NOT NULL;  -- las filas resumen borradas (tenant_id NULL) solo cuentan en el resumen de la corrida
-  INSERT INTO ops.purge_run (run_id, store, tenant_id, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff,
+  INSERT INTO ops.purge_run (purge_id, store, tenant_id, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff,
                              min_deleted_at, max_deleted_at, started_at)
   SELECT v_run, p_store, NULL, v_cutoff, v_policy,
          COALESCE(pg_catalog.sum((r.j ->> 'eligible')::bigint), 0)::bigint, COALESCE(pg_catalog.sum((r.j ->> 'deleted')::bigint), 0)::bigint, 0,
@@ -286,17 +286,17 @@ REVOKE ALL ON FUNCTION ops.retention_status() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ops.retention_status() TO app_rw, worker;
 
 -- Resumen de una corrida para el CLI (worker no lee purge_run): solo conteos agregados, sin tenant_id.
-CREATE FUNCTION ops.purge_run_summary(p_run_id uuid) RETURNS TABLE (store text, tenants bigint, eligible_before bigint, deleted_count bigint, remaining_older_than_cutoff bigint)
+CREATE FUNCTION ops.purge_run_summary(p_purge_id uuid) RETURNS TABLE (store text, tenants bigint, eligible_before bigint, deleted_count bigint, remaining_older_than_cutoff bigint)
   LANGUAGE sql
   STABLE
   SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
   AS $$
   SELECT s.store,
-         (SELECT pg_catalog.count(*) FROM ops.purge_run t WHERE t.run_id = s.run_id AND t.store = s.store AND t.tenant_id IS NOT NULL),
+         (SELECT pg_catalog.count(*) FROM ops.purge_run t WHERE t.purge_id = s.purge_id AND t.store = s.store AND t.tenant_id IS NOT NULL),
          s.eligible_before, s.deleted_count, s.remaining_older_than_cutoff
     FROM ops.purge_run s
-   WHERE s.run_id = p_run_id AND s.tenant_id IS NULL
+   WHERE s.purge_id = p_purge_id AND s.tenant_id IS NULL
 $$;
 REVOKE ALL ON FUNCTION ops.purge_run_summary(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ops.purge_run_summary(uuid) TO worker;

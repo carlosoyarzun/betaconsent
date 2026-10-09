@@ -88,7 +88,18 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
       WHERE c.relrowsecurity`,
   )).rows;
   assert.ok(all.length >= 6);
+  // SEC-CNS-021 PR-3 (0031): policies de purga TO security_event_owner (acotadas por vencimiento, sin tenant). Lista EXACTA y cerrada; no es una excepcion generica.
+  const PURGE_OWNER_POLICIES = [
+    "app.otp_verification/otp_verification_purge_delete", "app.otp_verification/otp_verification_purge_select",
+    "ops.purge_run/purge_run_owner_insert", "ops.purge_run/purge_run_owner_select", "ops.purge_run/purge_run_owner_update", "ops.purge_run/purge_run_purge_delete",
+    "ops.retention_policy/retention_policy_owner_delete", "ops.retention_policy/retention_policy_owner_insert",
+    "ops.retention_policy/retention_policy_owner_select", "ops.retention_policy/retention_policy_owner_update",
+    "ops.security_event/security_event_owner_update", "ops.security_event/security_event_purge_delete", "ops.security_event/security_event_purge_select",
+  ];
+  const ownerOnly = all.filter((p) => p.roles.length === 1 && p.roles[0] === "security_event_owner");
+  assert.deepEqual(ownerOnly.map((p) => p.k).sort(), PURGE_OWNER_POLICIES, "las policies TO security_event_owner son exactamente las de purga de 0031");
   for (const p of all) {
+    if (ownerOnly.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

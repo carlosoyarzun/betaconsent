@@ -43,6 +43,10 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
       "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$'",
       [table],
     )).rows;
+    // 0031 (SEC-CNS-021 PR-3): app.otp_verification suma SELECT y DELETE acotados por vencimiento TO security_event_owner; app_rw queda exactamente INSERT/SELECT/UPDATE.
+    const ownerPolicies = policies.filter((p) => p.roles.includes("security_event_owner"));
+    assert.deepEqual(ownerPolicies.map((p) => `${p.cmd}:${p.roles.join(",")}`).sort(), table === "otp_verification" ? ["DELETE:security_event_owner", "SELECT:security_event_owner"] : [], `${qname}: policies del dueno de la purga`);
+    policies.splice(0, policies.length, ...policies.filter((p) => !p.roles.includes("security_event_owner")));
     assert.deepEqual(policies.map((p) => p.cmd).sort(), ["INSERT", "SELECT", "UPDATE"], `${qname}: policies`);
     for (const p of policies) {
       assert.deepEqual(p.roles, ["app_rw"], `${qname}: policy solo TO app_rw`);

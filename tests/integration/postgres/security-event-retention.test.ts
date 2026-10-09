@@ -107,7 +107,7 @@ pgTest("TEST-CNS-1309 pg: ops.purge_p34('security_event') borra solo lo anterior
   assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.security_event WHERE tenant_id = $1", [B]), 1, "B conserva la nueva");
 
   const rows = (await admin.query<{ tenant_id: string | null; eligible_before: string; deleted_count: string; remaining_older_than_cutoff: string; retention: string; environment: string; store: string }>(
-    "SELECT tenant_id, eligible_before, deleted_count, remaining_older_than_cutoff, retention::text, environment, store FROM ops.purge_run WHERE run_id = $1", [runId],
+    "SELECT tenant_id, eligible_before, deleted_count, remaining_older_than_cutoff, retention::text, environment, store FROM ops.purge_run WHERE purge_id = $1", [runId],
   )).rows;
   const summary = rows.find((r) => r.tenant_id === null)!;
   assert.equal(Number(summary.eligible_before), eligible);
@@ -120,14 +120,14 @@ pgTest("TEST-CNS-1309 pg: ops.purge_p34('security_event') borra solo lo anterior
   assert.equal(Number(rows.find((r) => r.tenant_id === B)!.deleted_count), 1);
   assert.equal(rows.filter((r) => r.tenant_id === A).length, 1, "una fila por tenant");
   const tenantRange = (await admin.query<{ ok: boolean }>(
-    "SELECT bool_and(min_deleted_at <= max_deleted_at AND max_deleted_at < cutoff) AS ok FROM ops.purge_run WHERE run_id = $1 AND tenant_id IS NOT NULL", [runId],
+    "SELECT bool_and(min_deleted_at <= max_deleted_at AND max_deleted_at < cutoff) AS ok FROM ops.purge_run WHERE purge_id = $1 AND tenant_id IS NOT NULL", [runId],
   )).rows[0];
   assert.equal(tenantRange?.ok, true);
 
   // Una segunda corrida sin nada vencido: fila resumen con ceros (prueba de que la corrida ocurrio).
   const again = await purge(worker, "security_event");
   const second = (await admin.query<{ eligible_before: string; deleted_count: string; min_deleted_at: string | null; n: string }>(
-    "SELECT eligible_before, deleted_count, min_deleted_at, (SELECT count(*) FROM ops.purge_run WHERE run_id = $1) AS n FROM ops.purge_run WHERE run_id = $1 AND tenant_id IS NULL", [again],
+    "SELECT eligible_before, deleted_count, min_deleted_at, (SELECT count(*) FROM ops.purge_run WHERE purge_id = $1) AS n FROM ops.purge_run WHERE purge_id = $1 AND tenant_id IS NULL", [again],
   )).rows[0];
   assert.deepEqual([Number(second?.eligible_before), Number(second?.deleted_count), second?.min_deleted_at, Number(second?.n)], [0, 0, null, 1]);
 });
@@ -138,7 +138,7 @@ pgTest("TEST-CNS-1310 pg: la purga de purge_run no borra la corrida en curso; op
   // Fila de corrida vencida (31 dias) insertada con reloj sintetico.
   const oldRun = fixtureUuid("run-1310-old");
   await admin.query(
-    `INSERT INTO ops.purge_run (run_id, store, tenant_id, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff, started_at, finished_at)
+    `INSERT INTO ops.purge_run (purge_id, store, tenant_id, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff, started_at, finished_at)
      VALUES ($1, 'security_event', NULL, now() - interval '61 days', interval '30 days', 0, 0, 0, now() - interval '31 days', now() - interval '31 days')`,
     [oldRun],
   );
@@ -146,9 +146,9 @@ pgTest("TEST-CNS-1310 pg: la purga de purge_run no borra la corrida en curso; op
   assert.ok(baseline >= 1);
 
   const runId = await purge(worker, "purge_run");
-  assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE run_id = $1", [oldRun]), 0, "la corrida vencida se borro");
+  assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE purge_id = $1", [oldRun]), 0, "la corrida vencida se borro");
   assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE finished_at < now() - make_interval(days => $1)", [DAYS]), 0);
-  const own = (await admin.query<{ eligible_before: string; deleted_count: string; store: string }>("SELECT eligible_before, deleted_count, store FROM ops.purge_run WHERE run_id = $1", [runId])).rows;
+  const own = (await admin.query<{ eligible_before: string; deleted_count: string; store: string }>("SELECT eligible_before, deleted_count, store FROM ops.purge_run WHERE purge_id = $1", [runId])).rows;
   assert.equal(own.length, 1, "la corrida en curso quedo registrada y no se borro a si misma");
   assert.deepEqual([own[0]!.store, Number(own[0]!.eligible_before), Number(own[0]!.deleted_count)], ["purge_run", baseline, baseline]);
 
@@ -173,7 +173,7 @@ pgTest("TEST-CNS-1310 pg: la purga de purge_run no borra la corrida en curso; op
   // CHECK de la post-condicion: una fila con restantes > 0 no se puede registrar.
   await assert.rejects(
     () => admin.query(
-      `INSERT INTO ops.purge_run (run_id, store, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff, started_at)
+      `INSERT INTO ops.purge_run (purge_id, store, cutoff, retention, eligible_before, deleted_count, remaining_older_than_cutoff, started_at)
        VALUES (gen_random_uuid(), 'security_event', now(), interval '30 days', 1, 1, 1, now() - interval '1 second')`,
     ),
     (e: unknown) => codeOf(e) === "23514",
@@ -310,7 +310,7 @@ pgTest("TEST-CNS-1322 pg: la purga de app.otp_verification borra solo filas con 
   const runId = await purge(worker, "otp_verification");
   const left = (await admin.query<{ verification_ref: string }>("SELECT verification_ref FROM app.otp_verification WHERE tenant_id = $1 ORDER BY verification_ref", [t])).rows.map((r) => r.verification_ref);
   assert.deepEqual(left, ["active", "recent"], "el challenge activo y el reciente se conservan");
-  const summary = (await admin.query<{ eligible_before: string; deleted_count: string; store: string }>("SELECT eligible_before, deleted_count, store FROM ops.purge_run WHERE run_id = $1 AND tenant_id IS NULL", [runId])).rows[0];
+  const summary = (await admin.query<{ eligible_before: string; deleted_count: string; store: string }>("SELECT eligible_before, deleted_count, store FROM ops.purge_run WHERE purge_id = $1 AND tenant_id IS NULL", [runId])).rows[0];
   assert.deepEqual([summary?.store, Number(summary?.eligible_before), Number(summary?.deleted_count)], ["otp_verification", eligible, eligible]);
 
   // El dueno de la purga no lee el correo ni el hash; no inserta ni actualiza.
