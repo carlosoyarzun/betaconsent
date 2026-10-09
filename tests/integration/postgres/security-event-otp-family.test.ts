@@ -1,6 +1,6 @@
 // Gobierna: SEC-CNS-021 PR-1 (aceptada por Carlos 2026-10-08; CA-146 / P-34), db/migrations/0028_security_event_owner_role.sql y
 // 0029_security_event_otp_family.sql, INV-21-04 / INV-21-05 / INV-21-06, SEC-CNS-006 rev. 5, ADR-010 rev. 3 §4.1, INV-CM-01 / INV-CM-02.
-// Contra Postgres real (harness.ts; skip fuera de CI sin entorno): TEST-CNS-1305 (CHECK por familia: cada tipo con columnas faltantes o
+// TEST-CNS-1326 (el nuevo dueno tampoco puede mutar; usa SET ROLE security_event_owner: ruta en la allowlist del checker). Contra Postgres real (harness.ts; skip fuera de CI sin entorno): TEST-CNS-1305 (CHECK por familia: cada tipo con columnas faltantes o
 // sobrantes -> 23514), TEST-CNS-1306 (matriz de app_rw: INSERT solo en su tenant y por columnas; sin SELECT/UPDATE/DELETE/TRUNCATE; worker y
 // platform_rw sin DML) y TEST-CNS-1307 (duenos: security_event_owner dueno de la tabla y su funcion, ningun rol de runtime es miembro,
 // triggers ENABLE ALWAYS y FORCE RLS). Solo datos sinteticos. Estos tests NO se corrieron localmente (sin Docker/Postgres): los corre el CI.
@@ -99,18 +99,33 @@ pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVE
   await expectFail("RECOVERY con disparador de management", row("RECOVERY_TOKEN_ISSUED", { recovery_ref: RECOVERY, trigger_kind: "FAILURE_CAP" }), SHAPE);
   await expectFail("MANAGEMENT con disparador de recovery", row("MANAGEMENT_TOKEN_ROTATED", { chain_ref: CHAIN, trigger_kind: "CASE_CONTACT" }), SHAPE);
   // Refs que no son UUIDv4 (cero correo / nombre / RUT en las columnas de ref) y enums fuera de rango.
-  for (const bad of ["persona@ejemplo.cl", "12.345.678-5", "Maria Perez", "11111111-1111-1111-8111-111111111111"]) {
-    await expectFail(`verification_ref ${bad}`, { ...VALID[0]![1], verification_ref: bad }, "security_event_verification_ref_uuidv4");
-    await expectFail(`channel_ref ${bad}`, { ...VALID[0]![1], channel_ref: bad }, "security_event_channel_ref_uuidv4");
-    await expectFail(`chain_ref ${bad}`, { ...VALID[9]![1], chain_ref: bad }, "security_event_chain_ref_uuidv4");
-    await expectFail(`recovery_ref ${bad}`, { ...VALID[8]![1], recovery_ref: bad }, "security_event_recovery_ref_uuidv4");
+  // Correo, RUT y nombre no son uuid: el cast falla con 22P02 ANTES de llegar al CHECK (la columna uuid ya los hace imposibles).
+  // Un uuid bien formado pero no v4 si llega al CHECK *_uuidv4 (23514).
+  const expectInvalidUuid = async (label: string, r: Row): Promise<void> => {
+    await admin.query("BEGIN");
+    try {
+      await assert.rejects(() => insert(admin, r), (e: unknown) => codeOf(e) === "22P02", label);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  };
+  for (const bad of ["persona@ejemplo.cl", "12.345.678-5", "Maria Perez"]) {
+    await expectInvalidUuid(`verification_ref ${bad}`, { ...VALID[0]![1], verification_ref: bad });
+    await expectInvalidUuid(`channel_ref ${bad}`, { ...VALID[0]![1], channel_ref: bad });
+    await expectInvalidUuid(`chain_ref ${bad}`, { ...VALID[9]![1], chain_ref: bad });
+    await expectInvalidUuid(`recovery_ref ${bad}`, { ...VALID[8]![1], recovery_ref: bad });
   }
+  const notV4 = "11111111-1111-1111-8111-111111111111";
+  await expectFail("verification_ref no v4", { ...VALID[0]![1], verification_ref: notV4 }, "security_event_verification_ref_uuidv4");
+  await expectFail("channel_ref no v4", { ...VALID[0]![1], channel_ref: notV4 }, "security_event_channel_ref_uuidv4");
+  await expectFail("chain_ref no v4", { ...VALID[9]![1], chain_ref: notV4 }, "security_event_chain_ref_uuidv4");
+  await expectFail("recovery_ref no v4", { ...VALID[8]![1], recovery_ref: notV4 }, "security_event_recovery_ref_uuidv4");
   await expectFail("otp_scope fuera del enum", { ...VALID[1]![1], otp_scope: "ROOT" }, "security_event_otp_scope_enum");
-  await expectFail("scope_class fuera del enum", { ...VALID[4]![1], scope_class: "ALL" }, "security_event_scope_class_enum");
+  await expectFail("scope_class fuera del enum", { ...VALID[4]![1], scope_class: "ALL" }, "security_event_otp_shape"); // otp_shape se evalua antes (orden por nombre)
   await expectFail("key_kind fuera del enum", { ...VALID[4]![1], key_kind: "EMAIL" }, "security_event_key_kind_enum");
-  await expectFail("window_kind fuera del enum", { ...VALID[4]![1], window_kind: "HOURS_1" }, "security_event_window_kind_enum");
-  await expectFail("trigger_kind fuera del enum", { ...VALID[8]![1], trigger_kind: "WHENEVER" }, "security_event_trigger_kind_enum");
-  await expectFail("tipo fuera del enum", row("OTP_REVEALED", { verification_ref: VERIFICATION, otp_scope: "DECISION" }), "security_event_type_enum");
+  await expectFail("window_kind fuera del enum", { ...VALID[4]![1], window_kind: "HOURS_1" }, "security_event_otp_shape"); // otp_shape se evalua antes (orden por nombre)
+  await expectFail("trigger_kind fuera del enum", { ...VALID[8]![1], trigger_kind: "WHENEVER" }, "security_event_otp_shape"); // otp_shape se evalua antes (orden por nombre)
+  await expectFail("tipo fuera del enum", row("OTP_REVEALED", { verification_ref: VERIFICATION, otp_scope: "DECISION" }), "security_event_otp_shape"); // Postgres evalua los CHECK por nombre y otp_shape (ELSE false) salta antes que type_enum
   // Los tipos de sesion con columnas OTP/recovery -> 23514 (otp_shape); su forma propia sigue en security_event_session_shape (TEST-CNS-1191).
   await expectFail(
     "STAFF_LOGIN con verification_ref",
@@ -243,13 +258,26 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
   await migrator.query("BEGIN");
   try {
     await migrator.query("SET LOCAL ROLE consent_owner");
-    for (const sql of ["SELECT 1 FROM ops.security_event", "DROP TABLE ops.security_event", "ALTER TABLE ops.security_event DISABLE TRIGGER ALL", "ALTER TABLE ops.security_event NO FORCE ROW LEVEL SECURITY"]) {
+    for (const sql of ["SELECT 1 FROM ops.security_event", "ALTER TABLE ops.security_event DISABLE TRIGGER ALL", "ALTER TABLE ops.security_event NO FORCE ROW LEVEL SECURITY"]) {
       await migrator.query("SAVEPOINT s");
       await assert.rejects(() => migrator.query(sql), (e: unknown) => codeOf(e) === "42501", sql);
       await migrator.query("ROLLBACK TO s");
     }
   } finally {
     await migrator.query("ROLLBACK");
+  }
+
+  // R-21-1 / F-2 (P2, aceptado IT0b): consent_owner es dueno del ESQUEMA ops, asi que SI puede DROP de la tabla aunque no sea su dueno.
+  // Aserto positivo para que este test cambie cuando ADR-010 §4.5 cierre el residual.
+  const dropper = await ctx.connectAs("consent_migrator");
+  await dropper.query("BEGIN");
+  try {
+    await dropper.query("SET LOCAL ROLE consent_owner");
+    await dropper.query("SAVEPOINT d");
+    await assert.doesNotReject(() => dropper.query("DROP TABLE ops.security_event"), "R-21-1: el dueno del esquema puede DROP");
+    await dropper.query("ROLLBACK TO d");
+  } finally {
+    await dropper.query("ROLLBACK");
   }
 
   // 0028 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
@@ -263,4 +291,29 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
   // El arranque del runtime sigue pasando con el nuevo owner en la lista (startup-checks.ts).
   const startup = await runStartupChecks(await ctx.connectAs("app_rw"), { expectedEnvironment: "LOCAL", expectedRole: "app_rw" });
   assert.deepEqual(startup, { ok: true, failures: [] });
+});
+
+pgTest("TEST-CNS-1326 pg: como consent_owner -> SET ROLE security_event_owner, TRUNCATE da error del trigger y UPDATE/DELETE afectan 0 filas (FORCE RLS sin policy): el nuevo dueno tampoco puede mutar (INV-21-07 parcial; la purga llega en PR-3)", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  await insert(admin, VALID[0]![1]);
+  const migrator = await ctx.connectAs("consent_migrator");
+  for (const [sql, expectRows] of [["UPDATE ops.security_event SET otp_scope = 'MANAGE'", 0], ["DELETE FROM ops.security_event", 0]] as const) {
+    await migrator.query("BEGIN");
+    try {
+      await migrator.query("SET LOCAL ROLE consent_owner");
+      await migrator.query("SET LOCAL ROLE security_event_owner");
+      assert.equal((await migrator.query(sql)).rowCount, expectRows, sql);
+    } finally {
+      await migrator.query("ROLLBACK");
+    }
+  }
+  await migrator.query("BEGIN");
+  try {
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query("SET LOCAL ROLE security_event_owner");
+    await assert.rejects(() => migrator.query("TRUNCATE ops.security_event"), (e: unknown) => codeOf(e) === "23000", "TRUNCATE: trigger append-only");
+  } finally {
+    await migrator.query("ROLLBACK");
+  }
+  assert.equal((await admin.query("SELECT 1 FROM ops.security_event")).rowCount, 1, "la fila sigue intacta");
 });

@@ -29,6 +29,8 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
   "db/migrations/0028_security_event_owner_role.sql": ["grant-membership"],
   // 0029: transfiere ops.security_event (SET LOCAL ROLE security_event_owner para sus DEFAULT PRIVILEGES).
   "db/migrations/0029_security_event_otp_family.sql": ["set-role"],
+  // TEST-CNS-1326: demuestra que el nuevo dueno tampoco puede mutar la tabla (SET ROLE explicito del migrador).
+  "tests/integration/postgres/security-event-otp-family.test.ts": ["set-role"],
 };
 
 /** Extensiones que pueden ejecutar SQL / abrir sesiones (el checker se ignora a si mismo y a su test, ver SELF_EXCLUDED). */

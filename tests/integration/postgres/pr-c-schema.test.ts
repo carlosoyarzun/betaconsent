@@ -315,6 +315,8 @@ async function unguardedEmailColumns(db: Client): Promise<string[]> {
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'integrity', 'ops', 'tenant_resolve')
         AND a.attnum > 0 AND NOT a.attisdropped
+        -- una columna uuid no puede contener un correo; ops.security_event.channel_ref es un HMAC opaco (otp-challenge.ts:72), no un contacto.
+        AND a.atttypid <> 'pg_catalog.uuid'::regtype
         AND a.attname ~* '(e_?mail|correo|channel|recipient(?!_binding)|destin|contact|phone|tel[eé]fono)'
         AND NOT EXISTS (
           SELECT 1 FROM pg_constraint k

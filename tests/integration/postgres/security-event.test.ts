@@ -115,7 +115,7 @@ pgTest("TEST-CNS-1191 pg: CHECK de enum de tipo, forma por familia (STAFF/CASE/r
       await admin.query("ROLLBACK");
     }
   };
-  await expectFail("tipo fuera del enum", { event_type: "OTP_REVEALED" }, "security_event_type_enum");
+  await expectFail("tipo fuera del enum", { event_type: "OTP_REVEALED" }, "security_event_otp_shape"); // los CHECK se evaluan por nombre: otp_shape (ELSE false) salta antes que type_enum
   await expectFail("OTP_ISSUED con columnas de sesion y sin refs OTP (0029: la forma por familia la cubre TEST-CNS-1305)", { event_type: "OTP_ISSUED" }, "security_event_otp_shape");
   await expectFail("STAFF con case_ref", { case_ref: CASE_REF }, "security_event_session_shape");
   await expectFail("STAFF con session_kind CASE", { session_kind: "CASE" }, "security_event_session_shape");
