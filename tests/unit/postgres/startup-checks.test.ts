@@ -44,7 +44,7 @@ function db(s: Scenario = {}): FakeClient {
     }
     if (text.includes("pg_has_role")) {
       const member = new Set(s.memberOf ?? []);
-      return { rows: ["consent_owner", "tenant_resolve_owner", "staff_roster_owner", "integrity_owner"].map((owner) => ({ owner, member: member.has(owner) })) };
+      return { rows: ["consent_owner", "tenant_resolve_owner", "staff_roster_owner", "integrity_owner", "security_event_owner"].map((owner) => ({ owner, member: member.has(owner) })) };
     }
     if (text.includes("has_schema_privilege")) return { rows: (s.createOn ?? []).map((nspname) => ({ nspname })) };
     if (text.includes("has_parameter_privilege")) return { rows: [{ can_set: s.canSetReplicationRole ?? false }] };
@@ -70,6 +70,7 @@ test("TEST-CNS-747 no arranca: superusuario, BYPASSRLS, miembro de owner, CREATE
     [{ memberOf: ["tenant_resolve_owner"] }, /miembro de tenant_resolve_owner/],
     [{ memberOf: ["staff_roster_owner"] }, /miembro de staff_roster_owner/],
     [{ memberOf: ["integrity_owner"] }, /miembro de integrity_owner/],
+    [{ memberOf: ["security_event_owner"] }, /miembro de security_event_owner/], // SEC-CNS-021 PR-1, INV-21-06
     [{ createOn: ["public"] }, /CREATE en el esquema public/],
     [{ canSetReplicationRole: true }, /session_replication_role/],
   ];
