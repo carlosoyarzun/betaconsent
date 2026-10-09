@@ -52,10 +52,12 @@ const VALID: Array<[string, Row]> = [
 
 pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVERY, MANAGEMENT): cada tipo con columnas faltantes o sobrantes, refs no UUIDv4 o enums fuera de rango da 23514 (INV-21-04)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
-  const expectFail = async (label: string, r: Row, constraint: string): Promise<void> => {
+  // Con dos CHECK violables a la vez Postgres no garantiza cual reporta: se acepta cualquiera de la lista explicita.
+  const expectFail = async (label: string, r: Row, constraint: string | string[]): Promise<void> => {
+    const accepted = Array.isArray(constraint) ? constraint : [constraint];
     await admin.query("BEGIN");
     try {
-      await assert.rejects(() => insert(admin, r), (e: unknown) => codeOf(e) === "23514" && constraintOf(e) === constraint, label);
+      await assert.rejects(() => insert(admin, r), (e: unknown) => codeOf(e) === "23514" && accepted.includes(constraintOf(e) ?? ""), label);
     } finally {
       await admin.query("ROLLBACK");
     }
@@ -121,11 +123,11 @@ pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVE
   await expectFail("chain_ref no v4", { ...VALID[9]![1], chain_ref: notV4 }, "security_event_chain_ref_uuidv4");
   await expectFail("recovery_ref no v4", { ...VALID[8]![1], recovery_ref: notV4 }, "security_event_recovery_ref_uuidv4");
   await expectFail("otp_scope fuera del enum", { ...VALID[1]![1], otp_scope: "ROOT" }, "security_event_otp_scope_enum");
-  await expectFail("scope_class fuera del enum", { ...VALID[4]![1], scope_class: "ALL" }, "security_event_otp_shape"); // otp_shape se evalua antes (orden por nombre)
+  await expectFail("scope_class fuera del enum", { ...VALID[4]![1], scope_class: "ALL" }, ["security_event_otp_shape", "security_event_scope_class_enum"]);
   await expectFail("key_kind fuera del enum", { ...VALID[4]![1], key_kind: "EMAIL" }, "security_event_key_kind_enum");
-  await expectFail("window_kind fuera del enum", { ...VALID[4]![1], window_kind: "HOURS_1" }, "security_event_otp_shape"); // otp_shape se evalua antes (orden por nombre)
-  await expectFail("trigger_kind fuera del enum", { ...VALID[8]![1], trigger_kind: "WHENEVER" }, "security_event_otp_shape"); // otp_shape se evalua antes (orden por nombre)
-  await expectFail("tipo fuera del enum", row("OTP_REVEALED", { verification_ref: VERIFICATION, otp_scope: "DECISION" }), "security_event_otp_shape"); // Postgres evalua los CHECK por nombre y otp_shape (ELSE false) salta antes que type_enum
+  await expectFail("window_kind fuera del enum", { ...VALID[4]![1], window_kind: "HOURS_1" }, ["security_event_otp_shape", "security_event_window_kind_enum"]);
+  await expectFail("trigger_kind fuera del enum", { ...VALID[8]![1], trigger_kind: "WHENEVER" }, ["security_event_otp_shape", "security_event_trigger_kind_enum"]);
+  await expectFail("tipo fuera del enum", row("OTP_REVEALED", { verification_ref: VERIFICATION, otp_scope: "DECISION" }), ["security_event_otp_shape", "security_event_type_enum"]);
   // Los tipos de sesion con columnas OTP/recovery -> 23514 (otp_shape); su forma propia sigue en security_event_session_shape (TEST-CNS-1191).
   await expectFail(
     "STAFF_LOGIN con verification_ref",
@@ -295,7 +297,8 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
 
 pgTest("TEST-CNS-1326 pg: como consent_owner -> SET ROLE security_event_owner, TRUNCATE da error del trigger y UPDATE/DELETE afectan 0 filas (FORCE RLS sin policy): el nuevo dueno tampoco puede mutar (INV-21-07 parcial; la purga llega en PR-3)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
-  await insert(admin, VALID[0]![1]);
+  const mine = row("OTP_ISSUED", { tenant_id: fixtureUuid("t-1326"), verification_ref: fixtureUuid("v-1326"), otp_scope: "DECISION", channel_ref: fixtureUuid("ch-1326") });
+  await insert(admin, mine);
   const migrator = await ctx.connectAs("consent_migrator");
   for (const [sql, expectRows] of [["UPDATE ops.security_event SET otp_scope = 'MANAGE'", 0], ["DELETE FROM ops.security_event", 0]] as const) {
     await migrator.query("BEGIN");
@@ -315,5 +318,8 @@ pgTest("TEST-CNS-1326 pg: como consent_owner -> SET ROLE security_event_owner, T
   } finally {
     await migrator.query("ROLLBACK");
   }
-  assert.equal((await admin.query("SELECT 1 FROM ops.security_event")).rowCount, 1, "la fila sigue intacta");
+  const mineRows = (await admin.query<Record<string, string>>(
+    "SELECT event_type, otp_scope, verification_ref::text, channel_ref::text FROM ops.security_event WHERE tenant_id = $1 AND verification_ref = $2", [mine.tenant_id, mine.verification_ref],
+  )).rows;
+  assert.deepEqual(mineRows, [{ event_type: "OTP_ISSUED", otp_scope: "DECISION", verification_ref: mine.verification_ref, channel_ref: mine.channel_ref }], "la fila sigue intacta");
 });

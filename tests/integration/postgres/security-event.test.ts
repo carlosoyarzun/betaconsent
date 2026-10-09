@@ -107,15 +107,16 @@ pgTest("TEST-CNS-1190 pg: ops.security_event es append-only tambien para el supe
 
 pgTest("TEST-CNS-1191 pg: CHECK de enum de tipo, forma por familia (STAFF/CASE/rotacion), refs sin PII y columnas que fija la base; los CHECK de las tablas de sesion equivalen a los de security_event (INV-SE-06)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
-  const expectFail = async (label: string, over: Partial<typeof baseRow>, constraint: string): Promise<void> => {
+  const expectFail = async (label: string, over: Partial<typeof baseRow>, constraint: string | string[]): Promise<void> => {
+    const accepted = Array.isArray(constraint) ? constraint : [constraint];
     await admin.query("BEGIN");
     try {
-      await assert.rejects(() => insertEvent(admin, over), (e: unknown) => codeOf(e) === "23514" && constraintOf(e) === constraint, label);
+      await assert.rejects(() => insertEvent(admin, over), (e: unknown) => codeOf(e) === "23514" && accepted.includes(constraintOf(e) ?? ""), label);
     } finally {
       await admin.query("ROLLBACK");
     }
   };
-  await expectFail("tipo fuera del enum", { event_type: "OTP_REVEALED" }, "security_event_otp_shape"); // los CHECK se evaluan por nombre: otp_shape (ELSE false) salta antes que type_enum
+  await expectFail("tipo fuera del enum", { event_type: "OTP_REVEALED" }, ["security_event_otp_shape", "security_event_type_enum"]); // dos CHECK violables: orden no garantizado
   await expectFail("OTP_ISSUED con columnas de sesion y sin refs OTP (0029: la forma por familia la cubre TEST-CNS-1305)", { event_type: "OTP_ISSUED" }, "security_event_otp_shape");
   await expectFail("STAFF con case_ref", { case_ref: CASE_REF }, "security_event_session_shape");
   await expectFail("STAFF con session_kind CASE", { session_kind: "CASE" }, "security_event_session_shape");
