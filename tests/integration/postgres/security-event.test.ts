@@ -34,9 +34,11 @@ pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSE
   const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
     "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'ops' AND tablename = 'security_event'",
   )).rows;
-  assert.deepEqual(policies.map((p) => p.cmd), ["INSERT"], "D-5: sin policy SELECT/UPDATE/DELETE");
-  assert.deepEqual(policies[0]!.roles, ["app_rw"]);
-  assert.match(policies[0]!.with_check ?? "", /app\.current_tenant_id\(\)/);
+  // D-5 + 0031 (SEC-CNS-021 PR-3): app_rw solo tiene la policy INSERT; las otras dos son de security_event_owner (SELECT/DELETE de filas vencidas, P-34).
+  const appRwPolicies = policies.filter((p) => p.roles.includes("app_rw"));
+  assert.deepEqual(appRwPolicies.map((p) => p.cmd), ["INSERT"], "D-5: app_rw sin policy SELECT/UPDATE/DELETE");
+  assert.match(appRwPolicies[0]!.with_check ?? "", /app\.current_tenant_id\(\)/);
+  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]]]);
 
   for (const role of ["app_rw", "worker", "platform_rw"]) {
     for (const privilege of ["SELECT", "UPDATE"]) {
