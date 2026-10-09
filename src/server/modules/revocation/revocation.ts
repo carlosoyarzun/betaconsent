@@ -28,7 +28,8 @@ import type { TenantResolverPort } from "../../ports/tenant-resolver.port.ts";
 import type { DownstreamStubPort } from "../../ports/downstream-stub.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
-import { appendNext, lastLedgerSequence } from "../common/ledger-append.ts";
+import { lastLedgerSequence } from "../common/ledger-append.ts";
+import type { SecurityEventPort } from "../../ports/security-event.port.ts";
 
 /** LEGAL DECISION LD-02 / OPEN-RV-01 (revocation.spec `assuranceLevel`): el valor "suficiente" lo decide
  * Carlos; hasta entonces el contrato (ledger-event-payloads REVOCATION_VERIFIED, x-pending) admite solo un
@@ -62,7 +63,7 @@ export interface RevocationPorts {
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, los repos/ledger/outbox del bag se
  * sustituyen por los puertos de la tx. Las funciones `...Tx` de este módulo solo llaman a otras
  * `...Tx` (inTenant no se anida). */
-export function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: RevocationPorts) => Promise<T>): Promise<T> {
+export function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: RevocationPorts & { readonly securityEvents: SecurityEventPort }) => Promise<T>): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, ...tx }));
 }
 
@@ -799,7 +800,7 @@ export function hashRecoveryToken(token: string): string {
  * real (token opaco CSPRNG, mismo patrón GRD-IV-05 que invitation.ts sendInvitation: solo el
  * hash persiste, TTL P-15 vía recoveryTokenPolicy), lo emite por `recoveryLinkChannel` (sink
  * in-memory de LOCAL, nunca en la respuesta HTTP ni en logs, Cero PII) y registra
- * RECOVERY_TOKEN_ISSUED en el ledger como emisión SECURITY (kind: EMISSION, sin cambio de
+ * RECOVERY_TOKEN_ISSUED en ops.security_event (SEC-CNS-021 PR-2; fuera del ledger) como emisión SECURITY (kind: EMISSION, sin cambio de
  * estado de la Revocation). No implementa K vigentes por cadena (P-16) ni la ventana P-17
  * (revocation.spec RV0 effects): cada emisión crea un token nuevo sin invalidar los vigentes,
  * sin límite todavía (documentado como alcance mínimo IT0, igual que el resto de este archivo).
@@ -823,17 +824,9 @@ export async function issueRecoveryLinkBearer(
     // -> no se emite token ni evento; la respuesta HTTP sigue siendo la uniforme.
     if (await isAlreadyRevoked(p, tenantId, revokedDecisionRef)) return false;
     await p.recoveryTokenRepo.save({ tokenHash, recoveryRef, tenantId, chainRef, revokedDecisionRef, expiresAt });
-    await appendNext(p.ledger, {
-      eventType: "RECOVERY_TOKEN_ISSUED",
-      tenantId,
-      aggregateType: "Revocation",
-      aggregateId: chainRef,
-      actorType: "HUMAN",
-      actorRole: "UNVERIFIED_BEARER",
-      payload: { recoveryRef, trigger }, // security-event-payloads RECOVERY_TOKEN_ISSUED: solo {recoveryRef, trigger}
-      // Sin idempotencyKey: cada emisión es un token nuevo (K vigentes por cadena, revocation.spec
-      // RV0 effects); una emisión nueva no invalida ni dedupea las vigentes.
-    });
+    // SEC-CNS-021 PR-2 (F-1): ops.security_event en la MISMA tx (no el ledger); solo {recoveryRef, trigger}, cero PII.
+    // Sin idempotencia: cada emisión es un token nuevo (K vigentes por cadena, revocation.spec RV0 effects).
+    await p.securityEvents.record({ tenantId, eventType: "RECOVERY_TOKEN_ISSUED", recoveryRef, trigger });
     return true;
   });
   if (!issued) return { sent: false };

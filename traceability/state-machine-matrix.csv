@@ -151,8 +151,8 @@ otp-challenge,error,ERR-OT-07,"SM-CNS-001 §3 V6r, V6c;DEC-BR-017 §9;RULE-CNS-T
 otp-challenge,error,ERR-OT-08,"SM-CNS-001 §3 'Inválidas', §2.1 M1;INV-11",TEST-CNS-484,
 otp-challenge,error,ERR-OT-09,SEC-CNS-006 P-06,TEST-CNS-546,
 otp-challenge,event,OTP_ISSUED,"SM-CNS-001 §3 V1, V2r;SEC F03",TEST-CNS-483;TEST-CNS-571,
-otp-challenge,event,OTP_FAILED,SM-CNS-001 §3 V2,UNCOVERED,sin test que cite OTP_FAILED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-otp-challenge,event,OTP_LOCKED,SM-CNS-001 §3 V4,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-583;TEST-CNS-849); ninguno cubre otp-challenge
+otp-challenge,event,OTP_FAILED,SM-CNS-001 §3 V2,TEST-CNS-1301;TEST-CNS-849,
+otp-challenge,event,OTP_LOCKED,SM-CNS-001 §3 V4,TEST-CNS-1301;TEST-CNS-849,
 otp-challenge,event,OTP_EXPIRED,SM-CNS-001 §3 V5,UNCOVERED,sin test que cite OTP_EXPIRED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 otp-challenge,event,OTP_BUDGET_EXHAUSTED,"SM-CNS-001 §3 V6, V6r, V6c",UNCOVERED,sin test que cite OTP_BUDGET_EXHAUSTED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 otp-challenge,event,MANAGEMENT_TOKEN_ROTATED,DEC-BR-017 §6;SM-CNS-001 §5.0;ADR-006 §6.1;SEC-CNS-006 P-13,UNCOVERED,sin test que cite MANAGEMENT_TOKEN_ROTATED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)

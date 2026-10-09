@@ -17,6 +17,7 @@ import {
   verifyRevocationOtp,
   withdrawRevocation,
 } from "../../../src/server/modules/revocation/revocation.ts";
+import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
@@ -33,6 +34,7 @@ const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 
 function makePorts() {
   return withInMemoryTenancy({
+    securityEvents: createInMemorySecurityEventLog(),
     revocationRepo: createInMemoryRevocationRepository(),
     ledger: createInMemoryLedgerAdapter(),
     outbox: createInMemoryOutboxAdapter(),
@@ -129,8 +131,11 @@ test("TEST-CNS-579: issueRecoveryLinkBearer (RV0 fuente BEARER) emite RECOVERY_T
   const ports = makePorts();
   const result = await issueRecoveryLinkBearer(ports, "tenant-1", fixtureUuid("chain-579"), fixtureUuid("consent-579"), "LIMIT_REACHED");
   assert.equal(result.sent, true);
-  const events = await ports.ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("chain-579"));
-  assert.equal(events[0]?.eventType, "RECOVERY_TOKEN_ISSUED");
+  assert.equal((await ports.ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("chain-579"))).length, 0, "SEC-CNS-021 PR-2: nada en el ledger");
+  const sec = ports.securityEvents.listAll("tenant-1");
+  assert.equal(sec.length, 1);
+  assert.equal(sec[0]?.eventType, "RECOVERY_TOKEN_ISSUED");
+  assert.deepEqual(Object.keys(sec[0] ?? {}).filter((k) => k === "recoveryRef" || k === "trigger").sort(), ["recoveryRef", "trigger"]);
 });
 
 test("TEST-CNS-580: un revocationRef inexistente en R2/R3/R8 da 404 uniforme (ERR-CM-01), mismo criterio que RH2/RH3", async () => {

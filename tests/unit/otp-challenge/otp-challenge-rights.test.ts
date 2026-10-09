@@ -13,16 +13,19 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryOtpVerificationRepository } from "../../../src/infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import { createInMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
+import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 function makePorts() {
   const otpRepo = createInMemoryOtpVerificationRepository();
   const ledger = createInMemoryLedgerAdapter();
+  const securityEvents = createInMemorySecurityEventLog();
   return {
+    securityEvents,
     otpRepo,
     channel: createInMemoryOtpChannelSink(),
     ledger,
-    uow: createInMemoryTenancy({ ledger, otpRepo }).uow,
+    uow: createInMemoryTenancy({ ledger, otpRepo, securityEvents }).uow,
     policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),
   };
@@ -35,8 +38,11 @@ test("TEST-CNS-571: requestRightsOtp scope MANAGE emite OTP_ISSUED y el código 
   assert.equal(record.state, "CODE_SENT");
   assert.equal(record.parentRef, fixtureUuid("chain-1"));
   assert.ok(!("code" in record));
-  const events = await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", fixtureUuid("ver-manage-1"));
-  assert.equal(events[0]?.eventType, "OTP_ISSUED");
+  assert.equal((await ports.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", fixtureUuid("ver-manage-1"))).length, 0, "sin OTP_* en el ledger");
+  const sec = ports.securityEvents.listAll("tenant-1");
+  assert.equal(sec.length, 1);
+  assert.equal(sec[0]?.eventType, "OTP_ISSUED");
+  assert.equal((sec[0] as { otpScope?: string }).otpScope, "MANAGE");
 });
 
 test("TEST-CNS-572: submitRightsOtp con el código correcto (scope REVOCATION) -> VERIFIED, emite DECISION_MAKER_CHANNEL_VERIFIED", async () => {

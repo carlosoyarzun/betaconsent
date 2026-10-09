@@ -18,6 +18,7 @@ import { recordDecisionStep, startDecision, submitDecision, type ConsentDecision
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import { closeCase, confirmCaseReturnViaHandle, type RightsCasePorts } from "../../../src/server/modules/rights-case/rights-case.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
+import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { LedgerSequenceConflictError, type LedgerEventInput, type LedgerPort } from "../../../src/server/ports/ledger.port.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryEligibilityAdapter } from "../../../src/infra/adapters/in-memory-eligibility.adapter.ts";
@@ -111,7 +112,7 @@ async function openedWithOtp(flow: ReturnType<typeof makeFlow>): Promise<string>
   return sink.sent[sink.sent.length - 1]!.code;
 }
 
-test("TEST-CNS-842: otp V3: expectedSequence = base capturada antes del lock (OTP e Invitation I5); si el agregado avanza tras la base, LedgerSequenceConflictError y no queda VERIFIED", async () => {
+test("TEST-CNS-842: otp V3 (SEC-CNS-021 PR-2): expectedSequence 0 (OTP_* fuera del ledger; valla = lock de fila de app.otp_verification) e Invitation I5 con su base; V3 ∥ V3 deja exactamente un VERIFIED; un append ajeno al agregado sigue abortando con LedgerSequenceConflictError", async () => {
   // Camino feliz: base declarada.
   {
     const { ledger, seen } = recordingLedger();
@@ -120,11 +121,27 @@ test("TEST-CNS-842: otp V3: expectedSequence = base capturada antes del lock (OT
     seen.length = 0;
     await submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2);
     const byType = Object.fromEntries(seen.map((e) => [e.eventType, e.expectedSequence]));
-    assert.equal(byType.DECISION_MAKER_CHANNEL_VERIFIED, 1, "tras OTP_ISSUED (seq 1)");
+    assert.equal(byType.DECISION_MAKER_CHANNEL_VERIFIED, 0, "agregado nuevo en el ledger: OTP_ISSUED ya no ocupa la sequence 1");
+    assert.equal(await ledger.currentSequence(T, fixtureUuid("ver-842")), 1, "DECISION_MAKER_CHANNEL_VERIFIED queda con sequence 1 (INV-21-03)");
     assert.equal(typeof byType.INVITATION_VERIFIED, "number");
     assert.equal(byType.INVITATION_VERIFIED, await ledger.currentSequence(T, fixtureUuid("inv-842")) - 1, "I5 declara la base de la Invitation");
   }
-  // Carrera: otra unidad avanza el challenge entre la base y el lock.
+  // Carrera V3 || V3 con el mismo codigo correcto: el segundo espera el lock de fila, relee VERIFIED y sale por ERR-OT-03 sin llegar al append.
+  {
+    const { ledger } = recordingLedger();
+    const flow = makeFlow(ledger);
+    const code = await openedWithOtp(flow);
+    const results = await Promise.allSettled([
+      submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2),
+      submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1, "exactamente un VERIFIED");
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    assert.ok(rejected.reason instanceof DomainError && rejected.reason.code === "ERR-OT-03");
+    const types = (await ledger.listByAggregate(T, "DecisionMakerVerification", fixtureUuid("ver-842"))).map((e) => e.eventType);
+    assert.deepEqual(types, ["DECISION_MAKER_CHANNEL_VERIFIED"]);
+  }
+  // Defensa en profundidad: un append ajeno al agregado (no hay unidad real que lo haga) aun aborta; el estado no cambia.
   {
     const { ledger } = recordingLedger();
     let interfere = false;

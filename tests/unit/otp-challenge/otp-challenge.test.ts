@@ -18,14 +18,15 @@ import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memo
 import { createInMemoryOtpVerificationRepository } from "../../../src/infra/adapters/in-memory-otp-verification-repository.adapter.ts";
 import { createInMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 
+import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
 const CHANNEL_REF = "test+channel-1@example.invalid";
 
-function makeOtpPorts(ledger = createInMemoryLedgerAdapter()): { invitationPorts: InvitationPorts; otpPorts: OtpChallengePorts } {
+function makeOtpPorts(ledger = createInMemoryLedgerAdapter(), securityEvents = createInMemorySecurityEventLog()): { invitationPorts: InvitationPorts; otpPorts: OtpChallengePorts; securityEvents: typeof securityEvents } {
   const invitationRepo = createInMemoryInvitationRepository();
   const otpRepo = createInMemoryOtpVerificationRepository();
-  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo });
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo, securityEvents });
   const invitationPorts: InvitationPorts = {
     invitationRepo,
     eligibility: createInMemoryEligibilityAdapter(),
@@ -41,7 +42,7 @@ function makeOtpPorts(ledger = createInMemoryLedgerAdapter()): { invitationPorts
     policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
     secret: randomBytes(32),
   };
-  return { invitationPorts, otpPorts };
+  return { invitationPorts, otpPorts, securityEvents };
 }
 
 async function openedInvitation(invitationPorts: InvitationPorts, tenantId = "tenant-1") {
@@ -60,8 +61,8 @@ async function openedInvitation(invitationPorts: InvitationPorts, tenantId = "te
   await openInvitation(invitationPorts, tenantId, token);
 }
 
-test("TEST-CNS-483: V1 emite un código al canal ligado y el ledger nunca contiene el código en claro (INV-OT-02)", async () => {
-  const { invitationPorts, otpPorts } = makeOtpPorts();
+test("TEST-CNS-483: V1 emite un código al canal ligado y ni el ledger ni ops.security_event contienen el código en claro (INV-OT-02); OTP_ISSUED va a security_event, no al ledger (SEC-CNS-021 PR-2)", async () => {
+  const { invitationPorts, otpPorts, securityEvents } = makeOtpPorts();
   await openedInvitation(invitationPorts);
 
   const record = await requestOtp(otpPorts, "tenant-1", fixtureUuid("ver-1"), fixtureUuid("inv-1"), CHANNEL_REF);
@@ -73,9 +74,12 @@ test("TEST-CNS-483: V1 emite un código al canal ligado y el ledger nunca contie
   assert.equal(code.length, 6);
 
   const events = await otpPorts.ledger.listByAggregate("tenant-1", "DecisionMakerVerification", fixtureUuid("ver-1"));
-  assert.equal(events.length, 1);
-  assert.equal(events[0]?.eventType, "OTP_ISSUED");
-  assert.equal(JSON.stringify(events[0]?.payload).includes(code), false);
+  assert.equal(events.length, 0, "INV-21-02: 0 filas OTP_* en el ledger");
+  const sec = securityEvents.listAll("tenant-1");
+  assert.equal(sec.length, 1, "INV-21-02: exactamente 1 OTP_ISSUED en security_event");
+  assert.equal(sec[0]?.eventType, "OTP_ISSUED");
+  assert.equal(JSON.stringify(sec[0]).includes(code), false);
+  assert.equal(JSON.stringify(sec[0]).includes(CHANNEL_REF), false, "el canal real nunca sale: solo channelRef opaco");
 });
 
 test("TEST-CNS-484: V1 con channelRef distinto del ligado a la invitación -> ERR-OT-08 (GRD-OT-02)", async () => {
