@@ -138,15 +138,35 @@ BEGIN
     RAISE EXCEPTION 'security_event_owner conserva CREATE en el esquema ops (el grant temporal no quedo revocado)';
   END IF;
 
+  -- Triggers append-only: ENABLE ALWAYS, ejecutan ops.security_event_immutable() y cubren UPDATE, DELETE (fila) y TRUNCATE (sentencia).
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t
-       WHERE t.tgrelid = tbl AND t.tgname LIKE 'security\_event\_no\_%' AND t.tgenabled = 'A') <> 2 THEN
-    RAISE EXCEPTION 'los triggers append-only de ops.security_event deben seguir ENABLE ALWAYS';
+       WHERE t.tgrelid = tbl AND t.tgname LIKE 'security\_event\_no\_%' AND t.tgenabled = 'A'
+         AND t.tgfoid = (SELECT p.oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'ops' AND p.proname = 'security_event_immutable')) <> 2 THEN
+    RAISE EXCEPTION 'los triggers append-only de ops.security_event deben ser ENABLE ALWAYS y ejecutar ops.security_event_immutable()';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t WHERE t.tgrelid = tbl AND t.tgname = 'security_event_no_update_delete'
+                    AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 8) = 8 AND (t.tgtype & 16) = 16 AND (t.tgtype & 32) = 0)
+     OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t WHERE t.tgrelid = tbl AND t.tgname = 'security_event_no_truncate'
+                    AND (t.tgtype & 1) = 0 AND (t.tgtype & 2) = 2 AND (t.tgtype & 32) = 32) THEN
+    RAISE EXCEPTION 'los triggers de ops.security_event deben ser BEFORE ROW UPDATE/DELETE y BEFORE STATEMENT TRUNCATE';
   END IF;
   IF NOT (SELECT c.relrowsecurity AND c.relforcerowsecurity FROM pg_catalog.pg_class c WHERE c.oid = tbl) THEN
     RAISE EXCEPTION 'ops.security_event perdio ENABLE/FORCE ROW LEVEL SECURITY';
   END IF;
   IF pg_catalog.has_table_privilege('consent_owner', tbl, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN
     RAISE EXCEPTION 'consent_owner conserva privilegios sobre ops.security_event';
+  END IF;
+  -- Runtime: app_rw solo INSERT; worker y platform_rw, nada (INV-21-05).
+  IF pg_catalog.has_any_column_privilege('app_rw', tbl, 'SELECT,UPDATE')
+     OR pg_catalog.has_table_privilege('app_rw', tbl, 'DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN
+    RAISE EXCEPTION 'app_rw tiene privilegios de mas sobre ops.security_event (solo INSERT por columnas)';
+  END IF;
+  IF pg_catalog.has_any_column_privilege('worker', tbl, 'SELECT,INSERT,UPDATE,REFERENCES')
+     OR pg_catalog.has_table_privilege('worker', tbl, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+     OR pg_catalog.has_any_column_privilege('platform_rw', tbl, 'SELECT,INSERT,UPDATE,REFERENCES')
+     OR pg_catalog.has_table_privilege('platform_rw', tbl, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN
+    RAISE EXCEPTION 'worker o platform_rw tienen privilegios sobre ops.security_event';
   END IF;
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = tbl) <> 1 THEN
     RAISE EXCEPTION 'ops.security_event debe tener exactamente una policy (INSERT de app_rw)';
