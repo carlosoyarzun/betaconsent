@@ -8,9 +8,12 @@
 -- Aqui se redefine la lista blanca del ledger SIN esos 7 tipos transitorios (0013, redefinida por 0017). Desde aqui el ledger rechaza
 -- esos tipos con 23514 (check_violation).
 --
--- NOT VALID: las bases LOCAL/CI previas pueden conservar filas OTP_*/RECOVERY_TOKEN_ISSUED historicas; el ledger es append-only y no se
--- purga ni se reescribe (la cadena SHA-256 exige chain_seq contiguo). NOT VALID verifica las filas NUEVAS y no re-valida las existentes.
--- No se ejecuta VALIDATE CONSTRAINT (fallaria sobre esas filas historicas). IT0 es solo sintetico.
+-- REQUISITO: esta migracion EXIGE una base recreada (valido en IT0: LOCAL/CI, solo datos sinteticos). Una base con filas historicas
+-- OTP_*/RECOVERY_TOKEN_ISSUED en integrity.audit_event queda INVERIFICABLE tras 0030: verifyChainRows las marca EVENT_TYPE_NOT_ALLOWED (esas
+-- filas NO siguen siendo validas; el ledger es append-only y no se purga ni se reescribe, la cadena SHA-256 exige chain_seq contiguo).
+-- Ademas, un challenge en curso cuyo OTP_ISSUED ocupa la sequence 1 daria conflicto en V3 (que ahora declara expectedSequence 0).
+-- NOT VALID solo evita que ADD CONSTRAINT falle al aplicarse sobre una base no recreada: verifica las filas NUEVAS y no re-valida las
+-- existentes. No se ejecuta VALIDATE CONSTRAINT (fallaria sobre esas filas).
 --
 -- integrity.audit_event pertenece a integrity_owner (0027): todo DDL sobre integrity.* declara SET LOCAL ROLE integrity_owner
 -- (unica migracion, junto con 0027, autorizada por tools/spec-checks/integrity-owner-checker.ts). Espejo de

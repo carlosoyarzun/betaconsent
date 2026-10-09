@@ -154,7 +154,7 @@ pgTest("TEST-CNS-1302 pg: el evento OTP y el estado del challenge van en la MISM
   const T = fixtureUuid("t1302");
   await withEnv(ctx, async ({ uow, outside, count }) => {
     const mk = (ver: string) => ({
-      verificationRef: ver, tenantId: T, scope: "DECISION" as const, parentRef: fixtureUuid("inv1302"), channelRef: "ch-1302",
+      verificationRef: ver, tenantId: T, scope: "DECISION" as const, parentRef: fixtureUuid("inv1302"), channelRef: CHANNEL,
       codeHash: "0".repeat(64), attempts: 0, expiresAt: new Date(Date.now() + 60_000), state: "CODE_SENT" as const, resendCount: 0,
     });
     const rolled = fixtureUuid("ver1302-rollback");
@@ -198,5 +198,35 @@ pgTest("TEST-CNS-1303 pg: V3 deja DECISION_MAKER_CHANNEL_VERIFIED con sequence 1
     }
     const report = await uow.inTenant(T, ({ ledger }) => verifyLedgerChain(ledger, T));
     assert.equal(report.ok, true, JSON.stringify(report));
+  });
+});
+
+pgTest("TEST-CNS-1328 pg: V2r ∥ V3 en dos conexiones se serializan por el lock de fila: o gana V3 (VERIFIED, el reenvio sale por ERR-OT-03) o gana el reenvio (V3 con el codigo viejo sale por ERR-OT-02); nunca ambos (SEC-CNS-021 PR-2)", async (ctx) => {
+  const T = fixtureUuid("t1328");
+  await withEnv(ctx, async ({ outside, otp, count }) => {
+    const sink = otp.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
+    const isDomain = (r: PromiseSettledResult<unknown>, code: string): boolean => r.status === "rejected" && r.reason instanceof DomainError && r.reason.code === code;
+    for (let round = 0; round < 10; round += 1) {
+      const inv = fixtureUuid(`inv1328-${round}`);
+      const ver = fixtureUuid(`ver1328-${round}`);
+      await seedOpenedInvitation(outside, T, inv, fixtureUuid(`s1328-${round}`));
+      await requestOtp(otp, T, ver, inv, CHANNEL);
+      const oldCode = sink.sent[sink.sent.length - 1]!.code;
+      const [resend, verify] = await Promise.allSettled([resendOtp(otp, T, ver), submitOtp(otp, T, ver, oldCode, fixtureUuid("dm-1328"), 2)]);
+      const rec = await outside.otpRepo.findByRef(T, ver);
+      if (verify.status === "fulfilled") {
+        assert.ok(isDomain(resend, "ERR-OT-03"), `ronda ${round}: V3 gano, el reenvio debe salir por ERR-OT-03`);
+        assert.equal(rec?.state, "VERIFIED");
+        assert.equal(await secByVerification(count, T, ver, "OTP_ISSUED"), 1);
+      } else {
+        assert.equal(resend.status, "fulfilled", `ronda ${round}: si V3 falla, el reenvio gano`);
+        assert.ok(isDomain(verify, "ERR-OT-02"), `ronda ${round}: V3 con el codigo reemplazado sale por ERR-OT-02`);
+        assert.equal(rec?.state, "CODE_SENT");
+        assert.equal(rec?.attempts, 1);
+        assert.equal(await secByVerification(count, T, ver, "OTP_ISSUED"), 2);
+        assert.equal(await secByVerification(count, T, ver, "OTP_FAILED"), 1);
+      }
+      assert.equal(await ledgerMovedRows(count, T, ver), 0);
+    }
   });
 });
