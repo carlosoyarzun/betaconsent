@@ -1,4 +1,7 @@
-// Gobierna: CA-124 (PR-D), SEC-CNS-015 P2-E (lock de fila FOR UPDATE + expectedSequence capturado antes del lock) y P2-D
+// SEC-CNS-021 PR-2 (F-1): OTP_ISSUED/FAILED/LOCKED viven en ops.security_event, no en el ledger. En el ledger de un challenge solo queda
+// DECISION_MAKER_CHANNEL_VERIFIED (expectedSequence 0, sequence 1); la valla de concurrencia de OTP es el lock de fila de
+// app.otp_verification (findByRefForUpdate), ya no la secuencia del ledger. Los conteos filtran por tenant y verification_ref propios.
+// Gobierna: CA-124 (PR-D), SEC-CNS-015 P2-E (lock de fila FOR UPDATE; para OTP la base de secuencia ya no aplica, ver arriba) y P2-D
 // (consumo atomico del token de recuperacion), otp-challenge.spec V3, consent-decision.spec C3/C5, rights-case.spec RC2u,
 // revocation.spec R1r. TEST-CNS-845..848: carreras reales entre dos conexiones, varias rondas. El UoW se crea con
 // maxAttempts 1: el reintento ante LedgerSequenceConflictError taparia la falta del FOR UPDATE; con el lock, la
@@ -85,6 +88,10 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
   }
 }
 
+/** Filas de ops.security_event de UN challenge (tenant + verification_ref propios; sin conteos globales). */
+const secCount = (count: (sql: string, values: unknown[]) => Promise<number>, tenant: string, verificationRef: string, type: string): Promise<number> =>
+  count("SELECT count(*)::int AS n FROM ops.security_event WHERE tenant_id = $1 AND verification_ref = $2 AND event_type = $3", [tenant, verificationRef, type]);
+
 const eventCount = (count: (sql: string, values: unknown[]) => Promise<number>, tenant: string, aggregate: string, type: string): Promise<number> =>
   count("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = $3", [tenant, aggregate, type]);
 
@@ -101,7 +108,7 @@ async function seedOpenedInvitation(outside: ReturnType<typeof pgOutsideTxPorts>
   });
 }
 
-pgTest("TEST-CNS-845 pg: OTP verify ∥ verify en dos conexiones: exactamente una verifica (un solo evento, una sola INVITATION_VERIFIED) y la otra falla con ERR-OT-03; sin conflicto de secuencia (FOR UPDATE + base previa)", async (ctx) => {
+pgTest("TEST-CNS-845 pg: OTP verify ∥ verify en dos conexiones: exactamente una verifica (un solo DECISION_MAKER_CHANNEL_VERIFIED con sequence 1, una sola INVITATION_VERIFIED) y la otra falla con ERR-OT-03; sin conflicto de secuencia (valla = FOR UPDATE de app.otp_verification, expectedSequence 0)", async (ctx) => {
   const T = fixtureUuid("t845");
   await withEnv(ctx, async ({ outside, otp, count }) => {
     const sink = otp.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
@@ -117,6 +124,9 @@ pgTest("TEST-CNS-845 pg: OTP verify ∥ verify en dos conexiones: exactamente un
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.state, "VERIFIED");
       assert.equal((await outside.invitationRepo.findByRef(T, inv))?.state, "VERIFIED");
       assert.equal(await eventCount(count, T, ver, "DECISION_MAKER_CHANNEL_VERIFIED"), 1);
+      assert.equal(await count("SELECT max(sequence)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2", [T, ver]), 1, "INV-21-03: sequence 1");
+      assert.equal(await count("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type LIKE 'OTP\\_%'", [T, ver]), 0, "INV-21-02: 0 OTP_* en el ledger");
+      assert.equal(await secCount(count, T, ver, "OTP_ISSUED"), 1, "INV-21-02: exactamente 1 OTP_ISSUED en security_event");
       assert.equal(await eventCount(count, T, inv, "INVITATION_VERIFIED"), 1);
     }
   });
@@ -168,8 +178,9 @@ pgTest("TEST-CNS-849 pg: N submits incorrectos concurrentes sobre el mismo chall
       const rec = await outside.otpRepo.findByRef(T, ver);
       assert.equal(rec?.attempts, N, "ningun intento se pierde");
       assert.equal(rec?.state, "LOCKED");
-      assert.equal(await eventCount(count, T, ver, "OTP_LOCKED"), 1);
-      assert.equal(await eventCount(count, T, ver, "OTP_FAILED"), N - 1);
+      assert.equal(await secCount(count, T, ver, "OTP_LOCKED"), 1);
+      assert.equal(await secCount(count, T, ver, "OTP_FAILED"), N - 1);
+      assert.equal(await eventCount(count, T, ver, "OTP_LOCKED") + await eventCount(count, T, ver, "OTP_FAILED"), 0, "INV-21-02: nada de OTP_* en el ledger");
       // Tras LOCKED, ni el codigo correcto verifica (GRD-OT-04).
       await assert.rejects(() => submitOtp(otp, T, ver, good, fixtureUuid("dm-849"), 2), (e: unknown) => e instanceof DomainError && e.code === "ERR-OT-04");
     }
@@ -228,9 +239,9 @@ pgTest("TEST-CNS-848 pg: dos POST concurrentes con el mismo token de recuperacio
   });
 });
 
-// SEC-CNS-016 P2 (reintentos del UoW): con la base de secuencia capturada ANTES del lock, N submits concurrentes sobre el
-// mismo challenge se pisan entre si; sin espera, los reintentos van en lockstep y se agotan. Con backoff con jitter y el
-// maxAttempts por defecto del UoW, ningun intento incorrecto se pierde ni falla con LedgerSequenceConflictError.
+// SEC-CNS-016 P2 (reintentos del UoW): N submits concurrentes sobre el mismo challenge se serializan por el lock de fila; con el
+// maxAttempts por defecto del UoW ningun intento incorrecto se pierde ni falla con LedgerSequenceConflictError (SEC-CNS-021 PR-2:
+// ya no hay base de secuencia por challenge, pero el contrato observable se conserva).
 pgTest("TEST-CNS-861 pg: 10 submits incorrectos concurrentes sobre el mismo challenge con el maxAttempts por defecto no agotan reintentos: attempts = 10, ninguno falla con conflicto de secuencia", async (ctx) => {
   const T = fixtureUuid("t861");
   await withEnv(ctx, async ({ outside, otp, count }) => {
@@ -247,7 +258,7 @@ pgTest("TEST-CNS-861 pg: 10 submits incorrectos concurrentes sobre el mismo chal
       const codes = results.map((r) => (r.status === "rejected" && r.reason instanceof DomainError ? r.reason.code : `?${r.status === "rejected" ? String(r.reason) : "ok"}`));
       assert.ok(codes.every((c) => c === "ERR-OT-02"), `ronda ${round}: todos rechazados por codigo incorrecto, ninguno por reintentos agotados: ${codes.join(",")}`);
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.attempts, N, "ningun intento se pierde");
-      assert.equal(await eventCount(count, T, ver, "OTP_FAILED"), N);
+      assert.equal(await secCount(count, T, ver, "OTP_FAILED"), N);
     }
   }, DEFAULT_UOW_MAX_ATTEMPTS, { codeLength: 6, maxAttempts: 1000, ttlMs: 60_000, maxResends: 3 });
 });

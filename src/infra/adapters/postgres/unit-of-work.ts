@@ -24,6 +24,7 @@ import type { IdempotencyPolicy } from "../../../server/modules/common/idempoten
 import { createPgEnrollmentRepository, ENROLLMENT_SINGLE_ACTIVE_UNIQUE } from "./enrollment.adapter.ts";
 import { createPgInvitationRepository, INVITATION_SINGLE_NON_TERMINAL_UNIQUE } from "./invitation.adapter.ts";
 import { createPgLedgerAdapter } from "./ledger.adapter.ts";
+import { createPgSecurityEventAdapter } from "./security-event.adapter.ts";
 import { createPgOtpVerificationRepository, OTP_SINGLE_ACTIVE_UNIQUE } from "./otp-verification.adapter.ts";
 import { createPgOutboxAdapter } from "./outbox.adapter.ts";
 import { acquireCleanClient } from "./pool.ts";
@@ -117,6 +118,7 @@ export function createPgTenantTxPorts(tx: TenantTx, idempotencyPolicy?: Idempote
     tenantCatalog: createPgTenantCatalogAdapter(tx),
     idempotency: createPgIdempotencyAdapter(tx, idempotencyPolicy),
     accessLog: createPgAccessLogAdapter(tx),
+    securityEvents: createPgSecurityEventAdapter(tx),
   };
 }
 

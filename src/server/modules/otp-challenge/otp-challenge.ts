@@ -1,5 +1,8 @@
 // Gobierna: specs/state-machines/otp-challenge.spec.yaml (V1 RequestOtp, V3 SubmitOtp
 // correct_code, V2 SubmitOtp wrong_code, V4 LOCKED) y common.spec.yaml (GRD-CM-02, GRD-CM-05).
+// SEC-CNS-021 PR-2 (F-1): OTP_ISSUED/FAILED/LOCKED se escriben en ops.security_event (tx.securityEvents) en la MISMA tx que el estado del
+// challenge; en el ledger solo queda DECISION_MAKER_CHANNEL_VERIFIED (V3, expectedSequence 0). La valla de concurrencia es el lock de fila
+// de app.otp_verification (findByRefForUpdate), ya no la secuencia del ledger.
 // Alcance IT0 de este archivo (subconjunto mínimo, TEST-CNS-483 en adelante): solo scope
 // DECISION (padre = Invitation), sin REVOCATION/MANAGE. No implementa V2r (reenvío), V5
 // (expiración por barrido, solo se evalúa perezosamente al comparar), V6/V6a (presupuesto
@@ -26,10 +29,10 @@ import type { TenantId } from "../common/types.ts";
 import type { OtpChannelPort } from "../../ports/otp-channel.port.ts";
 import type { OtpScope, OtpVerificationRecord, OtpVerificationRepositoryPort } from "../../ports/otp-verification-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { SecurityEventPort } from "../../ports/security-event.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { invitationPortsInTx, markInvitationVerifiedTx } from "../invitation/invitation.ts";
-import { lastLedgerSequence } from "../common/ledger-append.ts";
 
 export interface OtpPolicy {
   /** P-01 (aprobado: 6; approved-parameters.ts): dígitos del código. */
@@ -89,6 +92,10 @@ function generateCode(length: number): string {
 
 type RightsOtpPorts = Omit<OtpChallengePorts, "invitation">;
 
+/** Puertos de UNA tx: los de `RightsOtpPorts` ligados a la unidad + `securityEvents` (ops.security_event). SEC-CNS-021 PR-2 (F-1,
+ * INV-21-02): OTP_ISSUED/FAILED/LOCKED se escriben ahi, en la MISMA tx que el estado del challenge, y no en el ledger. */
+type OtpTxPorts = RightsOtpPorts & { readonly securityEvents: SecurityEventPort };
+
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, `otpRepo`, `ledger` (y la Invitation, si el
  * bag la trae) son los de la tx. Las funciones de este modulo no anidan `inTenant`. Si la unidad se
  * reintenta (carrera de secuencia/UNIQUE), `fn` se reejecuta entera: no debe tener efectos fuera de la tx
@@ -96,21 +103,18 @@ type RightsOtpPorts = Omit<OtpChallengePorts, "invitation">;
 function inTx<P extends RightsOtpPorts & { readonly invitation?: InvitationPorts }, T>(
   ports: P,
   tenantId: TenantId,
-  fn: (txPorts: P) => Promise<T>,
+  fn: (txPorts: P & { readonly securityEvents: SecurityEventPort }) => Promise<T>,
 ): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) =>
     fn({
       ...ports,
       otpRepo: tx.otpRepo,
       ledger: tx.ledger,
+      securityEvents: tx.securityEvents,
       ...(ports.invitation ? { invitation: invitationPortsInTx(ports.invitation, tx) } : {}),
     }),
   );
 }
-
-/** Secuencia vigente del challenge: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P2-E). */
-const verificationSequence = (ports: RightsOtpPorts, tenantId: TenantId, verificationRef: string): Promise<number> =>
-  lastLedgerSequence(ports.ledger, tenantId, verificationRef);
 
 /** Relee el challenge CON lock de fila (SEC-CNS-015 P2-E): solo dentro de la unidad de trabajo. */
 async function requireVerification(ports: RightsOtpPorts, tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord> {
@@ -146,13 +150,15 @@ interface SubmitSpec {
 
 /** Nucleo de V3/V2/V4 en UNA tx con lock de fila y base previa (SEC-CNS-015 P2-E). */
 async function submitCore(
-  ports: RightsOtpPorts,
+  ports: OtpTxPorts,
   tenantId: TenantId,
   verificationRef: string,
   code: string,
   spec: SubmitSpec,
 ): Promise<SubmitOutcome> {
-  const base = await verificationSequence(ports, tenantId, verificationRef);
+  // SEC-CNS-021 PR-2 (valla de concurrencia): la unica fila del ledger de este agregado es DECISION_MAKER_CHANNEL_VERIFIED
+  // (sequence 1, expectedSequence 0). La valla ya no es la secuencia (los OTP_* salieron del ledger) sino el lock de fila de
+  // app.otp_verification (findByRefForUpdate): un V3 concurrente espera, relee VERIFIED y sale por ERR-OT-03 sin llegar al append.
   const found = await requireVerification(ports, tenantId, verificationRef);
   if (spec.expectScope !== null && found.scope !== spec.expectScope) {
     // ERR-OT-05 (OTP_SCOPE_MISUSE): VERIFIED de un scope no sirve para otro.
@@ -181,7 +187,7 @@ async function submitCore(
     const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
     await ports.otpRepo.save(verified);
     await ports.ledger.append({
-      expectedSequence: base,
+      expectedSequence: 0,
       eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
       tenantId,
       aggregateType: "DecisionMakerVerification",
@@ -200,32 +206,13 @@ async function submitCore(
   if (attempts >= ports.policy.maxAttempts) {
     const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
     await ports.otpRepo.save(locked);
-    await ports.ledger.append({
-      expectedSequence: base,
-      eventType: "OTP_LOCKED",
-      tenantId,
-      aggregateType: "DecisionMakerVerification",
-      aggregateId: verificationRef,
-      actorType: "SYSTEM_GUARD",
-      payload: { verificationRef, scope: spec.eventScope },
-      idempotencyKey: `${verificationRef}:locked`,
-    });
+    await ports.securityEvents.record({ tenantId, eventType: "OTP_LOCKED", verificationRef, otpScope: spec.eventScope });
     return { fail: "ERR-OT-04" };
   }
 
   const failed: OtpVerificationRecord = { ...found, attempts, state: "CODE_SENT" };
   await ports.otpRepo.save(failed);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "OTP_FAILED",
-    tenantId,
-    aggregateType: "DecisionMakerVerification",
-    aggregateId: verificationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope: spec.eventScope },
-    idempotencyKey: `${verificationRef}:failed:${attempts}`,
-  });
+  await ports.securityEvents.record({ tenantId, eventType: "OTP_FAILED", verificationRef, otpScope: spec.eventScope });
   return { fail: "ERR-OT-02" };
 }
 
@@ -237,7 +224,7 @@ interface Issued {
 
 /** Crea el challenge (agregado nuevo: expectedSequence 0) dentro de la tx; el envio va fuera. */
 async function issueChallengeTx(
-  ports: RightsOtpPorts,
+  ports: OtpTxPorts,
   tenantId: TenantId,
   verificationRef: string,
   scope: OtpScope,
@@ -259,16 +246,13 @@ async function issueChallengeTx(
     resendCount: 0,
   };
   await ports.otpRepo.save(record);
-  await ports.ledger.append({
-    expectedSequence: 0, // agregado nuevo; la carrera por el padre la resuelve el UNIQUE parcial GRD-OT-08
-    eventType: "OTP_ISSUED",
+  // La carrera por el padre la resuelve el UNIQUE parcial GRD-OT-08 (la tx entera revierte, evento incluido).
+  await ports.securityEvents.record({
     tenantId,
-    aggregateType: "DecisionMakerVerification",
-    aggregateId: verificationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { verificationRef, scope, channelRef: opaqueChannelRef(ports.secret, tenantId, channelRef) },
-    idempotencyKey: `${verificationRef}:issued`,
+    eventType: "OTP_ISSUED",
+    verificationRef,
+    otpScope: scope,
+    channelRef: opaqueChannelRef(ports.secret, tenantId, channelRef),
   });
   return { record, code };
 }
@@ -428,8 +412,7 @@ export async function submitRightsOtp(
 export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord> {
   type ResendOutcome = { readonly ok: { readonly record: OtpVerificationRecord; readonly code: string } } | { readonly fail: DomainErrorCode };
   const outcome = await inTx(ports, tenantId, async (p): Promise<ResendOutcome> => {
-    const base = await verificationSequence(p, tenantId, verificationRef);
-    const found = await requireVerification(p, tenantId, verificationRef);
+    const found = await requireVerification(p, tenantId, verificationRef); // lock de fila: unica valla (SEC-CNS-021 PR-2)
 
     if (found.state === "LOCKED") {
       return { fail: "ERR-OT-04" };
@@ -451,16 +434,12 @@ export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, ve
     const codeHash = hashCode(p.secret, verificationRef, code).toString("hex");
     const resent: OtpVerificationRecord = { ...found, codeHash, resendCount: found.resendCount + 1 };
     await p.otpRepo.save(resent);
-    await p.ledger.append({
-      expectedSequence: base,
-      eventType: "OTP_ISSUED",
+    await p.securityEvents.record({
       tenantId,
-      aggregateType: "DecisionMakerVerification",
-      aggregateId: verificationRef,
-      actorType: "HUMAN",
-      actorRole: "UNVERIFIED_BEARER",
-      payload: { verificationRef, scope: "DECISION", channelRef: opaqueChannelRef(p.secret, tenantId, found.channelRef) },
-      idempotencyKey: `${verificationRef}:resend:${resent.resendCount}`,
+      eventType: "OTP_ISSUED",
+      verificationRef,
+      otpScope: found.scope,
+      channelRef: opaqueChannelRef(p.secret, tenantId, found.channelRef),
     });
     return { ok: { record: resent, code } };
   });

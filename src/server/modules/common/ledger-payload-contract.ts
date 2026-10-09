@@ -2,7 +2,7 @@
 // GRD-RV-19 / ERR-RV-13 (LEDGER_VOCABULARY_VIOLATION), contracts/schemas/ledger-event-payloads.schema.json
 // ("fuente unica de la lista blanca por eventType; additionalProperties=false: un campo fuera de lista o un
 // valor fuera de enum hace fallar el append") y contracts/schemas/security-event-payloads.schema.json
-// (eventos del stream SECURITY que hoy se emiten transitoriamente al ledger).
+// (stream SECURITY: desde SEC-CNS-021 PR-2 / 0030 vive en ops.security_event y el ledger lo rechaza por vocabulario).
 //
 // Valida el payload contra `$defs[eventType]` del contrato real (no una copia) ANTES de cualquier efecto.
 // Fail-closed: un payload fuera del contrato lanza LedgerPayloadViolationError (ERR-RV-13), sin escribir.

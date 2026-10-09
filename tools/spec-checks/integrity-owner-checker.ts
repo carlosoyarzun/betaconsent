@@ -19,6 +19,8 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0026_integrity_owner_role.sql": ["grant-membership"],
   // 0027: transfiere el ledger a integrity_owner (SET LOCAL ROLE integrity_owner para sus DEFAULT PRIVILEGES).
   "db/migrations/0027_ledger_integrity_owner.sql": ["set-role"],
+  // 0030 (SEC-CNS-021 PR-2): redefine la lista blanca de event_type del ledger sin los tipos transitorios del stream SECURITY (DDL sobre integrity.*).
+  "db/migrations/0030_ledger_drop_transitional_security_events.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };

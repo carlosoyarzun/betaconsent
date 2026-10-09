@@ -7,6 +7,7 @@
 //  - Vocabulario DEC-BR-017 §6 (TEST-CNS-967): eventos emitidos en la lista blanca y en `events:` de la spec.
 // SYNTHETIC ONLY.
 
+import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -104,7 +105,8 @@ test("TEST-CNS-966 (INV-10): la expiración nunca produce FAILED en las vías OT
     assert.equal((await env.ports.revocationRepo.findByRef(T, R))?.status, "REQUESTED");
   }
   {
-    const env = makeX6Env({ recoveryTtlMs: 1 });
+    const securityEvents = createInMemorySecurityEventLog();
+    const env = makeX6Env({ recoveryTtlMs: 1, extra: { securityEvents } });
     const D = fixtureUuid("d966-link");
     await env.ports.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: fixtureUuid("chain-966-link") });
     await issueRecoveryLinkBearer(env.ports, T, fixtureUuid("chain-966-link"), D, "REQUESTER_ASKED");
@@ -114,7 +116,8 @@ test("TEST-CNS-966 (INV-10): la expiración nunca produce FAILED en las vías OT
     assert.equal(outcome.kind, "UNIFORM", "ERR-RV-05 uniforme");
     assert.equal(await env.ports.revocationRepo.findOpenByChain(T, fixtureUuid("chain-966-link")), null, "un /r/ expirado no crea Revocation ni emite nada");
     const linkEvents = (await env.ports.ledger.listByAggregate(T, "Revocation", fixtureUuid("chain-966-link"))).map((e) => e.eventType);
-    assert.deepEqual(linkEvents, ["RECOVERY_TOKEN_ISSUED"], "solo la emisión del token; ni REVOCATION_* ni FAILED");
+    assert.deepEqual(linkEvents, [], "SEC-CNS-021 PR-2: ni REVOCATION_* ni FAILED ni RECOVERY_TOKEN_ISSUED en el ledger");
+    assert.deepEqual(securityEvents.listAll(T).map((e) => e.eventType), ["RECOVERY_TOKEN_ISSUED"], "solo la emisión del token, en ops.security_event");
   }
   // Vía caso humano: una Revocation con caseRef abierta no la cierra ningún temporizador (INV-10): no hay
   // función de dominio que escriba FAILED salvo withdrawRevocation (R8); tripwire estático.

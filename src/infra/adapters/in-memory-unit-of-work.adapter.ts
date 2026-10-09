@@ -22,6 +22,7 @@ import type { OutboxPort } from "../../server/ports/outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "../../server/ports/recovery-token.port.ts";
 import type { RevocationRepositoryPort } from "../../server/ports/revocation-repository.port.ts";
 import type { RightsCaseRepositoryPort } from "../../server/ports/rights-case-repository.port.ts";
+import type { SecurityEventPort } from "../../server/ports/security-event.port.ts";
 import type { TenantCatalogPort } from "../../server/ports/tenant-catalog.port.ts";
 import type { IdempotencyPort } from "../../server/ports/idempotency.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-work.port.ts";
@@ -171,6 +172,15 @@ function scopeAccessLog(inner: AccessLogPort, tenant: TenantId): AccessLogPort {
   };
 }
 
+function scopeSecurityEvents(inner: SecurityEventPort, tenant: TenantId): SecurityEventPort {
+  return {
+    record: async (entry) => {
+      if (entry.tenantId !== tenant) throw new TenantScopeViolationError("securityEvents.record");
+      return inner.record(entry);
+    },
+  };
+}
+
 function scopeOutbox(inner: OutboxPort, tenant: TenantId): OutboxPort {
   return {
     enqueue: async (input) => {
@@ -207,6 +217,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     "outbox",
     "idempotency",
     "accessLog",
+    "securityEvents",
   ] as const;
   for (const name of keys) {
     const port: unknown = ports[name];
@@ -233,6 +244,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
         tenantCatalog: scopeTenantCatalog(ports.tenantCatalog, tenantId),
         idempotency: scopeIdempotency(ports.idempotency, tenantId),
         accessLog: scopeAccessLog(ports.accessLog, tenantId),
+        securityEvents: scopeSecurityEvents(ports.securityEvents, tenantId),
       });
     } catch (error) {
       for (let i = journal.length - 1; i >= 0; i--) journal[i]?.();

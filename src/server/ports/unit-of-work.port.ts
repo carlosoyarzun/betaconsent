@@ -17,6 +17,7 @@ import type { LedgerPort } from "./ledger.port.ts";
 import type { OtpVerificationRepositoryPort } from "./otp-verification-repository.port.ts";
 import type { OutboxPort } from "./outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "./recovery-token.port.ts";
+import type { SecurityEventPort } from "./security-event.port.ts";
 import type { RevocationRepositoryPort } from "./revocation-repository.port.ts";
 import type { RightsCaseRepositoryPort } from "./rights-case-repository.port.ts";
 import type { TenantCatalogPort } from "./tenant-catalog.port.ts";
@@ -42,6 +43,9 @@ export interface TenantTxPorts {
   readonly idempotency: IdempotencyPort;
   /** CA-128 (X6): log de acceso del operador en `ops` (append-only, sin PII), no el ledger (INV-RC-04). */
   readonly accessLog: AccessLogPort;
+  /** SEC-CNS-021 PR-2 (F-1, INV-21-02): eventos de seguridad OTP_*, RECOVERY_TOKEN_ISSUED (ops.security_event, fuera del ledger y de
+   * la cadena SHA-256) escritos en la MISMA tx que la transicion que los causa: si la unidad revierte, no queda ninguno. */
+  readonly securityEvents: SecurityEventPort;
 }
 
 export interface UnitOfWorkPort {

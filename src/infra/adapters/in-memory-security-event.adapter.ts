@@ -19,7 +19,10 @@ import {
   type SecurityEventRecord,
 } from "../../server/ports/security-event.port.ts";
 
-export interface InMemorySecurityEventLog extends SecurityEventPort {
+import { JournaledList, TX_JOURNAL, type TxParticipant } from "./in-memory-tx.ts";
+
+// SEC-CNS-021 PR-2 (INV-21-02): participante del UnitOfWork in-memory (journal): un rollback de la unidad deshace tambien el evento.
+export interface InMemorySecurityEventLog extends SecurityEventPort, TxParticipant {
   /** Eventos en orden de insercion. */
   list(tenantId?: string): readonly SecurityEventRecord[];
   /** Todos los eventos (sesion y familia OTP/RECOVERY/MANAGEMENT) en orden de insercion. */
@@ -31,9 +34,13 @@ export interface InMemorySecurityEventLog extends SecurityEventPort {
 }
 
 export function createInMemorySecurityEventLog(): InMemorySecurityEventLog {
-  const records: AnySecurityEventRecord[] = [];
+  const store = new JournaledList<AnySecurityEventRecord>();
+  const records = store.items;
   const log: InMemorySecurityEventLog = {
     failWith: null,
+    [TX_JOURNAL](journal) {
+      store.journal = journal;
+    },
     list: (tenantId) =>
       records.filter((r): r is SecurityEventRecord => !isOtpFamilyEntry(r) && (tenantId === undefined || r.tenantId === tenantId)),
     listAll: (tenantId) => (tenantId === undefined ? [...records] : records.filter((r) => r.tenantId === tenantId)),
@@ -52,10 +59,10 @@ export function createInMemorySecurityEventLog(): InMemorySecurityEventLog {
           environment: "LOCAL",
           dataClass: "SYNTHETIC",
         };
-        records.push(rec);
+        store.push(rec);
         return;
       }
-      records.push({
+      store.push({
         tenantId: entry.tenantId,
         eventType: entry.eventType,
         actorRef: entry.actorRef,

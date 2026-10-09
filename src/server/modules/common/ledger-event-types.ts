@@ -4,7 +4,8 @@
 // specs/state-machines/*.spec.yaml). Subconjunto IT0 de ADR-011 (S4-16).
 //
 // Lista blanca de `event_type` del ledger integrity.audit_event. DEBE coincidir EXACTO con el
-// CHECK `audit_event_event_type_allowlist` vigente (0013, redefinido por 0017_revocation_proposal_withdrawn_event.sql) (test
+// CHECK `audit_event_event_type_allowlist` vigente (0013, redefinido por 0017 y por
+// 0030_ledger_drop_transitional_security_events.sql, que quita los tipos del stream SECURITY: SEC-CNS-021 PR-2, ahora en ops.security_event) (test
 // TEST-CNS-912 lo compara contra pg_get_constraintdef). Agregar un tipo = migracion nueva
 // (nunca editar una mergeada) + esta lista + la spec que lo declara.
 
@@ -24,16 +25,6 @@ export const LEDGER_CONTRACT_EVENT_TYPES = [
 ] as const;
 
 /**
- * TRANSITORIOS: eventos del stream SECURITY (contracts/schemas/security-event-payloads.schema.json) que hoy
- * el dominio emite al ledger. common.spec.yaml:141 declara que ese stream vive en ops.security_event y "no es
- * ledger de consentimiento": al existir esa tabla se migran y se quitan de esta lista (migracion nueva).
- */
-export const LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES = [
-  "OTP_ISSUED", "OTP_FAILED", "OTP_LOCKED", "OTP_EXPIRED", "OTP_BUDGET_EXHAUSTED",
-  "MANAGEMENT_TOKEN_ROTATED", "RECOVERY_TOKEN_ISSUED",
-] as const;
-
-/**
  * Seed sintetico LOCAL (seed.ts, actor FIXTURE). El contrato no los declara: se aceptan solo con
  * actor_type = FIXTURE (CHECK en 0013) y por tanto solo en LOCAL (CHECK de 0002). FINDING: declarar su $def.
  */
@@ -41,7 +32,6 @@ export const LEDGER_LOCAL_SEED_EVENT_TYPES = ["TENANT_SEEDED", "SCHOOL_PARTICIPA
 
 export const LEDGER_EVENT_TYPES = [
   ...LEDGER_CONTRACT_EVENT_TYPES,
-  ...LEDGER_TRANSITIONAL_SECURITY_EVENT_TYPES,
   ...LEDGER_LOCAL_SEED_EVENT_TYPES,
 ] as const;
 
