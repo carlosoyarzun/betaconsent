@@ -1,5 +1,6 @@
 // Gobierna: CA-124 (H09), common.spec.yaml GRD-CM-11 (synthetic_only_environment, ERR-CM-11),
 // ADR-002 §2/§8, SEC-CNS-012 N2-06; TEST-CNS-747 (propuesto TEST-CNS-724 en el diseño).
+// SEC-CNS-021 PR-1 (CA-146 / P-34; INV-21-06): la lista de owners incluye security_event_owner (0028).
 //
 // Chequeo de arranque del rol de runtime (P2 de CI del diseño de CA-124): el servicio NO
 // arranca si el rol de la conexión es superusuario, BYPASSRLS, miembro de un owner, puede
@@ -86,9 +87,9 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 
   const membership = await db.query<{ owner: string; member: boolean }>(
     `SELECT o.rolname AS owner, pg_catalog.pg_has_role(current_user, o.oid, 'MEMBER') AS member
-       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner', 'staff_roster_owner', 'integrity_owner')`,
+       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner', 'staff_roster_owner', 'integrity_owner', 'security_event_owner')`,
   );
-  if (membership.rows.length < 4) failures.push("faltan los roles owner (base sin migrar)");
+  if (membership.rows.length < 5) failures.push("faltan los roles owner (base sin migrar)");
   for (const row of membership.rows) {
     if (row.member) failures.push(`el rol de la conexión es miembro de ${row.owner}`);
   }

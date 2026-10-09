@@ -5,7 +5,15 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkIntegrityOwnerUsage, findUsages, INTEGRITY_OWNER_ALLOWLIST, SCANNED_EXT_RE } from "../../../tools/spec-checks/integrity-owner-checker.ts";
+import {
+  checkIntegrityOwnerUsage,
+  checkSecurityEventOwnerUsage,
+  findSecurityEventOwnerUsages,
+  findUsages,
+  INTEGRITY_OWNER_ALLOWLIST,
+  SCANNED_EXT_RE,
+  SECURITY_EVENT_OWNER_ALLOWLIST,
+} from "../../../tools/spec-checks/integrity-owner-checker.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SKIP_DIRS = new Set(["node_modules", ".git", ".claude", "docs", "design-system", "evidence", "dist", "build", "coverage"]);
@@ -74,4 +82,37 @@ test("TEST-CNS-1237 integrity-owner-check: marca allowlist obsoleta (archivo aus
   const errs = checkIntegrityOwnerUsage(stale);
   assert.equal(errs.length, Object.keys(INTEGRITY_OWNER_ALLOWLIST).length);
   assert.ok(errs.every((e) => e.includes("obsoleta")));
+});
+
+// SEC-CNS-021 PR-1 (CA-146, INV-21-06): el mismo control para security_event_owner (migraciones 0028/0029).
+test("TEST-CNS-1325 security-event-owner-check: solo la allowlist usa SET ROLE security_event_owner o concede su membresia (repo real); detecta usos fuera de ella y no confunde integrity_owner", () => {
+  const files: { path: string; text: string }[] = [];
+  collect(ROOT, files);
+  assert.ok(files.some((f) => f.path === "db/migrations/0029_security_event_otp_family.sql"), "el escaneo debe alcanzar db/migrations");
+  assert.deepEqual(checkSecurityEventOwnerUsage(files), []);
+
+  const variants = [
+    "SET LOCAL ROLE security_event_owner;",
+    "set role security_event_owner;",
+    "SET   SESSION\n  ROLE \"security_event_owner\";",
+    "await c.query(`SET ROLE security_event_owner`);",
+    "SELECT set_config('role', 'security_event_owner', true);",
+  ];
+  for (const v of variants) {
+    const path = v.includes("await") ? "src/infra/x.ts" : "db/migrations/0099_x.sql";
+    const errs = checkSecurityEventOwnerUsage([{ path, text: v }]);
+    assert.ok(errs.some((e) => e.includes(path) && e.includes("set-role")), `no detecto: ${v}`);
+  }
+  assert.ok(findSecurityEventOwnerUsages("db/migrations/0099_x.sql", "GRANT security_event_owner TO app_rw;").some((u) => u.kind === "grant-membership"));
+  // Falsos positivos: GRANT hacia el rol, comentarios, otro rol con prefijo igual, y el rol del ledger.
+  for (const ok of ["GRANT USAGE, CREATE ON SCHEMA ops TO security_event_owner;", "-- SET ROLE security_event_owner;", "SET LOCAL ROLE security_event_owner_x;", "SET LOCAL ROLE integrity_owner;"]) {
+    assert.deepEqual(findSecurityEventOwnerUsages("db/migrations/0099_x.sql", ok), [], `falso positivo: ${ok}`);
+  }
+  // Una migracion nueva con el SET ROLE falla; la allowlist real pasa y una entrada obsoleta se marca.
+  const real = Object.entries(SECURITY_EVENT_OWNER_ALLOWLIST).map(([path, kinds]) => ({ path, text: kinds.map((k) => (k === "set-role" ? "SET LOCAL ROLE security_event_owner;" : "GRANT security_event_owner TO consent_owner;")).join("\n") }));
+  assert.deepEqual(checkSecurityEventOwnerUsage(real), []);
+  assert.equal(checkSecurityEventOwnerUsage([...real, { path: "db/migrations/0099_otra.sql", text: "SET LOCAL ROLE security_event_owner;" }]).filter((e) => e.includes("0099")).length, 1);
+  assert.ok(checkSecurityEventOwnerUsage(real.map((f) => ({ ...f, text: "SELECT 1;" }))).every((e) => e.includes("obsoleta")));
+  // El checker de integrity_owner no se altera por security_event_owner.
+  assert.deepEqual(findUsages("db/migrations/0099_x.sql", "SET LOCAL ROLE security_event_owner;"), []);
 });

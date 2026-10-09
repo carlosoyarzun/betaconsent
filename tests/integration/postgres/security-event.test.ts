@@ -21,13 +21,15 @@ const SESSION_REF = fixtureUuid("sr-1191");
 const CASE_REF = fixtureUuid("case-1191");
 
 const EVENT_COLUMNS = ["tenant_id", "event_type", "actor_ref", "actor_role", "session_kind", "session_ref", "case_ref"];
+// 0029 (SEC-CNS-021 PR-1): columnas de la familia OTP / RECOVERY / MANAGEMENT.
+const OTP_FAMILY_COLUMNS = ["verification_ref", "otp_scope", "scope_class", "channel_ref", "key_kind", "window_kind", "chain_ref", "recovery_ref", "trigger_kind"];
 
 pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSERT por tenant, grants exactos por columna (sin SELECT para app_rw), nada para worker/platform_rw y triggers ENABLE ALWAYS", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const rel = (await admin.query<{ rls: boolean; force: boolean; owner: string }>(
     "SELECT relrowsecurity AS rls, relforcerowsecurity AS force, pg_get_userbyid(relowner) AS owner FROM pg_class WHERE oid = 'ops.security_event'::regclass",
   )).rows[0];
-  assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" });
+  assert.deepEqual(rel, { rls: true, force: true, owner: "security_event_owner" }); // 0029 (SEC-CNS-021 PR-1, INV-21-06)
 
   const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
     "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'ops' AND tablename = 'security_event'",
@@ -51,13 +53,13 @@ pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSE
     `SELECT a.attname FROM pg_attribute a WHERE a.attrelid = 'ops.security_event'::regclass AND a.attnum > 0 AND NOT a.attisdropped
         AND has_column_privilege('app_rw', a.attrelid, a.attnum, 'INSERT') ORDER BY a.attname`,
   )).rows.map((r) => r.attname);
-  assert.deepEqual(insertable, [...EVENT_COLUMNS].sort(), "app_rw solo inserta las columnas de refs; la base fija id, seq, version, instante, entorno y clase");
+  assert.deepEqual(insertable, [...EVENT_COLUMNS, ...OTP_FAMILY_COLUMNS].sort(), "app_rw solo inserta las columnas de refs; la base fija id, seq, version, instante, entorno y clase");
 
   // Cero PII por construccion: ninguna columna de sid, hash, cookie, csrf, ip, user-agent, correo, nombre o texto libre.
   const columns = (await admin.query<{ attname: string }>(
     "SELECT attname FROM pg_attribute WHERE attrelid = 'ops.security_event'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attname",
   )).rows.map((r) => r.attname);
-  assert.deepEqual(columns, ["actor_ref", "actor_role", "case_ref", "data_class", "environment", "event_id", "event_seq", "event_type", "occurred_at", "schema_version", "session_kind", "session_ref", "tenant_id"]);
+  assert.deepEqual(columns, ["actor_ref", "actor_role", "case_ref", "chain_ref", "channel_ref", "data_class", "environment", "event_id", "event_seq", "event_type", "key_kind", "occurred_at", "otp_scope", "recovery_ref", "schema_version", "scope_class", "session_kind", "session_ref", "tenant_id", "trigger_kind", "verification_ref", "window_kind"]);
   assert.ok(!columns.some((c) => /sid|hash|cookie|csrf|ip|agent|mail|name|rut|detail|message|payload/.test(c)));
 
   const triggers = (await admin.query<{ tgname: string; tgenabled: string }>(
@@ -105,15 +107,17 @@ pgTest("TEST-CNS-1190 pg: ops.security_event es append-only tambien para el supe
 
 pgTest("TEST-CNS-1191 pg: CHECK de enum de tipo, forma por familia (STAFF/CASE/rotacion), refs sin PII y columnas que fija la base; los CHECK de las tablas de sesion equivalen a los de security_event (INV-SE-06)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
-  const expectFail = async (label: string, over: Partial<typeof baseRow>, constraint: string): Promise<void> => {
+  const expectFail = async (label: string, over: Partial<typeof baseRow>, constraint: string | string[]): Promise<void> => {
+    const accepted = Array.isArray(constraint) ? constraint : [constraint];
     await admin.query("BEGIN");
     try {
-      await assert.rejects(() => insertEvent(admin, over), (e: unknown) => codeOf(e) === "23514" && constraintOf(e) === constraint, label);
+      await assert.rejects(() => insertEvent(admin, over), (e: unknown) => codeOf(e) === "23514" && accepted.includes(constraintOf(e) ?? ""), label);
     } finally {
       await admin.query("ROLLBACK");
     }
   };
-  await expectFail("tipo fuera del enum (OTP_* sigue transitorio en el ledger)", { event_type: "OTP_ISSUED" }, "security_event_type_enum");
+  await expectFail("tipo fuera del enum", { event_type: "OTP_REVEALED" }, ["security_event_otp_shape", "security_event_type_enum"]); // dos CHECK violables: orden no garantizado
+  await expectFail("OTP_ISSUED con columnas de sesion y sin refs OTP (0029: la forma por familia la cubre TEST-CNS-1305)", { event_type: "OTP_ISSUED" }, "security_event_otp_shape");
   await expectFail("STAFF con case_ref", { case_ref: CASE_REF }, "security_event_session_shape");
   await expectFail("STAFF con session_kind CASE", { session_kind: "CASE" }, "security_event_session_shape");
   await expectFail("sin actor", { actor_ref: null as unknown as string }, "security_event_session_shape");

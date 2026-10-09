@@ -11,7 +11,8 @@
     "revocation.spec.yaml RECOVERY_TOKEN_ISSUED",
     "DEC-BR-017 §6 (fuera del ledger)",
     "ADR-002 §3",
-    "CA-141 (Carlos, 2026-10-06): eventos de sesion STAFF/CASE en ops.security_event (migracion 0025); NO son transitorios del ledger"
+    "CA-141 (Carlos, 2026-10-06): eventos de sesion STAFF/CASE en ops.security_event (migracion 0025); NO son transitorios del ledger",
+    "SEC-CNS-021 PR-1 (CA-146 / P-34, Carlos 2026-10-08): ops.security_event (migracion 0029) admite ya la familia OTP_*/RECOVERY_TOKEN_ISSUED/MANAGEMENT_TOKEN_ROTATED; hasta SEC-CNS-021 PR-2 siguen siendo transitorios del ledger (x-ops-only no cambia)"
   ],
   "$defs": {
     "OTP_ISSUED": {

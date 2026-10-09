@@ -10,7 +10,8 @@ import { pgTest } from "./harness.ts";
 import type { PgRole } from "./harness.ts";
 
 const RUNTIME_ROLES: PgRole[] = ["app_rw", "worker", "platform_rw"];
-const OWNERS = ["consent_owner", "tenant_resolve_owner", "integrity_owner"];
+// SEC-CNS-021 PR-1 (INV-21-06): security_event_owner (0028) es owner NOLOGIN y ningun rol de runtime es miembro.
+const OWNERS = ["consent_owner", "tenant_resolve_owner", "integrity_owner", "security_event_owner"];
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
 pgTest("TEST-CNS-744 pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, fuera de los owners y sin session_replication_role", async (ctx) => {
@@ -22,7 +23,7 @@ pgTest("TEST-CNS-744 pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, 
        FROM pg_roles WHERE rolname = ANY($1)`,
     [[...RUNTIME_ROLES, "consent_migrator", ...OWNERS]],
   )).rows;
-  assert.equal(roles.length, 7);
+  assert.equal(roles.length, 8);
   for (const r of roles) {
     assert.equal(r.rolsuper, false, `${r.rolname} superusuario`);
     assert.equal(r.rolbypassrls, false, `${r.rolname} BYPASSRLS`);

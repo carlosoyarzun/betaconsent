@@ -27,12 +27,12 @@ test("TEST-CNS-749 parseMigration valida nombre, alcance y calcula sha256", () =
   assert.throws(() => parseMigration("0008_x.sql", "-- scope: superuser\n"), /scope/);
 });
 
-test("TEST-CNS-749 las migraciones del repo: 0000, 0004, 0018 y 0026 son cluster, el resto database, versiones únicas y ordenadas", () => {
+test("TEST-CNS-749 las migraciones del repo: 0000, 0004, 0018, 0026 y 0028 son cluster, el resto database, versiones únicas y ordenadas", () => {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   assert.equal(migrations[0]?.version, "0000");
   assert.equal(migrations[0]?.scope, "cluster");
-  // Solo 0000 (roles), 0004 (outbox_claimer), 0018 (roles del roster, API-CNS-116) y 0026 (integrity_owner, X8) son de alcance cluster; el resto, database.
-  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004", "0018", "0026"]);
+  // Solo 0000 (roles), 0004 (outbox_claimer), 0018 (roles del roster, API-CNS-116), 0026 (integrity_owner, X8) y 0028 (security_event_owner, SEC-CNS-021) son de alcance cluster; el resto, database.
+  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004", "0018", "0026", "0028"]);
   const versions = migrations.map((m) => m.version);
   assert.deepEqual(versions, [...versions].sort());
   assert.equal(new Set(versions).size, versions.length);
