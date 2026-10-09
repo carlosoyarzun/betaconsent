@@ -38,7 +38,7 @@ pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSE
   const appRwPolicies = policies.filter((p) => p.roles.includes("app_rw"));
   assert.deepEqual(appRwPolicies.map((p) => p.cmd), ["INSERT"], "D-5: app_rw sin policy SELECT/UPDATE/DELETE");
   assert.match(appRwPolicies[0]!.with_check ?? "", /app\.current_tenant_id\(\)/);
-  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]]]);
+  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]], ["UPDATE", ["security_event_owner"]]]);
 
   for (const role of ["app_rw", "worker", "platform_rw"]) {
     for (const privilege of ["SELECT", "UPDATE"]) {

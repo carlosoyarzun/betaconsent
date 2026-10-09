@@ -192,7 +192,7 @@ pgTest("TEST-CNS-1306 pg: app_rw inserta la familia OTP/RECOVERY/MANAGEMENT solo
   const appRwPolicies = policies.filter((p) => p.roles.includes("app_rw"));
   assert.deepEqual(appRwPolicies.map((p) => [p.polname, p.cmd, p.roles]), [["security_event_app_rw_insert", "INSERT", ["app_rw"]]]);
   assert.match(appRwPolicies[0]!.with_check ?? "", /app\.current_tenant_id\(\)/);
-  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]]]);
+  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]], ["UPDATE", ["security_event_owner"]]]);
   const insertable = (await admin.query<{ attname: string }>(
     `SELECT a.attname FROM pg_attribute a WHERE a.attrelid = 'ops.security_event'::regclass AND a.attnum > 0 AND NOT a.attisdropped
         AND has_column_privilege('app_rw', a.attrelid, a.attnum, 'INSERT') ORDER BY a.attname`,
@@ -303,14 +303,15 @@ pgTest("TEST-CNS-1326 pg: como consent_owner -> SET ROLE security_event_owner, T
   const mine = row("OTP_ISSUED", { tenant_id: fixtureUuid("t-1326"), verification_ref: fixtureUuid("v-1326"), otp_scope: "DECISION", channel_ref: fixtureUuid("ch-1326") });
   await insert(admin, mine);
   const migrator = await ctx.connectAs("consent_migrator");
-  // UPDATE: sin policy de UPDATE (FORCE RLS) no toca filas. DELETE (0031, PR-3): la fila es reciente (no vencida) y el dueno no ve filas no vencidas
-  // (policy SELECT acotada): 0 filas; y aunque la viera, el trigger exige ops.purge_p34. La purga real la cubre TEST-CNS-1308/1309.
-  for (const [sql, expectRows] of [["UPDATE ops.security_event SET otp_scope = 'MANAGE'", 0], ["DELETE FROM ops.security_event", 0]] as const) {
+  // UPDATE (0031, P2-B): la policy USING (true) del dueno hace que llegue al trigger y falle con error (23000), no 0 filas. DELETE: la fila es reciente
+  // (no vencida) y el dueno no la ve (policy SELECT acotada): 0 filas; aunque la viera, el trigger exige ops.purge_p34 (TEST-CNS-1308/1309).
+  for (const [sql, expectRows] of [["UPDATE ops.security_event SET otp_scope = 'MANAGE'", "error"], ["DELETE FROM ops.security_event", 0]] as const) {
     await migrator.query("BEGIN");
     try {
       await migrator.query("SET LOCAL ROLE consent_owner");
       await migrator.query("SET LOCAL ROLE security_event_owner");
-      assert.equal((await migrator.query(sql)).rowCount, expectRows, sql);
+      if (expectRows === "error") await assert.rejects(() => migrator.query(sql), (e: unknown) => codeOf(e) === "23000", sql);
+      else assert.equal((await migrator.query(sql)).rowCount, expectRows, sql);
     } finally {
       await migrator.query("ROLLBACK");
     }

@@ -70,8 +70,9 @@ test("TEST-CNS-1312 el nucleo del CLI purga purge_run primero, llama ops.purge_p
 
 // --- TEST-CNS-1323 ---------------------------------------------------------------------------------------------------------------------------
 
-function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error"): FakeClient {
+function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error", purgeExecRow?: { app_rw: boolean; platform_rw: boolean }): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("to_regprocedure")) return purgeExecRow === undefined ? { rows: [{ app_rw: false, platform_rw: false }] } : { rows: [purgeExecRow] };
     if (text.includes("ops.retention_status")) return status === "error" ? new Error("boom") : { rows: status };
     if (text.includes("FROM pg_catalog.pg_auth_members")) return { rows: [{ inherit_option: false, set_option: true }] };
     if (text.includes("has_table_privilege('staff_roster_reader', c.oid")) return { rows: [] };
@@ -126,4 +127,11 @@ test("TEST-CNS-1323 senal retention_purge_stale: sin corrida o con corrida de 26
   assert.equal((await checkRetentionPurgeFreshness(healthyDb([]))).ok, false);
   // La senal no lleva etiquetas de tenant: solo nombres de store.
   assert.ok(mixed.stale.every((s) => /^[a-z_]+$/.test(s)));
+});
+
+test("TEST-CNS-1323 el arranque falla si app_rw o platform_rw pueden ejecutar ops.purge_p34 (solo worker)", async () => {
+  for (const row of [{ app_rw: true, platform_rw: false }, { app_rw: false, platform_rw: true }]) {
+    const r = await runStartupChecks(healthyDb(policy(null), row), { expectedEnvironment: "STAGING", expectedRole: "app_rw", retention: cfg });
+    assert.ok(r.failures.some((f) => /ejecutar ops\.purge_p34/.test(f)), r.failures.join("|"));
+  }
 });

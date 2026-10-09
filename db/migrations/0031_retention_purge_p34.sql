@@ -15,7 +15,11 @@
 -- 3. ops.security_event_guard(): reemplaza a ops.security_event_immutable() en el trigger de UPDATE/DELETE de ops.security_event (mismo nombre de
 --    trigger). UPDATE siempre falla. DELETE solo pasa si lo ejecuta security_event_owner (current_user) dentro de ops.purge_p34 (bandera
 --    ops.purge_active) Y la fila esta vencida segun la politica. Un superusuario o consent_owner que borra directamente: error. Residual R-21-2
---    (aceptado IT0b): quien pueda SET ROLE security_event_owner y fijar la bandera a mano borra, pero SOLO filas ya vencidas y sin dejar purge_run.
+--    (aceptado SOLO para IT0b sintetico; pasa a P1 antes de datos reales; se cierra con ADR-010 PR-7: event trigger, membresia SET fuera de la
+--    ceremonia y auditoria de sesiones): quien pueda SET ROLE security_event_owner PUEDE BORRAR SIN DEJAR RASTRO: DISABLE TRIGGER, NO FORCE ROW
+--    LEVEL SECURITY, DROP POLICY o DROP TABLE sobre security_event / retention_policy / purge_run; bajar la retencion (y con ello borrar OTP activos,
+--    incluido el estado de lockout de app.otp_verification); o borrar otp_verification vencidas sin purge_run. Pueden hacer ese SET ROLE consent_owner
+--    y, por transitividad, consent_migrator y los superusuarios; NINGUN rol de runtime (app_rw, worker, platform_rw) puede.
 --    TRUNCATE sigue prohibido (trigger BEFORE STATEMENT ENABLE ALWAYS).
 -- 4. ops.purge_p34(store, esperado) SECURITY DEFINER (dueno security_event_owner): verifica que la politica coincide con lo esperado, borra solo
 --    lo vencido, verifica la post-condicion (0 vencidas restantes, borradas = elegibles) e inserta purge_run en la misma tx. EXECUTE solo worker.
@@ -67,6 +71,9 @@ ALTER TABLE ops.retention_policy ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ops.retention_policy FORCE ROW LEVEL SECURITY;
 CREATE POLICY retention_policy_owner_select ON ops.retention_policy FOR SELECT TO security_event_owner USING (true);
 CREATE POLICY retention_policy_owner_insert ON ops.retention_policy FOR INSERT TO security_event_owner WITH CHECK (true);
+-- UPDATE/DELETE con USING (true): el intento llega al trigger y falla con error (no devuelve 0 filas en silencio).
+CREATE POLICY retention_policy_owner_update ON ops.retention_policy FOR UPDATE TO security_event_owner USING (true);
+CREATE POLICY retention_policy_owner_delete ON ops.retention_policy FOR DELETE TO security_event_owner USING (true);
 REVOKE ALL ON ops.retention_policy FROM PUBLIC;
 
 -- PLACEHOLDER P-34 (Carlos, 2026-10-08): 30 dias. LD-15 abierta. otp_budget lo agrega SEC-CNS-021 PR-4.
@@ -151,6 +158,7 @@ ALTER TABLE ops.purge_run ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ops.purge_run FORCE ROW LEVEL SECURITY;
 CREATE POLICY purge_run_owner_select ON ops.purge_run FOR SELECT TO security_event_owner USING (true);
 CREATE POLICY purge_run_owner_insert ON ops.purge_run FOR INSERT TO security_event_owner WITH CHECK (true);
+CREATE POLICY purge_run_owner_update ON ops.purge_run FOR UPDATE TO security_event_owner USING (true);
 CREATE POLICY purge_run_purge_delete ON ops.purge_run FOR DELETE TO security_event_owner
   USING (finished_at < pg_catalog.now() - (SELECT p.retention FROM ops.retention_policy p WHERE p.store = 'purge_run'));
 REVOKE ALL ON ops.purge_run FROM PUBLIC;
@@ -160,12 +168,15 @@ CREATE POLICY security_event_purge_select ON ops.security_event FOR SELECT TO se
   USING (occurred_at < pg_catalog.now() - (SELECT p.retention FROM ops.retention_policy p WHERE p.store = 'security_event'));
 CREATE POLICY security_event_purge_delete ON ops.security_event FOR DELETE TO security_event_owner
   USING (occurred_at < pg_catalog.now() - (SELECT p.retention FROM ops.retention_policy p WHERE p.store = 'security_event'));
+-- UPDATE con USING (true): el UPDATE del dueno llega al trigger y falla con error (no 0 filas en silencio).
+CREATE POLICY security_event_owner_update ON ops.security_event FOR UPDATE TO security_event_owner USING (true);
 
 -- Purga verificable (INV-21-07/08/09). Fail-closed: cualquier discrepancia aborta la tx completa (no se borra nada).
 CREATE FUNCTION ops.purge_p34(p_store text, p_expected interval) RETURNS uuid
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
+  SET "TimeZone" = 'UTC'
   AS $$
 DECLARE
   v_run       uuid        := pg_catalog.gen_random_uuid();
@@ -175,6 +186,8 @@ DECLARE
   v_rows      jsonb;
   v_remaining bigint;
 BEGIN
+  -- Serializa corridas concurrentes (cualquier store) con una clave constante: 7240131 (SEC-CNS-021 PR-3; distinta de 7240124/7240125 del runner/harness).
+  PERFORM pg_catalog.pg_advisory_xact_lock(7240131);
   IF p_store IS NULL OR p_expected IS NULL THEN
     RAISE EXCEPTION 'purge_p34: store y retencion esperada son obligatorios' USING ERRCODE = 'invalid_parameter_value';
   END IF;
@@ -341,6 +354,7 @@ BEGIN
             WHERE n.nspname = 'ops' AND p.proname IN ('purge_p34', 'purge_run_summary', 'retention_status', 'security_event_guard', 'append_only_guard') LOOP
     IF t.owner <> 'security_event_owner' THEN RAISE EXCEPTION 'ops.%() no pertenece a security_event_owner', t.proname; END IF;
     IF t.proconfig IS NULL OR NOT (t.proconfig @> ARRAY['search_path=pg_catalog, pg_temp']) THEN RAISE EXCEPTION 'ops.%() sin search_path fijo', t.proname; END IF;
+    IF t.proname = 'purge_p34' AND NOT (t.proconfig @> ARRAY['TimeZone=UTC']) THEN RAISE EXCEPTION 'ops.purge_p34() sin TimeZone=UTC'; END IF;
     IF (t.proname IN ('purge_p34', 'purge_run_summary', 'retention_status')) <> t.prosecdef THEN RAISE EXCEPTION 'ops.%(): SECURITY DEFINER inesperado', t.proname; END IF;
     IF pg_catalog.has_function_privilege('public', t.oid, 'EXECUTE') THEN RAISE EXCEPTION 'PUBLIC puede ejecutar ops.%()', t.proname; END IF;
     IF t.proname IN ('purge_p34', 'purge_run_summary') AND NOT (pg_catalog.has_function_privilege('worker', t.oid, 'EXECUTE')
@@ -372,9 +386,33 @@ BEGIN
                     AND pg_catalog.pg_get_userbyid(c.relowner) = 'security_event_owner') THEN
     RAISE EXCEPTION 'ops.security_event perdio ENABLE/FORCE ROW LEVEL SECURITY o su dueno';
   END IF;
-  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'ops' AND c.relname = 'security_event') <> 3 THEN
-    RAISE EXCEPTION 'ops.security_event debe tener exactamente 3 policies';
+  -- Policies de security_event: nombre, comando y roles exactos (no solo el conteo). polcmd: a=INSERT, r=SELECT, w=UPDATE, d=DELETE.
+  IF (SELECT pg_catalog.string_agg(p.polname::pg_catalog.text || ':' || p.polcmd::pg_catalog.text || ':' || (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(x), ',' ORDER BY pg_catalog.pg_get_userbyid(x)) FROM pg_catalog.unnest(p.polroles) AS x), ' ' ORDER BY p.polname)
+        FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'ops' AND c.relname = 'security_event')
+     IS DISTINCT FROM 'security_event_app_rw_insert:a:app_rw security_event_owner_update:w:security_event_owner security_event_purge_delete:d:security_event_owner security_event_purge_select:r:security_event_owner' THEN
+    RAISE EXCEPTION 'las policies de ops.security_event no son exactamente las declaradas (rol y comando)';
+  END IF;
+  -- Policies de app.otp_verification para security_event_owner: solo SELECT y DELETE.
+  IF (SELECT pg_catalog.string_agg(p.polname::pg_catalog.text || ':' || p.polcmd::pg_catalog.text, ' ' ORDER BY p.polname)
+        FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'app' AND c.relname = 'otp_verification'
+         AND (SELECT pg_catalog.bool_or(pg_catalog.pg_get_userbyid(x) = 'security_event_owner') FROM pg_catalog.unnest(p.polroles) AS x))
+     IS DISTINCT FROM 'otp_verification_purge_delete:d otp_verification_purge_select:r' THEN
+    RAISE EXCEPTION 'las policies de security_event_owner sobre app.otp_verification no son exactamente SELECT y DELETE';
+  END IF;
+  -- consent_owner es el unico miembro de security_event_owner.
+  IF (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(m.member), ',' ORDER BY pg_catalog.pg_get_userbyid(m.member))
+        FROM pg_catalog.pg_auth_members m WHERE m.roleid = (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = 'security_event_owner'))
+     IS DISTINCT FROM 'consent_owner' THEN
+    RAISE EXCEPTION 'consent_owner debe ser el unico miembro de security_event_owner';
+  END IF;
+  -- security_event_owner no tiene SELECT en ninguna columna de app.otp_verification salvo tenant_id y expires_at.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = (SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'app' AND c.relname = 'otp_verification')
+                AND a.attnum > 0 AND NOT a.attisdropped AND a.attname NOT IN ('tenant_id', 'expires_at')
+                AND pg_catalog.has_column_privilege('security_event_owner', a.attrelid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES')) THEN
+    RAISE EXCEPTION 'security_event_owner tiene privilegios sobre columnas de app.otp_verification distintas de tenant_id y expires_at';
   END IF;
   IF pg_catalog.has_any_column_privilege('app_rw', 'ops.security_event', 'SELECT,UPDATE')
      OR pg_catalog.has_table_privilege('app_rw', 'ops.security_event', 'DELETE,TRUNCATE,REFERENCES,TRIGGER')

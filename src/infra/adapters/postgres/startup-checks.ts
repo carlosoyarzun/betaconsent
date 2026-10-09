@@ -133,8 +133,23 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   }
 
   await checkRetentionConfig(db, options, failures);
+  await checkPurgeExecuteIsolation(db, failures);
 
   return { ok: failures.length === 0, failures };
+}
+
+/** SEC-CNS-021 PR-3 (P2-F): solo worker puede ejecutar ops.purge_p34; app_rw y platform_rw no. Fail-closed si no se puede verificar. */
+async function checkPurgeExecuteIsolation(db: Queryable, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ app_rw: boolean | null; platform_rw: boolean | null }>(
+      `SELECT pg_catalog.has_function_privilege('app_rw', pg_catalog.to_regprocedure('ops.purge_p34(text, interval)'), 'EXECUTE') AS app_rw,
+              pg_catalog.has_function_privilege('platform_rw', pg_catalog.to_regprocedure('ops.purge_p34(text, interval)'), 'EXECUTE') AS platform_rw`,
+    );
+    const row = r.rows[0];
+    if (row !== undefined && (row.app_rw === true || row.platform_rw === true)) failures.push("app_rw o platform_rw pueden ejecutar ops.purge_p34 (solo worker, P-34)");
+  } catch {
+    failures.push("no se pudo verificar el EXECUTE de ops.purge_p34");
+  }
 }
 
 /** Etiqueta de la senal de purga atrasada (sin etiquetas de tenant). */

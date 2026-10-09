@@ -74,12 +74,12 @@ pgTest("TEST-CNS-1308 pg: DELETE/UPDATE/TRUNCATE directos sobre ops.security_eve
       }
     }
   }
-  // UPDATE como security_event_owner: no hay policy de UPDATE, no toca ninguna fila.
+  // UPDATE como security_event_owner: la policy USING (true) lo lleva al trigger, que falla con error (no 0 filas; P2-B).
   await migrator.query("BEGIN");
   try {
     await migrator.query("SET LOCAL ROLE consent_owner");
     await migrator.query("SET LOCAL ROLE security_event_owner");
-    assert.equal((await migrator.query("UPDATE ops.security_event SET otp_scope = 'MANAGE'")).rowCount, 0);
+    await assert.rejects(() => migrator.query("UPDATE ops.security_event SET otp_scope = 'MANAGE'"), (e: unknown) => codeOf(e) === "23000");
   } finally {
     await migrator.query("ROLLBACK");
   }
@@ -203,6 +203,17 @@ pgTest("TEST-CNS-1311 pg: ops.purge_p34 aborta (22023) si la retencion esperada 
     await assert.rejects(() => admin.query(sql), (e: unknown) => codeOf(e) === "23000", sql);
   }
   const migrator = await ctx.connectAs("consent_migrator");
+  // Como security_event_owner (SET ROLE) UPDATE/DELETE de retention_policy y UPDATE de purge_run llegan al trigger y fallan con error (P2-B).
+  for (const sql of ["UPDATE ops.retention_policy SET retention = interval '2 days'", "DELETE FROM ops.retention_policy", "UPDATE ops.purge_run SET deleted_count = deleted_count"]) {
+    await migrator.query("BEGIN");
+    try {
+      await migrator.query("SET LOCAL ROLE consent_owner");
+      await migrator.query("SET LOCAL ROLE security_event_owner");
+      await assert.rejects(() => migrator.query(sql), (e: unknown) => codeOf(e) === "23000", sql);
+    } finally {
+      await migrator.query("ROLLBACK");
+    }
+  }
   await migrator.query("BEGIN");
   try {
     await migrator.query("SET LOCAL ROLE consent_owner");
@@ -229,6 +240,7 @@ pgTest("TEST-CNS-1311 pg: ops.purge_p34 aborta (22023) si la retencion esperada 
   for (const f of fns) {
     assert.equal(f.owner, "security_event_owner", f.proname);
     assert.ok(f.cfg.includes("search_path=pg_catalog, pg_temp"), f.proname);
+    if (f.proname === "purge_p34") assert.ok(f.cfg.includes("TimeZone=UTC"), "purge_p34 fija TimeZone=UTC (P2-D)");
   }
 });
 
@@ -313,6 +325,23 @@ pgTest("TEST-CNS-1322 pg: la purga de app.otp_verification borra solo filas con 
       await migrator.query("ROLLBACK");
     }
   }
+  // P2-F: DELETE directo como security_event_owner (SET ROLE) sobre otp_verification solo alcanza filas vencidas (policy), no los challenges activos/recientes.
+  await insertOtp("old-direct", "p-old3", "EXPIRED", `now() - interval '${DAYS + 3} days'`);
+  await migrator.query("BEGIN");
+  try {
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query("SET LOCAL ROLE security_event_owner");
+    const del = await migrator.query("DELETE FROM app.otp_verification RETURNING tenant_id");
+    assert.ok(del.rows.length >= 1 && del.rows.every((r) => typeof (r as { tenant_id?: unknown }).tenant_id === "string"));
+    await migrator.query("COMMIT");
+  } catch (e) {
+    await migrator.query("ROLLBACK");
+    throw e;
+  }
+  const afterDirect = (await admin.query<{ verification_ref: string }>("SELECT verification_ref FROM app.otp_verification WHERE tenant_id = $1 ORDER BY verification_ref", [t])).rows.map((r) => r.verification_ref);
+  assert.deepEqual(afterDirect, ["active", "recent"], "el DELETE directo solo borro vencidas");
+  assert.equal(await countAt(admin, "SELECT count(*) AS n FROM app.otp_verification WHERE expires_at < now() - make_interval(days => $1)", [DAYS]), 0);
+
   // Las columnas y policies de runtime no cambiaron: app_rw sigue sin DELETE.
   await assert.rejects(async () => (await ctx.connectAs("app_rw")).query("DELETE FROM app.otp_verification"), (e: unknown) => codeOf(e) === "42501");
 });
