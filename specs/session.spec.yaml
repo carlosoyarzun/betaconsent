@@ -238,7 +238,7 @@ guards:
       La rotacion corre en DOS tx: tx1 en el tenant de la cookie previa (que puede ser otro colegio) con revoke + ROTATION; tx2 con create + LOGIN. SESSION_REVOKED_BY_ROTATION sin un LOGIN posterior significa "revocada por un intento de login" (si tx2 falla, el navegador queda sin sesion; fail-closed).
       FAIL-CLOSED (D-3): si no se puede escribir el evento se revierte TODO: login -> 503 sin sesion ni Set-Cookie; logout -> 503, revoked_at sigue NULL, sin Set-Cookie ni borrado de cookies; la UI muestra "No se pudo cerrar sesion, reintenta" y nunca exito. API-CNS-192, API-CNS-193 y los dev-login mapean SecurityEventWriteError a 503 (ERR-CM-12 GUARD_EVALUATOR_UNAVAILABLE), nunca al 500 global.
       Senal de log (NO es una metrica ni un contador real) `security_event_write_failed name=<Error.name> code=<SQLSTATE opcional>` (sin etiquetas de tenant/principal/sesion; el repo no tiene infraestructura de metricas: sigue el patron de log de `*_purge_failed`; contar ocurrencias es tarea de la observabilidad).
-      El runtime (app_rw) solo INSERTA (D-5): sin SELECT ni policy SELECT. Retencion: SECURITY_EVENT_RETENTION = PENDING - Carlos (LEGAL DECISION LD-15); IT0 sintetico sin purga (D-1).
+      El runtime (app_rw) solo INSERTA (D-5): sin SELECT ni policy SELECT. Retencion: SECURITY_EVENT_RETENTION = CNS_RETENTION_SECURITY_EVENT_DAYS (0031, SEC-CNS-021 PR-3); valor 30 dias es PLACEHOLDER, LD-15 abierta (LEGAL DECISION); la purga solo ocurre via ops.purge_p34 y queda en ops.purge_run.
       SECURITY_EVENT_RETENTION implementa P-34 (SEC-CNS-006) para security_event; placeholder 30 dias (LD-15 abierta). 'Sin purga en IT0' aplica solo mientras la DB se recrea; purga verificable obligatoria antes de STAGING (Carlos, 2026-10-08, F-LD-01).
     onFail: ERR-SE-04
     governedBy: ["CA-141", "common.spec streams.SECURITY", "API-CNS-184", "INV-CM-01", "INV-CM-02", "LD-15"]
@@ -293,7 +293,7 @@ residuals:
     acceptedFor: "IT0 sintetico"
     status: "ACEPTADO (Carlos, 2026-10-06); revisar antes de APR-IDP"
   - id: R-SE-06
-    statement: "Retencion de ops.security_event: SECURITY_EVENT_RETENTION = PENDING - Carlos (LEGAL DECISION LD-15). IT0 sintetico: sin purga (D-1). Con staff real, login/logout por principal_ref son datos personales de trabajadores (Ley 21.719): base juridica e informacion al trabajador son LEGAL DECISION antes de datos reales."
+    statement: "Retencion de ops.security_event: SECURITY_EVENT_RETENTION = CNS_RETENTION_SECURITY_EVENT_DAYS, placeholder 30 dias (LEGAL DECISION LD-15 abierta); purga verificable via ops.purge_p34 (0031, SEC-CNS-021 PR-3). Con staff real, login/logout por principal_ref son datos personales de trabajadores (Ley 21.719): base juridica e informacion al trabajador son LEGAL DECISION antes de datos reales."
     acceptedFor: "IT0 sintetico"
     note: "SECURITY_EVENT_RETENTION implementa P-34 (SEC-CNS-006) para security_event; placeholder 30 dias (LD-15 abierta). 'Sin purga en IT0' aplica solo mientras la DB se recrea; purga verificable obligatoria antes de STAGING (Carlos, 2026-10-08, F-LD-01)."
   - id: R-SE-07
