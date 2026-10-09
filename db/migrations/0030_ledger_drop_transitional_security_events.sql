@@ -8,12 +8,12 @@
 -- Aqui se redefine la lista blanca del ledger SIN esos 7 tipos transitorios (0013, redefinida por 0017). Desde aqui el ledger rechaza
 -- esos tipos con 23514 (check_violation).
 --
--- REQUISITO: esta migracion EXIGE una base recreada (valido en IT0: LOCAL/CI, solo datos sinteticos). Una base con filas historicas
--- OTP_*/RECOVERY_TOKEN_ISSUED en integrity.audit_event queda INVERIFICABLE tras 0030: verifyChainRows las marca EVENT_TYPE_NOT_ALLOWED (esas
--- filas NO siguen siendo validas; el ledger es append-only y no se purga ni se reescribe, la cadena SHA-256 exige chain_seq contiguo).
--- Ademas, un challenge en curso cuyo OTP_ISSUED ocupa la sequence 1 daria conflicto en V3 (que ahora declara expectedSequence 0).
--- NOT VALID solo evita que ADD CONSTRAINT falle al aplicarse sobre una base no recreada: verifica las filas NUEVAS y no re-valida las
--- existentes. No se ejecuta VALIDATE CONSTRAINT (fallaria sobre esas filas).
+-- ABORTA si encuentra filas OTP_*/RECOVERY_TOKEN_ISSUED/MANAGEMENT_TOKEN_ROTATED historicas en integrity.audit_event: el ADD CONSTRAINT
+-- se crea VALIDADO (sin la opcion de omitir la validacion; Carlos, 2026-10-09, opcion b) y valida TODAS las filas existentes (la validacion no
+-- pasa por RLS). En una base recreada (LOCAL/CI, solo datos sinteticos, IT0) pasa sin costo. En una base antigua falla con 23514 y la
+-- migracion entera revierte: hay que recrear la base (el ledger es append-only y no se purga ni se reescribe; la cadena SHA-256 exige
+-- chain_seq contiguo, y esas filas quedarian inverificables: verifyChainRows -> EVENT_TYPE_NOT_ALLOWED). Tampoco hay que migrar challenges
+-- en curso: uno con OTP_ISSUED en la sequence 1 daria conflicto en V3 (que ahora declara expectedSequence 0).
 --
 -- integrity.audit_event pertenece a integrity_owner (0027): todo DDL sobre integrity.* declara SET LOCAL ROLE integrity_owner
 -- (unica migracion, junto con 0027, autorizada por tools/spec-checks/integrity-owner-checker.ts). Espejo de
@@ -38,6 +38,6 @@ ALTER TABLE integrity.audit_event
     'TENANT_STATUS_CHANGED', 'SCHOOL_PARTICIPATION_STATUS_CHANGED', 'ENROLLMENT_STATUS_CHANGED',
     -- Seed LOCAL
     'TENANT_SEEDED', 'SCHOOL_PARTICIPATION_SEEDED'
-  )) NOT VALID;
+  ));
 
 SET LOCAL ROLE consent_owner;

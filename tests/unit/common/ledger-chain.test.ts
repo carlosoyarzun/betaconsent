@@ -110,7 +110,7 @@ test("TEST-CNS-912 lista blanca derivada del contrato (ledger-event-payloads.sch
   assert.equal(isLedgerEventType("otp_issued"), false);
 
   const sql = readFileSync(join(HERE, "..", "..", "..", "db", "migrations", "0030_ledger_drop_transitional_security_events.sql"), "utf8");
-  const block = /audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\)(?:\s+NOT VALID)?[,;]/.exec(sql)?.[1] ?? "";
+  const block = /audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\)[,;]/.exec(sql)?.[1] ?? "";
   const inSql = [...block.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1] as string);
   assert.deepEqual([...inSql].sort(), [...LEDGER_EVENT_TYPES].sort());
 
@@ -121,5 +121,7 @@ test("TEST-CNS-912 lista blanca derivada del contrato (ledger-event-payloads.sch
   for (const removed of ["CONSENT_EXPIRED", "CONSENT_SUPERSEDED", "DECISION_CONTESTED", "CONSENT_CONTEXT_STATUS_CHANGED"]) {
     assert.equal(isLedgerEventType(removed), false, `${removed} no debe estar en la lista`);
   }
-  assert.ok(sql.includes("NOT VALID") && sql.includes("ops.security_event"), "la migracion documenta NOT VALID y el destino de los tipos SECURITY");
+  // Carlos 2026-10-09 (b): el CHECK se crea VALIDADO (sin NOT VALID): aborta en bases con filas OTP_*/RECOVERY historicas.
+  assert.equal(/NOT\s+VALID/i.test(sql.replace(/--[^\n]*/g, "")), false, "0030 no debe crear el CHECK como NOT VALID");
+  assert.ok(sql.includes("ABORTA") && sql.includes("ops.security_event"), "la migracion documenta el aborto y el destino de los tipos SECURITY");
 });

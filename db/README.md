@@ -38,10 +38,10 @@ declarar `SET LOCAL ROLE integrity_owner` y pasar por CODEOWNERS (`0026_integrit
 (`0027:42-87`: dueños, triggers `ENABLE ALWAYS`, FORCE RLS, sin privilegios de `consent_owner`).
 
 `0030` (SEC-CNS-021 PR-2) redefine la lista blanca del ledger sin los tipos OTP_*/RECOVERY_TOKEN_ISSUED/MANAGEMENT_TOKEN_ROTATED
-(ahora en `ops.security_event`). **Exige una base recreada** (válido en IT0, datos sintéticos): una base con filas históricas de esos
-tipos en `integrity.audit_event` queda inverificable (`verifyChainRows` → `EVENT_TYPE_NOT_ALLOWED`; `NOT VALID` solo evita que la
-migración falle, no vuelve válidas esas filas), y un challenge en curso con `OTP_ISSUED` en sequence 1 daría conflicto en V3
-(`expectedSequence` 0).
+(ahora en `ops.security_event`). **Aborta si encuentra filas OTP_*/RECOVERY históricas en `integrity.audit_event`: recrear la base**
+(el CHECK se crea validado, sin `NOT VALID`, decisión de Carlos 2026-10-09; la validación recorre todas las filas y la migración revierte con
+23514). En una base recreada (IT0, datos sintéticos) pasa sin costo. Esas filas dejarían la cadena inverificable (`verifyChainRows` →
+`EVENT_TYPE_NOT_ALLOWED`) y un challenge en curso con `OTP_ISSUED` en sequence 1 daría conflicto en V3 (`expectedSequence` 0).
 
 ### Qué protege
 
