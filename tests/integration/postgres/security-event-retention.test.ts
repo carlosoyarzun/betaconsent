@@ -214,6 +214,15 @@ pgTest("TEST-CNS-1311 pg: ops.purge_p34 aborta (22023) si la retencion esperada 
       await migrator.query("ROLLBACK");
     }
   }
+  // Una segunda fila del mismo store (otp_budget) con 2 dias: clave primaria -> 23505 (la politica no se puede duplicar ni reemplazar).
+  await migrator.query("BEGIN");
+  try {
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query("SET LOCAL ROLE security_event_owner");
+    await assert.rejects(() => migrator.query("INSERT INTO ops.retention_policy (store, retention, decision_ref) VALUES ('otp_budget', interval '2 days', 'x')"), (e: unknown) => codeOf(e) === "23505");
+  } finally {
+    await migrator.query("ROLLBACK");
+  }
   await migrator.query("BEGIN");
   try {
     await migrator.query("SET LOCAL ROLE consent_owner");
@@ -348,12 +357,12 @@ pgTest("TEST-CNS-1322 pg: la purga de app.otp_verification borra solo filas con 
   await assert.rejects(async () => (await ctx.connectAs("app_rw")).query("DELETE FROM app.otp_verification"), (e: unknown) => codeOf(e) === "42501");
 });
 
-/** Inserta una fila de ops.otp_budget con vencimiento sintetico (el superusuario del harness fija el reloj; app_rw no puede). key_hmac distinto por fila. */
-async function insertBudget(admin: Client, tenant: string, hex: string, kind: "CHANNEL" | "INVITATION", expiresDaysAgo: number): Promise<void> {
+/** Inserta una fila de ops.otp_budget con vencimiento sintetico (minutos hacia atras; negativo = futuro) (el superusuario del harness fija el reloj; app_rw no puede). key_hmac distinto por fila. */
+async function insertBudget(admin: Client, tenant: string, hex: string, kind: "CHANNEL" | "INVITATION", expiresMinutesAgo: number): Promise<void> {
   await admin.query(
     `INSERT INTO ops.otp_budget (tenant_id, scope_class, key_kind, key_hmac, key_version, window_kind, window_start, expires_at, failures)
-     VALUES ($1, 'DECISION', $2, repeat($3, 64), 1, 'DAY_1', pg_catalog.now() - make_interval(days => $4::int) - interval '1 day', pg_catalog.now() - make_interval(days => $4::int), 3)`,
-    [tenant, kind, hex, expiresDaysAgo],
+     VALUES ($1, 'DECISION', $2, repeat($3, 64), 1, 'DAY_1', pg_catalog.now() - make_interval(mins => $4::int) - interval '1 day', pg_catalog.now() - make_interval(mins => $4::int), 3)`,
+    [tenant, kind, hex, expiresMinutesAgo],
   );
 }
 const budgetCount = (admin: Client, tenant: string): Promise<number> => countAt(admin, "SELECT count(*) AS n FROM ops.otp_budget WHERE tenant_id = $1", [tenant]);
@@ -362,38 +371,42 @@ pgTest("TEST-CNS-1336 pg: ops.purge_p34('otp_budget') borra solo filas con expir
   const admin = await ctx.connectAsSuperuser();
   const A = fixtureUuid("t-1336-a");
   const B = fixtureUuid("t-1336-b");
-  await insertBudget(admin, A, "a", "CHANNEL", DAYS + 1); // vencida fuera de retencion
-  await insertBudget(admin, A, "b", "INVITATION", DAYS + 10); // vencida fuera de retencion
-  await insertBudget(admin, A, "c", "CHANNEL", DAYS - 1); // vencida pero dentro de la retencion: se conserva
-  await insertBudget(admin, A, "d", "INVITATION", -1); // vigente (expires_at futuro): se conserva
-  await insertBudget(admin, B, "a", "CHANNEL", DAYS + 1);
-  await insertBudget(admin, B, "e", "CHANNEL", -1);
-  const eligible = await countAt(admin, "SELECT count(*) AS n FROM ops.otp_budget WHERE expires_at < now() - make_interval(days => $1)", [DAYS]);
-  assert.ok(eligible >= 3);
+  await insertBudget(admin, A, "a", "CHANNEL", DAYS * DAY_MIN + 60); // vencida fuera de retencion
+  await insertBudget(admin, A, "b", "INVITATION", (DAYS + 10) * DAY_MIN); // vencida fuera de retencion
+  await insertBudget(admin, A, "c", "CHANNEL", (DAYS - 1) * DAY_MIN); // vencida pero dentro de la retencion: se conserva
+  await insertBudget(admin, A, "d", "INVITATION", -DAY_MIN); // vigente (expires_at futuro): se conserva
+  // Borde (INV-21-08): 1 minuto mas nuevo que el corte se conserva (el corte exacto no es reproducible: now() avanza entre insertar y purgar).
+  await insertBudget(admin, A, "f", "CHANNEL", DAYS * DAY_MIN - 1);
+  await insertBudget(admin, B, "a", "CHANNEL", DAYS * DAY_MIN + 60);
+  await insertBudget(admin, B, "e", "CHANNEL", -DAY_MIN);
+  const own = "tenant_id IN ($1, $2) AND expires_at < now() - make_interval(days => $3)";
+  const eligible = await countAt(admin, `SELECT count(*) AS n FROM ops.otp_budget WHERE ${own}`, [A, B, DAYS]);
+  assert.equal(eligible, 3);
 
   const worker = await ctx.connectAs("worker");
   // Una retencion esperada distinta de la politica aborta sin borrar nada ni registrar corrida.
   const runsBefore = await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE store = 'otp_budget'");
   await assert.rejects(() => purge(worker, "otp_budget", 7), (e: unknown) => codeOf(e) === "22023");
-  assert.equal(await budgetCount(admin, A), 4);
+  assert.equal(await budgetCount(admin, A), 5);
   assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE store = 'otp_budget'"), runsBefore);
 
   const runId = await purge(worker, "otp_budget");
-  assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.otp_budget WHERE expires_at < now() - make_interval(days => $1)", [DAYS]), 0, "post-condicion: 0 vencidas");
-  assert.equal(await budgetCount(admin, A), 2, "A conserva la vencida dentro de retencion y la vigente");
+  assert.equal(await countAt(admin, `SELECT count(*) AS n FROM ops.otp_budget WHERE ${own}`, [A, B, DAYS]), 0, "post-condicion: 0 vencidas");
+  assert.equal(await budgetCount(admin, A), 3, "A conserva la vencida dentro de retencion, la del borde y la vigente");
   assert.equal(await budgetCount(admin, B), 1, "B conserva la vigente");
   const keptA = (await admin.query<{ key_hmac: string }>("SELECT key_hmac FROM ops.otp_budget WHERE tenant_id = $1 ORDER BY key_hmac", [A])).rows.map((r) => r.key_hmac[0]);
-  assert.deepEqual(keptA, ["c", "d"]);
+  assert.deepEqual(keptA, ["c", "d", "f"]);
 
   const rows = (await admin.query<{ tenant_id: string | null; eligible_before: string; deleted_count: string; remaining_older_than_cutoff: string; store: string }>(
     "SELECT tenant_id, eligible_before, deleted_count, remaining_older_than_cutoff, store FROM ops.purge_run WHERE purge_id = $1", [runId],
   )).rows;
   const summary = rows.find((r) => r.tenant_id === null)!;
-  assert.deepEqual([summary.store, Number(summary.eligible_before), Number(summary.deleted_count), Number(summary.remaining_older_than_cutoff)], ["otp_budget", eligible, eligible, 0]);
+  assert.deepEqual([summary.store, Number(summary.eligible_before), Number(summary.deleted_count), Number(summary.remaining_older_than_cutoff)], ["otp_budget", Number(summary.deleted_count), Number(summary.deleted_count), 0]);
+  assert.ok(Number(summary.deleted_count) >= eligible, "el resumen incluye al menos las filas propias (otros tests pueden dejar filas vencidas)");
   assert.equal(rows.every((r) => r.store === "otp_budget"), true);
   assert.equal(Number(rows.find((r) => r.tenant_id === A)!.deleted_count), 2);
   assert.equal(Number(rows.find((r) => r.tenant_id === B)!.deleted_count), 1);
-  assert.equal(rows.filter((r) => r.tenant_id !== null).reduce((n, r) => n + Number(r.deleted_count), 0), eligible, "los conteos por tenant suman el resumen");
+  assert.equal(rows.filter((r) => r.tenant_id !== null).reduce((n, r) => n + Number(r.deleted_count), 0), Number(summary.deleted_count), "los conteos por tenant suman el resumen");
   // El resumen para el CLI devuelve solo conteos (sin tenant_id ni claves).
   const cli = (await worker.query<Record<string, string>>("SELECT * FROM ops.purge_run_summary($1)", [runId])).rows[0]!;
   assert.deepEqual(Object.keys(cli).sort(), ["deleted_count", "eligible_before", "remaining_older_than_cutoff", "store", "tenants"]);
@@ -409,9 +422,9 @@ pgTest("TEST-CNS-1336 pg: ops.purge_p34('otp_budget') borra solo filas con expir
 pgTest("TEST-CNS-1337 pg: aislamiento de la purga de ops.otp_budget: security_event_owner solo ve y borra filas vencidas por expires_at (no las vigentes ni las vencidas dentro de la retencion), no inserta ni actualiza; el runtime no gana nada (INV-21-06, FORCE RLS)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const T = fixtureUuid("t-1337");
-  await insertBudget(admin, T, "a", "CHANNEL", DAYS + 2);
-  await insertBudget(admin, T, "b", "INVITATION", DAYS - 1);
-  await insertBudget(admin, T, "c", "CHANNEL", -1);
+  await insertBudget(admin, T, "a", "CHANNEL", (DAYS + 2) * DAY_MIN);
+  await insertBudget(admin, T, "b", "INVITATION", (DAYS - 1) * DAY_MIN);
+  await insertBudget(admin, T, "c", "CHANNEL", -DAY_MIN);
   assert.equal(await budgetCount(admin, T), 3);
 
   const migrator = await ctx.connectAs("consent_migrator");
@@ -427,15 +440,16 @@ pgTest("TEST-CNS-1337 pg: aislamiento de la purga de ops.otp_budget: security_ev
   };
   // SELECT: del tenant propio solo la fila vencida fuera de retencion; nada visible esta dentro de la retencion.
   await asOwner(async () => {
-    const seen = await migrator.query<{ key_hmac: string }>("SELECT key_hmac FROM ops.otp_budget WHERE tenant_id = $1", [T]);
-    assert.deepEqual(seen.rows.map((r) => r.key_hmac[0]), ["a"]);
+    const seen = await migrator.query<{ expires_at: Date }>("SELECT expires_at FROM ops.otp_budget WHERE tenant_id = $1", [T]);
+    assert.equal(seen.rows.length, 1, "solo la vencida fuera de retencion");
+    assert.ok(seen.rows[0]!.expires_at.getTime() < Date.now() - DAYS * 86_400_000);
     const within = await migrator.query<{ n: string }>("SELECT count(*) AS n FROM ops.otp_budget WHERE expires_at >= now() - make_interval(days => $1)", [DAYS]);
     assert.equal(Number(within.rows[0]?.n), 0, "ninguna fila dentro de la retencion es visible para el dueno");
   });
   // DELETE directo del dueno (sin ops.purge_p34): alcanza solo la vencida. El rollback deja las tres.
   await asOwner(async () => {
-    const del = await migrator.query<{ key_hmac: string }>("DELETE FROM ops.otp_budget WHERE tenant_id = $1 RETURNING key_hmac", [T]);
-    assert.deepEqual(del.rows.map((r) => r.key_hmac[0]), ["a"]);
+    const del = await migrator.query("DELETE FROM ops.otp_budget WHERE tenant_id = $1", [T]);
+    assert.equal(del.rowCount, 1, "solo la vencida");
   });
   assert.equal(await budgetCount(admin, T), 3, "el rollback no dejo cambios");
   // La purga real sobre el mismo tenant conserva las no vencidas.
@@ -444,7 +458,13 @@ pgTest("TEST-CNS-1337 pg: aislamiento de la purga de ops.otp_budget: security_ev
   const left = (await admin.query<{ key_hmac: string }>("SELECT key_hmac FROM ops.otp_budget WHERE tenant_id = $1 ORDER BY key_hmac", [T])).rows.map((r) => r.key_hmac[0]);
   assert.deepEqual(left, ["b", "c"], "el dueno no borra filas no vencidas");
 
-  // INSERT del dueno: sin policy de INSERT -> RLS lo rechaza (42501). UPDATE: no alcanza ninguna fila.
+  // P2-1: el dueno no lee key_hmac ni otras columnas (SELECT por columnas solo en tenant_id y expires_at).
+  for (const col of ["key_hmac", "failures", "window_start", "scope_class"]) {
+    await asOwner(async () => {
+      await assert.rejects(() => migrator.query(`SELECT ${col} FROM ops.otp_budget WHERE tenant_id = $1`, [T]), (e: unknown) => codeOf(e) === "42501", col);
+    });
+  }
+  // INSERT del dueno: sin privilegio de INSERT -> 42501. UPDATE: sin privilegio -> 42501 (se inserta antes una fila vencida y visible, de modo que no es un 0 filas vacuo).
   await asOwner(async () => {
     await assert.rejects(
       () => migrator.query(
@@ -453,9 +473,11 @@ pgTest("TEST-CNS-1337 pg: aislamiento de la purga de ops.otp_budget: security_ev
       (e: unknown) => codeOf(e) === "42501",
     );
   });
+  await insertBudget(admin, T, "9", "INVITATION", (DAYS + 3) * DAY_MIN);
   await asOwner(async () => {
-    const upd = await migrator.query("UPDATE ops.otp_budget SET failures = 0 WHERE tenant_id = $1", [T]);
-    assert.equal(upd.rowCount, 0, "el dueno no actualiza filas no vencidas");
+    const visible = await migrator.query("SELECT 1 FROM ops.otp_budget WHERE tenant_id = $1", [T]);
+    assert.equal(visible.rows.length, 1, "la fila vencida insertada es visible para el dueno");
+    await assert.rejects(() => migrator.query("UPDATE ops.otp_budget SET failures = 0 WHERE tenant_id = $1", [T]), (e: unknown) => codeOf(e) === "42501");
   });
   // consent_owner (sin SET ROLE al dueno) no tiene privilegios; los roles de runtime no ganan DELETE ni acceso (worker/platform_rw).
   await migrator.query("BEGIN");

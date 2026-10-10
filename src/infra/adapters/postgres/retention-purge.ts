@@ -30,15 +30,28 @@ export function retentionDaysFor(config: RetentionConfig, store: PurgeStore): nu
   }
 }
 
+/** 23514 de la constraint purge_run_deleted_eq_eligible (condicion de carrera con un upsert de ops.otp_budget). */
+export function isDeletedEqEligibleViolation(error: unknown): boolean {
+  const e = error as { code?: string; constraint?: string };
+  return e.code === "23514" && e.constraint === "purge_run_deleted_eq_eligible";
+}
+
 /** Ejecuta la purga de todos los stores habilitados. Cualquier error (politica distinta, post-condicion) se propaga: fail-closed. */
 export async function executeRetentionPurge(db: Queryable, config: RetentionConfig): Promise<PurgeStoreResult[]> {
   const results: PurgeStoreResult[] = [];
   for (const store of PURGE_ORDER) {
     const days = retentionDaysFor(config, store);
-    const run = await db.query<{ run_id: string }>(
-      "SELECT ops.purge_p34($1::text, pg_catalog.make_interval(days => $2::int)) AS run_id",
-      [store, days],
-    );
+    const callPurge = (): Promise<{ rows: Array<{ run_id: string }> }> =>
+      db.query<{ run_id: string }>("SELECT ops.purge_p34($1::text, pg_catalog.make_interval(days => $2::int)) AS run_id", [store, days]);
+    let run;
+    try {
+      run = await callPurge();
+    } catch (error) {
+      // P2-6: un upsert concurrente que reinicia una fila vencida entre el conteo y el DELETE rompe purge_run_deleted_eq_eligible (la tx de
+      // purge_p34 aborta entera, sin borrar nada). Se reintenta UNA vez; si vuelve a fallar, el error se propaga (fail-closed). El CHECK no se relaja.
+      if (!isDeletedEqEligibleViolation(error)) throw error;
+      run = await callPurge();
+    }
     const runId = run.rows[0]?.run_id;
     if (runId === undefined) throw new Error(`purge_p34 no devolvio run_id (${store})`);
     const summary = await db.query<{ tenants: string; eligible_before: string; deleted_count: string; remaining_older_than_cutoff: string }>(

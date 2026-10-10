@@ -25,6 +25,11 @@ SET LOCAL ROLE security_event_owner;
 INSERT INTO ops.retention_policy (store, retention, decision_ref) VALUES
   ('otp_budget', interval '30 days', 'P-34 placeholder (Carlos 2026-10-08, D5); LD-15 abierta: no es un valor aprobado definitivo');
 
+-- Minimo privilegio (P2-1): el dueno deja de leer key_hmac y demas columnas. La purga solo necesita tenant_id y expires_at (SELECT por columnas,
+-- suficiente para count(*), el WHERE y el RETURNING de ops.purge_p34) y DELETE. Sin INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER para el dueno.
+REVOKE ALL ON ops.otp_budget FROM security_event_owner;
+GRANT SELECT (tenant_id, expires_at), DELETE ON ops.otp_budget TO security_event_owner;
+
 CREATE POLICY otp_budget_purge_select ON ops.otp_budget FOR SELECT TO security_event_owner
   USING (expires_at < pg_catalog.now() - (SELECT p.retention FROM ops.retention_policy p WHERE p.store = 'otp_budget'));
 CREATE POLICY otp_budget_purge_delete ON ops.otp_budget FOR DELETE TO security_event_owner
@@ -287,9 +292,30 @@ BEGIN
      IS DISTINCT FROM 'otp_budget_purge_delete:d:security_event_owner otp_budget_purge_select:r:security_event_owner otp_budget_tenant_insert:a:app_rw otp_budget_tenant_select:r:app_rw otp_budget_tenant_update:w:app_rw' THEN
     RAISE EXCEPTION 'las policies de ops.otp_budget no son exactamente las declaradas (rol y comando)';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'ops.otp_budget'::pg_catalog.regclass AND p.polname LIKE 'otp\_budget\_purge\_%'
-              AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) NOT LIKE '%expires_at%') THEN
-    RAISE EXCEPTION 'las policies de purga de ops.otp_budget deben acotar por expires_at';
+  -- Policies de purga: expresion con vencimiento por expires_at contra la politica del store otp_budget (pg_get_expr normaliza los literales).
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = 'ops.otp_budget'::pg_catalog.regclass AND p.polname IN ('otp_budget_purge_select', 'otp_budget_purge_delete')
+         AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%expires_at < %'
+         AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%retention_policy%'
+         AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%store = ''otp_budget''::text%') <> 2 THEN
+    RAISE EXCEPTION 'las policies de purga de ops.otp_budget deben acotar por expires_at contra la politica del store otp_budget';
+  END IF;
+  -- EXECUTE de ops.purge_p34 (proacl exacta): solo el dueno y worker; nada para PUBLIC ni otros roles.
+  IF (SELECT pg_catalog.string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END || ':' || a.privilege_type, ',' ORDER BY a.grantee::pg_catalog.regrole::pg_catalog.text)
+        FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) AS a
+       WHERE p.oid = 'ops.purge_p34(text, interval)'::pg_catalog.regprocedure)
+     IS DISTINCT FROM 'security_event_owner:EXECUTE,worker:EXECUTE' THEN
+    RAISE EXCEPTION 'la ACL de ops.purge_p34 debe ser exactamente EXECUTE para security_event_owner y worker';
+  END IF;
+  -- security_event_owner sobre ops.otp_budget: SELECT solo en tenant_id y expires_at (no key_hmac), DELETE; nada mas (P2-1).
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = 'ops.otp_budget'::pg_catalog.regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attname NOT IN ('tenant_id', 'expires_at')
+                AND pg_catalog.has_column_privilege('security_event_owner', a.attrelid, a.attnum, 'SELECT,INSERT,UPDATE,REFERENCES'))
+     OR pg_catalog.has_column_privilege('security_event_owner', 'ops.otp_budget', 'key_hmac', 'SELECT')
+     OR NOT pg_catalog.has_column_privilege('security_event_owner', 'ops.otp_budget', 'expires_at', 'SELECT')
+     OR NOT pg_catalog.has_column_privilege('security_event_owner', 'ops.otp_budget', 'tenant_id', 'SELECT')
+     OR pg_catalog.has_table_privilege('security_event_owner', 'ops.otp_budget', 'INSERT,UPDATE,TRUNCATE,REFERENCES,TRIGGER')
+     OR NOT pg_catalog.has_table_privilege('security_event_owner', 'ops.otp_budget', 'DELETE') THEN
+    RAISE EXCEPTION 'privilegios de security_event_owner sobre ops.otp_budget distintos de SELECT(tenant_id, expires_at) y DELETE';
   END IF;
   -- Sin cambios para el runtime en ops.otp_budget: app_rw sin DELETE; worker y platform_rw sin acceso; consent_owner sin privilegios; RLS forzada.
   IF pg_catalog.has_table_privilege('app_rw', 'ops.otp_budget', 'DELETE,TRUNCATE,REFERENCES,TRIGGER')

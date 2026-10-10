@@ -139,3 +139,31 @@ test("TEST-CNS-1323 el arranque falla si app_rw o platform_rw pueden ejecutar op
     assert.ok(r.failures.some((f) => /ejecutar ops\.purge_p34/.test(f)), r.failures.join("|"));
   }
 });
+
+test("TEST-CNS-1338 el nucleo del CLI reintenta UNA vez ante 23514 de purge_run_deleted_eq_eligible; si vuelve a fallar propaga; otros errores no se reintentan (P2-6)", async () => {
+  const RUN = "22222222-2222-4222-8222-222222222222";
+  const race = (): Error => Object.assign(new Error("check"), { code: "23514", constraint: "purge_run_deleted_eq_eligible" });
+  const summaryRow = { rows: [{ tenants: "0", eligible_before: "0", deleted_count: "0", remaining_older_than_cutoff: "0" }] };
+  const cfg1 = { securityEventDays: 30, otpBudgetDays: 30, otpVerificationDays: 30, purgeRunDays: 30 };
+
+  let failuresLeft = 1;
+  const once = new FakeClient((text, values) => {
+    if (text.includes("ops.purge_p34")) {
+      if (values?.[0] === "otp_budget" && failuresLeft-- > 0) return race();
+      return { rows: [{ run_id: RUN }] };
+    }
+    if (text.includes("ops.purge_run_summary")) return summaryRow;
+    return undefined;
+  });
+  const results = await executeRetentionPurge(once, cfg1);
+  assert.equal(results.length, PURGE_ORDER.length);
+  assert.equal(once.queries.filter((q) => q.text.includes("ops.purge_p34") && q.values?.[0] === "otp_budget").length, 2, "un reintento");
+
+  const always = new FakeClient((text) => (text.includes("ops.purge_p34") ? race() : undefined));
+  await assert.rejects(() => executeRetentionPurge(always, cfg1), /check/);
+  assert.equal(always.queries.filter((q) => q.text.includes("ops.purge_p34")).length, 2, "solo un reintento, luego falla");
+
+  const other = new FakeClient((text) => (text.includes("ops.purge_p34") ? Object.assign(new Error("otro"), { code: "23514", constraint: "otra" }) : undefined));
+  await assert.rejects(() => executeRetentionPurge(other, cfg1), /otro/);
+  assert.equal(other.queries.filter((q) => q.text.includes("ops.purge_p34")).length, 1, "otras constraints no se reintentan");
+});
