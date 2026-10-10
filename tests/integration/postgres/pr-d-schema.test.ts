@@ -85,6 +85,10 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
   assert.deepEqual(await columnsWith(admin, "app.otp_verification", "app_rw", "UPDATE"), [
     "attempts", "code_hash", "consumed_at", "expires_at", "last_sent_at", "resend_count", "sends_in_window", "sends_window_start", "state",
   ]); // 0032: marcas de envio P-06
+  assert.deepEqual(await columnsWith(admin, "app.otp_verification", "app_rw", "INSERT"), [
+    "attempts", "channel_ref", "code_hash", "consumed_at", "expires_at", "last_sent_at", "parent_ref", "resend_count", "scope", "sends_in_window",
+    "sends_window_start", "state", "tenant_id", "verification_ref",
+  ]); // 0032: marcas de envio P-06 insertables; data_class y created_at los fija la base
   assert.deepEqual(await columnsWith(admin, "app.rights_case", "app_rw", "UPDATE"), ["origin", "revocation_ref", "status"]);
   assert.deepEqual(await columnsWith(admin, "app.enrollment", "app_rw", "UPDATE"), ["state"]);
   assert.deepEqual(await columnsWith(admin, "app.invitation", "app_rw", "INSERT"), [
