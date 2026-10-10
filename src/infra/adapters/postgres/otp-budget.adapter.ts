@@ -27,6 +27,7 @@ export function createPgOtpBudgetAdapter(tx: Pick<TenantTx, "query">): OtpBudget
     async reserveFailure(tenantId, keys, at, windowMs, limit) {
       const now = at.toISOString();
       const end = new Date(at.getTime() + windowMs).toISOString();
+      const reserved: OtpBudgetKey[] = [];
       for (const key of keys) {
         // Una sola sentencia atomica por clave (GRD-OT-03): el INSERT ... ON CONFLICT DO UPDATE toma el lock de la fila y, al esperar a otra
         // transaccion, reevalua el WHERE contra la version confirmada. Ventana vencida -> arranca otra con failures = 1; vigente con cupo -> +1;
@@ -43,7 +44,14 @@ export function createPgOtpBudgetAdapter(tx: Pick<TenantTx, "query">): OtpBudget
            RETURNING b.failures`,
           [tenantId, key.scopeClass, key.keyKind, key.keyHmac, key.keyVersion, key.windowKind, now, end, limit],
         );
-        if (r.rows.length === 0) return key;
+        if (r.rows.length === 0) {
+          // Sin comparacion no se consume: revierte las reservas hechas en ESTA llamada.
+          for (const done of reserved) {
+            await tx.query(`UPDATE ops.otp_budget SET failures = failures - 1 WHERE ${KEY_PREDICATE} AND failures > 0`, keyParams(tenantId, done));
+          }
+          return key;
+        }
+        reserved.push(key);
       }
       return null;
     },

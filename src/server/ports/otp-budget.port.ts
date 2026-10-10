@@ -31,8 +31,8 @@ export interface OtpBudgetPort {
    * V2/V3 (GRD-OT-03): reserva ATOMICA de un fallo en cada clave, EN EL ORDEN DADO, antes de comparar el codigo. Una sola sentencia por clave
    * (el lock de fila es el de la propia sentencia): N reservas concurrentes nunca superan `limit`. Si la ventana de una clave ya vencio
    * (`expiresAt <= at`), arranca una nueva con failures = 1 (ventana fija desde el primer fallo, no deslizante). Devuelve la primera clave
-   * sin cupo (sin reservar en ella ni en las siguientes) o null si todas se reservaron. Las reservas previas a la clave agotada se conservan:
-   * el intento rechazado cuenta contra ellas.
+   * sin cupo (sin reservar en ella ni en las siguientes) o null si todas se reservaron. Si una clave no tiene cupo se REVIERTEN las reservas
+   * hechas en esa misma llamada: sin comparacion no se consume presupuesto.
    */
   reserveFailure(tenantId: TenantId, keys: readonly OtpBudgetKey[], at: Date, windowMs: number, limit: number): Promise<OtpBudgetKey | null>;
 

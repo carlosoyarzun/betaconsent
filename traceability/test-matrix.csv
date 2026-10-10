@@ -675,3 +675,5 @@ TEST-CNS-1321,unit,tests/unit/otp-challenge/otp-budget.test.ts,"P-06 D8: V1 + 2 
 TEST-CNS-410,unit,tests/unit/otp-challenge/otp-budget.test.ts,"orden de locks F-4: invitacion antes que challenge en V1/V2/V2r",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-12;F-4,ACTIVE
 TEST-CNS-1319,unit,tests/unit/otp-challenge/otp-budget.test.ts,"subclave HKDF del presupuesto distinta de la de channelRef",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-15,ACTIVE
 TEST-CNS-1320,unit,tests/unit/otp-challenge/otp-policy-config.test.ts,"P-04..P-07 aprobados en cualquier entorno; overrides solo LOCAL; maxResends retirado; DAYS_30 no aplicado",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-16;D6,ACTIVE
+TEST-CNS-1334,unit,tests/unit/otp-challenge/otp-budget.test.ts,"FAILED es terminal: sin reserva, sin VERIFIED, sin evento aunque la ventana rote",SEC-CNS-021;CA-146;GRD-OT-03;INV-21-14,ACTIVE
+TEST-CNS-1335,unit,tests/unit/otp-challenge/otp-budget.test.ts,"clave posterior agotada revierte las reservas previas de la misma llamada",SEC-CNS-021;CA-146;GRD-OT-03;INV-21-11,ACTIVE

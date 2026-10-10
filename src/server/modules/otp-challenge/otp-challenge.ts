@@ -181,16 +181,26 @@ async function lockParentThenChallenge(
   ports: OtpTxPorts,
   tenantId: TenantId,
   verificationRef: string,
+  expectScope: OtpScope | null = null,
 ): Promise<{ readonly found: OtpVerificationRecord; readonly invitation: InvitationRecord | null }> {
   const peek = await ports.otpRepo.findByRef(tenantId, verificationRef);
   if (!peek) {
     throw new DomainError("ERR-CM-01");
   }
+  if (expectScope !== null && peek.scope !== expectScope) {
+    throw new DomainError("ERR-OT-01"); // ERR-OT-05: el scope se rechaza antes de tomar locks
+  }
   let invitation: InvitationRecord | null = null;
-  if (peek.scope === "DECISION" && ports.invitation) {
+  if (peek.scope === "DECISION") {
+    // V6a necesita el lock de la invitacion: sin su puerto o sin su fila NO se omite en silencio (fail-closed).
+    if (!ports.invitation) throw new DomainError("ERR-CM-12");
     invitation = await ports.invitation.invitationRepo.findByRefForUpdate(tenantId, peek.parentRef);
+    if (!invitation) throw new DomainError("ERR-CM-01");
   }
   const found = await requireVerification(ports, tenantId, verificationRef);
+  if (found.scope !== peek.scope || found.parentRef !== peek.parentRef) {
+    throw new Error("otp-challenge: scope/parentRef cambiaron entre la lectura y el lock (son inmutables)");
+  }
   return { found, invitation };
 }
 
@@ -232,7 +242,7 @@ async function submitCore(
   // SEC-CNS-021 PR-2 (valla de concurrencia): la unica fila del ledger de este agregado es DECISION_MAKER_CHANNEL_VERIFIED
   // (sequence 1, expectedSequence 0). La valla ya no es la secuencia (los OTP_* salieron del ledger) sino el lock de fila de
   // app.otp_verification (findByRefForUpdate): un V3 concurrente espera, relee VERIFIED y sale por ERR-OT-03 sin llegar al append.
-  const { found, invitation } = await lockParentThenChallenge(ports, tenantId, verificationRef); // F-4: invitacion -> challenge
+  const { found, invitation } = await lockParentThenChallenge(ports, tenantId, verificationRef, spec.expectScope); // F-4: invitacion -> challenge
   if (spec.expectScope !== null && found.scope !== spec.expectScope) {
     // ERR-OT-05 (OTP_SCOPE_MISUSE): VERIFIED de un scope no sirve para otro.
     throw new DomainError("ERR-OT-01");
@@ -243,6 +253,10 @@ async function submitCore(
   if (found.state === "VERIFIED" || found.consumedAt) {
     // Replay de un challenge ya consumido (INV-OT-07).
     return { fail: "ERR-OT-03" };
+  }
+  if (found.state !== "CODE_SENT") {
+    // FAILED (V6/V6r) es terminal: sin reserva, sin comparacion, sin eventos ni escrituras. EXPIRED/NOT_STARTED tambien rechazan.
+    return { fail: found.state === "FAILED" ? budgetExhaustedError(found.scope) : "ERR-OT-03" };
   }
   if (found.expiresAt.getTime() <= clockMs(ports)) {
     // V5 (expiracion perezosa) + GRD-OT-05.

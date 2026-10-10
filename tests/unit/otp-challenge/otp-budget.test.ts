@@ -164,3 +164,32 @@ test("TEST-CNS-1319: la subclave HKDF del presupuesto es distinta de la de chann
   const k = randomBytes(32);
   assert.notDeepEqual(deriveOtpBudgetKey(k), deriveOtpChannelRefKey(k));
 });
+
+test("TEST-CNS-1334: FAILED es terminal: con ventana rotada y codigo correcto no pasa a VERIFIED, no reserva presupuesto ni emite eventos (P1 revision)", async () => {
+  const s = setup({ budgetMaxFailures: 1 });
+  const inv = await open(s.invitation, "1334");
+  const ver = fixtureUuid("ver-1334");
+  await requestOtp(s.otp, T, ver, inv, CH);
+  const good = s.channel.sent[0]!.code;
+  await assert.rejects(() => submitOtp(s.otp, T, ver, wrongOf(good), fixtureUuid("dm"), 2), (e) => code(e) === "ERR-OT-02");
+  await assert.rejects(() => submitOtp(s.otp, T, ver, wrongOf(good), fixtureUuid("dm"), 2), (e) => code(e) === "ERR-OT-06");
+  assert.equal((await s.otpRepo.findByRef(T, ver))?.state, "FAILED");
+  s.clock.ms += 25 * 3_600_000; // la ventana rota: habria cupo
+  const rowsBefore = JSON.stringify(s.otpBudget.rows(T));
+  const eventsBefore = s.securityEvents.listAll(T).length;
+  await assert.rejects(() => submitOtp(s.otp, T, ver, good, fixtureUuid("dm"), 2), (e) => code(e) === "ERR-OT-06");
+  assert.equal((await s.otpRepo.findByRef(T, ver))?.state, "FAILED");
+  assert.equal(JSON.stringify(s.otpBudget.rows(T)), rowsBefore, "sin reserva");
+  assert.equal(s.securityEvents.listAll(T).length, eventsBefore, "sin evento");
+});
+
+test("TEST-CNS-1335: clave posterior agotada revierte las reservas previas de la misma llamada (puerto in-memory)", async () => {
+  const b = createInMemoryOtpBudget();
+  const at = new Date();
+  const k = (kind: "CHANNEL" | "INVITATION", h: string) => ({ scopeClass: "DECISION" as const, keyKind: kind, keyHmac: h.repeat(64), keyVersion: 1, windowKind: "DAY_1" as const });
+  const ch = k("CHANNEL", "a");
+  const iv = k("INVITATION", "b");
+  assert.equal(await b.reserveFailure(T, [iv], at, 1000, 1), null);
+  assert.equal((await b.reserveFailure(T, [ch, iv], at, 1000, 1))?.keyKind, "INVITATION");
+  assert.equal(b.rows(T).find((r) => r.keyKind === "CHANNEL"), undefined, "CHANNEL no quedo reservada");
+});

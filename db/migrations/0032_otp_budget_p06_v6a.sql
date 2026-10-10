@@ -196,6 +196,15 @@ BEGIN
     RAISE EXCEPTION 'security_event_owner tiene privilegios sobre columnas de app.otp_verification distintas de tenant_id y expires_at';
   END IF;
 
+  -- Identidad inmutable (P2-3): app_rw no actualiza scope/parent_ref/channel_ref del challenge (lockParentThenChallenge depende de ello) ni borra invitaciones.
+  IF pg_catalog.has_column_privilege('app_rw', otp, 'scope', 'UPDATE') OR pg_catalog.has_column_privilege('app_rw', otp, 'parent_ref', 'UPDATE')
+     OR pg_catalog.has_column_privilege('app_rw', otp, 'channel_ref', 'UPDATE') THEN
+    RAISE EXCEPTION 'app_rw no debe poder actualizar scope, parent_ref ni channel_ref de app.otp_verification';
+  END IF;
+  IF pg_catalog.has_table_privilege('app_rw', inv, 'DELETE') THEN
+    RAISE EXCEPTION 'app_rw no debe poder borrar app.invitation';
+  END IF;
+
   -- consent_owner sigue siendo el unico miembro de security_event_owner.
   IF (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(m.member), ',' ORDER BY pg_catalog.pg_get_userbyid(m.member))
         FROM pg_catalog.pg_auth_members m WHERE m.roleid = (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = 'security_event_owner'))

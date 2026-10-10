@@ -46,16 +46,20 @@ export function createInMemoryOtpBudget(): InMemoryOtpBudget {
     },
     async reserveFailure(tenantId, keys, at, windowMs, limit) {
       const now = at.getTime();
+      const undo: Array<() => void> = [];
       for (const key of keys) {
         const k = rowKey(tenantId, key);
         const row = store.get(k);
+        const prev = row;
         if (!row || row.expiresAt <= now) {
           store.set(k, { windowStart: now, expiresAt: now + windowMs, failures: 1, keyKind: key.keyKind, windowKind: key.windowKind });
         } else if (row.failures < limit) {
           store.set(k, { ...row, failures: row.failures + 1 });
         } else {
+          for (const u of undo.reverse()) u(); // sin comparacion no se consume: revierte las reservas de esta llamada
           return key;
         }
+        undo.push(() => (prev ? store.set(k, prev) : store.delete(k)));
       }
       return null;
     },
