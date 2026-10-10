@@ -310,7 +310,7 @@ pgTest("TEST-CNS-1333 pg: CHECK otp_send_marks_shape: marcas incoherentes se rec
   const insert = (n: string, lastSent: string | null, windowStart: string | null, sends: number): Promise<unknown> =>
     admin.query(
       `INSERT INTO app.otp_verification (tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, state, last_sent_at, sends_window_start, sends_in_window)
-       VALUES ($1, $2, 'DECISION', 'p', 'a@example.invalid', $3, 0, now() + interval '1 hour', 'CODE_SENT', $4::timestamptz, $5::timestamptz, $6)`,
+       VALUES ($1, $2, 'DECISION', 'p-' || $2::text, 'a@example.invalid', $3, 0, now() + interval '1 hour', 'CODE_SENT', $4::timestamptz, $5::timestamptz, $6)`,
       [T, `v1333-${n}`, "a".repeat(64), lastSent, windowStart, sends],
     );
   const accepted = ["otp_send_marks_shape", "otp_sends_in_window_nonneg"];
