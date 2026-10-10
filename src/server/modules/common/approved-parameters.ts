@@ -52,3 +52,9 @@ export const APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS = 60_000;
 /** P-06 (aprobado por Carlos): máximo de envíos por hora por verificación = 3. SIN CONSUMIDOR todavía
  * (ver APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS; además queda abierto si el 3 incluye el envío inicial). */
 export const APPROVED_P06_OTP_MAX_SENDS_PER_HOUR = 3;
+
+// P-34 (retención de ops.security_event y stores de OTP; SEC-CNS-021 PR-3). NO es un valor aprobado: LD-15 (LEGAL DECISION) sigue abierta.
+// 30 días es un PLACEHOLDER de Carlos (2026-10-08) que la migración 0031 siembra en ops.retention_policy (decision_ref lo declara). Por eso el
+// nombre NO lleva APPROVED_ y retention.config.ts NO lo usa como default: fuera de LOCAL/DEV la configuración explícita es obligatoria. Sirve
+// solo como valor de referencia de tests/fixtures LOCAL.
+export const PLACEHOLDER_P34_RETENTION_DAYS = 30;

@@ -81,3 +81,10 @@ DDL del ledger deba declararse y revisarse (`0026:18`).
 - En arranque: `startup-checks.ts:87-95` falla si la conexión es miembro de `integrity_owner`.
 - CA-142 (spec-check `SET LOCAL ROLE integrity_owner` en `tools/spec-checks/`): en curso, no forma parte de este doc.
   Estas pruebas requieren Postgres real (`npm run test:integration`).
+
+## Retención y purga P-34 (0031, SEC-CNS-021 PR-3)
+
+- `ops.retention_policy` (solo-agregar, sembrada con 30 días: **PLACEHOLDER**, LD-15 abierta) y `ops.purge_run` (evidencia por corrida) son de `security_event_owner`, con FORCE RLS y sin grants de runtime.
+- La purga solo ocurre vía `ops.purge_p34(store, esperado)` (SECURITY DEFINER; EXECUTE solo `worker`). Stores: `security_event`, `otp_verification`, `purge_run` (`otp_budget` llega en PR-4). El trigger `ops.security_event_guard()` rechaza UPDATE siempre y DELETE salvo dentro de la función y solo de filas vencidas; TRUNCATE sigue prohibido.
+- `ops.retention_status()` (app_rw, worker) y `ops.purge_run_summary(purge_id)` (worker) exponen solo estado/conteos. CLI: `src/infra/adapters/postgres/retention-purge-cli.ts` (rol `worker`); config `CNS_RETENTION_{SECURITY_EVENT,OTP_VERIFICATION,PURGE_RUN}_DAYS` (obligatorias en STAGING; LOCAL/DEV sin ellas = `DISABLED_LOCAL`, exit 3).
+- Residual R-21-2 (aceptado SOLO para IT0b sintético; pasa a P1 antes de datos reales; se cierra con ADR-010 PR-7: event trigger, membresía SET fuera de la ceremonia, auditoría de sesiones): quien pueda `SET ROLE security_event_owner` puede borrar sin dejar rastro (DISABLE TRIGGER, NO FORCE RLS, DROP POLICY/TABLE; bajar la retención y borrar OTP activos, incluido el estado de lockout; borrar `otp_verification` vencidas sin `purge_run`). Pueden hacer ese SET ROLE `consent_owner` y, por transitividad, `consent_migrator` y los superusuarios; ningún rol de runtime puede.

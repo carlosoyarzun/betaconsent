@@ -1,6 +1,8 @@
 // Gobierna: CA-124 (H09), common.spec.yaml GRD-CM-11 (synthetic_only_environment, ERR-CM-11),
 // ADR-002 §2/§8, SEC-CNS-012 N2-06; TEST-CNS-747 (propuesto TEST-CNS-724 en el diseño).
 // SEC-CNS-021 PR-1 (CA-146 / P-34; INV-21-06): la lista de owners incluye security_event_owner (0028).
+// SEC-CNS-021 PR-3 (INV-21-10/19): en STAGING la configuracion CNS_RETENTION_* es obligatoria y debe coincidir con ops.retention_policy
+// (via ops.retention_status(); el runtime no lee la tabla); checkRetentionPurgeFreshness emite la senal retention_purge_stale.
 //
 // Chequeo de arranque del rol de runtime (P2 de CI del diseño de CA-124): el servicio NO
 // arranca si el rol de la conexión es superusuario, BYPASSRLS, miembro de un owner, puede
@@ -14,6 +16,7 @@
 // ROLE; y que el reloj de la BD (now() de la vista) y el del proceso (Date.now() del dominio) difieran
 // como máximo 2 s.
 
+import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { Queryable } from "./pool.ts";
 
 /** F-7: tolerancia entre el reloj de la BD (vista del roster) y el del proceso (dominio). */
@@ -29,6 +32,8 @@ export interface StartupCheckOptions {
   expectedEnvironment?: "LOCAL" | "DEV" | "STAGING";
   /** SEC-CNS-017 F6: rol de runtime esperado (`current_user` exacto). El proceso web exige `app_rw`. */
   expectedRole?: string;
+  /** SEC-CNS-021 PR-3: retencion configurada (retention.config.ts). Obligatoria en STAGING; si se pasa, debe coincidir con ops.retention_policy. */
+  retention?: RetentionConfig;
 }
 
 export interface StartupCheckResult {
@@ -127,7 +132,75 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
     failures.push("no se pudo leer ops.db_catalog");
   }
 
+  await checkRetentionConfig(db, options, failures);
+  await checkPurgeExecuteIsolation(db, failures);
+
   return { ok: failures.length === 0, failures };
+}
+
+/** SEC-CNS-021 PR-3 (P2-F): solo worker puede ejecutar ops.purge_p34; app_rw y platform_rw no. Fail-closed si no se puede verificar. */
+async function checkPurgeExecuteIsolation(db: Queryable, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ app_rw: boolean | null; platform_rw: boolean | null }>(
+      `SELECT pg_catalog.has_function_privilege('app_rw', pg_catalog.to_regprocedure('ops.purge_p34(text, interval)'), 'EXECUTE') AS app_rw,
+              pg_catalog.has_function_privilege('platform_rw', pg_catalog.to_regprocedure('ops.purge_p34(text, interval)'), 'EXECUTE') AS platform_rw`,
+    );
+    const row = r.rows[0];
+    if (row !== undefined && (row.app_rw === true || row.platform_rw === true)) failures.push("app_rw o platform_rw pueden ejecutar ops.purge_p34 (solo worker, P-34)");
+  } catch {
+    failures.push("no se pudo verificar el EXECUTE de ops.purge_p34");
+  }
+}
+
+/** Etiqueta de la senal de purga atrasada (sin etiquetas de tenant). */
+export const RETENTION_PURGE_STALE_SIGNAL = "retention_purge_stale";
+/** INV-21-19: una corrida de purga debe tener menos de 26 h (job diario + holgura). */
+export const MAX_PURGE_AGE_MS = 26 * 60 * 60_000;
+
+interface RetentionStatusRow { store: string; retention_days: string | number; last_run_at: Date | string | null }
+
+function expectedRetentionDays(config: RetentionConfig): Readonly<Record<string, number>> {
+  return { security_event: config.securityEventDays, otp_verification: config.otpVerificationDays, purge_run: config.purgeRunDays };
+}
+
+/** SEC-CNS-021 PR-3: la retencion configurada debe existir (STAGING) y coincidir con ops.retention_policy. Fail-closed. */
+async function checkRetentionConfig(db: Queryable, options: StartupCheckOptions, failures: string[]): Promise<void> {
+  if (options.retention === undefined) {
+    if (options.expectedEnvironment === "STAGING") failures.push("falta la configuracion de retencion CNS_RETENTION_* (obligatoria en STAGING, P-34)");
+    return;
+  }
+  try {
+    const status = await db.query<RetentionStatusRow>("SELECT store, retention_days, last_run_at FROM ops.retention_status()");
+    const byStore = new Map(status.rows.map((r) => [r.store, Number(r.retention_days)]));
+    for (const [store, days] of Object.entries(expectedRetentionDays(options.retention))) {
+      const actual = byStore.get(store);
+      if (actual === undefined) failures.push(`ops.retention_policy no tiene politica para ${store}`);
+      else if (actual !== days) failures.push(`la retencion configurada de ${store} difiere de ops.retention_policy`);
+    }
+  } catch {
+    failures.push("no se pudo verificar ops.retention_policy");
+  }
+}
+
+/**
+ * INV-21-19 (STAGING): devuelve los stores sin corrida de purga de menos de 26 h segun ops.retention_status(). Es una SENAL, no un fallo
+ * de arranque (un deploy nuevo aun no tiene corridas); el llamador emite RETENTION_PURGE_STALE_SIGNAL con los nombres de store, nunca de tenant.
+ */
+export async function checkRetentionPurgeFreshness(
+  db: Queryable,
+  nowMs: () => number = Date.now,
+  maxAgeMs: number = MAX_PURGE_AGE_MS,
+): Promise<{ ok: boolean; stale: string[] }> {
+  try {
+    const status = await db.query<RetentionStatusRow>("SELECT store, retention_days, last_run_at FROM ops.retention_status()");
+    const now = nowMs();
+    const stale = status.rows
+      .filter((r) => r.last_run_at === null || now - new Date(r.last_run_at).getTime() >= maxAgeMs)
+      .map((r) => r.store);
+    return { ok: stale.length === 0 && status.rows.length > 0, stale };
+  } catch {
+    return { ok: false, stale: ["unknown"] };
+  }
 }
 
 /** R2: membresías y privilegios de staff_roster_owner / staff_roster_reader (ver cabecera). */

@@ -31,6 +31,10 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
   "db/migrations/0028_security_event_owner_role.sql": ["grant-membership"],
   // 0029: transfiere ops.security_event (SET LOCAL ROLE security_event_owner para sus DEFAULT PRIVILEGES).
   "db/migrations/0029_security_event_otp_family.sql": ["set-role"],
+  // 0031 (SEC-CNS-021 PR-3): crea retention_policy / purge_run / ops.purge_p34 como security_event_owner (SET LOCAL ROLE).
+  "db/migrations/0031_retention_purge_p34.sql": ["set-role"],
+  // TEST-CNS-1308/1311: demuestran que el dueno sin la bandera de purga tampoco muta, y los privilegios del dueno (SET ROLE explicito del migrador).
+  "tests/integration/postgres/security-event-retention.test.ts": ["set-role"],
   // TEST-CNS-1326: demuestra que el nuevo dueno tampoco puede mutar la tabla (SET ROLE explicito del migrador).
   "tests/integration/postgres/security-event-otp-family.test.ts": ["set-role"],
 };

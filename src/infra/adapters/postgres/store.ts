@@ -10,11 +10,13 @@
 
 import type { Pool } from "pg";
 import type { IdempotencyPolicy } from "../../../server/modules/common/idempotency-policy.config.ts";
+import { loadRetentionConfig } from "../../../server/modules/common/retention.config.ts";
+import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { TenantHandlePort } from "../../../server/ports/tenant-handle.port.ts";
 import type { TenantResolverPort } from "../../../server/ports/tenant-resolver.port.ts";
 import type { TenantTxPorts } from "../../../server/ports/unit-of-work.port.ts";
 import { createPool, guardBorrowedClient } from "./pool.ts";
-import { assertStartupChecks } from "./startup-checks.ts";
+import { assertStartupChecks, checkRetentionPurgeFreshness, RETENTION_PURGE_STALE_SIGNAL } from "./startup-checks.ts";
 import { createPgTenantHandleAdapter } from "./tenant-handle.adapter.ts";
 import { createPgTenantResolver } from "./tenant-resolver.adapter.ts";
 import { PgUnitOfWork } from "./unit-of-work.ts";
@@ -69,6 +71,8 @@ export interface OpenPostgresStoreOptions {
   readonly idempotencyPolicy: IdempotencyPolicy;
   /** Por defecto process.env (inyectable en tests). */
   readonly env?: NodeJS.ProcessEnv;
+  /** SEC-CNS-021 PR-3: retencion P-34 ya cargada; si falta se carga de env (lanza en STAGING si no esta configurada). */
+  readonly retention?: RetentionConfig;
 }
 
 /** Valida la credencial del entorno: solo el rol de runtime; nunca el migrador. */
@@ -95,12 +99,24 @@ export function readRuntimeDatabaseUrl(env: NodeJS.ProcessEnv): string {
 
 /** Abre el pool y ejecuta los chequeos de arranque; si fallan, cierra el pool y lanza (no se escucha). */
 export async function openPostgresStore(options: OpenPostgresStoreOptions): Promise<PostgresStore> {
-  const url = readRuntimeDatabaseUrl(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const url = readRuntimeDatabaseUrl(env);
+  // SEC-CNS-021 PR-3 (INV-21-10): en STAGING sin CNS_RETENTION_* esto lanza y el proceso no arranca; en LOCAL/DEV sin ellas la purga queda deshabilitada.
+  let retention: RetentionConfig | undefined = options.retention;
+  if (retention === undefined) {
+    const loaded = loadRetentionConfig(env, options.environment);
+    retention = loaded.status === "CONFIGURED" ? loaded.config : undefined;
+  }
   const pool = createPool({ connectionString: url, max: 10 });
   try {
     const client = guardBorrowedClient(await pool.connect());
     try {
-      await assertStartupChecks(client, { expectedEnvironment: options.environment, expectedRole: "app_rw" });
+      await assertStartupChecks(client, { expectedEnvironment: options.environment, expectedRole: "app_rw", ...(retention === undefined ? {} : { retention }) });
+      if (options.environment === "STAGING") {
+        // INV-21-19: senal (no fallo) si algun store no tiene una corrida de purga de menos de 26 h. Solo nombres de store, sin tenant.
+        const freshness = await checkRetentionPurgeFreshness(client);
+        if (!freshness.ok) console.error(JSON.stringify({ signal: RETENTION_PURGE_STALE_SIGNAL, stores: freshness.stale }));
+      }
     } finally {
       client.release();
     }
