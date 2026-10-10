@@ -32,12 +32,14 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.invitationRepo.findByRefForUpdate(t, ref)),
       findActiveBySubject: (t, ctx, subject) => uow.inTenant(t, (tx) => tx.invitationRepo.findActiveBySubject(t, ctx, subject)),
       existsBySubject: (t, ctx, subject) => uow.inTenant(t, (tx) => tx.invitationRepo.existsBySubject(t, ctx, subject)),
+      markOtpExhausted: (t, ref) => uow.inTenant(t, (tx) => tx.invitationRepo.markOtpExhausted(t, ref)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.invitationRepo.save(record)),
     },
     otpRepo: {
       findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.otpRepo.findByRef(t, ref)),
       findByRefForUpdate: (t, ref) => uow.inTenant(t, (tx) => tx.otpRepo.findByRefForUpdate(t, ref)),
       findActiveByParent: (t, parent, scope) => uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, parent, scope)),
+      countLockedByParent: (t, parent, scope) => uow.inTenant(t, (tx) => tx.otpRepo.countLockedByParent(t, parent, scope)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.otpRepo.save(record)),
     },
     rightsCaseRepo: {
@@ -70,6 +72,11 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
     },
     securityEvents: {
       record: (entry) => uow.inTenant(entry.tenantId, (tx) => tx.securityEvents.record(entry)),
+    },
+    otpBudget: {
+      findExhausted: (t, keys, at, limit) => uow.inTenant(t, (tx) => tx.otpBudget.findExhausted(t, keys, at, limit)),
+      reserveFailure: (t, keys, at, windowMs, limit) => uow.inTenant(t, (tx) => tx.otpBudget.reserveFailure(t, keys, at, windowMs, limit)),
+      releaseFailure: (t, keys) => uow.inTenant(t, (tx) => tx.otpBudget.releaseFailure(t, keys)),
     },
     idempotency: {
       find: (t, hash) => uow.inTenant(t, (tx) => tx.idempotency.find(t, hash)),

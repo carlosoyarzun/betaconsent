@@ -31,7 +31,7 @@ const INVITATION_HANDLE_COOKIE_NAME = "__Host-cns-i-handle";
 const MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
 const TENANT_ID = "de4a4205-7305-4869-8951-17522f43e694";
 
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 function parseSetCookie(res: Response): Record<string, string> {

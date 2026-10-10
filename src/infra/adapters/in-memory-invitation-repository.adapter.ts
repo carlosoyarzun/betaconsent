@@ -61,8 +61,14 @@ export function createInMemoryInvitationRepository(): InMemoryInvitationReposito
     listByTenant(tenantId) {
       return [...byKey.values()].filter((r) => r.tenantId === tenantId);
     },
+    async markOtpExhausted(tenantId, invitationRef) {
+      const current = byKey.get(key(tenantId, invitationRef));
+      if (current) byKey.set(key(tenantId, invitationRef), { ...current, otpExhausted: true });
+    },
     async save(record) {
-      byKey.set(key(record.tenantId, record.invitationRef), { ...record });
+      // otpExhausted es monotona y solo la escribe markOtpExhausted (como la columna de la base, que save no toca).
+      const current = byKey.get(key(record.tenantId, record.invitationRef));
+      byKey.set(key(record.tenantId, record.invitationRef), { ...record, ...(current?.otpExhausted ? { otpExhausted: true } : {}) });
     },
   };
 }

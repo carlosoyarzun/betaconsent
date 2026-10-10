@@ -31,7 +31,8 @@ const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+channel-1@example.invalid";
 
 // LOCAL-only sintético (D4, no es default de producción): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+// SEC-CNS-021 PR-4: P-06 aprobado (3 envios/h, el inicial incluido) rige; solo se anula la separacion de 60 s (LOCAL_ONLY) para poder reenviar de inmediato.
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, minResendIntervalMs: 0 };
 // LOCAL-only sintetico (GRD-CD-04, decision-relationship.config.ts): estos tests no ejercen
 // pasos de decision, pero createDefaultConsentFlowPorts exige la config igual que otpPolicy.
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
@@ -315,7 +316,8 @@ test("TEST-CNS-550: POST /otp/resend agota el límite (P-06) -> 409 OTP_RESEND_L
     const requested = await post(harness.baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie: sessionAfterOpen });
     const sessionAfterRequest = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionAfterOpen;
 
-    for (let i = 0; i < LOCAL_ONLY_TEST_OTP_POLICY.maxResends; i += 1) {
+    // D8: el envio inicial (V1) cuenta; con P-06 aprobado (3/h) caben V1 + 2 reenvios.
+    for (let i = 0; i < 2; i += 1) {
       const ok = await post(harness.baseUrl, { path: "/otp/resend", ...VALID_CSRF, sessionCookie: sessionAfterRequest });
       assert.equal(ok.status, 202);
     }

@@ -12,7 +12,7 @@ import { loadStaffRosterCursorSecret } from "../../../src/server/modules/staff-r
 import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "../../../src/server/entrypoints/http/server-secrets.config.ts";
 import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
-const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const REL = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const ORIGIN = "http://consola-consent.test.localhost";
 const TENANT_ID = "c4cd7d8a-9578-4558-843e-a79fdab94fba";

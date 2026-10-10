@@ -135,6 +135,9 @@ const EXTERNAL_ERROR_CODE: Readonly<Record<string, string>> = {
   "ERR-OT-02": "OTP_CODE_REJECTED",
   "ERR-OT-03": "OTP_EXPIRED_OR_CONSUMED",
   "ERR-OT-04": "OTP_LOCKED",
+  // SEC-CNS-021 PR-4: presupuesto de fallos agotado (V6 DECISION: reemitir la invitacion; V6r RIGHTS: respuesta uniforme con RECOVERY visible).
+  "ERR-OT-06": "OTP_BUDGET_EXHAUSTED_DECISION",
+  "ERR-OT-07": "OTP_BUDGET_EXHAUSTED_RIGHTS",
   "ERR-OT-09": "OTP_RESEND_LIMIT",
   "ERR-CD-01": "ALREADY_DECIDED",
   "ERR-CD-02": "PURPOSE_SELECTION_INVALID",

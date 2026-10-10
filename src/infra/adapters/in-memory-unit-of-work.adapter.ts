@@ -17,6 +17,7 @@ import type { ConsentDecisionRepositoryPort } from "../../server/ports/consent-d
 import type { EnrollmentRepositoryPort } from "../../server/ports/enrollment-repository.port.ts";
 import type { InvitationRepositoryPort } from "../../server/ports/invitation-repository.port.ts";
 import type { LedgerPort } from "../../server/ports/ledger.port.ts";
+import type { OtpBudgetPort } from "../../server/ports/otp-budget.port.ts";
 import type { OtpVerificationRepositoryPort } from "../../server/ports/otp-verification-repository.port.ts";
 import type { OutboxPort } from "../../server/ports/outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "../../server/ports/recovery-token.port.ts";
@@ -89,6 +90,7 @@ function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId):
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
     findActiveBySubject: async (t, contextRef, subjectRef) => (t === tenant ? inner.findActiveBySubject(t, contextRef, subjectRef) : null),
     existsBySubject: async (t, contextRef, subjectRef) => (t === tenant ? inner.existsBySubject(t, contextRef, subjectRef) : false),
+    markOtpExhausted: async (t, ref) => (t === tenant ? inner.markOtpExhausted(t, ref) : undefined),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("invitationRepo.save");
       return inner.save(record);
@@ -101,6 +103,7 @@ function scopeOtpRepo(inner: OtpVerificationRepositoryPort, tenant: TenantId): O
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
     findActiveByParent: async (t, parentRef, scope) => (t === tenant ? inner.findActiveByParent(t, parentRef, scope) : null),
+    countLockedByParent: async (t, parentRef, scope) => (t === tenant ? inner.countLockedByParent(t, parentRef, scope) : 0),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("otpRepo.save");
       return inner.save(record);
@@ -181,6 +184,18 @@ function scopeSecurityEvents(inner: SecurityEventPort, tenant: TenantId): Securi
   };
 }
 
+function scopeOtpBudget(inner: OtpBudgetPort, tenant: TenantId): OtpBudgetPort {
+  return {
+    // Bajo RLS un tenant ajeno ve 0 filas (sin cupo consumido) y no puede escribir.
+    findExhausted: async (t, keys, at, limit) => (t === tenant ? inner.findExhausted(t, keys, at, limit) : null),
+    reserveFailure: async (t, keys, at, windowMs, limit) => {
+      if (t !== tenant) throw new TenantScopeViolationError("otpBudget.reserveFailure");
+      return inner.reserveFailure(t, keys, at, windowMs, limit);
+    },
+    releaseFailure: async (t, keys) => (t === tenant ? inner.releaseFailure(t, keys) : undefined),
+  };
+}
+
 function scopeOutbox(inner: OutboxPort, tenant: TenantId): OutboxPort {
   return {
     enqueue: async (input) => {
@@ -218,6 +233,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     "idempotency",
     "accessLog",
     "securityEvents",
+    "otpBudget",
   ] as const;
   for (const name of keys) {
     const port: unknown = ports[name];
@@ -245,6 +261,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
         idempotency: scopeIdempotency(ports.idempotency, tenantId),
         accessLog: scopeAccessLog(ports.accessLog, tenantId),
         securityEvents: scopeSecurityEvents(ports.securityEvents, tenantId),
+        otpBudget: scopeOtpBudget(ports.otpBudget, tenantId),
       });
     } catch (error) {
       for (let i = journal.length - 1; i >= 0; i--) journal[i]?.();

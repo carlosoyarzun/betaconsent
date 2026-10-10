@@ -26,7 +26,7 @@ function makePorts() {
     channel: createInMemoryOtpChannelSink(),
     ledger,
     uow: createInMemoryTenancy({ ledger, otpRepo, securityEvents }).uow,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 },
     secret: randomBytes(32),
   };
 }

@@ -63,7 +63,8 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
       ledger: outside.ledger,
       uow,
       invitation,
-      policy: { codeLength: 6, maxAttempts: 2, ttlMs: 60_000, maxResends: 3 },
+      // SEC-CNS-021 PR-4: P-04 (10 fallos/clave/dia) y P-06 (60 s entre envios) se anulan SOLO aqui (LOCAL_ONLY) para repetir rondas y reenviar de inmediato.
+      policy: { codeLength: 6, maxAttempts: 2, ttlMs: 60_000, budgetMaxFailures: 1000, minResendIntervalMs: 0 },
       secret: randomBytes(32),
     };
     const count: Count = async (sql, values) => (await admin.query<{ n: number }>(sql, values)).rows[0]?.n ?? -1;
