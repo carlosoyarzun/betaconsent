@@ -52,7 +52,7 @@ test("TEST-CNS-497: invitación -> OTP -> decisión en memoria; cadena del ledge
     ledger,
     uow: tenancy.uow,
     invitation: invitationPorts,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 },
     secret: randomBytes(32),
   };
   const consentPorts: ConsentDecisionPorts = {

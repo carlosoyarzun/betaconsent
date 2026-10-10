@@ -34,11 +34,12 @@ interface InvitationRow {
   participation_ref: string | null;
   reissue_of_ref: string | null;
   recipient_binding: "RECIPIENT_CHANNEL" | "UNBOUND" | null;
+  otp_exhausted: boolean;
 }
 
 const COLUMNS =
   "tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state, consent_version, expires_at, " +
-  "recipient_channel_ref, token_hash, bound_decision_maker_ref, enrollment_ref, participation_ref, reissue_of_ref, recipient_binding";
+  "recipient_channel_ref, token_hash, bound_decision_maker_ref, enrollment_ref, participation_ref, reissue_of_ref, recipient_binding, otp_exhausted";
 
 function toRecord(row: InvitationRow): InvitationRecord {
   return {
@@ -57,6 +58,7 @@ function toRecord(row: InvitationRow): InvitationRecord {
     ...(row.participation_ref !== null ? { participationRef: row.participation_ref } : {}),
     ...(row.reissue_of_ref !== null ? { reissueOfRef: row.reissue_of_ref } : {}),
     ...(row.recipient_binding !== null ? { recipientBinding: row.recipient_binding } : {}),
+    ...(row.otp_exhausted ? { otpExhausted: true } : {}),
   };
 }
 
@@ -98,6 +100,10 @@ export function createPgInvitationRepository(tx: TenantTx): InvitationRepository
         [tenantId, contextRef, subjectRef],
       );
       return r.rows[0]?.found === true;
+    },
+    async markOtpExhausted(tenantId, invitationRef) {
+      // V6a: monotona (el trigger de 0032 rechaza true -> false). Se llama con el lock de la fila ya tomado (F-4).
+      await tx.query("UPDATE app.invitation SET otp_exhausted = true WHERE tenant_id = $1 AND invitation_ref = $2", [tenantId, invitationRef]);
     },
     async save(record) {
       // Upsert. La identidad (contexto, producto, sujeto, enrollment, participacion, reemision) se

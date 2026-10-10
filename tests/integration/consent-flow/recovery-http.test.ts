@@ -40,7 +40,7 @@ const RECOVERY_COOKIE_NAME = "__Host-cns-recovery";
 const MANAGE_ENTRY_HANDLE_COOKIE_NAME = "__Host-cns-m-handle";
 const TENANT_ID = "5ab701b7-c97e-4715-8e69-45b9fc1d7123";
 
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 const LOCAL_ONLY_TEST_RECOVERY_HANDLE_POLICY = { ttlMs: 60_000 };

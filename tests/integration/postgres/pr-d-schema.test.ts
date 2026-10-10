@@ -80,9 +80,11 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
   }
   // Solo cambian de estado las columnas de estado; la identidad se fija al crear.
   assert.deepEqual(await columnsWith(admin, "app.invitation", "app_rw", "UPDATE"), [
-    "bound_decision_maker_ref", "consent_version", "expires_at", "recipient_binding", "recipient_channel_ref", "state", "token_hash",
-  ]);
-  assert.deepEqual(await columnsWith(admin, "app.otp_verification", "app_rw", "UPDATE"), ["attempts", "code_hash", "consumed_at", "expires_at", "resend_count", "state"]);
+    "bound_decision_maker_ref", "consent_version", "expires_at", "otp_exhausted", "recipient_binding", "recipient_channel_ref", "state", "token_hash",
+  ]); // 0032: otp_exhausted (V6a) actualizable, no insertable
+  assert.deepEqual(await columnsWith(admin, "app.otp_verification", "app_rw", "UPDATE"), [
+    "attempts", "code_hash", "consumed_at", "expires_at", "last_sent_at", "resend_count", "sends_in_window", "sends_window_start", "state",
+  ]); // 0032: marcas de envio P-06
   assert.deepEqual(await columnsWith(admin, "app.rights_case", "app_rw", "UPDATE"), ["origin", "revocation_ref", "status"]);
   assert.deepEqual(await columnsWith(admin, "app.enrollment", "app_rw", "UPDATE"), ["state"]);
   assert.deepEqual(await columnsWith(admin, "app.invitation", "app_rw", "INSERT"), [

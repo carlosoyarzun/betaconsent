@@ -663,3 +663,15 @@ TEST-CNS-1312,unit,tests/unit/postgres/retention-config.test.ts,"config CNS_RETE
 TEST-CNS-1313,integration,tests/integration/postgres/security-event-retention.test.ts,"pg: CLI retention-purge-cli purga como worker, salida sin PII, DISABLED_LOCAL, no purga con retencion distinta",SEC-CNS-021;CA-146;P-34;INV-21-10,ACTIVE
 TEST-CNS-1322,integration,tests/integration/postgres/security-event-retention.test.ts,"pg: purga de app.otp_verification solo con expires_at vencido, nunca challenge activo; sin lectura de correo/hash",SEC-CNS-021;CA-146;P-34;INV-21-18,ACTIVE
 TEST-CNS-1323,unit,tests/unit/postgres/retention-config.test.ts,"arranque STAGING exige retencion coincidente; senal retention_purge_stale a las 26 h",SEC-CNS-021;CA-146;P-34;INV-21-19,ACTIVE
+TEST-CNS-162,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V6 DECISION: reserva agotada -> ERR-OT-06 sin comparar, FAILED, OTP_BUDGET_EXHAUSTED, sin PII",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-11;INV-21-14;INV-21-15,ACTIVE
+TEST-CNS-156,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V6 DECISION: ERR-OT-06 y challenge FAILED (mismo test que 162)",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-14,ACTIVE
+TEST-CNS-163,unit,tests/unit/otp-challenge/otp-budget.test.ts,"acierto no consume presupuesto; ventana fija desde el primer fallo y reinicio a las 24 h",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-11,ACTIVE
+TEST-CNS-157,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V6r RIGHTS: ERR-OT-07 y FAILED; DAYS_30 no se reserva (D6)",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-14;D6,ACTIVE
+TEST-CNS-1317,unit,tests/unit/otp-challenge/otp-budget.test.ts,"P-05: agotar RIGHTS no toca DECISION",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-13,ACTIVE
+TEST-CNS-393,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V6a: el 3.er LOCKED marca otpExhausted + OTP_BUDGET_EXHAUSTED(INVITATION)",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-14;GRD-OT-09,ACTIVE
+TEST-CNS-394,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V6a: V1 posterior sobre invitacion otpExhausted -> ERR-OT-06 (GRD-OT-14)",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-14;GRD-OT-14,ACTIVE
+TEST-CNS-152,unit,tests/unit/otp-challenge/otp-budget.test.ts,"P-06: reenvio <60 s -> ERR-OT-09 sin cambiar el codigo",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-17;GRD-OT-06,ACTIVE
+TEST-CNS-1321,unit,tests/unit/otp-challenge/otp-budget.test.ts,"P-06 D8: V1 + 2 reenvios caben, el 3.o no; ventana de 1 h reinicia",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-17;D8,ACTIVE
+TEST-CNS-410,unit,tests/unit/otp-challenge/otp-budget.test.ts,"orden de locks F-4: invitacion antes que challenge en V1/V2/V2r",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-12;F-4,ACTIVE
+TEST-CNS-1319,unit,tests/unit/otp-challenge/otp-budget.test.ts,"subclave HKDF del presupuesto distinta de la de channelRef",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-15,ACTIVE
+TEST-CNS-1320,unit,tests/unit/otp-challenge/otp-policy-config.test.ts,"P-04..P-07 aprobados en cualquier entorno; overrides solo LOCAL; maxResends retirado; DAYS_30 no aplicado",SEC-CNS-021;CA-146;SEC-CNS-006;INV-21-16;D6,ACTIVE

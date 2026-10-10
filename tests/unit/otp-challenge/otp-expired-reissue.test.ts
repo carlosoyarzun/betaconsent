@@ -27,7 +27,7 @@ test("TEST-CNS-850: V1 con el activo expirado: pasa a EXPIRED y se emite uno nue
   const invitation: InvitationPorts = { invitationRepo, eligibility: createInMemoryEligibilityAdapter(), ledger, ...tenancy };
   const channel = createInMemoryOtpChannelSink();
   let clock = 1_800_000_000_000; // reloj inyectado: sin setTimeout ni dependencia de la carga de la máquina
-  const otp: OtpChallengePorts = { now: () => clock, otpRepo, channel, ledger, uow: tenancy.uow, invitation, policy: { codeLength: 6, maxAttempts: 3, ttlMs: 30, maxResends: 3 }, secret: randomBytes(32) };
+  const otp: OtpChallengePorts = { now: () => clock, otpRepo, channel, ledger, uow: tenancy.uow, invitation, policy: { codeLength: 6, maxAttempts: 3, ttlMs: 30 }, secret: randomBytes(32) };
   await createInvitation(invitation, T, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"), invitationRef: fixtureUuid("inv-850"), contextRef: "BETA_2026_01", productRef: "LECTORPRO", subjectRef: fixtureUuid("s850") });
   await markInvitationReady(invitation, T, "INVITER", fixtureUuid("inv-850"), { consentVersion: "v1", expiresAt: new Date(Date.now() + 60_000), recipientChannelRef: CH });
   const { token } = await sendInvitation(invitation, T, "INVITER", fixtureUuid("inv-850"), { deliveryChannel: "CONSENT_APP_EMAIL" });

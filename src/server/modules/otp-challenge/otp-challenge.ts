@@ -3,36 +3,52 @@
 // SEC-CNS-021 PR-2 (F-1): OTP_ISSUED/FAILED/LOCKED se escriben en ops.security_event (tx.securityEvents) en la MISMA tx que el estado del
 // challenge; en el ledger solo queda DECISION_MAKER_CHANNEL_VERIFIED (V3, expectedSequence 0). La valla de concurrencia es el lock de fila
 // de app.otp_verification (findByRefForUpdate), ya no la secuencia del ledger.
-// Alcance IT0 de este archivo (subconjunto mínimo, TEST-CNS-483 en adelante): solo scope
-// DECISION (padre = Invitation), sin REVOCATION/MANAGE. No implementa V2r (reenvío), V5
-// (expiración por barrido, solo se evalúa perezosamente al comparar), V6/V6a (presupuesto
-// por clave, requiere ops.otp_budget) ni GRD-OT-08/13 (ligar el challenge al
-// handle/sesión que lo pidió: sin infraestructura de handles HTTP en este slice). Los
-// parámetros P-01 (6 dígitos), P-02 (10 min) y P-03 (5 intentos) de SEC-CNS-006 rev. 5 §1 están
-// APROBADOS por Carlos (approved-parameters.ts) y son el default de otp-policy.config.ts; el llamador
-// los inyecta vía `OtpPolicy`. Lo diferido sigue arriba (V2r aparte, V5, V6/V6a, GRD-OT-08/13).
 //
-// V2r (resendOtp, Carlos 2026-09-27): agrega el subconjunto mínimo de V2r (reemplaza el
-// código sin reiniciar `attempts` ni el presupuesto, GRD-OT-06). P-06 está APROBADO (>=60 s entre
-// envíos, <=3/hora por verificación) pero PENDIENTE de aplicar en el PR de ops.otp_budget (junto con
-// P-04/04a/b/c, P-05 y P-07): falta registrar timestamps de envío. Mientras tanto se modela como
-// `maxResends` en `OtpPolicy`, exigido por `otp-policy.config.ts` y sin default. No
-// implementa GRD-OT-13 (challenge_bound_to_request_handle: sin infraestructura de handles HTTP
-// en este slice, igual que V1/V3 ya declaran arriba) ni el presupuesto por clave (V6/V6a/V6r).
+// SEC-CNS-021 PR-4 (CA-146 / DF-10, F-4, F-5; D6, D8 de Carlos 2026-10-08): presupuesto de fallos por clave (ops.otp_budget, P-04/P-04a/b/c/P-05), V6 (DECISION)
+// y V6r (RIGHTS) al agotarse, V6a (3.er challenge LOCKED de una invitacion -> invitation.otp_exhausted, P-07 DECISION, GRD-OT-09/14) y P-06 en V2r
+// (>= 60 s entre envios y <= 3 envios por hora por verificacion; el envio INICIAL de V1 cuenta, D8). `maxResends` se retiro: P-06 lo reemplaza.
+// DIFERIDO (D6): el tope RIGHTS DAYS_30 (P-07, V6c, rotacion del management token): P07_RIGHTS_DAYS_30_CAP_ENFORCED = false; el unico tope de RIGHTS es P-04 DAY_1.
+//
+// ORDEN DE LOCKS (F-4, P1; sin riesgo de deadlock). TODOS los caminos que toman mas de un lock lo hacen en este orden global:
+//   1. app.invitation (SOLO scope DECISION; FOR UPDATE)            -> V1 (requestOtp), V2/V3/V4/V6/V6a (submitOtp) y V2r (resendOtp, scope DECISION)
+//   2. app.otp_verification (FOR UPDATE, por verificationRef)
+//   3. ops.otp_budget (filas de las claves, via INSERT ... ON CONFLICT DO UPDATE), SIEMPRE en el orden CHANNEL y luego INVITATION|CHAIN (otp-budget.ts)
+//   4. filas nuevas (ops.security_event, integrity.audit_event)
+// Un camino puede omitir niveles (RIGHTS no tiene invitacion; V1 solo lee el presupuesto) pero nunca invertir su orden relativo. Antes de PR-4
+// submitOtp bloqueaba challenge -> invitacion (via I5/V6a) mientras V1 bloqueaba invitacion -> challenge: ciclo posible. Ahora submitOtp/resendOtp leen
+// el challenge SIN lock (scope y parentRef son inmutables), bloquean la invitacion y recien entonces bloquean el challenge (lockParentThenChallenge).
+// V4/V6a y V1 comparten el lock de la invitacion: un V1 concurrente con el 3.er LOCKED se evalua DESPUES de V6a y ve otp_exhausted (SEC N-09, GRD-OT-09).
+//
+// Alcance IT0 de este archivo: GRD-OT-13 (ligar el challenge al handle/sesion que lo pidio) sigue sin implementarse (sin infraestructura de handles en este slice);
+// V5 (expiracion) se evalua perezosamente al comparar o reenviar. Los parametros P-01 (6 digitos), P-02 (10 min) y P-03 (5 intentos) de SEC-CNS-006 rev. 5 §1 estan
+// APROBADOS por Carlos (approved-parameters.ts) y son el default de otp-policy.config.ts; el llamador los inyecta via `OtpPolicy`. P-04, P-06 y P-07 se
+// resuelven con `budgetPolicy` (default aprobado; overrides solo LOCAL via el loader).
 
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03, opaqueUuidV4 } from "../common/opaque-ref.ts";
 import { createHmac, hkdfSync, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+
+import {
+  APPROVED_P04_OTP_BUDGET_MAX_FAILURES,
+  APPROVED_P04_OTP_BUDGET_WINDOW_MS,
+  APPROVED_P06_OTP_MAX_SENDS_PER_HOUR,
+  APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS,
+  APPROVED_P06_OTP_SEND_WINDOW_MS,
+  APPROVED_P07_OTP_DECISION_MAX_LOCKED_CHALLENGES,
+} from "../common/approved-parameters.ts";
 
 import { DomainError, type DomainErrorCode } from "../common/errors.ts";
 import { assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
 import type { TenantId } from "../common/types.ts";
 import type { OtpChannelPort } from "../../ports/otp-channel.port.ts";
 import type { OtpScope, OtpVerificationRecord, OtpVerificationRepositoryPort } from "../../ports/otp-verification-repository.port.ts";
+import type { InvitationRecord } from "../../ports/invitation-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
+import type { OtpBudgetPort } from "../../ports/otp-budget.port.ts";
 import type { SecurityEventPort } from "../../ports/security-event.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { invitationPortsInTx, markInvitationVerifiedTx } from "../invitation/invitation.ts";
+import { otpBudgetKeys, scopeClassOf } from "./otp-budget.ts";
 
 export interface OtpPolicy {
   /** P-01 (aprobado: 6; approved-parameters.ts): dígitos del código. */
@@ -41,9 +57,33 @@ export interface OtpPolicy {
   readonly maxAttempts: number;
   /** P-02 (aprobado: 10 min): vigencia del código en milisegundos. */
   readonly ttlMs: number;
-  /** P-06 (aprobado >=60 s entre envíos y <=3/hora, pendiente de aplicar en ops.otp_budget; hoy contador): reenvíos máximos (V2r,
-   * GRD-OT-06) antes de ERR-OT-09. */
-  readonly maxResends: number;
+  /** P-04 (aprobado: 10 fallos por clave y ventana DAY_1). Opcional: ausente = valor aprobado. Un override distinto solo se admite en LOCAL (otp-policy.config.ts). */
+  readonly budgetMaxFailures?: number;
+  /** P-04 (aprobado: ventana fija de 24 h desde el primer fallo). Opcional: ausente = valor aprobado. */
+  readonly budgetWindowMs?: number;
+  /** P-07 DECISION (aprobado: 3 challenges LOCKED por invitacion -> V6a). Opcional: ausente = valor aprobado. */
+  readonly maxLockedChallenges?: number;
+  /** P-06 (aprobado: >= 60 s entre envíos de una verificación). Opcional: ausente = valor aprobado. */
+  readonly minResendIntervalMs?: number;
+  /** P-06 (aprobado: <= 3 envíos por hora por verificación, el inicial incluido; D8). Opcional: ausente = valor aprobado. */
+  readonly maxSendsPerHour?: number;
+}
+
+/** Parametros P-04/P-06/P-07 resueltos: el valor del `OtpPolicy` o, si falta, el APROBADO (approved-parameters.ts). */
+function budgetPolicy(policy: OtpPolicy): {
+  readonly maxFailures: number;
+  readonly windowMs: number;
+  readonly maxLocked: number;
+  readonly minResendIntervalMs: number;
+  readonly maxSendsPerHour: number;
+} {
+  return {
+    maxFailures: policy.budgetMaxFailures ?? APPROVED_P04_OTP_BUDGET_MAX_FAILURES,
+    windowMs: policy.budgetWindowMs ?? APPROVED_P04_OTP_BUDGET_WINDOW_MS,
+    maxLocked: policy.maxLockedChallenges ?? APPROVED_P07_OTP_DECISION_MAX_LOCKED_CHALLENGES,
+    minResendIntervalMs: policy.minResendIntervalMs ?? APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS,
+    maxSendsPerHour: policy.maxSendsPerHour ?? APPROVED_P06_OTP_MAX_SENDS_PER_HOUR,
+  };
 }
 
 export interface OtpChallengePorts {
@@ -94,7 +134,13 @@ type RightsOtpPorts = Omit<OtpChallengePorts, "invitation">;
 
 /** Puertos de UNA tx: los de `RightsOtpPorts` ligados a la unidad + `securityEvents` (ops.security_event). SEC-CNS-021 PR-2 (F-1,
  * INV-21-02): OTP_ISSUED/FAILED/LOCKED se escriben ahi, en la MISMA tx que el estado del challenge, y no en el ledger. */
-type OtpTxPorts = RightsOtpPorts & { readonly securityEvents: SecurityEventPort };
+type OtpTxPorts = RightsOtpPorts & {
+  readonly securityEvents: SecurityEventPort;
+  /** SEC-CNS-021 PR-4: presupuesto de fallos (ops.otp_budget) de la tx. */
+  readonly otpBudget: OtpBudgetPort;
+  /** Solo scope DECISION (V1/V2/V3/V4/V6/V6a/V2r): puertos de la Invitation ligados a la tx. */
+  readonly invitation?: InvitationPorts;
+};
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, `otpRepo`, `ledger` (y la Invitation, si el
  * bag la trae) son los de la tx. Las funciones de este modulo no anidan `inTenant`. Si la unidad se
@@ -103,7 +149,7 @@ type OtpTxPorts = RightsOtpPorts & { readonly securityEvents: SecurityEventPort 
 function inTx<P extends RightsOtpPorts & { readonly invitation?: InvitationPorts }, T>(
   ports: P,
   tenantId: TenantId,
-  fn: (txPorts: P & { readonly securityEvents: SecurityEventPort }) => Promise<T>,
+  fn: (txPorts: P & { readonly securityEvents: SecurityEventPort; readonly otpBudget: OtpBudgetPort }) => Promise<T>,
 ): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) =>
     fn({
@@ -111,6 +157,7 @@ function inTx<P extends RightsOtpPorts & { readonly invitation?: InvitationPorts
       otpRepo: tx.otpRepo,
       ledger: tx.ledger,
       securityEvents: tx.securityEvents,
+      otpBudget: tx.otpBudget,
       ...(ports.invitation ? { invitation: invitationPortsInTx(ports.invitation, tx) } : {}),
     }),
   );
@@ -126,6 +173,27 @@ async function requireVerification(ports: RightsOtpPorts, tenantId: TenantId, ve
   return found;
 }
 
+/**
+ * F-4 (orden de locks, ver cabecera): lee el challenge SIN lock solo para conocer scope y parentRef (inmutables), bloquea la invitacion padre (scope
+ * DECISION) y recien despues bloquea el challenge (releyendo el estado confirmado). Evita el ciclo invitacion<->challenge con V1.
+ */
+async function lockParentThenChallenge(
+  ports: OtpTxPorts,
+  tenantId: TenantId,
+  verificationRef: string,
+): Promise<{ readonly found: OtpVerificationRecord; readonly invitation: InvitationRecord | null }> {
+  const peek = await ports.otpRepo.findByRef(tenantId, verificationRef);
+  if (!peek) {
+    throw new DomainError("ERR-CM-01");
+  }
+  let invitation: InvitationRecord | null = null;
+  if (peek.scope === "DECISION" && ports.invitation) {
+    invitation = await ports.invitation.invitationRepo.findByRefForUpdate(tenantId, peek.parentRef);
+  }
+  const found = await requireVerification(ports, tenantId, verificationRef);
+  return { found, invitation };
+}
+
 /** Resultado de una unidad de V2/V3/V4: los fallos que DEBEN dejar efecto (intento reservado, LOCKED,
  * EXPIRED + su evento) se confirman y el error se lanza DESPUES del commit; un throw dentro revertiria
  * la reserva del intento (GRD-OT-04, SEC F02). */
@@ -136,6 +204,11 @@ function settle(outcome: SubmitOutcome): OtpVerificationRecord {
     throw new DomainError(outcome.fail);
   }
   return outcome.ok;
+}
+
+/** ERR-OT-06 (DECISION: la via es reemitir la invitacion) o ERR-OT-07 (RIGHTS: respuesta uniforme, RECOVERY visible). */
+function budgetExhaustedError(scope: OtpScope): DomainErrorCode {
+  return scopeClassOf(scope) === "DECISION" ? "ERR-OT-06" : "ERR-OT-07";
 }
 
 interface SubmitSpec {
@@ -159,7 +232,7 @@ async function submitCore(
   // SEC-CNS-021 PR-2 (valla de concurrencia): la unica fila del ledger de este agregado es DECISION_MAKER_CHANNEL_VERIFIED
   // (sequence 1, expectedSequence 0). La valla ya no es la secuencia (los OTP_* salieron del ledger) sino el lock de fila de
   // app.otp_verification (findByRefForUpdate): un V3 concurrente espera, relee VERIFIED y sale por ERR-OT-03 sin llegar al append.
-  const found = await requireVerification(ports, tenantId, verificationRef);
+  const { found, invitation } = await lockParentThenChallenge(ports, tenantId, verificationRef); // F-4: invitacion -> challenge
   if (spec.expectScope !== null && found.scope !== spec.expectScope) {
     // ERR-OT-05 (OTP_SCOPE_MISUSE): VERIFIED de un scope no sirve para otro.
     throw new DomainError("ERR-OT-01");
@@ -177,6 +250,25 @@ async function submitCore(
     return { fail: "ERR-OT-03" };
   }
 
+  // GRD-OT-03 (budget_by_scope_class, P-04/P-05): reserva atomica de un fallo en cada clave aplicable, ANTES de comparar y en la misma tx que GRD-OT-04.
+  // Sin cupo en alguna clave -> rechazo SIN comparar: V6 (DECISION, ERR-OT-06) o V6r (RIGHTS, ERR-OT-07); el challenge pasa a FAILED y queda
+  // OTP_BUDGET_EXHAUSTED. La Revocation de la cadena no se toca (V6r nunca la deniega). El rechazo no consume el intento (no se comparo).
+  const budget = budgetPolicy(ports.policy);
+  const budgetKeys = otpBudgetKeys(ports.secret, tenantId, found.scope, found.parentRef, found.channelRef);
+  const exhausted = await ports.otpBudget.reserveFailure(tenantId, budgetKeys, new Date(clockMs(ports)), budget.windowMs, budget.maxFailures);
+  if (exhausted) {
+    await ports.otpRepo.save({ ...found, state: "FAILED" });
+    await ports.securityEvents.record({
+      tenantId,
+      eventType: "OTP_BUDGET_EXHAUSTED",
+      verificationRef,
+      scopeClass: exhausted.scopeClass,
+      keyKind: exhausted.keyKind,
+      windowKind: exhausted.windowKind,
+    });
+    return { fail: budgetExhaustedError(found.scope) };
+  }
+
   // GRD-OT-04 (attempts_below_N_atomic): reserva el intento ANTES de comparar (SEC F02).
   const attempts = found.attempts + 1;
   const candidateHash = hashCode(ports.secret, verificationRef, code);
@@ -184,6 +276,7 @@ async function submitCore(
   const isCorrect = candidateHash.length === storedHash.length && timingSafeEqual(candidateHash, storedHash); // GRD-OT-07
 
   if (isCorrect) {
+    await ports.otpBudget.releaseFailure(tenantId, budgetKeys); // los aciertos no consumen presupuesto (P-04)
     const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
     await ports.otpRepo.save(verified);
     await ports.ledger.append({
@@ -207,6 +300,14 @@ async function submitCore(
     const locked: OtpVerificationRecord = { ...found, attempts, state: "LOCKED" };
     await ports.otpRepo.save(locked);
     await ports.securityEvents.record({ tenantId, eventType: "OTP_LOCKED", verificationRef, otpScope: spec.eventScope });
+    if (found.scope === "DECISION" && invitation && ports.invitation) {
+      // V6a (GRD-OT-09, P-07): contabilidad del padre bajo el lock de la invitacion ya tomado. El challenge LOCKED no transiciona (R13-7).
+      const lockedCount = await ports.otpRepo.countLockedByParent(tenantId, found.parentRef, "DECISION");
+      if (lockedCount >= budget.maxLocked && invitation.otpExhausted !== true) {
+        await ports.invitation.invitationRepo.markOtpExhausted(tenantId, found.parentRef);
+        await ports.securityEvents.record({ tenantId, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "DAY_1" });
+      }
+    }
     return { fail: "ERR-OT-04" };
   }
 
@@ -244,6 +345,10 @@ async function issueChallengeTx(
     expiresAt: new Date(clockMs(ports) + ports.policy.ttlMs),
     state: "CODE_SENT",
     resendCount: 0,
+    // P-06 (D8): el envio inicial cuenta como el primero de la ventana de 1 h.
+    lastSentAt: new Date(clockMs(ports)),
+    sendsWindowStart: new Date(clockMs(ports)),
+    sendsInWindow: 1,
   };
   await ports.otpRepo.save(record);
   // La carrera por el padre la resuelve el UNIQUE parcial GRD-OT-08 (la tx entera revierte, evento incluido).
@@ -285,6 +390,21 @@ async function deliver(ports: RightsOtpPorts, issued: Issued, verificationRef: s
   return issued.record;
 }
 
+/** GRD-OT-03 en V1: lanza ERR-OT-06/07 si alguna clave aplicable ya no tiene cupo en su ventana vigente. Solo lectura. */
+async function assertBudgetCapacity(
+  ports: OtpTxPorts,
+  tenantId: TenantId,
+  scope: OtpScope,
+  parentRef: string,
+  channelRef: string,
+): Promise<void> {
+  const budget = budgetPolicy(ports.policy);
+  const keys = otpBudgetKeys(ports.secret, tenantId, scope, parentRef, channelRef);
+  if (await ports.otpBudget.findExhausted(tenantId, keys, new Date(clockMs(ports)), budget.maxFailures)) {
+    throw new DomainError(budgetExhaustedError(scope));
+  }
+}
+
 /** V1: NOT_STARTED -> CODE_SENT (scope DECISION). Guards: GRD-CM-02, GRD-CM-05, GRD-OT-01, GRD-OT-02, GRD-OT-08 (subconjunto). */
 export async function requestOtp(
   ports: OtpChallengePorts,
@@ -311,6 +431,12 @@ export async function requestOtp(
     assertRouteEligible(
       await p.invitation.eligibility.isEligibleForIssuance(tenantId, invitation.contextRef, invitation.productRef),
     ); // GRD-CM-05 (guardsByScope.DECISION)
+    if (invitation.otpExhausted === true) {
+      // GRD-OT-14 (parent_not_otp_exhausted): V6a ya marco la invitacion (bajo este mismo lock); la via es reemitirla.
+      throw new DomainError("ERR-OT-06");
+    }
+    // GRD-OT-03 en V1: solo SELECT, sin cupo en alguna clave -> respuesta generica (el borde HTTP la hace uniforme). No reserva.
+    await assertBudgetCapacity(p, tenantId, "DECISION", invitationRef, channelRef);
 
     const active = await activeUnexpired(p, tenantId, invitationRef, "DECISION");
     if (active) {
@@ -368,6 +494,7 @@ export async function requestRightsOtp(
   channelRef: string,
 ): Promise<OtpVerificationRecord> {
   const issued = await inTx(ports, tenantId, async (p): Promise<Issued> => {
+    await assertBudgetCapacity(p, tenantId, scope, chainRef, channelRef); // GRD-OT-03 / V6r (ERR-OT-07)
     const active = await activeUnexpired(p, tenantId, chainRef, scope);
     if (active) {
       // GRD-OT-08 (subconjunto): idempotente, mismo challenge activo.
@@ -412,7 +539,7 @@ export async function submitRightsOtp(
 export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, verificationRef: string): Promise<OtpVerificationRecord> {
   type ResendOutcome = { readonly ok: { readonly record: OtpVerificationRecord; readonly code: string } } | { readonly fail: DomainErrorCode };
   const outcome = await inTx(ports, tenantId, async (p): Promise<ResendOutcome> => {
-    const found = await requireVerification(p, tenantId, verificationRef); // lock de fila: unica valla (SEC-CNS-021 PR-2)
+    const { found } = await lockParentThenChallenge(p, tenantId, verificationRef); // F-4: invitacion (DECISION) -> challenge; el lock de fila es la valla (PR-2)
 
     if (found.state === "LOCKED") {
       return { fail: "ERR-OT-04" };
@@ -425,14 +552,33 @@ export async function resendOtp(ports: OtpChallengePorts, tenantId: TenantId, ve
       await p.otpRepo.save({ ...found, state: "EXPIRED" });
       return { fail: "ERR-OT-03" };
     }
-    if (found.resendCount >= p.policy.maxResends) {
-      // GRD-OT-06 (resend_limits, P-06): límite alcanzado, el challenge no cambia.
-      return { fail: "ERR-OT-09" };
+    // GRD-OT-06 (resend_limits, P-06; D8: el envio inicial de V1 cuenta), con hora de servidor y bajo el lock del challenge. Si el limite se alcanza,
+    // el challenge no cambia (ERR-OT-09). Sin marcas (fila anterior a 0032) = sin envios registrados.
+    const budget = budgetPolicy(p.policy);
+    const nowMs = clockMs(p);
+    if (found.lastSentAt !== undefined && nowMs - found.lastSentAt.getTime() < budget.minResendIntervalMs) {
+      return { fail: "ERR-OT-09" }; // < 60 s desde el ultimo envio
+    }
+    let windowStartMs = found.sendsWindowStart?.getTime();
+    let sendsInWindow = found.sendsInWindow ?? 0;
+    if (windowStartMs === undefined || windowStartMs + APPROVED_P06_OTP_SEND_WINDOW_MS <= nowMs) {
+      windowStartMs = nowMs; // ventana de 1 h vencida: arranca otra desde este envio
+      sendsInWindow = 0;
+    }
+    if (sendsInWindow >= budget.maxSendsPerHour) {
+      return { fail: "ERR-OT-09" }; // el envio excede el maximo por hora (el inicial cuenta)
     }
 
     const code = generateCode(p.policy.codeLength);
     const codeHash = hashCode(p.secret, verificationRef, code).toString("hex");
-    const resent: OtpVerificationRecord = { ...found, codeHash, resendCount: found.resendCount + 1 };
+    const resent: OtpVerificationRecord = {
+      ...found,
+      codeHash,
+      resendCount: found.resendCount + 1,
+      lastSentAt: new Date(nowMs),
+      sendsWindowStart: new Date(windowStartMs),
+      sendsInWindow: sendsInWindow + 1,
+    };
     await p.otpRepo.save(resent);
     await p.securityEvents.record({
       tenantId,

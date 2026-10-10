@@ -150,7 +150,8 @@
     }
 
     function handleOtpRejected(code) {
-      if (code === "OTP_LOCKED") {
+      if (code === "OTP_LOCKED" || code === "OTP_BUDGET_EXHAUSTED_DECISION" || code === "OTP_BUDGET_EXHAUSTED_RIGHTS") {
+        // SEC-CNS-021 PR-4 (V6/V6r): presupuesto de fallos agotado = mismo estado bloqueado (sin copy nuevo); RIGHTS conserva RECOVERY visible.
         showLocked();
       } else if (code === "OTP_EXPIRED_OR_CONSUMED") {
         showExpired();

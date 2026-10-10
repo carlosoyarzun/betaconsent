@@ -14,6 +14,7 @@ import type { EnrollmentRepositoryPort } from "./enrollment-repository.port.ts";
 import type { IdempotencyPort } from "./idempotency.port.ts";
 import type { InvitationRepositoryPort } from "./invitation-repository.port.ts";
 import type { LedgerPort } from "./ledger.port.ts";
+import type { OtpBudgetPort } from "./otp-budget.port.ts";
 import type { OtpVerificationRepositoryPort } from "./otp-verification-repository.port.ts";
 import type { OutboxPort } from "./outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "./recovery-token.port.ts";
@@ -46,6 +47,9 @@ export interface TenantTxPorts {
   /** SEC-CNS-021 PR-2 (F-1, INV-21-02): eventos de seguridad OTP_*, RECOVERY_TOKEN_ISSUED (ops.security_event, fuera del ledger y de
    * la cadena SHA-256) escritos en la MISMA tx que la transicion que los causa: si la unidad revierte, no queda ninguno. */
   readonly securityEvents: SecurityEventPort;
+  /** SEC-CNS-021 PR-4 (DF-10, GRD-OT-03): presupuesto de fallos de OTP por clave (ops.otp_budget), en la MISMA tx que el challenge:
+   * la reserva, su reversion en el acierto y el rechazo (V6/V6r) confirman o revierten junto con el estado del challenge. */
+  readonly otpBudget: OtpBudgetPort;
 }
 
 export interface UnitOfWorkPort {
