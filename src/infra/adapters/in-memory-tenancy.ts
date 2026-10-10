@@ -8,6 +8,7 @@ import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-w
 import type { TenantHandlePort } from "../../server/ports/tenant-handle.port.ts";
 import { createInMemoryAccessLogAdapter } from "./in-memory-access-log.adapter.ts";
 import { createInMemoryIdempotencyAdapter, LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS } from "./in-memory-idempotency.adapter.ts";
+import { createInMemoryOtpBudget } from "./in-memory-otp-budget.adapter.ts";
 import { createInMemorySecurityEventLog } from "./in-memory-security-event.adapter.ts";
 import { createInMemoryTenantCatalogAdapter } from "./in-memory-tenant-catalog.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "./in-memory-consent-decision-repository.adapter.ts";
@@ -51,6 +52,7 @@ export function createInMemoryTenancy(ports: InMemoryTenancySources): InMemoryTe
     idempotency: ports.idempotency ?? createInMemoryIdempotencyAdapter({ ttlMs: LOCAL_ONLY_IN_MEMORY_IDEMPOTENCY_TTL_MS }),
     accessLog: ports.accessLog ?? createInMemoryAccessLogAdapter(),
     securityEvents: ports.securityEvents ?? createInMemorySecurityEventLog(),
+    otpBudget: ports.otpBudget ?? createInMemoryOtpBudget(),
   };
   return {
     uow: createInMemoryUnitOfWork(full),

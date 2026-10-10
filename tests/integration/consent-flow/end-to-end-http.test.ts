@@ -29,7 +29,7 @@ const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+e2e-http@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 // LOCAL-only sintético (GRD-CD-04, decision-relationship.config.ts, opción b de Carlos).
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));

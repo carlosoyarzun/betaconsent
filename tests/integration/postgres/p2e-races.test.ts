@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
-import { requestOtp, submitOtp, type OtpChallengePorts } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
+import { requestOtp, submitOtp, type OtpChallengePorts, type OtpPolicy } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
 import { recordDecisionStep, startDecision, submitDecision, type ConsentDecisionPorts } from "../../../src/server/modules/consent-decision/consent-decision.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import { confirmCaseReturnViaHandle, type RightsCasePorts } from "../../../src/server/modules/rights-case/rights-case.ts";
@@ -50,7 +50,7 @@ async function withEnv<T>(ctx: PgTestContext, body: (env: {
   decision: ConsentDecisionPorts;
   count: (sql: string, values: unknown[]) => Promise<number>;
   pool: ReturnType<typeof createPool>;
-}) => Promise<T>, maxAttempts = 1, policy: { codeLength: number; maxAttempts: number; ttlMs: number; maxResends: number } = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }): Promise<T> {
+}) => Promise<T>, maxAttempts = 1, policy: OtpPolicy = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, budgetMaxFailures: 1000 }): Promise<T> {
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 16 });
   const admin = await ctx.connectAsSuperuser();
   try {
@@ -260,5 +260,5 @@ pgTest("TEST-CNS-861 pg: 10 submits incorrectos concurrentes sobre el mismo chal
       assert.equal((await outside.otpRepo.findByRef(T, ver))?.attempts, N, "ningun intento se pierde");
       assert.equal(await secCount(count, T, ver, "OTP_FAILED"), N);
     }
-  }, DEFAULT_UOW_MAX_ATTEMPTS, { codeLength: 6, maxAttempts: 1000, ttlMs: 60_000, maxResends: 3 });
+  }, DEFAULT_UOW_MAX_ATTEMPTS, { codeLength: 6, maxAttempts: 1000, ttlMs: 60_000, budgetMaxFailures: 1000 });
 });

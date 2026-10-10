@@ -23,7 +23,9 @@ import { createInMemoryTenancy } from "../../../src/infra/adapters/in-memory-ten
 
 const CHANNEL_REF = "test+channel-1@example.invalid";
 
-function makeOtpPorts(ledger = createInMemoryLedgerAdapter(), securityEvents = createInMemorySecurityEventLog()): { invitationPorts: InvitationPorts; otpPorts: OtpChallengePorts; securityEvents: typeof securityEvents } {
+// SEC-CNS-021 PR-4: reloj inyectable (`now`) para P-06 (>= 60 s entre envios) y ttl de 2 h para poder avanzarlo sin expirar el challenge.
+function makeOtpPorts(ledger = createInMemoryLedgerAdapter(), securityEvents = createInMemorySecurityEventLog()): { invitationPorts: InvitationPorts; otpPorts: OtpChallengePorts; securityEvents: typeof securityEvents; clock: { ms: number } } {
+  const clock = { ms: Date.now() };
   const invitationRepo = createInMemoryInvitationRepository();
   const otpRepo = createInMemoryOtpVerificationRepository();
   const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo, securityEvents });
@@ -39,10 +41,11 @@ function makeOtpPorts(ledger = createInMemoryLedgerAdapter(), securityEvents = c
     ledger,
     uow: tenancy.uow,
     invitation: invitationPorts,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 7_200_000 },
     secret: randomBytes(32),
+    now: () => clock.ms,
   };
-  return { invitationPorts, otpPorts, securityEvents };
+  return { invitationPorts, otpPorts, securityEvents, clock };
 }
 
 async function openedInvitation(invitationPorts: InvitationPorts, tenantId = "tenant-1") {
@@ -175,7 +178,7 @@ test("TEST-CNS-489: V3 con verificationRef de otro tenant -> 404 uniforme ERR-CM
 });
 
 test("TEST-CNS-545: V2r reemplaza el código sin reiniciar attempts ni el canal ligado (GRD-OT-06); el código viejo deja de servir", async () => {
-  const { invitationPorts, otpPorts } = makeOtpPorts();
+  const { invitationPorts, otpPorts, clock } = makeOtpPorts();
   await openedInvitation(invitationPorts);
   await requestOtp(otpPorts, "tenant-1", fixtureUuid("ver-1"), fixtureUuid("inv-1"), CHANNEL_REF);
   const sink = otpPorts.channel as ReturnType<typeof createInMemoryOtpChannelSink>;
@@ -188,6 +191,7 @@ test("TEST-CNS-545: V2r reemplaza el código sin reiniciar attempts ni el canal 
   const afterOneFail = await otpPorts.otpRepo.findByRef("tenant-1", fixtureUuid("ver-1"));
   assert.equal(afterOneFail?.attempts, 1);
 
+  clock.ms += 60_000; // P-06: >= 60 s desde el envio inicial
   const resent = await resendOtp(otpPorts, "tenant-1", fixtureUuid("ver-1"));
   assert.equal(resent.state, "CODE_SENT");
   assert.equal(resent.attempts, 1); // NO reinicia attempts (GRD-OT-06)
@@ -205,20 +209,25 @@ test("TEST-CNS-545: V2r reemplaza el código sin reiniciar attempts ni el canal 
   assert.equal(verified.state, "VERIFIED");
 });
 
-test("TEST-CNS-546: V2r agota el límite de reenvíos (P-06, maxResends) -> ERR-OT-09, sin tocar el challenge", async () => {
-  const { invitationPorts, otpPorts } = makeOtpPorts();
+test("TEST-CNS-546: V2r aplica P-06 con D8 (el envio inicial cuenta): V1 + 2 reenvios caben, el 3.o -> ERR-OT-09 sin tocar el challenge", async () => {
+  const { invitationPorts, otpPorts, clock } = makeOtpPorts();
   await openedInvitation(invitationPorts);
   await requestOtp(otpPorts, "tenant-1", fixtureUuid("ver-1"), fixtureUuid("inv-1"), CHANNEL_REF);
 
-  for (let i = 0; i < otpPorts.policy.maxResends; i += 1) {
+  for (let i = 0; i < 2; i += 1) {
+    clock.ms += 60_000;
     await resendOtp(otpPorts, "tenant-1", fixtureUuid("ver-1"));
   }
+  clock.ms += 60_000;
+  const before = await otpPorts.otpRepo.findByRef("tenant-1", fixtureUuid("ver-1"));
   await assert.rejects(
     () => resendOtp(otpPorts, "tenant-1", fixtureUuid("ver-1")),
     (err: unknown) => err instanceof DomainError && err.code === "ERR-OT-09",
   );
   const record = await otpPorts.otpRepo.findByRef("tenant-1", fixtureUuid("ver-1"));
-  assert.equal(record?.resendCount, otpPorts.policy.maxResends);
+  assert.deepEqual(record, before, "el rechazo no cambia el challenge");
+  assert.equal(record?.resendCount, 2);
+  assert.equal(record?.sendsInWindow, 3);
   assert.equal(record?.state, "CODE_SENT");
 });
 

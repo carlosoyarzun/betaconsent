@@ -29,10 +29,13 @@ interface OtpRow {
   consumed_at: Date | null;
   state: OtpVerificationState;
   resend_count: number;
+  last_sent_at: Date | null;
+  sends_window_start: Date | null;
+  sends_in_window: number;
 }
 
 const COLUMNS =
-  "tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count";
+  "tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count, last_sent_at, sends_window_start, sends_in_window";
 
 function toRecord(row: OtpRow): OtpVerificationRecord {
   return {
@@ -47,6 +50,9 @@ function toRecord(row: OtpRow): OtpVerificationRecord {
     ...(row.consumed_at !== null ? { consumedAt: row.consumed_at } : {}),
     state: row.state,
     resendCount: row.resend_count,
+    ...(row.last_sent_at !== null ? { lastSentAt: row.last_sent_at } : {}),
+    ...(row.sends_window_start !== null ? { sendsWindowStart: row.sends_window_start } : {}),
+    ...(row.sends_in_window > 0 ? { sendsInWindow: row.sends_in_window } : {}),
   };
 }
 
@@ -80,19 +86,30 @@ export function createPgOtpVerificationRepository(tx: TenantTx): OtpVerification
       const row = r.rows[0];
       return row ? toRecord(row) : null;
     },
+    async countLockedByParent(tenantId, parentRef, scope) {
+      const r = await tx.query<{ n: string | number }>(
+        `SELECT count(*) AS n FROM app.otp_verification WHERE tenant_id = $1 AND parent_ref = $2 AND scope = $3 AND state = 'LOCKED'`,
+        [tenantId, parentRef, scope],
+      );
+      return Number(r.rows[0]?.n ?? 0);
+    },
     async save(record) {
       // Upsert. scope, padre y canal se fijan al emitir y no son actualizables (sin grant de columna).
       await tx.query(
         `INSERT INTO app.otp_verification
-           (tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10, $11)
+           (tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count,
+            last_sent_at, sends_window_start, sends_in_window)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10, $11, $12::timestamptz, $13::timestamptz, $14)
          ON CONFLICT (tenant_id, verification_ref) DO UPDATE SET
            code_hash = EXCLUDED.code_hash,
            attempts = EXCLUDED.attempts,
            expires_at = EXCLUDED.expires_at,
            consumed_at = EXCLUDED.consumed_at,
            state = EXCLUDED.state,
-           resend_count = EXCLUDED.resend_count`,
+           resend_count = EXCLUDED.resend_count,
+           last_sent_at = EXCLUDED.last_sent_at,
+           sends_window_start = EXCLUDED.sends_window_start,
+           sends_in_window = EXCLUDED.sends_in_window`,
         [
           record.tenantId,
           record.verificationRef,
@@ -105,6 +122,9 @@ export function createPgOtpVerificationRepository(tx: TenantTx): OtpVerification
           record.consumedAt?.toISOString() ?? null,
           record.state,
           record.resendCount,
+          record.lastSentAt?.toISOString() ?? null,
+          record.sendsWindowStart?.toISOString() ?? null,
+          record.sendsInWindow ?? 0,
         ],
       );
     },

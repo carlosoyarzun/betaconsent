@@ -89,7 +89,7 @@ function buildPorts(): Ports {
     ledger,
     uow: tenancy.uow,
     invitation,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 },
     secret: randomBytes(32),
   };
   const decision: ConsentDecisionPorts = {

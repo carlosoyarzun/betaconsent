@@ -13,7 +13,7 @@ import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../.
 import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTION" | undefined): Promise<{ baseUrl: string; close(): Promise<void> }> {

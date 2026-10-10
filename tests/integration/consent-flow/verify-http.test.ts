@@ -28,7 +28,8 @@ const TENANT_ID = "0a96abb3-3b07-4f0e-8f48-bcc4893e0e73";
 const CHANNEL_REF = "test+verify@example.invalid";
 
 // LOCAL-only sintético (D4): ver otp-policy.config.ts.
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 2 };
+// SEC-CNS-021 PR-4: P-06 aprobado (3 envios/h, el inicial incluido) rige; solo se anula la separacion de 60 s (LOCAL_ONLY) para poder reenviar de inmediato.
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, minResendIntervalMs: 0 };
 // LOCAL-only sintetico (GRD-CD-04, decision-relationship.config.ts): estos tests no ejercen
 // pasos de decision, pero createDefaultConsentFlowPorts exige la config igual que otpPolicy.
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };

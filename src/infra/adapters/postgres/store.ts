@@ -51,6 +51,7 @@ export function createForbiddenOutsideTxPorts(): TenantTxPorts {
     idempotency: forbidden("idempotency"),
     accessLog: forbidden("accessLog"),
     securityEvents: forbidden("securityEvents"),
+    otpBudget: forbidden("otpBudget"),
   };
 }
 

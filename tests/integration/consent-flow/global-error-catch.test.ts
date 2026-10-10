@@ -13,7 +13,7 @@ const ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_SECRET = Buffer.alloc(32, 7);
-const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const REL = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 test("TEST-CNS-877: un throw con detail de pg responde 500 uniforme sin message/detail y el servidor sigue vivo", async () => {

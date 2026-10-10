@@ -74,7 +74,7 @@ test("TEST-CNS-1212 OPEN-CM-09: DECISION_MAKER_CHANNEL_VERIFIED nuevo registra l
     channel: createInMemoryOtpChannelSink(),
     ledger,
     uow: createInMemoryTenancy({ ledger, otpRepo }).uow,
-    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 },
+    policy: { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 },
     secret: randomBytes(32),
   };
   const ver = fixtureUuid("ver-keyversion-1");

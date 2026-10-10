@@ -54,7 +54,7 @@ async function setUp(label: string, environment: Environment = "LOCAL", removed:
   const caseRef = fixtureUuid(`case-${label}`);
   const revocationRef = fixtureUuid(`rv-${label}`);
   const consentId = `consent-${chainRef}`;
-  const ports = createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
+  const ports = createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   await ports.decision.repo.save({
     consentId, tenantId: TENANT, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef, subjectRef: fixtureUuid(`subject-${label}`),
     decisionMakerRef: "dm:case-session", invitationRef: fixtureUuid(`inv-${label}`), verificationRef: fixtureUuid(`ver-${label}`), chainRef, state: "GRANTED",
@@ -274,7 +274,7 @@ test("TEST-CNS-1170 dev-login solo LOCAL y sin privilegios extra (mismo emisor, 
 
 test("TEST-CNS-1171 storeMode=postgres exige un registro de sesiones CASE inyectado (fail-closed: nunca una sesion CASE en memoria sobre una base real)", () => {
   assert.throws(
-    () => createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ORIGIN }, sessionSecret: SECRET, environment: "LOCAL", storeMode: "postgres", ports: createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET) }),
+    () => createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ORIGIN }, sessionSecret: SECRET, environment: "LOCAL", storeMode: "postgres", ports: createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET) }),
     /caseSessions/,
   );
 });

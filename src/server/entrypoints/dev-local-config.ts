@@ -19,8 +19,9 @@ import {
   APPROVED_P33_IDEMPOTENCY_TTL_MS,
 } from "../modules/common/approved-parameters.ts";
 
-/** P-01/P-02/P-03 = valores aprobados (SEC-CNS-006 rev. 5 §1); maxResends (P-06) LOCAL_ONLY: el valor aprobado aún no es modelable (ver otp-policy.config.ts). */
-export const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: APPROVED_P01_OTP_CODE_LENGTH, ttlMs: APPROVED_P02_OTP_TTL_MS, maxAttempts: APPROVED_P03_OTP_MAX_ATTEMPTS, maxResends: 3 };
+/** P-01/P-02/P-03 = valores aprobados (SEC-CNS-006 rev. 5 §1). P-04/P-06/P-07 tambien rigen con su valor aprobado (default de loadOtpPolicyConfig):
+ * SEC-CNS-021 PR-4 retiro `maxResends` (P-06 lo reemplaza). */
+export const LOCAL_ONLY_DEV_OTP_POLICY = { codeLength: APPROVED_P01_OTP_CODE_LENGTH, ttlMs: APPROVED_P02_OTP_TTL_MS, maxAttempts: APPROVED_P03_OTP_MAX_ATTEMPTS };
 
 /** P-33 (idempotency-policy.config.ts, GRD-CM-08): TTL de la Idempotency-Key = 24 h, APROBADO
  * (Carlos, 2026-10-01); vale en cualquier entorno (approved-parameters.ts). */

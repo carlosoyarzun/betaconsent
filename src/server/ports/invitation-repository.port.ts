@@ -38,6 +38,9 @@ export interface InvitationRecord {
   readonly reissueOfRef?: string;
   /** I2: RECIPIENT_CHANNEL exige recipientChannelRef; UNBOUND no lo lleva (GRD-IV-03). */
   readonly recipientBinding?: "RECIPIENT_CHANNEL" | "UNBOUND";
+  /** V6a (SEC-CNS-021 PR-4, GRD-OT-09/14, P-07): el 3.er challenge DECISION de esta invitacion quedo LOCKED. Monotona (solo false -> true) y SOLO la
+   * escribe `markOtpExhausted`: `save` no la modifica. Ausente = false. La via es reemitir la invitacion (I1 con reissueOfRef). */
+  readonly otpExhausted?: boolean;
 }
 
 export interface InvitationRepositoryPort {
@@ -50,5 +53,7 @@ export interface InvitationRepositoryPort {
   findActiveBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): Promise<InvitationRecord | null>;
   /** GRD-IV-14 (API-CNS-116, PC-2): existe CUALQUIER Invitation (en cualquier estado) para (tenantId, contextRef, subjectRef). */
   existsBySubject(tenantId: TenantId, contextRef: string, subjectRef: string): Promise<boolean>;
+  /** V6a: marca `otpExhausted = true` (monotona). Solo dentro de `inTenant`, con el lock de la fila de la invitacion tomado antes (F-4). */
+  markOtpExhausted(tenantId: TenantId, invitationRef: string): Promise<void>;
   save(record: InvitationRecord): Promise<void>;
 }

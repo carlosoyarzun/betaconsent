@@ -40,6 +40,13 @@ export function createInMemoryOtpVerificationRepository(): InMemoryOtpVerificati
       }
       return null;
     },
+    async countLockedByParent(tenantId, parentRef, scope) {
+      let n = 0;
+      for (const record of byKey.values()) {
+        if (record.tenantId === tenantId && record.parentRef === parentRef && record.scope === scope && record.state === "LOCKED") n += 1;
+      }
+      return n;
+    },
     async save(record) {
       byKey.set(key(record.tenantId, record.verificationRef), { ...record });
     },

@@ -33,7 +33,7 @@ const CASE_CSRF_COOKIE_NAME = "__Host-cns-case-csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const TENANT_ID = "7cfbfb16-4c4d-4966-892b-0794cbd57199";
 
-const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000, maxResends: 3 };
+const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 const LOCAL_ONLY_TEST_RECOVERY_TOKEN_POLICY = { ttlMs: 60_000 };
 
