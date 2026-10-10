@@ -1,5 +1,5 @@
-// Gobierna: SEC-CNS-021 PR-3 (aceptada por Carlos 2026-10-08; §4.2/§4.3, D5), CA-146, P-34 (placeholder de 30 dias; LD-15 abierta), INV-21-07/08/09/10/18,
-// db/migrations/0031_retention_purge_p34.sql, INV-CM-01. Contra Postgres real (harness.ts; skip fuera de CI sin entorno): TEST-CNS-1308 (borrado/UPDATE/
+// Gobierna: SEC-CNS-021 PR-3 y PR-5 (aceptada por Carlos 2026-10-08; §4.2/§4.3, D5), CA-146, P-34 (placeholder de 30 dias; LD-15 abierta), INV-21-07/08/09/10/18,
+// db/migrations/0031_retention_purge_p34.sql, db/migrations/0033_retention_purge_otp_budget.sql (1336, 1337: purga de ops.otp_budget), INV-CM-01. Contra Postgres real (harness.ts; skip fuera de CI sin entorno): TEST-CNS-1308 (borrado/UPDATE/
 // TRUNCATE directo falla para todos), 1309 (purga de security_event: solo lo vencido, conteos, una fila por tenant), 1310 (purga de purge_run y resumen),
 // 1311 (purge_p34 aborta con politica distinta/ausente; retention_policy solo-agregar y sin grants), 1313 (CLI y chequeos de arranque), 1322 (purga de
 // app.otp_verification). Usa SET ROLE security_event_owner (ruta en la allowlist del checker). Solo datos sinteticos; relojes sinteticos (occurred_at
@@ -187,15 +187,15 @@ pgTest("TEST-CNS-1311 pg: ops.purge_p34 aborta (22023) si la retencion esperada 
   await insertEvent(admin, t, "v-1311-old", OLD);
   const runsBefore = await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run");
 
-  for (const [store, expected] of [["security_event", "7 days"], ["security_event", "31 days"], ["otp_budget", "30 days"], ["no_existe", "30 days"], [null, "30 days"], ["security_event", null]] as const) {
+  for (const [store, expected] of [["security_event", "7 days"], ["security_event", "31 days"], ["otp_budget", "7 days"], ["otp_budget", "31 days"], ["no_existe", "30 days"], [null, "30 days"], ["security_event", null]] as const) {
     await assert.rejects(() => worker.query("SELECT ops.purge_p34($1::text, $2::interval)", [store, expected]), (e: unknown) => codeOf(e) === "22023", `${store}/${expected}`);
   }
   assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.security_event WHERE tenant_id = $1", [t]), 1, "no se borro nada");
   assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run"), runsBefore, "no se registro ninguna corrida");
 
-  // Politica sembrada: tres stores a 30 dias, marcada como placeholder (LD-15 abierta), sin otp_budget (llega con PR-4).
+  // Politica sembrada: cuatro stores a 30 dias (otp_budget desde 0033), marcada como placeholder (LD-15 abierta).
   const policy = (await admin.query<{ store: string; retention: string; decision_ref: string }>("SELECT store, retention::text, decision_ref FROM ops.retention_policy ORDER BY store")).rows;
-  assert.deepEqual(policy.map((p) => [p.store, p.retention]), [["otp_verification", `${DAYS} days`], ["purge_run", `${DAYS} days`], ["security_event", `${DAYS} days`]]);
+  assert.deepEqual(policy.map((p) => [p.store, p.retention]), [["otp_budget", `${DAYS} days`], ["otp_verification", `${DAYS} days`], ["purge_run", `${DAYS} days`], ["security_event", `${DAYS} days`]]);
   for (const p of policy) assert.match(p.decision_ref, /placeholder.*LD-15/);
 
   // Solo-agregar (superusuario: trigger) y minimo de 1 dia (CHECK; como security_event_owner via SET ROLE).
@@ -250,7 +250,7 @@ pgTest("TEST-CNS-1313 pg: el CLI retention-purge-cli purga como worker e imprime
   await insertEvent(admin, t, "v-1313-old", OLD);
   await insertEvent(admin, t, "v-1313-new", 5);
   const base = { PATH: process.env.PATH ?? "", CNS_ENVIRONMENT: "LOCAL", CNS_DATABASE_URL: ctx.urlFor("worker") };
-  const cfg = { CNS_RETENTION_SECURITY_EVENT_DAYS: String(DAYS), CNS_RETENTION_OTP_VERIFICATION_DAYS: String(DAYS), CNS_RETENTION_PURGE_RUN_DAYS: String(DAYS) };
+  const cfg = { CNS_RETENTION_SECURITY_EVENT_DAYS: String(DAYS), CNS_RETENTION_OTP_BUDGET_DAYS: String(DAYS), CNS_RETENTION_OTP_VERIFICATION_DAYS: String(DAYS), CNS_RETENTION_PURGE_RUN_DAYS: String(DAYS) };
   const run = (env: Record<string, string>) => spawnSync(process.execPath, ["src/infra/adapters/postgres/retention-purge-cli.ts"], { env, encoding: "utf8" });
 
   const disabled = run(base);
@@ -270,22 +270,24 @@ pgTest("TEST-CNS-1313 pg: el CLI retention-purge-cli purga como worker e imprime
   const ok = run({ ...base, ...cfg });
   assert.equal(ok.status, 0, ok.stderr);
   const lines = ok.stdout.trim().split("\n");
-  assert.equal(lines.length, 3, "una linea por store");
-  for (const line of lines) assert.match(line, /^store=(purge_run|security_event|otp_verification) run_id=[0-9a-f-]{36} tenants=\d+ eligible=\d+ deleted=\d+ remaining=0$/);
+  assert.equal(lines.length, 4, "una linea por store");
+  for (const line of lines) assert.match(line, /^store=(purge_run|security_event|otp_budget|otp_verification) run_id=[0-9a-f-]{36} tenants=\d+ eligible=\d+ deleted=\d+ remaining=0$/);
   assert.ok(!ok.stdout.includes(t) && !ok.stdout.includes(fixtureUuid("v-1313-old")), "sin tenant_id ni refs en la salida");
   assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.security_event WHERE tenant_id = $1", [t]), 1, "solo queda la fila nueva");
 
-  // Nucleo reutilizable: otra corrida devuelve los tres stores con post-condicion 0.
-  const results = await executeRetentionPurge(await ctx.connectAs("worker"), { securityEventDays: DAYS, otpVerificationDays: DAYS, purgeRunDays: DAYS });
-  assert.deepEqual(results.map((r) => r.store), ["purge_run", "security_event", "otp_verification"]);
+  // Nucleo reutilizable: otra corrida devuelve los cuatro stores con post-condicion 0.
+  const results = await executeRetentionPurge(await ctx.connectAs("worker"), { securityEventDays: DAYS, otpBudgetDays: DAYS, otpVerificationDays: DAYS, purgeRunDays: DAYS });
+  assert.deepEqual(results.map((r) => r.store), ["purge_run", "security_event", "otp_budget", "otp_verification"]);
   assert.ok(results.every((r) => r.remaining === 0 && r.deleted === r.eligible));
 
   // Chequeo de arranque contra la base: coincide / difiere / STAGING sin configuracion.
   const app = await ctx.connectAs("app_rw");
-  const same = { securityEventDays: DAYS, otpVerificationDays: DAYS, purgeRunDays: DAYS };
+  const same = { securityEventDays: DAYS, otpBudgetDays: DAYS, otpVerificationDays: DAYS, purgeRunDays: DAYS };
   assert.deepEqual(await runStartupChecks(app, { expectedEnvironment: "LOCAL", expectedRole: "app_rw", retention: same }), { ok: true, failures: [] });
   const differs = await runStartupChecks(app, { expectedEnvironment: "LOCAL", expectedRole: "app_rw", retention: { ...same, otpVerificationDays: 7 } });
   assert.ok(differs.failures.some((f) => /otp_verification difiere de ops\.retention_policy/.test(f)), differs.failures.join("|"));
+  const differsBudget = await runStartupChecks(app, { expectedEnvironment: "LOCAL", expectedRole: "app_rw", retention: { ...same, otpBudgetDays: 7 } });
+  assert.ok(differsBudget.failures.some((f) => /otp_budget difiere de ops\.retention_policy/.test(f)), differsBudget.failures.join("|"));
   const noConfig = await runStartupChecks(app, { expectedRole: "app_rw" });
   assert.equal(noConfig.ok, true, "LOCAL sin configuracion: arranca (purga deshabilitada)");
 });
@@ -344,4 +346,133 @@ pgTest("TEST-CNS-1322 pg: la purga de app.otp_verification borra solo filas con 
 
   // Las columnas y policies de runtime no cambiaron: app_rw sigue sin DELETE.
   await assert.rejects(async () => (await ctx.connectAs("app_rw")).query("DELETE FROM app.otp_verification"), (e: unknown) => codeOf(e) === "42501");
+});
+
+/** Inserta una fila de ops.otp_budget con vencimiento sintetico (el superusuario del harness fija el reloj; app_rw no puede). key_hmac distinto por fila. */
+async function insertBudget(admin: Client, tenant: string, hex: string, kind: "CHANNEL" | "INVITATION", expiresDaysAgo: number): Promise<void> {
+  await admin.query(
+    `INSERT INTO ops.otp_budget (tenant_id, scope_class, key_kind, key_hmac, key_version, window_kind, window_start, expires_at, failures)
+     VALUES ($1, 'DECISION', $2, repeat($3, 64), 1, 'DAY_1', pg_catalog.now() - make_interval(days => $4::int) - interval '1 day', pg_catalog.now() - make_interval(days => $4::int), 3)`,
+    [tenant, kind, hex, expiresDaysAgo],
+  );
+}
+const budgetCount = (admin: Client, tenant: string): Promise<number> => countAt(admin, "SELECT count(*) AS n FROM ops.otp_budget WHERE tenant_id = $1", [tenant]);
+
+pgTest("TEST-CNS-1336 pg: ops.purge_p34('otp_budget') borra solo filas con expires_at anterior al corte; conserva la vencida dentro de la retencion y la vigente; registra purge_run (una fila por tenant + resumen); una retencion esperada distinta aborta (F-6, INV-21-08)", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const A = fixtureUuid("t-1336-a");
+  const B = fixtureUuid("t-1336-b");
+  await insertBudget(admin, A, "a", "CHANNEL", DAYS + 1); // vencida fuera de retencion
+  await insertBudget(admin, A, "b", "INVITATION", DAYS + 10); // vencida fuera de retencion
+  await insertBudget(admin, A, "c", "CHANNEL", DAYS - 1); // vencida pero dentro de la retencion: se conserva
+  await insertBudget(admin, A, "d", "INVITATION", -1); // vigente (expires_at futuro): se conserva
+  await insertBudget(admin, B, "a", "CHANNEL", DAYS + 1);
+  await insertBudget(admin, B, "e", "CHANNEL", -1);
+  const eligible = await countAt(admin, "SELECT count(*) AS n FROM ops.otp_budget WHERE expires_at < now() - make_interval(days => $1)", [DAYS]);
+  assert.ok(eligible >= 3);
+
+  const worker = await ctx.connectAs("worker");
+  // Una retencion esperada distinta de la politica aborta sin borrar nada ni registrar corrida.
+  const runsBefore = await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE store = 'otp_budget'");
+  await assert.rejects(() => purge(worker, "otp_budget", 7), (e: unknown) => codeOf(e) === "22023");
+  assert.equal(await budgetCount(admin, A), 4);
+  assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.purge_run WHERE store = 'otp_budget'"), runsBefore);
+
+  const runId = await purge(worker, "otp_budget");
+  assert.equal(await countAt(admin, "SELECT count(*) AS n FROM ops.otp_budget WHERE expires_at < now() - make_interval(days => $1)", [DAYS]), 0, "post-condicion: 0 vencidas");
+  assert.equal(await budgetCount(admin, A), 2, "A conserva la vencida dentro de retencion y la vigente");
+  assert.equal(await budgetCount(admin, B), 1, "B conserva la vigente");
+  const keptA = (await admin.query<{ key_hmac: string }>("SELECT key_hmac FROM ops.otp_budget WHERE tenant_id = $1 ORDER BY key_hmac", [A])).rows.map((r) => r.key_hmac[0]);
+  assert.deepEqual(keptA, ["c", "d"]);
+
+  const rows = (await admin.query<{ tenant_id: string | null; eligible_before: string; deleted_count: string; remaining_older_than_cutoff: string; store: string }>(
+    "SELECT tenant_id, eligible_before, deleted_count, remaining_older_than_cutoff, store FROM ops.purge_run WHERE purge_id = $1", [runId],
+  )).rows;
+  const summary = rows.find((r) => r.tenant_id === null)!;
+  assert.deepEqual([summary.store, Number(summary.eligible_before), Number(summary.deleted_count), Number(summary.remaining_older_than_cutoff)], ["otp_budget", eligible, eligible, 0]);
+  assert.equal(rows.every((r) => r.store === "otp_budget"), true);
+  assert.equal(Number(rows.find((r) => r.tenant_id === A)!.deleted_count), 2);
+  assert.equal(Number(rows.find((r) => r.tenant_id === B)!.deleted_count), 1);
+  assert.equal(rows.filter((r) => r.tenant_id !== null).reduce((n, r) => n + Number(r.deleted_count), 0), eligible, "los conteos por tenant suman el resumen");
+  // El resumen para el CLI devuelve solo conteos (sin tenant_id ni claves).
+  const cli = (await worker.query<Record<string, string>>("SELECT * FROM ops.purge_run_summary($1)", [runId])).rows[0]!;
+  assert.deepEqual(Object.keys(cli).sort(), ["deleted_count", "eligible_before", "remaining_older_than_cutoff", "store", "tenants"]);
+
+  // Segunda corrida sin nada vencido: fila resumen con ceros.
+  const again = await purge(worker, "otp_budget");
+  const second = (await admin.query<{ eligible_before: string; deleted_count: string; n: string }>(
+    "SELECT eligible_before, deleted_count, (SELECT count(*) FROM ops.purge_run WHERE purge_id = $1) AS n FROM ops.purge_run WHERE purge_id = $1 AND tenant_id IS NULL", [again],
+  )).rows[0];
+  assert.deepEqual([Number(second?.eligible_before), Number(second?.deleted_count), Number(second?.n)], [0, 0, 1]);
+});
+
+pgTest("TEST-CNS-1337 pg: aislamiento de la purga de ops.otp_budget: security_event_owner solo ve y borra filas vencidas por expires_at (no las vigentes ni las vencidas dentro de la retencion), no inserta ni actualiza; el runtime no gana nada (INV-21-06, FORCE RLS)", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const T = fixtureUuid("t-1337");
+  await insertBudget(admin, T, "a", "CHANNEL", DAYS + 2);
+  await insertBudget(admin, T, "b", "INVITATION", DAYS - 1);
+  await insertBudget(admin, T, "c", "CHANNEL", -1);
+  assert.equal(await budgetCount(admin, T), 3);
+
+  const migrator = await ctx.connectAs("consent_migrator");
+  const asOwner = async (body: () => Promise<void>): Promise<void> => {
+    await migrator.query("BEGIN");
+    try {
+      await migrator.query("SET LOCAL ROLE consent_owner");
+      await migrator.query("SET LOCAL ROLE security_event_owner");
+      await body();
+    } finally {
+      await migrator.query("ROLLBACK");
+    }
+  };
+  // SELECT: del tenant propio solo la fila vencida fuera de retencion; nada visible esta dentro de la retencion.
+  await asOwner(async () => {
+    const seen = await migrator.query<{ key_hmac: string }>("SELECT key_hmac FROM ops.otp_budget WHERE tenant_id = $1", [T]);
+    assert.deepEqual(seen.rows.map((r) => r.key_hmac[0]), ["a"]);
+    const within = await migrator.query<{ n: string }>("SELECT count(*) AS n FROM ops.otp_budget WHERE expires_at >= now() - make_interval(days => $1)", [DAYS]);
+    assert.equal(Number(within.rows[0]?.n), 0, "ninguna fila dentro de la retencion es visible para el dueno");
+  });
+  // DELETE directo del dueno (sin ops.purge_p34): alcanza solo la vencida. El rollback deja las tres.
+  await asOwner(async () => {
+    const del = await migrator.query<{ key_hmac: string }>("DELETE FROM ops.otp_budget WHERE tenant_id = $1 RETURNING key_hmac", [T]);
+    assert.deepEqual(del.rows.map((r) => r.key_hmac[0]), ["a"]);
+  });
+  assert.equal(await budgetCount(admin, T), 3, "el rollback no dejo cambios");
+  // La purga real sobre el mismo tenant conserva las no vencidas.
+  const worker = await ctx.connectAs("worker");
+  await purge(worker, "otp_budget");
+  const left = (await admin.query<{ key_hmac: string }>("SELECT key_hmac FROM ops.otp_budget WHERE tenant_id = $1 ORDER BY key_hmac", [T])).rows.map((r) => r.key_hmac[0]);
+  assert.deepEqual(left, ["b", "c"], "el dueno no borra filas no vencidas");
+
+  // INSERT del dueno: sin policy de INSERT -> RLS lo rechaza (42501). UPDATE: no alcanza ninguna fila.
+  await asOwner(async () => {
+    await assert.rejects(
+      () => migrator.query(
+        `INSERT INTO ops.otp_budget (tenant_id, scope_class, key_kind, key_hmac, key_version, window_kind, window_start, expires_at, failures)
+         VALUES ($1, 'DECISION', 'CHANNEL', repeat('f', 64), 1, 'DAY_1', now(), now() + interval '1 day', 1)`, [T]),
+      (e: unknown) => codeOf(e) === "42501",
+    );
+  });
+  await asOwner(async () => {
+    const upd = await migrator.query("UPDATE ops.otp_budget SET failures = 0 WHERE tenant_id = $1", [T]);
+    assert.equal(upd.rowCount, 0, "el dueno no actualiza filas no vencidas");
+  });
+  // consent_owner (sin SET ROLE al dueno) no tiene privilegios; los roles de runtime no ganan DELETE ni acceso (worker/platform_rw).
+  await migrator.query("BEGIN");
+  try {
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await assert.rejects(() => migrator.query("DELETE FROM ops.otp_budget"), (e: unknown) => codeOf(e) === "42501");
+  } finally {
+    await migrator.query("ROLLBACK");
+  }
+  await assert.rejects(async () => (await ctx.connectAs("app_rw")).query("DELETE FROM ops.otp_budget"), (e: unknown) => codeOf(e) === "42501", "app_rw sin DELETE");
+  for (const role of ["worker", "platform_rw"] as const) {
+    await assert.rejects(async () => (await ctx.connectAs(role)).query("SELECT 1 FROM ops.otp_budget"), (e: unknown) => codeOf(e) === "42501", `${role} sin acceso`);
+  }
+  // Las policies de purga acotan por expires_at (no por tenant) y solo existen para el dueno.
+  const pols = (await admin.query<{ policyname: string; qual: string }>(
+    "SELECT policyname, qual FROM pg_policies WHERE schemaname = 'ops' AND tablename = 'otp_budget' AND 'security_event_owner' = ANY(roles) ORDER BY policyname",
+  )).rows;
+  assert.deepEqual(pols.map((p) => p.policyname), ["otp_budget_purge_delete", "otp_budget_purge_select"]);
+  for (const p of pols) assert.match(p.qual, /expires_at/);
 });

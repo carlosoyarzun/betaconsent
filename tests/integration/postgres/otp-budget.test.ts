@@ -1,7 +1,7 @@
 // Gobierna: SEC-CNS-021 PR-4 (aceptada por Carlos 2026-10-08; CA-146 / DF-10; D6, D8), db/migrations/0032_otp_budget_p06_v6a.sql, otp-challenge.spec V1/V2/V6/V6a/V2r,
 // GRD-OT-03/06/09/14, INV-21-05/06/11/12/13/17, INV-CM-02. Contra Postgres real (harness.ts; skip fuera de CI sin entorno). Solo datos sinteticos.
 // TEST-CNS-1314 (reserva atomica N=20), 1315 (ventana fija), 1316 (V1 ∥ 3.er LOCKED sin deadlock), 1324 (P-06 concurrente), 1318 (tenants + RLS directo),
-// 1329 (marcas P-06 round-trip), 1330 (puerto otpBudget), 1331 (catalogo y grants de ops.otp_budget), 1332 (trigger monotonico), 1333 (CHECK otp_send_marks_shape).
+// 395 (V6r con Revocation abierta intacta; SEC-CNS-021 PR-5), 1329 (marcas P-06 round-trip), 1330 (puerto otpBudget), 1331 (catalogo y grants de ops.otp_budget), 1332 (trigger monotonico), 1333 (CHECK otp_send_marks_shape).
 // PgUnitOfWork con maxAttempts 1 y lockTimeoutMs alto: un deadlock (40P01) se VE, no se reintenta. Conteos filtrados por tenant/ref propios (sin globales); los
 // CHECK se aceptan por lista (el orden de evaluacion no esta garantizado); los channelRef respetan otp_channel_reserved.
 // Estos tests NO se corrieron localmente (sin Docker/Postgres): los corre el CI.
@@ -17,8 +17,9 @@ import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { InvitationPorts } from "../../../src/server/modules/invitation/invitation.ts";
-import { requestOtp, requestRightsOtp, resendOtp, submitOtp, type OtpChallengePorts, type OtpPolicy } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
+import { requestOtp, requestRightsOtp, resendOtp, submitOtp, submitRightsOtp, type OtpChallengePorts, type OtpPolicy } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
 import type { OtpBudgetKey } from "../../../src/server/ports/otp-budget.port.ts";
+import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest, type PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
@@ -274,7 +275,7 @@ pgTest("TEST-CNS-1331 pg: catalogo y grants de ops.otp_budget (dueno, FORCE RLS,
   const rel = (await admin.query<{ rls: boolean; force: boolean; owner: string }>("SELECT relrowsecurity AS rls, relforcerowsecurity AS force, pg_get_userbyid(relowner) AS owner FROM pg_class WHERE oid = 'ops.otp_budget'::regclass")).rows[0];
   assert.deepEqual(rel, { rls: true, force: true, owner: "security_event_owner" });
   const pol = (await admin.query<{ policyname: string; cmd: string; roles: string[] }>("SELECT policyname, cmd, roles::text[] AS roles FROM pg_policies WHERE schemaname = 'ops' AND tablename = 'otp_budget' ORDER BY policyname")).rows;
-  assert.deepEqual(pol.map((p) => `${p.policyname}:${p.cmd}:${p.roles.join(",")}`), ["otp_budget_tenant_insert:INSERT:app_rw", "otp_budget_tenant_select:SELECT:app_rw", "otp_budget_tenant_update:UPDATE:app_rw"]);
+  assert.deepEqual(pol.map((p) => `${p.policyname}:${p.cmd}:${p.roles.join(",")}`), ["otp_budget_purge_delete:DELETE:security_event_owner", "otp_budget_purge_select:SELECT:security_event_owner", "otp_budget_tenant_insert:INSERT:app_rw", "otp_budget_tenant_select:SELECT:app_rw", "otp_budget_tenant_update:UPDATE:app_rw"]);
   const cols = async (role: string, priv: string): Promise<string[]> =>
     (await admin.query<{ c: string }>("SELECT attname AS c FROM pg_attribute WHERE attrelid = 'ops.otp_budget'::regclass AND attnum > 0 AND NOT attisdropped AND has_column_privilege($1, attrelid, attnum, $2) ORDER BY 1", [role, priv])).rows.map((r) => r.c);
   assert.deepEqual(await cols("app_rw", "UPDATE"), ["expires_at", "failures", "window_start"]);
@@ -319,4 +320,33 @@ pgTest("TEST-CNS-1333 pg: CHECK otp_send_marks_shape: marcas incoherentes se rec
   for (const [n, a, b, c] of [["sin-ventana", "2030-01-01T10:00:00Z", null, 1], ["sin-ultimo", null, "2030-01-01T09:00:00Z", 1], ["cero-envios", "2030-01-01T10:00:00Z", "2030-01-01T09:00:00Z", 0], ["ventana-posterior", "2030-01-01T09:00:00Z", "2030-01-01T10:00:00Z", 1], ["envios-sin-marcas", null, null, 1]] as const) {
     await assert.rejects(() => insert(n, a, b, c), (e: unknown) => codeOf(e) === "23514" && accepted.includes(constraintOf(e) ?? ""), n);
   }
+});
+
+pgTest("TEST-CNS-395 pg: V6r (presupuesto RIGHTS agotado) -> ERR-OT-07 y challenge FAILED, pero la Revocation abierta de la cadena sigue intacta (estado, fila unica no terminal, sin eventos de ledger nuevos); se registra OTP_BUDGET_EXHAUSTED (INV-21-14)", async (ctx) => {
+  const T = fixtureUuid("t395");
+  const D = fixtureUuid("d395");
+  const REV = fixtureUuid("rev395");
+  const chain = fixtureUuid("chain395");
+  const ver = fixtureUuid("ver395");
+  await withEnv(ctx, { budgetMaxFailures: 2 }, async (env) => {
+    await env.outside.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: chain });
+    await env.outside.revocationRepo.save({ revocationRef: REV, tenantId: T, chainRef: chain, revokedDecisionRef: D, status: "REQUESTED" });
+    const before = (await env.outside.ledger.listByAggregate(T, "Revocation", REV)).length;
+
+    await requestRightsOtp(env.otp, T, ver, "REVOCATION", chain, `mgmt:${chain}`);
+    const good = env.sink.sent[env.sink.sent.length - 1]!.code;
+    for (let i = 0; i < 2; i += 1) {
+      await assert.rejects(() => submitRightsOtp(env.otp, T, ver, "REVOCATION", wrongOf(good), fixtureUuid("dm395"), 2), (e) => e instanceof DomainError && e.code === "ERR-OT-02");
+    }
+    await assert.rejects(() => submitRightsOtp(env.otp, T, ver, "REVOCATION", good, fixtureUuid("dm395"), 2), (e) => e instanceof DomainError && e.code === "ERR-OT-07");
+
+    assert.equal((await env.outside.otpRepo.findByRef(T, ver))?.state, "FAILED", "V6r: el challenge pasa a FAILED");
+    assert.equal(await env.count("SELECT count(*)::int AS n FROM ops.security_event WHERE tenant_id = $1 AND verification_ref = $2 AND event_type = 'OTP_BUDGET_EXHAUSTED' AND scope_class = 'RIGHTS'", [T, ver]), 1);
+    // La Revocation abierta no cambia: mismo estado, sigue siendo la unica no terminal de la cadena y el ledger no registra nada nuevo.
+    const rev = await env.outside.revocationRepo.findByRef(T, REV);
+    assert.equal(rev?.status, "REQUESTED");
+    assert.equal(await env.count("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND chain_ref = $2 AND status <> 'FAILED'", [T, chain]), 1);
+    assert.equal(await env.count("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND chain_ref = $2 AND status = 'FAILED'", [T, chain]), 0);
+    assert.equal((await env.outside.ledger.listByAggregate(T, "Revocation", REV)).length, before, "sin eventos de ledger nuevos sobre la Revocation");
+  });
 });
