@@ -276,7 +276,7 @@ BEGIN
 
   -- SEC-CNS-021 PR-5: politica de otp_budget y purga habilitada para el store.
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-                  WHERE n.nspname = 'ops' AND p.proname = 'purge_p34' AND pg_catalog.position('''otp_budget''' IN p.prosrc) > 0
+                  WHERE n.nspname = 'ops' AND p.proname = 'purge_p34' AND pg_catalog.strpos(p.prosrc, 'otp_budget') > 0
                     AND p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'] AND p.proconfig @> ARRAY['TimeZone=UTC']
                     AND pg_catalog.pg_get_userbyid(p.proowner) = 'security_event_owner') THEN
     RAISE EXCEPTION 'ops.purge_p34 no admite otp_budget o perdio SECURITY DEFINER / search_path / TimeZone / dueno';
