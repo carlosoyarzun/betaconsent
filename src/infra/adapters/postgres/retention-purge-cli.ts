@@ -1,7 +1,7 @@
 // Gobierna: SEC-CNS-021 PR-3 (aceptada por Carlos 2026-10-08; §4.3), P-34 (placeholder; LD-15 abierta), INV-21-07/08/10.
 // CLI del job de retencion. Conectado como el rol `worker` (nunca el migrador ni un superusuario):
 //   CNS_ENVIRONMENT=LOCAL|DEV|STAGING CNS_DATABASE_URL=postgresql://worker:...@host:PORT/DB \
-//   CNS_RETENTION_SECURITY_EVENT_DAYS=N CNS_RETENTION_OTP_VERIFICATION_DAYS=N CNS_RETENTION_PURGE_RUN_DAYS=N \
+//   CNS_RETENTION_SECURITY_EVENT_DAYS=N CNS_RETENTION_OTP_BUDGET_DAYS=N CNS_RETENTION_OTP_VERIFICATION_DAYS=N CNS_RETENTION_PURGE_RUN_DAYS=N \
 //     node src/infra/adapters/postgres/retention-purge-cli.ts
 // Salida: una linea por store con run_id y conteos (sin tenant_id, refs ni filas). Exit: 0 purga ok, 1 error/uso/arranque fallido,
 // 3 DISABLED_LOCAL (LOCAL/DEV sin CNS_RETENTION_*: la purga queda deshabilitada). La programacion diaria (cron del host) va en la primera

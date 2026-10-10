@@ -7,7 +7,7 @@
 import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { Queryable } from "./pool.ts";
 
-export type PurgeStore = "purge_run" | "security_event" | "otp_verification";
+export type PurgeStore = "purge_run" | "security_event" | "otp_budget" | "otp_verification";
 
 export interface PurgeStoreResult {
   readonly store: PurgeStore;
@@ -19,11 +19,12 @@ export interface PurgeStoreResult {
 }
 
 /** Orden de purga: purge_run primero. */
-export const PURGE_ORDER: readonly PurgeStore[] = ["purge_run", "security_event", "otp_verification"];
+export const PURGE_ORDER: readonly PurgeStore[] = ["purge_run", "security_event", "otp_budget", "otp_verification"];
 
 export function retentionDaysFor(config: RetentionConfig, store: PurgeStore): number {
   switch (store) {
     case "security_event": return config.securityEventDays;
+    case "otp_budget": return config.otpBudgetDays;
     case "otp_verification": return config.otpVerificationDays;
     case "purge_run": return config.purgeRunDays;
   }

@@ -35,6 +35,8 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
   "db/migrations/0031_retention_purge_p34.sql": ["set-role"],
   // 0032 (SEC-CNS-021 PR-4): crea ops.otp_budget como security_event_owner (SET LOCAL ROLE).
   "db/migrations/0032_otp_budget_p06_v6a.sql": ["set-role"],
+  // 0033 (SEC-CNS-021 PR-5): fila otp_budget en retention_policy, policies de purga y ops.purge_p34 como security_event_owner (SET LOCAL ROLE).
+  "db/migrations/0033_retention_purge_otp_budget.sql": ["set-role"],
   // TEST-CNS-1308/1311: demuestran que el dueno sin la bandera de purga tampoco muta, y los privilegios del dueno (SET ROLE explicito del migrador).
   "tests/integration/postgres/security-event-retention.test.ts": ["set-role"],
   // TEST-CNS-1326: demuestra que el nuevo dueno tampoco puede mutar la tabla (SET ROLE explicito del migrador).

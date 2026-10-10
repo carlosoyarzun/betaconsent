@@ -3,15 +3,16 @@
 //
 // Configuracion de retencion (SECURITY_EVENT_RETENTION y stores hermanos). Sin default en codigo:
 //   CNS_RETENTION_SECURITY_EVENT_DAYS    ops.security_event
+//   CNS_RETENTION_OTP_BUDGET_DAYS        ops.otp_budget (por expires_at; SEC-CNS-021 PR-5)
 //   CNS_RETENTION_OTP_VERIFICATION_DAYS  app.otp_verification (por expires_at)
 //   CNS_RETENTION_PURGE_RUN_DAYS         ops.purge_run
-// (CNS_RETENTION_OTP_BUDGET_DAYS llega con SEC-CNS-021 PR-4, cuando exista ops.otp_budget.)
-//  - STAGING / PRODUCTION / entorno desconocido: las tres son obligatorias; si falta o es invalida, lanza (el proceso no arranca).
+//  - STAGING / PRODUCTION / entorno desconocido: las cuatro son obligatorias; si falta o es invalida, lanza (el proceso no arranca).
 //  - LOCAL / DEV: si no hay ninguna, la purga queda DESHABILITADA (DISABLED_LOCAL); si hay algunas pero no todas, o alguna es invalida, lanza.
 // La coincidencia con ops.retention_policy la verifica startup-checks.ts (contra la base).
 
 export interface RetentionConfig {
   readonly securityEventDays: number;
+  readonly otpBudgetDays: number;
   readonly otpVerificationDays: number;
   readonly purgeRunDays: number;
 }
@@ -22,6 +23,7 @@ export type RetentionConfigResult =
 
 export const RETENTION_ENV_VARS = {
   securityEventDays: "CNS_RETENTION_SECURITY_EVENT_DAYS",
+  otpBudgetDays: "CNS_RETENTION_OTP_BUDGET_DAYS",
   otpVerificationDays: "CNS_RETENTION_OTP_VERIFICATION_DAYS",
   purgeRunDays: "CNS_RETENTION_PURGE_RUN_DAYS",
 } as const;
@@ -55,6 +57,7 @@ export function loadRetentionConfig(
     status: "CONFIGURED",
     config: {
       securityEventDays: parseDays(RETENTION_ENV_VARS.securityEventDays, env[RETENTION_ENV_VARS.securityEventDays] as string),
+      otpBudgetDays: parseDays(RETENTION_ENV_VARS.otpBudgetDays, env[RETENTION_ENV_VARS.otpBudgetDays] as string),
       otpVerificationDays: parseDays(RETENTION_ENV_VARS.otpVerificationDays, env[RETENTION_ENV_VARS.otpVerificationDays] as string),
       purgeRunDays: parseDays(RETENTION_ENV_VARS.purgeRunDays, env[RETENTION_ENV_VARS.purgeRunDays] as string),
     },
