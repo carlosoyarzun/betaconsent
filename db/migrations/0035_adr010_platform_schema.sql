@@ -25,6 +25,10 @@
 --     en PR-3 ninguna funcion lo hace, asi que toda ruta con step-up falla cerrada (STEP_UP_MISSING) hasta PR-4.
 --   * Cada decision (ALLOW/DENY) se escribe en platform.authorization_check. Las funciones de aprovisionamiento NO lanzan excepcion ante un DENY:
 --     devuelven NULL/false para que la fila de evidencia se confirme con la transaccion.
+-- Contrato con el adapter (P2-7): el principal y el tenant se fijan SOLO con set_config('app.principal_ref' | 'app.tenant_id', ..., true) (local a la
+-- transaccion). Ninguna GUC app.* puede venir de ALTER ROLE/DATABASE ... SET (startup-checks lo verifica). Ante un DENY el adapter debe hacer COMMIT.
+-- resource_ref solo admite formas cerradas por accion (B1): APPROVE_* = UUID; REQUEST_MEMBERSHIP = principal:(TENANT_ADMIN|INVITER);
+-- REQUEST_ROLE_ASSIGNMENT = principal:ROL(:CLASE)?. Cualquier otro texto (RUT, nombre, correo) es DENY INVALID_RESOURCE y se guarda NULL.
 -- Ningun dato personal: principal_ref y resource_ref son refs opacas (sin '@'), data_class SYNTHETIC.
 
 -- 0. Precondiciones de lectura de grant_owner (tenant de la transaccion): unico objeto de `app` que toca.
@@ -84,6 +88,11 @@ CREATE FUNCTION platform.membership_guard() RETURNS trigger
   SET search_path = pg_catalog, pg_temp
   AS $$
 BEGIN
+  -- P2-4: toda fila nace PENDING (el CHECK de doble control ya exige approved_* nulos); ACTIVE solo por UPDATE.
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status = 'PENDING' THEN RETURN NEW; END IF;
+    RAISE EXCEPTION 'platform.%: toda fila nace PENDING (ADR-010 §4.4)', TG_TABLE_NAME USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
   IF TG_OP = 'UPDATE' THEN
     IF OLD.status = 'PENDING' AND NEW.status = 'ACTIVE' THEN
       IF TG_TABLE_NAME = 'tenant_membership' THEN
@@ -97,7 +106,7 @@ BEGIN
       END IF;
     END IF;
   END IF;
-  RAISE EXCEPTION 'platform.%: solo se admite PENDING -> ACTIVE con approved_*; no se borra ni se reescribe (ADR-010 §4.4)', TG_TABLE_NAME
+  RAISE EXCEPTION 'platform.%: solo se admite INSERT PENDING y PENDING -> ACTIVE con approved_*; no se borra ni se reescribe (ADR-010 §4.4)', TG_TABLE_NAME
     USING ERRCODE = 'integrity_constraint_violation';
 END
 $$;
@@ -113,11 +122,11 @@ END
 $$;
 REVOKE ALL ON FUNCTION platform.membership_no_truncate() FROM PUBLIC;
 
-CREATE TRIGGER tenant_membership_guard BEFORE UPDATE OR DELETE ON platform.tenant_membership
+CREATE TRIGGER tenant_membership_guard BEFORE INSERT OR UPDATE OR DELETE ON platform.tenant_membership
   FOR EACH ROW EXECUTE FUNCTION platform.membership_guard();
 CREATE TRIGGER tenant_membership_no_truncate BEFORE TRUNCATE ON platform.tenant_membership
   FOR EACH STATEMENT EXECUTE FUNCTION platform.membership_no_truncate();
-CREATE TRIGGER platform_role_assignment_guard BEFORE UPDATE OR DELETE ON platform.platform_role_assignment
+CREATE TRIGGER platform_role_assignment_guard BEFORE INSERT OR UPDATE OR DELETE ON platform.platform_role_assignment
   FOR EACH ROW EXECUTE FUNCTION platform.membership_guard();
 CREATE TRIGGER platform_role_assignment_no_truncate BEFORE TRUNCATE ON platform.platform_role_assignment
   FOR EACH STATEMENT EXECUTE FUNCTION platform.membership_no_truncate();
@@ -144,7 +153,7 @@ REVOKE ALL ON platform.platform_role_assignment FROM PUBLIC;
 
 -- grant_owner (platform.authorize_target) lee solo las columnas que decide; nunca escribe en estas tablas.
 GRANT SELECT (request_ref, tenant_id, principal_ref, membership_role, status, requested_by_ref) ON platform.tenant_membership TO grant_owner;
-GRANT SELECT (request_ref, principal_ref, platform_role, approver_class, status, requested_by_ref) ON platform.platform_role_assignment TO grant_owner;
+GRANT SELECT (request_ref, principal_ref, platform_role, status, requested_by_ref) ON platform.platform_role_assignment TO grant_owner;
 
 -- Funciones de aprovisionamiento (dueno membership_owner). Reglas: nunca excepcion ante DENY (la evidencia de authorize se confirma);
 -- devuelven NULL (solicitar) o false (aprobar). El actor es app.principal_ref (authorize_target); el tenant destino de PLATFORM es parametro.
@@ -180,7 +189,8 @@ DECLARE
   v_approver text := NULLIF(pg_catalog.current_setting('app.principal_ref', true), '');
   v_tenant uuid;
 BEGIN
-  SELECT m.tenant_id INTO v_tenant FROM platform.tenant_membership m WHERE m.request_ref = p_request_ref AND m.status = 'PENDING';
+  -- Bloquea la solicitud antes de decidir (P2-2): el perdedor de una carrera ve la fila ya ACTIVE y recibe REQUEST_NOT_FOUND sin consumir su nonce.
+  SELECT m.tenant_id INTO v_tenant FROM platform.tenant_membership m WHERE m.request_ref = p_request_ref AND m.status = 'PENDING' FOR UPDATE;
   IF NOT platform.authorize_target('APPROVE_MEMBERSHIP', p_request_ref::pg_catalog.text, v_tenant, true) THEN
     RETURN false;
   END IF;
@@ -202,7 +212,7 @@ DECLARE
   v_res text := CASE WHEN p_principal_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$'
                       AND p_platform_role IN ('PLATFORM', 'RIGHTS_OPERATOR', 'APPROVER', 'CONTEXT_OWNER')
                       AND ((p_platform_role = 'APPROVER' AND p_approver_class IN ('PRIVACY_LEGAL', 'SECURITY')) OR (p_platform_role <> 'APPROVER' AND p_approver_class IS NULL))
-                      THEN pg_catalog.concat(p_principal_ref, ':', p_platform_role, ':', p_approver_class) END;
+                      THEN pg_catalog.concat_ws(':', p_principal_ref, p_platform_role, p_approver_class) END;
 BEGIN
   IF NOT platform.authorize_target('REQUEST_ROLE_ASSIGNMENT', v_res, NULL, true) THEN
     RETURN NULL;
@@ -223,6 +233,7 @@ CREATE FUNCTION platform.approve_role_assignment(p_request_ref uuid)
 DECLARE
   v_approver text := NULLIF(pg_catalog.current_setting('app.principal_ref', true), '');
 BEGIN
+  PERFORM 1 FROM platform.platform_role_assignment a WHERE a.request_ref = p_request_ref AND a.status = 'PENDING' FOR UPDATE;
   IF NOT platform.authorize_target('APPROVE_ROLE_ASSIGNMENT', p_request_ref::pg_catalog.text, NULL, true) THEN
     RETURN false;
   END IF;
@@ -274,7 +285,10 @@ CREATE TABLE platform.authorization_check (
   tenant_id      uuid,
   action         text        CONSTRAINT authorization_check_action_shape CHECK (action ~ '^[A-Z_]{1,64}$'),
   principal_ref  text        CONSTRAINT authorization_check_principal_shape CHECK (principal_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$'),
-  resource_ref   text        CONSTRAINT authorization_check_resource_shape CHECK (resource_ref ~ '^[A-Za-z0-9._:-]{1,100}$'),
+  resource_ref   text        CONSTRAINT authorization_check_resource_shape CHECK (
+    resource_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    OR resource_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(TENANT_ADMIN|INVITER)$'
+    OR resource_ref ~ '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(PLATFORM|RIGHTS_OPERATOR|APPROVER|CONTEXT_OWNER)(:(PRIVACY_LEGAL|SECURITY))?$'),
   decision       text        NOT NULL CONSTRAINT authorization_check_decision_enum CHECK (decision IN ('ALLOW', 'DENY')),
   reason_code    text        NOT NULL CONSTRAINT authorization_check_reason_enum CHECK (reason_code IN
     ('OK', 'UNKNOWN_ACTION', 'NO_PRINCIPAL', 'INVALID_RESOURCE', 'TENANT_SCOPE', 'CALLER_ROLE', 'NO_ROLE', 'TENANT_MISMATCH', 'REQUEST_NOT_FOUND', 'SELF_APPROVAL', 'STEP_UP_MISSING', 'INVALID_TTL')),
@@ -349,11 +363,14 @@ CREATE FUNCTION platform.authorize_target(p_action text, p_resource_ref text, p_
 DECLARE
   c_policy      constant text := 'ADR010-PR3-v1';
   c_principal   constant text := '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$';
-  c_resource    constant text := '^[A-Za-z0-9._:-]{1,100}$';
+  c_princ       constant text := '(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})';
+  c_uuid        constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  c_member      constant text := '^' || c_princ || ':(TENANT_ADMIN|INVITER)$';
+  c_roleas      constant text := '^' || c_princ || ':(PLATFORM|RIGHTS_OPERATOR|APPROVER|CONTEXT_OWNER)(:(PRIVACY_LEGAL|SECURITY))?$';
   v_principal   text := NULLIF(pg_catalog.current_setting('app.principal_ref', true), '');
+  v_re          text;
   v_scope       text;
   v_reason      text := NULL;
-  v_step_up     boolean := true;
   v_is_platform boolean := false;
   v_is_tadmin   boolean := false;
   v_req_by      text;
@@ -366,22 +383,22 @@ BEGIN
       WHEN 'REQUEST_MEMBERSHIP' THEN 'TENANT' WHEN 'APPROVE_MEMBERSHIP' THEN 'TENANT'
       WHEN 'REQUEST_ROLE_ASSIGNMENT' THEN 'PLATFORM' WHEN 'APPROVE_ROLE_ASSIGNMENT' THEN 'PLATFORM' END;
     IF v_scope IS NULL THEN v_reason := 'UNKNOWN_ACTION'; EXIT decide; END IF;
+    v_re := CASE p_action WHEN 'REQUEST_MEMBERSHIP' THEN c_member WHEN 'REQUEST_ROLE_ASSIGNMENT' THEN c_roleas ELSE c_uuid END;
     IF v_principal IS NULL OR v_principal !~ c_principal THEN v_reason := 'NO_PRINCIPAL'; EXIT decide; END IF;
-    IF p_resource_ref IS NULL OR p_resource_ref !~ c_resource THEN v_reason := 'INVALID_RESOURCE'; EXIT decide; END IF;
-    IF (v_scope = 'TENANT') <> (p_tenant IS NOT NULL) THEN v_reason := 'TENANT_SCOPE'; EXIT decide; END IF;
+    IF p_resource_ref IS NULL OR p_resource_ref !~ v_re THEN v_reason := 'INVALID_RESOURCE'; EXIT decide; END IF;
+    -- APPROVE_MEMBERSHIP sin tenant (solicitud inexistente) sigue al lookup y termina en REQUEST_NOT_FOUND.
+    IF p_action <> 'APPROVE_MEMBERSHIP' AND (v_scope = 'TENANT') <> (p_tenant IS NOT NULL) THEN v_reason := 'TENANT_SCOPE'; EXIT decide; END IF;
 
     v_is_platform := session_user = 'platform_rw' AND EXISTS (
       SELECT 1 FROM platform.platform_role_assignment a
        WHERE a.principal_ref = v_principal AND a.platform_role = 'PLATFORM' AND a.status = 'ACTIVE');
 
     IF p_action = 'REQUEST_MEMBERSHIP' THEN
-      -- Via TENANT_ADMIN (consola STAFF en web, Q-17): solo su propio tenant, sin step-up (N7 aplica a CASE/PLATFORM hasta APR-IDP).
+      -- Via TENANT_ADMIN (consola STAFF en web, Q-17): solo su propio tenant. Q4/§4.4: ambos con step-up ATTESTED, tambien esta via (B2); hasta PR-4 falla cerrado.
       v_is_tadmin := session_user = 'app_rw' AND p_tenant IS NOT DISTINCT FROM app.current_tenant_id() AND EXISTS (
         SELECT 1 FROM platform.tenant_membership m
          WHERE m.tenant_id = p_tenant AND m.principal_ref = v_principal AND m.membership_role = 'TENANT_ADMIN' AND m.status = 'ACTIVE');
-      IF v_is_tadmin THEN
-        v_step_up := false;
-      ELSIF NOT v_is_platform THEN
+      IF NOT v_is_tadmin AND NOT v_is_platform THEN
         IF session_user NOT IN ('app_rw', 'platform_rw') THEN v_reason := 'CALLER_ROLE';
         ELSIF session_user = 'app_rw' AND p_tenant IS DISTINCT FROM app.current_tenant_id() THEN v_reason := 'TENANT_MISMATCH';
         ELSE v_reason := 'NO_ROLE'; END IF;
@@ -406,7 +423,7 @@ BEGIN
       END IF;
     END IF;
 
-    IF v_step_up THEN
+    IF true THEN
       v_digest := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_resource_ref, 'UTF8')), 'hex');
       SELECT n.nonce_hash INTO v_nonce FROM platform.action_nonce n
        WHERE n.principal_ref = v_principal AND n.action = p_action AND n.scope = v_scope AND n.tenant_id IS NOT DISTINCT FROM p_tenant
@@ -415,6 +432,7 @@ BEGIN
       IF v_nonce IS NULL THEN v_reason := 'STEP_UP_MISSING'; EXIT decide; END IF;
       IF p_consume THEN
         UPDATE platform.action_nonce SET consumed_at = pg_catalog.now() WHERE nonce_hash = v_nonce AND consumed_at IS NULL;
+        IF NOT FOUND THEN v_reason := 'STEP_UP_MISSING'; EXIT decide; END IF;
       END IF;
     END IF;
   END;
@@ -423,7 +441,7 @@ BEGIN
   VALUES ('AUTHORIZE', p_tenant,
           CASE WHEN v_scope IS NOT NULL THEN p_action END,
           CASE WHEN v_principal ~ c_principal THEN v_principal END,
-          CASE WHEN p_resource_ref ~ c_resource THEN p_resource_ref END,
+          CASE WHEN v_re IS NOT NULL AND p_resource_ref ~ v_re THEN p_resource_ref END,
           CASE WHEN v_reason IS NULL THEN 'ALLOW' ELSE 'DENY' END, COALESCE(v_reason, 'OK'), c_policy);
   RETURN v_reason IS NULL;
 END
@@ -450,8 +468,12 @@ CREATE FUNCTION platform.issue_action_nonce(p_action text, p_refs text[], p_tena
 DECLARE
   c_policy    constant text := 'ADR010-PR3-v1';
   c_principal constant text := '^(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$';
-  c_resource  constant text := '^[A-Za-z0-9._:-]{1,100}$';
+  c_princ     constant text := '(staff-synthetic-[0-9]{2,6}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})';
+  c_uuid      constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  c_member    constant text := '^' || c_princ || ':(TENANT_ADMIN|INVITER)$';
+  c_roleas    constant text := '^' || c_princ || ':(PLATFORM|RIGHTS_OPERATOR|APPROVER|CONTEXT_OWNER)(:(PRIVACY_LEGAL|SECURITY))?$';
   v_principal text := NULLIF(pg_catalog.current_setting('app.principal_ref', true), '');
+  v_re        text;
   v_scope     text;
   v_reason    text := NULL;
   v_nonce     text;
@@ -463,8 +485,9 @@ BEGIN
       WHEN 'REQUEST_MEMBERSHIP' THEN 'TENANT' WHEN 'APPROVE_MEMBERSHIP' THEN 'TENANT'
       WHEN 'REQUEST_ROLE_ASSIGNMENT' THEN 'PLATFORM' WHEN 'APPROVE_ROLE_ASSIGNMENT' THEN 'PLATFORM' END;
     IF v_scope IS NULL THEN v_reason := 'UNKNOWN_ACTION'; EXIT decide; END IF;
+    v_re := CASE p_action WHEN 'REQUEST_MEMBERSHIP' THEN c_member WHEN 'REQUEST_ROLE_ASSIGNMENT' THEN c_roleas ELSE c_uuid END;
     IF v_principal IS NULL OR v_principal !~ c_principal THEN v_reason := 'NO_PRINCIPAL'; EXIT decide; END IF;
-    IF p_refs IS NULL OR pg_catalog.cardinality(p_refs) <> 1 OR p_refs[1] IS NULL OR p_refs[1] !~ c_resource THEN v_reason := 'INVALID_RESOURCE'; EXIT decide; END IF;
+    IF p_refs IS NULL OR pg_catalog.cardinality(p_refs) <> 1 OR p_refs[1] IS NULL OR p_refs[1] !~ v_re THEN v_reason := 'INVALID_RESOURCE'; EXIT decide; END IF;
     IF (v_scope = 'TENANT') <> (p_tenant_id IS NOT NULL) THEN v_reason := 'TENANT_SCOPE'; EXIT decide; END IF;
     IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 3600 THEN v_reason := 'INVALID_TTL'; EXIT decide; END IF;
     IF session_user <> 'platform_rw' THEN v_reason := 'CALLER_ROLE'; EXIT decide; END IF;
@@ -484,7 +507,7 @@ BEGIN
   VALUES ('ISSUE_NONCE', p_tenant_id,
           CASE WHEN v_scope IS NOT NULL THEN p_action END,
           CASE WHEN v_principal ~ c_principal THEN v_principal END,
-          CASE WHEN p_refs IS NOT NULL AND pg_catalog.cardinality(p_refs) = 1 AND p_refs[1] ~ c_resource THEN p_refs[1] END,
+          CASE WHEN p_refs IS NOT NULL AND pg_catalog.cardinality(p_refs) = 1 AND v_re IS NOT NULL AND p_refs[1] ~ v_re THEN p_refs[1] END,
           CASE WHEN v_reason IS NULL THEN 'ALLOW' ELSE 'DENY' END, COALESCE(v_reason, 'OK'), c_policy);
   IF v_reason IS NOT NULL THEN RETURN NULL; END IF;
   RETURN v_nonce;
@@ -619,18 +642,55 @@ BEGIN
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'platform') <> 11 THEN
     RAISE EXCEPTION 'platform debe tener exactamente 11 funciones en PR-3';
   END IF;
-  FOR t IN SELECT p.oid, p.proname, p.prosecdef, p.proconfig, pg_catalog.pg_get_userbyid(p.proowner) AS owner
+  FOR t IN SELECT p.oid, p.proname, p.prosecdef, p.proconfig, p.proacl, p.proowner, p.prosrc, pg_catalog.pg_get_userbyid(p.proowner) AS owner
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'platform' LOOP
     IF NOT (expect_exec ? t.proname) THEN RAISE EXCEPTION 'funcion inesperada platform.%()', t.proname; END IF;
     IF t.owner <> (expect_owner ->> t.proname) THEN RAISE EXCEPTION 'platform.%() no pertenece a %', t.proname, expect_owner ->> t.proname; END IF;
     IF t.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp'] THEN RAISE EXCEPTION 'platform.%() sin search_path fijo exacto', t.proname; END IF;
     IF t.prosecdef <> (t.proname NOT LIKE '%guard' AND t.proname <> 'membership_no_truncate') THEN RAISE EXCEPTION 'platform.%(): SECURITY DEFINER inesperado', t.proname; END IF;
     IF pg_catalog.has_function_privilege('public', t.oid, 'EXECUTE') THEN RAISE EXCEPTION 'PUBLIC puede ejecutar platform.%()', t.proname; END IF;
+    -- P2-8: sin SQL dinamico y ACL cerrada: el conjunto de grantees (distintos del dueno) es EXACTAMENTE el declarado, de cualquier rol.
+    IF t.prosrc ~* '\mexecute\M' THEN RAISE EXCEPTION 'platform.%() contiene EXECUTE (SQL dinamico prohibido)', t.proname; END IF;
+    IF (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text, ',' ORDER BY pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text COLLATE "C")
+          FROM pg_catalog.aclexplode(COALESCE(t.proacl, pg_catalog.acldefault('f', t.proowner))) a WHERE a.grantee <> t.proowner)
+       IS DISTINCT FROM (SELECT pg_catalog.string_agg(x, ',' ORDER BY x COLLATE "C") FROM pg_catalog.jsonb_array_elements_text(expect_exec -> t.proname) AS x) THEN
+      RAISE EXCEPTION 'la ACL de platform.%() no es exactamente la declarada', t.proname;
+    END IF;
     FOREACH r IN ARRAY ARRAY['app_rw', 'platform_rw', 'worker', 'integrity_verifier', 'consent_owner', 'consent_migrator', 'membership_owner', 'grant_owner', 'transition_owner', 'platform_schema_owner'] LOOP
       IF r <> t.owner AND pg_catalog.has_function_privilege(r, t.oid, 'EXECUTE') <> COALESCE((expect_exec -> t.proname) ? r, false) THEN
         RAISE EXCEPTION 'EXECUTE de platform.%() para % distinto del declarado', t.proname, r;
       END IF;
     END LOOP;
   END LOOP;
+
+  -- P2-8: ACL de tablas, columnas, esquema y triggers cerradas frente a cualquier rol (no solo los nombrados arriba).
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace,
+                    pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))) a
+              WHERE n.nspname = 'platform' AND c.relkind = 'r' AND a.grantee <> c.relowner) THEN
+    RAISE EXCEPTION 'las tablas de platform solo pueden tener ACL de su dueno (cualquier otro grantee, incluido PUBLIC, esta prohibido)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute att JOIN pg_catalog.pg_class c ON c.oid = att.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace,
+                    pg_catalog.aclexplode(att.attacl) a
+              WHERE n.nspname = 'platform' AND att.attacl IS NOT NULL
+                AND (pg_catalog.pg_get_userbyid(a.grantee) <> 'grant_owner' OR a.privilege_type <> 'SELECT' OR c.relname NOT IN ('tenant_membership', 'platform_role_assignment'))) THEN
+    RAISE EXCEPTION 'las ACL de columnas de platform solo admiten SELECT para grant_owner sobre las tablas de membership';
+  END IF;
+  IF (SELECT pg_catalog.string_agg(c.relname::pg_catalog.text || '.' || att.attname::pg_catalog.text, ',' ORDER BY (c.relname::pg_catalog.text || '.' || att.attname::pg_catalog.text) COLLATE "C")
+        FROM pg_catalog.pg_attribute att JOIN pg_catalog.pg_class c ON c.oid = att.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'platform' AND att.attnum > 0 AND NOT att.attisdropped AND att.attacl IS NOT NULL)
+     IS DISTINCT FROM 'platform_role_assignment.platform_role,platform_role_assignment.principal_ref,platform_role_assignment.request_ref,platform_role_assignment.requested_by_ref,platform_role_assignment.status,tenant_membership.membership_role,tenant_membership.principal_ref,tenant_membership.request_ref,tenant_membership.requested_by_ref,tenant_membership.status,tenant_membership.tenant_id' THEN
+    RAISE EXCEPTION 'las columnas con SELECT de grant_owner no son exactamente las que usa authorize_target';
+  END IF;
+  IF (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text || ':' || a.privilege_type, ',' ORDER BY pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text COLLATE "C")
+        FROM pg_catalog.pg_namespace n, pg_catalog.aclexplode(n.nspacl) a WHERE n.nspname = 'platform' AND a.grantee <> n.nspowner)
+     IS DISTINCT FROM 'app_rw:USAGE,grant_owner:USAGE,membership_owner:USAGE,platform_rw:USAGE' THEN
+    RAISE EXCEPTION 'la ACL del esquema platform no es exactamente USAGE para app_rw, platform_rw, membership_owner y grant_owner';
+  END IF;
+  IF (SELECT pg_catalog.string_agg(g.tgname::pg_catalog.text || ':' || p.proname::pg_catalog.text, ',' ORDER BY g.tgname::pg_catalog.text COLLATE "C")
+        FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace JOIN pg_catalog.pg_proc p ON p.oid = g.tgfoid
+       WHERE n.nspname = 'platform' AND NOT g.tgisinternal)
+     IS DISTINCT FROM 'action_nonce_guard:action_nonce_guard,action_nonce_no_truncate:authorization_check_guard,authorization_check_append_only:authorization_check_guard,authorization_check_no_truncate:authorization_check_guard,platform_role_assignment_guard:membership_guard,platform_role_assignment_no_truncate:membership_no_truncate,tenant_membership_guard:membership_guard,tenant_membership_no_truncate:membership_no_truncate' THEN
+    RAISE EXCEPTION 'el mapeo trigger -> funcion de platform no es el declarado';
+  END IF;
 END
 $assert$;

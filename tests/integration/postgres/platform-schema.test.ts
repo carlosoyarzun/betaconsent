@@ -10,6 +10,7 @@
 // Requiere Postgres real (harness.ts); skip sin entorno. Solo sinteticos.
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { checkRoleMemberships } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
@@ -37,22 +38,39 @@ async function call<T = Record<string, unknown>>(client: Client, principal: stri
   }
 }
 
-/** Siembra (superusuario, sin pasar por las funciones) un rol de plataforma ACTIVO: el bootstrap real es una ceremonia (Q10), fuera de PR-3. */
+/** Siembra (superusuario, sin pasar por las funciones) un rol de plataforma ACTIVO: el bootstrap real es una ceremonia (Q10), fuera de PR-3. Toda fila nace PENDING (P2-4). */
 async function seedPlatform(admin: Client, principal: string, role = "PLATFORM"): Promise<void> {
   await admin.query(
-    `INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, approver_class, status, requested_by_ref, approved_by_ref, approved_at)
-     VALUES ($1, $2, CASE WHEN $2 = 'APPROVER' THEN 'SECURITY' END, 'ACTIVE', $3, $4, now())`,
-    [principal, role, P("seed-requester"), P("seed-approver")],
+    "INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, approver_class, status, requested_by_ref) VALUES ($1, $2, CASE WHEN $2 = 'APPROVER' THEN 'SECURITY' END, 'PENDING', $3)",
+    [principal, role, P("seed-requester")],
+  );
+  await admin.query(
+    "UPDATE platform.platform_role_assignment SET status = 'ACTIVE', approved_by_ref = $3, approved_at = now() WHERE principal_ref = $1 AND platform_role = $2",
+    [principal, role, P("seed-approver")],
   );
 }
 
 async function seedTenantAdmin(admin: Client, tenant: string, principal: string): Promise<void> {
   await admin.query(
-    `INSERT INTO platform.tenant_membership (tenant_id, principal_ref, membership_role, status, requested_by_ref, approved_by_ref, approved_at)
-     VALUES ($1, $2, 'TENANT_ADMIN', 'ACTIVE', $3, $4, now())`,
-    [tenant, principal, P("seed-requester"), P("seed-approver")],
+    "INSERT INTO platform.tenant_membership (tenant_id, principal_ref, membership_role, status, requested_by_ref) VALUES ($1, $2, 'TENANT_ADMIN', 'PENDING', $3)",
+    [tenant, principal, P("seed-requester")],
+  );
+  await admin.query(
+    "UPDATE platform.tenant_membership SET status = 'ACTIVE', approved_by_ref = $3, approved_at = now() WHERE tenant_id = $1 AND principal_ref = $2 AND membership_role = 'TENANT_ADMIN'",
+    [tenant, principal, P("seed-approver")],
   );
 }
+
+/** Siembra un nonce ya ATTESTED (stand-in del verifier de PR-4) para el binding exacto (principal, accion, tenant, resource). */
+async function seedNonce(admin: Client, principal: string, action: string, tenant: string | null, resource: string): Promise<void> {
+  await admin.query(
+    `INSERT INTO platform.action_nonce (nonce_hash, scope, tenant_id, action, refs_digest, principal_ref, expires_at, attested_at)
+     VALUES (encode(sha256(convert_to($1, 'UTF8')), 'hex'), $2, $3::uuid, $4, encode(sha256(convert_to($5, 'UTF8')), 'hex'), $6, now() + interval '5 minutes', now())`,
+    [randomUUID(), tenant === null ? "PLATFORM" : "TENANT", tenant, action, resource, principal],
+  );
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Stand-in del verifier de PR-4: marca el nonce como ATTESTED (el guard permite NULL -> instante una sola vez). */
 async function attest(admin: Client, principal: string, action: string): Promise<number> {
@@ -238,7 +256,7 @@ pgTest("TEST-CNS-1354 pg: aprovisionamiento de roles de plataforma con doble con
   assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE principal_ref = $1", [C])).rowCount, 0);
 
   // Nonce emitido pero aun PENDING (no atestado): sigue sin efecto. El nonce se liga a las refs opacas de la solicitud.
-  const resource = `${C}:RIGHTS_OPERATOR:`;
+  const resource = `${C}:RIGHTS_OPERATOR`;
   const nonce = (await call<{ n: string | null }>(plat, A, null, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 300) AS n", [resource]))[0]?.n;
   assert.match(nonce ?? "", HEX64);
   assert.equal((await call<{ r: string | null }>(plat, A, null, "SELECT platform.request_role_assignment($1, 'RIGHTS_OPERATOR', NULL) AS r", [C]))[0]?.r, null);
@@ -276,19 +294,24 @@ pgTest("TEST-CNS-1354 pg: aprovisionamiento de roles de plataforma con doble con
   assert.equal((await lastChecks(admin, B))[0]?.reason_code, "REQUEST_NOT_FOUND");
 
   // El nonce de A (solicitud ajena) no sirve para otra solicitud: refs distintas => STEP_UP_MISSING.
-  const other = (await call<{ n: string | null }>(plat, A, null, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 300) AS n", [`${C}:CONTEXT_OWNER:`]))[0]?.n;
+  const other = (await call<{ n: string | null }>(plat, A, null, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 300) AS n", [`${C}:CONTEXT_OWNER`]))[0]?.n;
   assert.match(other ?? "", HEX64);
   await attest(admin, A, "REQUEST_ROLE_ASSIGNMENT");
   assert.equal((await call<{ r: string | null }>(plat, A, null, "SELECT platform.request_role_assignment($1, 'PLATFORM', NULL) AS r", [C]))[0]?.r, null);
   assert.equal((await lastChecks(admin, A))[0]?.reason_code, "STEP_UP_MISSING");
 
-  // Doble control tambien en la tabla: ACTIVE con aprobador == solicitante viola el CHECK (23514); PENDING con approved_* tambien.
+  // Doble control tambien en la tabla: toda fila nace PENDING (P2-4); ACTIVE con aprobador == solicitante viola el CHECK (23514); PENDING con approved_* tambien.
   await assert.rejects(
-    admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref, approved_by_ref, approved_at) VALUES ($1, 'PLATFORM', 'ACTIVE', $2, $2, now())", [P("pz"), A]),
+    admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref, approved_by_ref, approved_at) VALUES ($1, 'PLATFORM', 'ACTIVE', $2, $3, now())", [P("pz0"), A, B]),
+    (e) => codeOf(e) === "23000",
+  );
+  await admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref) VALUES ($1, 'PLATFORM', 'PENDING', $2)", [P("pz1"), A]);
+  await assert.rejects(
+    admin.query("UPDATE platform.platform_role_assignment SET status = 'ACTIVE', approved_by_ref = requested_by_ref, approved_at = now() WHERE principal_ref = $1", [P("pz1")]),
     (e) => codeOf(e) === "23514",
   );
   await assert.rejects(
-    admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref, approved_by_ref, approved_at) VALUES ($1, 'PLATFORM', 'PENDING', $2, $3, now())", [P("pz"), A, B]),
+    admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref, approved_by_ref, approved_at) VALUES ($1, 'PLATFORM', 'PENDING', $2, $3, now())", [P("pz2"), A, B]),
     (e) => codeOf(e) === "23514",
   );
   // APPROVER exige clase (PRIVACY_LEGAL | SECURITY); las demas, ninguna.
@@ -309,13 +332,19 @@ pgTest("TEST-CNS-1355 pg: membership por tenant: TENANT_ADMIN solicita desde web
   await seedPlatform(admin, PA);
   await seedPlatform(admin, PB);
 
-  // Via TENANT_ADMIN: su propio tenant, sin nonce.
+  // Via TENANT_ADMIN (B2, Q4/§4.4): tambien exige step-up ATTESTED; sin nonce falla cerrado (web no puede emitir nonces: issue_action_nonce es de platform_rw).
+  assert.equal((await call<{ r: string | null }>(web, ADMIN_X, TENANT_X, "SELECT platform.request_membership($1::uuid, $2, 'INVITER') AS r", [TENANT_X, NEWBIE]))[0]?.r, null);
+  assert.deepEqual(await lastChecks(admin, ADMIN_X), [{ check_kind: "AUTHORIZE", action: "REQUEST_MEMBERSHIP", decision: "DENY", reason_code: "STEP_UP_MISSING" }]);
+  assert.equal((await admin.query("SELECT 1 FROM platform.tenant_membership WHERE tenant_id = $1 AND principal_ref = $2", [TENANT_X, NEWBIE])).rowCount, 0);
+  // Con un nonce atestado ligado a (tenant, accion, refs, principal): su propio tenant.
+  await seedNonce(admin, ADMIN_X, "REQUEST_MEMBERSHIP", TENANT_X, `${NEWBIE}:INVITER`);
   const ref = (await call<{ r: string | null }>(web, ADMIN_X, TENANT_X, "SELECT platform.request_membership($1::uuid, $2, 'INVITER') AS r", [TENANT_X, NEWBIE]))[0]?.r;
   assert.match(ref ?? "", /^[0-9a-f-]{36}$/);
   assert.deepEqual(await lastChecks(admin, ADMIN_X), [{ check_kind: "AUTHORIZE", action: "REQUEST_MEMBERSHIP", decision: "ALLOW", reason_code: "OK" }]);
   assert.deepEqual((await admin.query("SELECT tenant_id, principal_ref, membership_role, status, requested_by_ref FROM platform.tenant_membership WHERE request_ref = $1", [ref])).rows[0],
     { tenant_id: TENANT_X, principal_ref: NEWBIE, membership_role: "INVITER", status: "PENDING", requested_by_ref: ADMIN_X });
-  // Repetir la misma solicitud no duplica (UNIQUE) y no lanza.
+  // Repetir la misma solicitud (con otro nonce) no duplica (UNIQUE) y no lanza.
+  await seedNonce(admin, ADMIN_X, "REQUEST_MEMBERSHIP", TENANT_X, `${NEWBIE}:INVITER`);
   assert.equal((await call<{ r: string | null }>(web, ADMIN_X, TENANT_X, "SELECT platform.request_membership($1::uuid, $2, 'INVITER') AS r", [TENANT_X, NEWBIE]))[0]?.r, null);
   assert.equal((await admin.query("SELECT 1 FROM platform.tenant_membership WHERE tenant_id = $1 AND principal_ref = $2", [TENANT_X, NEWBIE])).rowCount, 1);
 
@@ -387,6 +416,9 @@ pgTest("TEST-CNS-1356 pg: inmutabilidad: membership solo PENDING -> ACTIVE con a
   await assert.rejects(admin.query("UPDATE platform.tenant_membership SET status = 'ACTIVE' WHERE request_ref = $1", [mref]), (e) => codeOf(e) === "23514");
   await admin.query("UPDATE platform.tenant_membership SET status = 'ACTIVE', approved_by_ref = $2, approved_at = now() WHERE request_ref = $1", [mref, P("i-appr")]);
   await assert.rejects(admin.query("UPDATE platform.tenant_membership SET status = 'PENDING', approved_by_ref = NULL, approved_at = NULL WHERE request_ref = $1", [mref]), integrity);
+  // P2-4: ninguna fila nace ACTIVE (ni siquiera con aprobador distinto): ACTIVE solo por UPDATE desde PENDING.
+  await assert.rejects(admin.query("INSERT INTO platform.tenant_membership (tenant_id, principal_ref, membership_role, status, requested_by_ref, approved_by_ref, approved_at) VALUES ($1, $2, 'INVITER', 'ACTIVE', $3, $4, now())", [TENANT_X, P("i-m3"), P("i-req"), P("i-appr")]), integrity);
+  await assert.rejects(admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref, approved_by_ref, approved_at) VALUES ($1, 'PLATFORM', 'ACTIVE', $2, $3, now())", [P("i-m3"), P("i-req"), P("i-appr")]), integrity);
   await assert.rejects(admin.query("DELETE FROM platform.platform_role_assignment"), integrity);
   await assert.rejects(admin.query("TRUNCATE platform.platform_role_assignment"), integrity);
   // Forma de las refs: un correo no entra como principal (cero PII).
@@ -502,9 +534,14 @@ pgTest("TEST-CNS-1357 pg: action_nonce emitido por la DB: solo hash (el nonce en
     assert.equal((await call<{ a: boolean }>(plat, PB, TENANT_X, "SELECT platform.authorize('APPROVE_MEMBERSHIP', $1) AS a", [reqRef]))[0]?.a, true);
   }
   assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [PB])).rowCount, 0, "authorize no consume el nonce");
-  // Sin tenant en la transaccion, una accion de tenant no se decide (TENANT_SCOPE).
+  // Sin tenant en la transaccion, la solicitud no se resuelve (REQUEST_NOT_FOUND, igual que una inexistente); REQUEST_MEMBERSHIP sin tenant es TENANT_SCOPE.
   assert.equal((await call<{ a: boolean }>(plat, PB, null, "SELECT platform.authorize('APPROVE_MEMBERSHIP', $1) AS a", [reqRef]))[0]?.a, false);
+  assert.equal((await lastChecks(admin, PB))[0]?.reason_code, "REQUEST_NOT_FOUND");
+  assert.equal((await call<{ a: boolean }>(plat, PB, null, "SELECT platform.authorize('REQUEST_MEMBERSHIP', $1) AS a", [`${P("n-x")}:INVITER`]))[0]?.a, false);
   assert.equal((await lastChecks(admin, PB))[0]?.reason_code, "TENANT_SCOPE");
+  // approve_membership sobre una solicitud inexistente: REQUEST_NOT_FOUND (P2-2).
+  assert.equal((await call<{ r: boolean }>(plat, PB, null, "SELECT platform.approve_membership($1::uuid) AS r", [fixtureUuid("n-inexistente")]))[0]?.r, false);
+  assert.equal((await lastChecks(admin, PB))[0]?.reason_code, "REQUEST_NOT_FOUND");
   // Otro tenant en la transaccion: la solicitud no existe para el (aislamiento).
   assert.equal((await call<{ a: boolean }>(plat, PB, TENANT_Y, "SELECT platform.authorize('APPROVE_MEMBERSHIP', $1) AS a", [reqRef]))[0]?.a, false);
   assert.equal((await lastChecks(admin, PB))[0]?.reason_code, "REQUEST_NOT_FOUND");
@@ -524,4 +561,159 @@ pgTest("TEST-CNS-1357 pg: action_nonce emitido por la DB: solo hash (el nonce en
   await new Promise((resolve) => setTimeout(resolve, 1300));
   assert.equal((await call<{ r: boolean }>(plat, PC, null, "SELECT platform.approve_membership($1::uuid) AS r", [req2]))[0]?.r, false);
   assert.equal((await lastChecks(admin, PC))[0]?.reason_code, "STEP_UP_MISSING");
+});
+
+pgTest("TEST-CNS-1358 pg: concurrencia: el nonce se usa una sola vez y una solicitud se aprueba una sola vez (el perdedor no deja ALLOW sin efecto ni consume su nonce)", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const plat = await ctx.connectAs("platform_rw");
+  const c1 = await ctx.connectAs("platform_rw");
+  const c2 = await ctx.connectAs("platform_rw");
+  const A = P("c-pa");
+  const B = P("c-pb");
+  const D = P("c-pd");
+  const C = P("c-target");
+  for (const principal of [A, B, D]) await seedPlatform(admin, principal);
+
+  // Uso unico: c1 consume el nonce y mantiene la tx abierta; c2 con el MISMO nonce espera el bloqueo y luego recibe DENY.
+  await call(plat, A, null, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 300)", [`${C}:RIGHTS_OPERATOR`]);
+  assert.equal(await attest(admin, A, "REQUEST_ROLE_ASSIGNMENT"), 1);
+  await c1.query("BEGIN");
+  await c1.query("SELECT set_config('app.principal_ref', $1, true)", [A]);
+  const first = await c1.query<{ r: string | null }>("SELECT platform.request_role_assignment($1, 'RIGHTS_OPERATOR', NULL) AS r", [C]);
+  const second = call<{ r: string | null }>(c2, A, null, "SELECT platform.request_role_assignment($1, 'RIGHTS_OPERATOR', NULL) AS r", [C]);
+  await sleep(300);
+  await c1.query("COMMIT");
+  assert.match(first.rows[0]?.r ?? "", /^[0-9a-f-]{36}$/);
+  assert.equal((await second)[0]?.r, null);
+  assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE principal_ref = $1", [C])).rowCount, 1);
+  assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [A])).rowCount, 1);
+  assert.deepEqual(
+    (await admin.query<{ decision: string; reason_code: string }>("SELECT decision, reason_code FROM platform.authorization_check WHERE principal_ref = $1 AND action = 'REQUEST_ROLE_ASSIGNMENT' AND check_kind = 'AUTHORIZE' ORDER BY decision")).rows,
+    [{ decision: "ALLOW", reason_code: "OK" }, { decision: "DENY", reason_code: "STEP_UP_MISSING" }],
+  );
+
+  // Doble aprobacion: B y D (cada uno con su nonce atestado) aprueban la MISMA solicitud a la vez; solo uno tiene efecto y el perdedor conserva su nonce.
+  const target = (await admin.query<{ request_ref: string }>("SELECT request_ref FROM platform.platform_role_assignment WHERE principal_ref = $1", [C])).rows[0]?.request_ref ?? "";
+  await call(plat, B, null, "SELECT platform.issue_action_nonce('APPROVE_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 300)", [target]);
+  await call(plat, D, null, "SELECT platform.issue_action_nonce('APPROVE_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 300)", [target]);
+  assert.equal(await attest(admin, B, "APPROVE_ROLE_ASSIGNMENT"), 1);
+  assert.equal(await attest(admin, D, "APPROVE_ROLE_ASSIGNMENT"), 1);
+  await c1.query("BEGIN");
+  await c1.query("SELECT set_config('app.principal_ref', $1, true)", [B]);
+  const won = await c1.query<{ r: boolean }>("SELECT platform.approve_role_assignment($1::uuid) AS r", [target]);
+  const lost = call<{ r: boolean }>(c2, D, null, "SELECT platform.approve_role_assignment($1::uuid) AS r", [target]);
+  await sleep(300);
+  await c1.query("COMMIT");
+  assert.equal(won.rows[0]?.r, true);
+  assert.equal((await lost)[0]?.r, false);
+  assert.deepEqual((await admin.query("SELECT status, approved_by_ref FROM platform.platform_role_assignment WHERE request_ref = $1", [target])).rows[0], { status: "ACTIVE", approved_by_ref: B });
+  assert.equal((await lastChecks(admin, D))[0]?.reason_code, "REQUEST_NOT_FOUND");
+  assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [D])).rowCount, 0, "el perdedor no consume su nonce");
+  assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [B])).rowCount, 1);
+});
+
+pgTest("TEST-CNS-1359 pg: binding de la accion: un nonce de la accion A no sirve para la accion B aunque coincidan principal y refs; el nonce en claro no aparece en ninguna tabla", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const plat = await ctx.connectAs("platform_rw");
+  const B = P("b-pb");
+  await seedPlatform(admin, B);
+  const U = (await admin.query<{ request_ref: string }>(
+    "INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref) VALUES ($1, 'CONTEXT_OWNER', 'PENDING', $2) RETURNING request_ref", [P("b-subject"), P("b-req")],
+  )).rows[0]?.request_ref ?? "";
+  const M = (await admin.query<{ request_ref: string }>(
+    "INSERT INTO platform.tenant_membership (tenant_id, principal_ref, membership_role, status, requested_by_ref) VALUES ($1, $2, 'INVITER', 'PENDING', $3) RETURNING request_ref", [TENANT_X, P("b-subject2"), P("b-req")],
+  )).rows[0]?.request_ref ?? "";
+  const nonces: string[] = [];
+  const issue = async (action: string, ref: string, tenant: string | null): Promise<void> => {
+    const n = (await call<{ n: string | null }>(plat, B, null, "SELECT platform.issue_action_nonce($1, ARRAY[$2::text], $3::uuid, 300) AS n", [action, ref, tenant]))[0]?.n;
+    assert.match(n ?? "", HEX64);
+    nonces.push(n ?? "");
+  };
+
+  // Nonce de APPROVE_MEMBERSHIP (tenant X, refs [U]) atestado: no sirve para APPROVE_ROLE_ASSIGNMENT con las mismas refs.
+  await issue("APPROVE_MEMBERSHIP", U, TENANT_X);
+  assert.equal(await attest(admin, B, "APPROVE_MEMBERSHIP"), 1);
+  assert.equal((await call<{ r: boolean }>(plat, B, null, "SELECT platform.approve_role_assignment($1::uuid) AS r", [U]))[0]?.r, false);
+  assert.equal((await lastChecks(admin, B))[0]?.reason_code, "STEP_UP_MISSING");
+  // Y al reves: nonce de APPROVE_ROLE_ASSIGNMENT con refs [M] no sirve para APPROVE_MEMBERSHIP de M.
+  await issue("APPROVE_ROLE_ASSIGNMENT", M, null);
+  assert.equal(await attest(admin, B, "APPROVE_ROLE_ASSIGNMENT"), 1);
+  assert.equal((await call<{ r: boolean }>(plat, B, null, "SELECT platform.approve_membership($1::uuid) AS r", [M]))[0]?.r, false);
+  assert.equal((await lastChecks(admin, B))[0]?.reason_code, "STEP_UP_MISSING");
+  assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [B])).rowCount, 0, "ningun nonce se consumio por la accion equivocada");
+  assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE request_ref = $1 AND status = 'PENDING'", [U])).rowCount, 1);
+
+  // Con el nonce de la accion correcta si pasa (y se consume).
+  await issue("APPROVE_ROLE_ASSIGNMENT", U, null);
+  assert.equal(await attest(admin, B, "APPROVE_ROLE_ASSIGNMENT"), 1);
+  assert.equal((await call<{ r: boolean }>(plat, B, null, "SELECT platform.approve_role_assignment($1::uuid) AS r", [U]))[0]?.r, true);
+  assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [B])).rowCount, 1);
+
+  // El nonce en claro nunca se persiste: ni en action_nonce ni en authorization_check ni en las tablas de membership.
+  for (const table of ["action_nonce", "authorization_check", "tenant_membership", "platform_role_assignment"]) {
+    const docs = (await admin.query<{ doc: string }>(`SELECT to_jsonb(t)::text AS doc FROM platform.${table} t`)).rows.map((r) => r.doc);
+    for (const nonce of nonces) assert.ok(!docs.some((d) => d.includes(nonce)), `nonce en claro en platform.${table}`);
+  }
+});
+
+pgTest("TEST-CNS-1360 pg: B1 sin PII: un RUT con puntos, un RUT sin puntos o un nombre como recurso dan DENY INVALID_RESOURCE y se guardan como NULL; el CHECK de resource_ref rechaza esas formas", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const plat = await ctx.connectAs("platform_rw");
+  const web = await ctx.connectAs("app_rw");
+  const A = P("r-pa");
+  await seedPlatform(admin, A);
+  const PII = ["12.345.678-5", "12345678-5", "Juan.Perez"];
+
+  for (const v of PII) {
+    // authorize() con recurso de forma incorrecta para cada accion (incluido cruzar formas entre acciones).
+    for (const action of ["APPROVE_MEMBERSHIP", "APPROVE_ROLE_ASSIGNMENT", "REQUEST_MEMBERSHIP", "REQUEST_ROLE_ASSIGNMENT"]) {
+      assert.equal((await call<{ a: boolean }>(plat, A, TENANT_X, "SELECT platform.authorize($1, $2) AS a", [action, v]))[0]?.a, false, `${action} ${v}`);
+      assert.equal((await lastChecks(admin, A))[0]?.reason_code, "INVALID_RESOURCE", `${action} ${v}`);
+    }
+    // Funciones de aprovisionamiento con el valor como principal: DENY y nada insertado.
+    assert.equal((await call<{ r: string | null }>(plat, A, null, "SELECT platform.request_membership($1::uuid, $2, 'INVITER') AS r", [TENANT_X, v]))[0]?.r, null);
+    assert.equal((await lastChecks(admin, A))[0]?.reason_code, "INVALID_RESOURCE");
+    assert.equal((await call<{ r: string | null }>(plat, A, null, "SELECT platform.request_role_assignment($1, 'PLATFORM', NULL) AS r", [v]))[0]?.r, null);
+    assert.equal((await lastChecks(admin, A))[0]?.reason_code, "INVALID_RESOURCE");
+    assert.equal((await call<{ r: string | null }>(web, A, TENANT_X, "SELECT platform.request_membership($1::uuid, $2, 'INVITER') AS r", [TENANT_X, v]))[0]?.r, null);
+    // issue_action_nonce con el valor como ref.
+    assert.equal((await call<{ n: string | null }>(plat, A, null, "SELECT platform.issue_action_nonce('APPROVE_ROLE_ASSIGNMENT', ARRAY[$1::text], NULL, 60) AS n", [v]))[0]?.n, null);
+    assert.equal((await lastChecks(admin, A))[0]?.reason_code, "INVALID_RESOURCE");
+    // CHECK de la tabla: ni como resource_ref ni como principal_ref.
+    await assert.rejects(admin.query("INSERT INTO platform.authorization_check (check_kind, decision, reason_code, policy_version, resource_ref) VALUES ('AUTHORIZE', 'DENY', 'NO_ROLE', 'x', $1)", [v]), (e) => codeOf(e) === "23514", `resource_ref ${v}`);
+    await assert.rejects(admin.query("INSERT INTO platform.authorization_check (check_kind, decision, reason_code, policy_version, principal_ref) VALUES ('AUTHORIZE', 'DENY', 'NO_ROLE', 'x', $1)", [v]), (e) => codeOf(e) === "23514", `principal_ref ${v}`);
+  }
+  assert.equal((await admin.query("SELECT 1 FROM platform.authorization_check WHERE reason_code = 'INVALID_RESOURCE' AND resource_ref IS NOT NULL")).rowCount, 0, "el recurso invalido se guarda NULL");
+  assert.ok((await admin.query("SELECT 1 FROM platform.authorization_check WHERE reason_code = 'INVALID_RESOURCE'")).rowCount! >= PII.length * 7);
+  assert.equal((await admin.query("SELECT 1 FROM platform.tenant_membership")).rowCount, 0);
+  assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE principal_ref <> $1", [A])).rowCount, 0);
+  // Ninguna tabla guarda ninguno de los valores.
+  for (const table of ["tenant_membership", "platform_role_assignment", "action_nonce", "authorization_check"]) {
+    const docs = (await admin.query<{ doc: string }>(`SELECT to_jsonb(t)::text AS doc FROM platform.${table} t`)).rows.map((r) => r.doc);
+    for (const v of PII) assert.ok(!docs.some((d) => d.includes(v)), `${v} guardado en platform.${table}`);
+  }
+  // Las formas cerradas validas siguen entrando (UUID, principal:rol, principal:rol:clase).
+  for (const ok of [fixtureUuid("r-ok"), `${P("r-ok")}:INVITER`, `${P("r-ok")}:APPROVER:SECURITY`, `${P("r-ok")}:PLATFORM`]) {
+    await admin.query("INSERT INTO platform.authorization_check (check_kind, decision, reason_code, policy_version, resource_ref) VALUES ('AUTHORIZE', 'DENY', 'NO_ROLE', 'x', $1)", [ok]);
+  }
+  for (const bad of [`${P("r-ok")}:ADMIN`, `${P("r-ok")}:INVITER:SECURITY`, `${P("r-ok")}:`, "staff-synthetic-1:INVITER"]) {
+    await assert.rejects(admin.query("INSERT INTO platform.authorization_check (check_kind, decision, reason_code, policy_version, resource_ref) VALUES ('AUTHORIZE', 'DENY', 'NO_ROLE', 'x', $1)", [bad]), (e) => codeOf(e) === "23514", bad);
+  }
+});
+
+pgTest("TEST-CNS-1362 pg: P2-7: una GUC app.* fijada con ALTER ROLE ... IN DATABASE ... SET para un rol de runtime hace fallar el arranque", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const web = await ctx.connectAs("app_rw");
+  assert.deepEqual(await runStartupChecks(web, { expectedRole: "app_rw", expectedEnvironment: "LOCAL" }), { ok: true, failures: [] });
+  const db = ctx.dbName;
+  // Catalogo global de roles: serializado con el provisionado (withRoleCatalogLock). Solo afecta a la base de este archivo.
+  try {
+    await ctx.withRoleCatalogLock(async () => { await admin.query(`ALTER ROLE app_rw IN DATABASE "${db}" SET app.tenant_id TO 'x'`); });
+    const bad = await runStartupChecks(web, { expectedRole: "app_rw", expectedEnvironment: "LOCAL" });
+    assert.equal(bad.ok, false);
+    assert.ok(bad.failures.some((f) => /GUC app\.tenant_id para app_rw/.test(f)), bad.failures.join("; "));
+  } finally {
+    await ctx.withRoleCatalogLock(async () => { await admin.query(`ALTER ROLE app_rw IN DATABASE "${db}" RESET app.tenant_id`); });
+  }
+  assert.deepEqual(await runStartupChecks(web, { expectedRole: "app_rw", expectedEnvironment: "LOCAL" }), { ok: true, failures: [] });
 });

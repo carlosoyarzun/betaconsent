@@ -35,6 +35,8 @@ interface Scenario {
   dbClockOffsetMs?: number | "nan";
   // ADR-010 PR-3: privilegios del rol de conexion sobre el esquema platform (por defecto, los declarados para app_rw).
   platformExposure?: Array<{ kind: string; name: string }> | "error";
+  // ADR-010 PR-3 (P2-7): GUC app.* en pg_db_role_setting para los roles de runtime.
+  appGucDefaults?: Array<{ scope: string; setting: string }> | "error";
 }
 
 function db(s: Scenario = {}): FakeClient {
@@ -46,6 +48,10 @@ function db(s: Scenario = {}): FakeClient {
     if (text.includes("FROM pg_catalog.pg_auth_members")) {
       if (s.rosterRolesError) return new Error("boom");
       return { rows: s.readerMembership ?? [{ inherit_option: false, set_option: true }] };
+    }
+    if (text.includes("pg_db_role_setting")) {
+      if (s.appGucDefaults === "error") return new Error("boom");
+      return { rows: s.appGucDefaults ?? [] };
     }
     if (text.includes("n.nspname = 'platform'")) {
       if (s.platformExposure === "error") return new Error("boom");
@@ -256,6 +262,20 @@ test("TEST-CNS-1352 ADR-010 PR-3: no arranca si el rol de runtime tiene privileg
     [{ runtimeRole: "worker", platformExposure: [{ kind: "function", name: "request_membership" }] }, /ejecutar platform\.request_membership\(\)/],
     [{ runtimeRole: "integrity_verifier", platformExposure: [{ kind: "function", name: "authorize" }] }, /ejecutar platform\.authorize\(\)/],
     [{ runtimeRole: "app_rw", platformExposure: "error" }, /no se pudo verificar la exposición del esquema platform/],
+  ];
+  for (const [scenario, pattern] of cases) {
+    const result = await runStartupChecks(db(scenario), { expectedEnvironment: "LOCAL" });
+    assert.equal(result.ok, false);
+    assert.ok(result.failures.some((f) => pattern.test(f)), `${JSON.stringify(scenario)} -> ${result.failures.join("; ")}`);
+  }
+});
+
+test("TEST-CNS-1361 ADR-010 PR-3 P2-7: no arranca si pg_db_role_setting fija una GUC app.* para un rol de runtime o para todos; fail-closed si no se puede leer", async () => {
+  assert.equal((await runStartupChecks(db({ appGucDefaults: [] }), { expectedEnvironment: "LOCAL" })).ok, true);
+  const cases: Array<[Scenario, RegExp]> = [
+    [{ appGucDefaults: [{ scope: "app_rw", setting: "app.tenant_id" }] }, /GUC app\.tenant_id para app_rw/],
+    [{ appGucDefaults: [{ scope: "(todos los roles)", setting: "app.principal_ref" }] }, /GUC app\.principal_ref para \(todos los roles\)/],
+    [{ appGucDefaults: "error" }, /no se pudo verificar pg_db_role_setting/],
   ];
   for (const [scenario, pattern] of cases) {
     const result = await runStartupChecks(db(scenario), { expectedEnvironment: "LOCAL" });

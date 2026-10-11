@@ -130,6 +130,7 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 
   await checkStaffRosterRoles(db, me?.rolname, failures);
   await checkPlatformSchemaExposure(db, me?.rolname, failures);
+  await checkNoAppGucDefaults(db, failures);
 
   const clock = await checkClockSkew(db, options.nowMs ?? Date.now).catch(() => ({ ok: false, skewMs: Number.NaN }));
   if (!clock.ok) failures.push(`el reloj de la base difiere del proceso en más de ${MAX_CLOCK_SKEW_MS / 1000} s o no se pudo leer (F-7)`);
@@ -166,6 +167,28 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   await checkPurgeExecuteIsolation(db, failures);
 
   return { ok: failures.length === 0, failures };
+}
+
+/**
+ * ADR-010 PR-3 (P2-7): el principal y el tenant los fija el adapter con set_config(..., true) por transaccion. Ningun default de rol o de base
+ * (pg_db_role_setting) puede traer una GUC app.* para los roles de runtime: fijaria un principal o un tenant fuera de la transaccion.
+ */
+async function checkNoAppGucDefaults(db: Queryable, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ scope: string; setting: string }>(
+      `SELECT COALESCE(r.rolname::pg_catalog.text, '(todos los roles)') AS scope, pg_catalog.split_part(c, '=', 1) AS setting
+         FROM pg_catalog.pg_db_role_setting s
+         LEFT JOIN pg_catalog.pg_roles r ON r.oid = s.setrole
+         CROSS JOIN LATERAL pg_catalog.unnest(s.setconfig) AS c
+        WHERE pg_catalog.lower(c) LIKE 'app.%'
+          AND s.setdatabase IN (0, (SELECT d.oid FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()))
+          AND (s.setrole = 0 OR r.rolname = ANY($1::text[]))`,
+      [Object.keys(PLATFORM_RUNTIME_EXECUTE)],
+    );
+    for (const row of r.rows) failures.push(`pg_db_role_setting fija la GUC ${row.setting} para ${row.scope}: las GUC app.* solo se fijan por transaccion (ADR-010 PR-3)`);
+  } catch {
+    failures.push("no se pudo verificar pg_db_role_setting (GUC app.*)");
+  }
 }
 
 /** ADR-010 PR-3: sin privilegios sobre tablas de platform y EXECUTE solo de las funciones declaradas para el rol. Fail-closed si no se puede verificar. */
