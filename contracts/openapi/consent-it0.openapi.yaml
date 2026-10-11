@@ -119,6 +119,7 @@ components:
       name: __Host-cns-platform
       description: Sesión PLATFORM propia (PRIVACY_LEGAL, SECURITY, CONTEXT_OWNER); step-up P-36 por acción.
       x-pending: ["P-26 (nombre de cookie)", "APR-IDP (parámetros del IdP: PENDING — Carlos / studio)", "OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)"]
+      x-moved-to: consent-platform.openapi.yaml
     caseSession:
       type: apiKey
       in: cookie
@@ -130,6 +131,7 @@ components:
         inactividad, y tenant, caseRef, principal y rol coincidentes. Cualquier fallo es el mismo 404 uniforme. El token CSRF queda ligado al sid
         (otro token de sesión: 403 CSRF_REJECTED). Logout (API-CNS-193) revoca el sid en servidor. Cada login emite un sid nuevo (rotación). Especificación: specs/session.spec.yaml (SPEC-CNS-SESSION).
       x-pending: ["P-26 (nombre de cookie)", "APR-IDP"]
+      x-moved-to: consent-platform.openapi.yaml
   parameters:
     CsrfToken:
       name: X-CSRF-Token
@@ -383,6 +385,7 @@ paths:
     post:
       operationId: reactivateConsentContext
       x-api-id: API-CNS-107
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: CX2 — reactivar ConsentContext (PAUSED → ACTIVE), solo HUMAN
       x-governed-by: ["tenant-context.spec CX2", "SM-CNS-001 §6", "CARLOS r3 R7-1", "DEC-BR-015:45", "ADR-006 §2", "SEC-CNS-005 T-62, TS-16j"]
@@ -1097,6 +1100,7 @@ paths:
     post:
       operationId: proposeCaseVerification
       x-api-id: API-CNS-136
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: RH2/RH2v paso 1 — propose_case_verification (RIGHTS_OPERATOR, sesión CASE, step-up)
       description: El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02; INV-CM-07). Sin efecto sobre Revocation hasta la aprobación. Dotación nominal atestada mínima de 4 personas (≥2 RIGHTS_OPERATOR distintos y ≥2 aprobadores distintos, sin reutilización entre roles; GRD-RC-15, R14-B); si no, ERR-RC-10 y el caso sigue abierto.
@@ -1129,6 +1133,7 @@ paths:
     post:
       operationId: approveCaseVerification
       x-api-id: API-CNS-137
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: RH2/RH2v paso 2 — approve_case_verification (PRIVACY_LEGAL o SECURITY, tercer humano) → REQUESTED|VERIFIED → VERIFIED
       description: REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto. En la misma tx se proyectan verifiedAuthPath y verifiedRecoveryMethod (SEC N2-02, GRD-RV-29). Dotación mínima de 4 personas (GRD-RC-15, R14-B; ERR-RC-10).
@@ -1163,6 +1168,7 @@ paths:
     post:
       operationId: withdrawCaseVerificationProposal
       x-api-id: API-CNS-140
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: RH2 retiro — withdraw_case_verification_proposal (solo el RIGHTS_OPERATOR proponente, solo propuesta PENDING)
       description: La propuesta queda WITHDRAWN (terminal, no aprobable) y se registra REVOCATION_PROPOSAL_WITHDRAWN (solo refs). NO cambia el estado de la Revocation ni produce FAILED (INV-6); queda disponible para una nueva propuesta. Cualquier otro principal, o una propuesta ya no PENDING, falla cerrado (ERR-RV-07 / ERR-CM-06).
@@ -1195,6 +1201,7 @@ paths:
     post:
       operationId: recordCaseConfirmation
       x-api-id: API-CNS-138
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: RH3 paso 1 — record_case_confirmation (RIGHTS_OPERATOR, sesión CASE); sin efecto sin co-firma
       description: Interino IT0 (R13-4, R14-B) — cuatro ojos, dos RIGHTS_OPERATOR distintos (registra uno, co-firma otro; cualquiera de los dos puede ser el proponente de RH2, AUDIT-H01-rev4 M-04), ninguno aprobador de RH2/RH2v ni de un grant del caso; mínimo 4 personas (≥2 RIGHTS_OPERATOR y ≥2 aprobadores distintos, GRD-RC-15) sin reutilización entre roles. recordedByRef se deriva de la sesión CASE, nunca del body (GRD-CM-07). La regla definitiva es LEGAL DECISION LD-03.
@@ -1229,6 +1236,7 @@ paths:
     post:
       operationId: cosignCaseConfirmation
       x-api-id: API-CNS-139
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: RH3 paso 2 — cosign_case_confirmation por un segundo RIGHTS_OPERATOR distinto (VERIFIED → CONFIRMED)
       description: Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Encola APPLY_REVOCATION en la misma tx. REVOCATION_CONFIRMED registra recordedByRef y cosignedByRef (refs opacas UUIDv4 del principal de plataforma, distintas entre sí e iguales a las columnas de la confirmación; INV-RV-11, F-R14-04); sin cosignedByRef el append falla y no hay efecto. cosignedByRef se deriva de la sesión CASE del co-firmante, nunca del body (GRD-CM-07).
@@ -1299,6 +1307,7 @@ paths:
     post:
       operationId: logoutCaseSession
       x-api-id: API-CNS-193
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: Cerrar la sesión CASE (CA-139) — revoca el sid en servidor y borra las cookies
       description: >-
@@ -1481,6 +1490,7 @@ paths:
     post:
       operationId: closeRightsCase
       x-api-id: API-CNS-148
+      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
       tags: [platform]
       summary: RC4/RC5/RC6 — close_case (IN_VERIFICATION|CONTACTING → RESOLVED|WITHDRAWN)
       description: RESOLVED solo tras R4 APPLIED; WITHDRAWN solo tras REVOCATION_FAILED WITHDRAWN_BY_REQUESTER del ciclo vigente (GRD-RC-09). Ningún timer cierra el caso.

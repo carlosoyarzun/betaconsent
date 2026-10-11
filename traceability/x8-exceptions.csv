@@ -180,3 +180,5 @@ RULE-CNS-027,RULE,specs/state-machines/consent-decision.spec.yaml,sin TEST-CNS q
 RULE-CNS-029,RULE,specs/state-machines/invitation.spec.yaml,sin TEST-CNS que lo cite en test-matrix.csv; sin cita en src/ ni db/ (no construido o no demostrable en IT0),Carlos Oyarzun (aceptación por grupo en chat),2026-10-06
 RULE-CNS-TBD-01,RULE,specs/state-machines/common.spec.yaml,sin TEST-CNS que lo cite en test-matrix.csv; sin cita en src/ ni db/ (no construido o no demostrable en IT0),Carlos Oyarzun (aceptación por grupo en chat),2026-10-06
 RULE-CNS-TBD-02,RULE,specs/state-machines/revocation.spec.yaml,sin TEST-CNS que lo cite en test-matrix.csv; sin cita en src/ ni db/ (no construido o no demostrable en IT0),Carlos Oyarzun (aceptación por grupo en chat),2026-10-06
+INV-RC-07,INV,specs/state-machines/rights-case.spec.yaml,sin TEST-CNS que lo cite; implementacion y prueba en ADR-010 PR-5 (spec PROPOSED de ADR-010 PR-1),PENDIENTE revision de Carlos (PR de ADR-010 PR-1),
+INV-RV-12,INV,specs/state-machines/revocation.spec.yaml,sin TEST-CNS que lo cite; implementacion y prueba en ADR-010 PR-5 (spec PROPOSED de ADR-010 PR-1),PENDIENTE revision de Carlos (PR de ADR-010 PR-1),

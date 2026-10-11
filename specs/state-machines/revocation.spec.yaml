@@ -1,3 +1,4 @@
+# rev. 4i (ADR-010 PR-1, 2026-10-11): agrega dbEnforcement (funciones SECURITY DEFINER por transición, trigger y revokes de ADR-010 rev. 4 §4.2; Q-17/Q-18 de Carlos, 2026-10-11). Sin cambio de guards, actores, estados, eventos ni semántica de consentimiento/revocación/elegibilidad.
 # Máquina Revocation del subconjunto IT0 (H01 / CA-116), clase de ruta RIGHTS. rev. 4 (SM-CNS-001 v7 + R14).
 # rev. 4h (2026-10-01, CA-128, Carlos OPEN-RV-14 (a), revisión de seguridad): RH2w (API-CNS-140) exige stepUpAssertion igual que RH2 (guards += GRD-RC-12, errors += ERR-RC-05, testIds += TEST-CNS-1023/1024); OPEN-RV-14 RESUELTO; OPEN-RV-15 registra la divergencia ERR-RC-05 vs ERR-CM-06 (422) de los handlers 136/137/140. Sin cambio de semántica de consentimiento/revocación/elegibilidad.
 # rev. 4g (2026-09-27, SEC-CNS-014, aprobado por Carlos): cierra OPEN-RV-12 en los 15 huecos que la nota de rev. 4d daba por "corregidos puntualmente" sin estarlo — RC3 (GRD-RV-19/23/25), RH2 (GRD-RV-23), RH2v (GRD-RV-23), RH3 (GRD-RV-23, GRD-RV-28), R12 (GRD-RV-19/23/25/28, GRD-RC-08, GRD-RC-14): errors += ERR-RV-13, ERR-RV-15, ERR-RV-04, ERR-RC-09 según corresponda a cada guard (onFail exacto de esta spec/rights-case.spec.yaml). OPEN-RV-12 se corrige para reflejar el estado real. Sin cambio de guards existentes, actores, estados ni semántica de consentimiento/revocación/elegibilidad.
@@ -22,7 +23,7 @@ title: "State machine Revocation (IT0): OTP, RECOVERY CHANNEL_LINK y RECOVERY HU
 smId: SM-CNS-001
 smSection: "§5, §5.0, §5.1, §5.2 (RC3/RC3a/R12/RH2/RH2v/RH3), §7 — v7"
 aggregateType: Revocation
-version: "0.4.4"
+version: "0.4.5"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -1063,6 +1064,39 @@ invariants:
     statement: "Toda Revocation CONFIRMED tiene un job APPLY_REVOCATION pendiente o ya aplicado; no existe CONFIRMED huérfano, y una caída entre la confirmación y R4 termina en APPLIED al reanudar el worker."
     governedBy: ["SEC-CNS-012 P1-01 (técnico)", "SM-CNS-001 R0.1"]
     testIds: [TEST-CNS-331]
+
+dbEnforcement:
+  governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
+  status: PROPOSED
+  implementedIn: "ADR-010 PR-5"
+  conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
+  functions:
+    - {id: FN-RV-01, name: case_state.request_revocation, transitions: [R1], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RV-02, name: case_state.verify_revocation_otp, transitions: [R2], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RV-03, name: case_state.confirm_revocation, transitions: [R3], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RV-04, name: case_state.revoke_with_recovery_link, transitions: [R1r, R2r, R3r, R10, R11], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RV-05, name: case_state.withdraw_revocation, transitions: [R8], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RV-06, name: case_state.express_revocation_intent_in_case, transitions: [RC3, R12], executedBy: app_rw, owner: transition_owner, sameLotAs: "rights-case:RC3/RC3a"}
+    - {id: FN-RV-07, name: case_state.propose_case_verification, transitions: [RH2, RH2v], step: propose, executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner, dualControl: "GRD-RV-09 paso 1; GRD-RC-12"}
+    - {id: FN-RV-08, name: case_state.approve_case_verification, transitions: [RH2, RH2v], step: approve, executedBy: platform_rw, owner: transition_owner, dualControl: "tres humanos: GRD-RV-09, INV-13, INV-14, P-38, CHECK 0016:16"}
+    - {id: FN-RV-09, name: case_state.withdraw_case_verification_proposal, transitions: [RH2w], executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner}
+    - {id: FN-RV-10, name: case_state.record_case_confirmation, transitions: [RH3], step: record, executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner, legal: "LD-03 (OPEN-RV-06); step-up OPEN-RV-10"}
+    - {id: FN-RV-11, name: case_state.cosign_case_confirmation, transitions: [RH3], step: cosign, executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner, dualControl: "cuatro ojos GRD-RV-26, INV-17, INV-RV-11; CHECK cosigned_by_ref <> recorded_by_ref (nuevo en PR-5)", legal: "LD-03; step-up OPEN-RV-10"}
+    - {id: FN-RV-12, name: case_state.apply_revocation, transitions: [R4], executedBy: worker, owner: transition_owner, sameLotAs: "consent-decision:C6", acceptsIntegrityFailure: true}
+    - {id: FN-RV-13, name: case_state.mark_downstream_emitted, transitions: [R5], executedBy: worker, owner: transition_owner}
+    - {id: FN-RV-14, name: case_state.record_downstream_ack, transitions: [R6], executedBy: worker, owner: transition_owner}
+    - {id: FN-RV-15, name: case_state.record_erasure_attestation, transitions: [R7], executedBy: worker, owner: transition_owner}
+    - {id: FN-RV-16, name: case_state.escalate_expired_revocation, transitions: [R9], executedBy: worker, owner: transition_owner, sameLotAs: "rights-case:RC1 (SYSTEM)"}
+  noFunction:
+    - {transitions: [R8h], reason: "enabled: false (R13-4); habilitar = LEGAL DECISION LD-03"}
+    - {transitions: [RV0], reason: "no toca app.revocation; fuente SYSTEM dentro de FN-RC-04"}
+  trigger: {id: TRG-RV-01, name: case_state.revocation_transition_guard, enable: ALWAYS, rules: ["grafo de transiciones del spec", "toda escritura exige current_user = transition_owner", "columnas HUMAN_ASSISTED, RH2, attested_*, recorded_by_ref, cosigned_by_ref solo con case_state.effect de su función de efecto", "verified_auth_path NOT NULL desde VERIFIED (GRD-RV-29)"]}
+  newChecks: ["cosigned_by_ref <> recorded_by_ref (GRD-RV-26)", "verification_ref UNIQUE (GRD-RV-05)", "verified_auth_path NOT NULL desde VERIFIED (GRD-RV-29)"]
+  revokedFromAppRw: ["INSERT app.revocation (0006:113-115, 0016:18)", "UPDATE app.revocation (0006:116-118, 0016:19)", "INSERT directo al ledger de eventos Revocation y CONSENT_REVOKED (policy, INV-DBR-07)", "consent_decision.state = REVOKED (policy; C6 solo por FN-RV-12)"]
+  invariants:
+    - {id: INV-RV-12, statement: "Ningún rol de runtime escribe app.revocation fuera de las funciones FN-RV-* (dueño transition_owner); verified_recovery_method = HUMAN_ASSISTED, columnas RH2/attested_* y recorded_by_ref/cosigned_by_ref solo las escribe su función de efecto (case_state.effect).", testIds: []}  # UNCOVERED en traceability hasta PR-5
+  openItems:
+    - {id: OPEN-RV-16, item: "Dueño de las funciones de transición y escritura del ledger: DECIDIDO Q-18 (a) transition_owner, único escritor de eventos Revocation/RightsCase/CONSENT_REVOKED (Carlos, 2026-10-11). Implementación en ADR-010 PR-5.", owner: Carlos, status: "DECIDED (Q-18)", blocksDataReal: true}
 
 failClosed: >
   Rutas RIGHTS: todo fallo de credencial devuelve la respuesta uniforme y ofrece la vía siguiente

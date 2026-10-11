@@ -1,0 +1,509 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Consent App - API HTTP del proceso platform (esqueleto)
+  version: 0.0.1-outline
+  x-api-id: API-CNS-TBD-P00
+  x-status: OUTLINE
+  x-it0-only: IT0b
+  x-data-class: SYNTHETIC_ONLY
+  x-governed-by:
+    - "ADR-010 rev. 4 §4.1, §4.3, §4.4, §4.6 (PR-3 a PR-6)"
+    - specs/db-roles.spec.yaml
+    - specs/session.spec.yaml
+    - "Q-17 (a), Carlos 2026-10-11: la consola STAFF del colegio (/staff/*) NO se mueve; sigue en consent-it0.openapi.yaml, servida por web con app_rw y RLS por tenant"
+  x-human-gate: "Ningun contrato esta aprobado; cierre = human gate de Carlos."
+  description: |
+    Esqueleto: solo paths, scopes y estado de entrega. Los schemas completos se escriben en PR-3 a PR-5.
+    Cubre solo al equipo de LectorPro (sesiones CASE y PLATFORM) en el proceso `platform`, sin egress. El verifier no expone HTTP.
+
+    Operaciones movidas desde consent-it0.openapi.yaml conservan su `x-api-id`; alli quedan con `x-moved-to`.
+    Las operaciones nuevas usan `API-CNS-TBD-Pnn` (rango 100-199 sin reconciliar con Notion, OPEN-CT-04).
+
+    Reglas transversales (heredadas de API-CNS-100):
+    - Cero PII en path y query.
+    - Todo POST exige CSRF + Origin exacto (GRD-CM-10).
+    - Ningun GET transiciona (INV-CM-08).
+    - El actor se toma de la sesion, nunca del body.
+    - Respuestas 404 uniformes.
+    - Excepcion a revisar (F-A10-07, P2, OPEN): API-CNS-100 dice "ningun request acepta tenantRef"; el aprovisionamiento PLATFORM (Q4) necesita el tenant destino. Se declarara una excepcion explicita solo para la clase PLATFORM, revisada por lampone-security.
+
+    Extensiones por operacion: `x-session`, `x-roles`, `x-step-up` (accion del nonce, P-36), `x-db-role`, `x-db-function` (las de case_state.* son de transition_owner, Q-18; las de platform.*, de grant_owner o membership_owner), `x-authorize` (platform.authorize(), 4.6; por definir), `x-delivery` (PR de entrega).
+  x-pending:
+    - "OPEN-CT-04: rango API-CNS reconciliar con Notion."
+    - "F-A10-07: excepcion tenantRef para la clase PLATFORM."
+    - "P-26 / APR-IDP: nombres de cookie y parametros del IdP pendientes (PENDING - Carlos / studio)."
+  x-not-exposed:
+    - "Canje del code, ATTESTED/REJECTED, checkpoints y alertas de break-glass: proceso verifier, sin HTTP."
+    - "Bootstrap y re-bootstrap de principals PLATFORM (Q10): ceremonia."
+    - "Funciones SYSTEM (R4-R7, R9+RC1, RC2+RV0): las ejecuta worker."
+    - "R8h y RC1c: deshabilitadas (LEGAL DECISION LD-03/LD-04)."
+  x-stays-in-it0: "/i/, /m/, /r/, /invitation/open, /otp/*, /decision/*, /manage/revocation*, /manage/recovery-link, /recovery/revoke, /rights-case/*, y toda la consola STAFF (/staff/*; staffSession, RLS por tenant). Solicitud de membership de un TENANT_ADMIN: ruta nueva POST /staff/membership-requests en consent-it0 (fuera de este PR); la aprobacion es siempre la operacion approveMembership."
+servers:
+  - url: https://platform.invalid
+    description: placeholder; sin host real
+tags:
+  - name: platform
+paths:
+  /platform/auth/login:
+    get:
+      operationId: platformAuthLogin
+      x-api-id: API-CNS-TBD-P01
+      tags: [platform]
+      summary: "platformAuthLogin - Query kind={CASE|PLATFORM}. 302 al IdP (code + PKCE, scope openid)."
+      x-roles: "none"
+      x-step-up: "LOGIN_<kind>"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.issue_action_nonce"
+      x-delivery: "PR-4"
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/auth/callback:
+    get:
+      operationId: platformAuthCallback
+      x-api-id: API-CNS-TBD-P02
+      tags: [platform]
+      summary: "platformAuthCallback - Solo INSERT; 303 a una ruta sin code."
+      x-session: oidcState
+      x-roles: "none"
+      x-step-up: "none"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.enqueue_oidc_exchange"
+      x-delivery: "PR-4"
+      security: [{oidcState: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/auth/exchanges/{exchangeRef}:
+    get:
+      operationId: platformAuthExchangeStatus
+      x-api-id: API-CNS-TBD-P03
+      tags: [platform]
+      summary: "platformAuthExchangeStatus"
+      x-session: oidcState
+      x-roles: "none"
+      x-step-up: "none"
+      x-db-role: "platform_rw"
+      x-db-function: "(lectura de estado PENDING/ATTESTED/REJECTED, sin code ni claims)"
+      x-delivery: "PR-4"
+      security: [{oidcState: []}]
+      parameters:
+        - {name: exchangeRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/sessions/platform:
+    post:
+      operationId: openPlatformSession
+      x-api-id: API-CNS-TBD-P04
+      tags: [platform]
+      summary: "openPlatformSession - Requiere asercion ATTESTED."
+      x-session: oidcState
+      x-roles: "PRIVACY_LEGAL, SECURITY, CONTEXT_OWNER, RIGHTS_OPERATOR (OPEN-TC-06, OI-DBR-06)"
+      x-step-up: "LOGIN_PLATFORM"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.open_platform_session"
+      x-delivery: "PR-5"
+      security: [{oidcState: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/sessions/case:
+    post:
+      operationId: openCaseSession
+      x-api-id: API-CNS-TBD-P05
+      tags: [platform]
+      summary: "openCaseSession - Requiere grant atestado del caso."
+      x-session: platformSession
+      x-roles: "RIGHTS_OPERATOR, APPROVER"
+      x-step-up: "LOGIN_CASE"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.open_case_session"
+      x-delivery: "PR-5"
+      security: [{platformSession: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/case-session/logout:
+    post:
+      operationId: caseSessionLogout
+      x-api-id: API-CNS-193
+      tags: [platform]
+      summary: "caseSessionLogout - Movido desde consent-it0."
+      x-session: caseSession
+      x-roles: "any"
+      x-step-up: "none"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.revoke_session"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{caseSession: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/logout:
+    post:
+      operationId: platformLogout
+      x-api-id: API-CNS-TBD-P06
+      tags: [platform]
+      summary: "platformLogout"
+      x-session: platformSession
+      x-roles: "any"
+      x-step-up: "none"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.revoke_session"
+      x-delivery: "PR-5"
+      security: [{platformSession: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/case-session/dev-login:
+    post:
+      operationId: caseSessionDevLogin
+      tags: [platform]
+      summary: "caseSessionDevLogin - x-local-only."
+      x-roles: "solo LOCAL (GRD-CM-13)"
+      x-step-up: "none"
+      x-db-role: "platform_rw"
+      x-db-function: "(igual que openCaseSession, con asercion sintetica)"
+      x-delivery: "MAIN (codigo), PR-5"
+      x-local-only: true
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/step-up:
+    post:
+      operationId: issueStepUp
+      x-api-id: API-CNS-TBD-P07
+      tags: [platform]
+      summary: "issueStepUp - Sesion caseSession o platformSession (P-36, 4.3.1, Q11)."
+      x-roles: "RIGHTS_OPERATOR, APPROVER, PLATFORM"
+      x-step-up: "(body: action + refs opacas; 302 al IdP con nonce ligado a tenant, accion, refs y principal)"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.issue_action_nonce"
+      x-delivery: "PR-4"
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}:
+    get:
+      operationId: getRightsCase
+      x-api-id: API-CNS-TBD-P08
+      tags: [platform]
+      summary: "getRightsCase"
+      x-session: caseSession
+      x-roles: "RIGHTS_OPERATOR"
+      x-step-up: "none"
+      x-db-role: "platform_rw->rights_operator"
+      x-db-function: "(vistas case_scope() + ops.access_log)"
+      x-delivery: "PR-5"
+      security: [{caseSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/verification-proposals:
+    post:
+      operationId: proposeCaseVerification
+      x-api-id: API-CNS-136
+      tags: [platform]
+      summary: "proposeCaseVerification - Movido desde consent-it0."
+      x-session: caseSession
+      x-roles: "RIGHTS_OPERATOR"
+      x-step-up: "PROPOSE_CASE_VERIFICATION"
+      x-db-role: "platform_rw->rights_operator"
+      x-db-function: "case_state.propose_case_verification"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{caseSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/approval:
+    post:
+      operationId: approveCaseVerification
+      x-api-id: API-CNS-137
+      tags: [platform]
+      summary: "approveCaseVerification - Movido desde consent-it0."
+      x-session: platformSession
+      x-roles: "PRIVACY_LEGAL, SECURITY"
+      x-step-up: "APPROVE_CASE_VERIFICATION"
+      x-db-role: "platform_rw"
+      x-db-function: "case_state.approve_case_verification"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{platformSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: proposalRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal:
+    post:
+      operationId: withdrawCaseVerificationProposal
+      x-api-id: API-CNS-140
+      tags: [platform]
+      summary: "withdrawCaseVerificationProposal - Movido desde consent-it0."
+      x-session: caseSession
+      x-roles: "RIGHTS_OPERATOR = proponente"
+      x-step-up: "WITHDRAW_CASE_VERIFICATION_PROPOSAL"
+      x-db-role: "platform_rw->rights_operator"
+      x-db-function: "case_state.withdraw_case_verification_proposal"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{caseSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: proposalRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/confirmation:
+    post:
+      operationId: recordCaseConfirmation
+      x-api-id: API-CNS-138
+      tags: [platform]
+      summary: "recordCaseConfirmation - Movido desde consent-it0."
+      x-session: caseSession
+      x-roles: "RIGHTS_OPERATOR"
+      x-step-up: "none (OPEN-RV-10, LD-03)"
+      x-db-role: "platform_rw->rights_operator"
+      x-db-function: "case_state.record_case_confirmation"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{caseSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/confirmation/cosign:
+    post:
+      operationId: cosignCaseConfirmation
+      x-api-id: API-CNS-139
+      tags: [platform]
+      summary: "cosignCaseConfirmation - Movido desde consent-it0."
+      x-session: caseSession
+      x-roles: "RIGHTS_OPERATOR distinto del registrador"
+      x-step-up: "none (OPEN-RV-10, LD-03)"
+      x-db-role: "platform_rw->rights_operator"
+      x-db-function: "case_state.cosign_case_confirmation"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{caseSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/close:
+    post:
+      operationId: closeRightsCase
+      x-api-id: API-CNS-148
+      tags: [platform]
+      summary: "closeRightsCase - Movido desde consent-it0."
+      x-session: caseSession
+      x-roles: "RIGHTS_OPERATOR"
+      x-step-up: "none"
+      x-db-role: "platform_rw->rights_operator"
+      x-db-function: "case_state.close_case"
+      x-delivery: "PR-5"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{caseSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/grant-requests:
+    post:
+      operationId: requestCaseGrant
+      x-api-id: API-CNS-TBD-P09
+      tags: [platform]
+      summary: "requestCaseGrant - GRD-RC-10/12, INV-15."
+      x-session: platformSession
+      x-roles: "RIGHTS_OPERATOR (receptor)"
+      x-step-up: "REQUEST_GRANT"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.request_grant"
+      x-delivery: "PR-5"
+      security: [{platformSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/rights-cases/{caseRef}/grant-requests/{grantRequestRef}/approval:
+    post:
+      operationId: approveCaseGrant
+      x-api-id: API-CNS-TBD-P10
+      tags: [platform]
+      summary: "approveCaseGrant"
+      x-session: platformSession
+      x-roles: "PRIVACY_LEGAL, SECURITY distinto del solicitante"
+      x-step-up: "APPROVE_GRANT"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.approve_grant"
+      x-delivery: "PR-5"
+      security: [{platformSession: []}]
+      parameters:
+        - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: grantRequestRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/memberships/requests:
+    post:
+      operationId: requestMembership
+      x-api-id: API-CNS-TBD-P11
+      tags: [platform]
+      summary: "requestMembership - Excepcion tenantRef: F-A10-07."
+      x-session: platformSession
+      x-roles: "PLATFORM"
+      x-step-up: "REQUEST_MEMBERSHIP"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.request_membership"
+      x-delivery: "PR-3"
+      security: [{platformSession: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/memberships/requests/{requestRef}/approval:
+    post:
+      operationId: approveMembership
+      x-api-id: API-CNS-TBD-P12
+      tags: [platform]
+      summary: "approveMembership"
+      x-session: platformSession
+      x-roles: "PLATFORM distinto del solicitante"
+      x-step-up: "APPROVE_MEMBERSHIP"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.approve_membership"
+      x-delivery: "PR-3"
+      security: [{platformSession: []}]
+      parameters:
+        - {name: requestRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/role-assignments/requests:
+    post:
+      operationId: requestRoleAssignment
+      x-api-id: API-CNS-TBD-P13
+      tags: [platform]
+      summary: "requestRoleAssignment - Cross-tenant; excepcion tenantRef: F-A10-07."
+      x-session: platformSession
+      x-roles: "PLATFORM"
+      x-step-up: "REQUEST_ROLE_ASSIGNMENT"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.request_role_assignment"
+      x-delivery: "PR-3"
+      security: [{platformSession: []}]
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/role-assignments/requests/{requestRef}/approval:
+    post:
+      operationId: approveRoleAssignment
+      x-api-id: API-CNS-TBD-P14
+      tags: [platform]
+      summary: "approveRoleAssignment - Cross-tenant."
+      x-session: platformSession
+      x-roles: "PLATFORM distinto del solicitante"
+      x-step-up: "APPROVE_ROLE_ASSIGNMENT"
+      x-db-role: "platform_rw"
+      x-db-function: "platform.approve_role_assignment"
+      x-delivery: "PR-3"
+      security: [{platformSession: []}]
+      parameters:
+        - {name: requestRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+  /platform/consent-contexts/{contextRef}/reactivate:
+    post:
+      operationId: reactivateConsentContext
+      x-api-id: API-CNS-107
+      tags: [platform]
+      summary: "reactivateConsentContext - Movido desde consent-it0."
+      x-session: platformSession
+      x-roles: "CONTEXT_OWNER"
+      x-step-up: "por definir (hoy no lo exige)"
+      x-db-role: "platform_rw"
+      x-db-function: "(funcion de ConsentContext, H02/ADR-011, fuera de ADR-010)"
+      x-delivery: "PR-6"
+      x-moved-from: consent-it0.openapi.yaml
+      security: [{platformSession: []}]
+      parameters:
+        - {name: contextRef, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '404':
+          description: Respuesta uniforme.
+components:
+  securitySchemes:
+    caseSession:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-case
+      description: Movido desde consent-it0 (sesion CASE, specs/session.spec.yaml). Nombre de cookie ilustrativo (P-26).
+    platformSession:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-platform
+      description: Movido desde consent-it0. Sesion PLATFORM; documenta la asercion ATTESTED del login (N7). Nombre de cookie ilustrativo (P-26).
+    oidcState:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-oidc
+      description: Nuevo. Estado PKCE con vida de minutos. Nombre de cookie ilustrativo (P-26).

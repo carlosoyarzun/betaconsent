@@ -430,3 +430,15 @@ tenant-context,event,TENANT_STATUS_CHANGED,SM-CNS-001 §6 (SM:170: 'TENANT_STATU
 tenant-context,event,SCHOOL_PARTICIPATION_STATUS_CHANGED,SM-CNS-001 §6 (SM:172);SM-CNS-001 R0.1 (sin cambio de estado sin evento),UNCOVERED,sin test que cite SCHOOL_PARTICIPATION_STATUS_CHANGED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 tenant-context,event,ENROLLMENT_STATUS_CHANGED,SM-CNS-001 §6 (SM:173);SM-CNS-001 R0.1,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-710;TEST-CNS-1002); ninguno cubre tenant-context
 tenant-context,event,CONSENT_CONTEXT_STATUS_CHANGED,[N-SM] §1 'Audit',UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-912); ninguno cubre tenant-context
+revocation,invariant,INV-RV-12,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04, INV-DBR-05;GRD-CM-15",UNCOVERED,"sin test; implementacion en ADR-010 PR-5 (TEST-CNS-TBD-DBR-01, TEST-CNS-TBD-RV-DB-01)"
+revocation,open_item,OPEN-RV-16,"ADR-010 rev. 4 §4.2 (Q-18 a, Carlos 2026-10-11);F-A10-01",UNCOVERED,"decision tomada (transition_owner); implementacion y prueba en ADR-010 PR-5"
+rights-case,invariant,INV-RC-07,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04",UNCOVERED,"sin test; implementacion en ADR-010 PR-5 (TEST-CNS-TBD-DBR-01)"
+db-roles,invariant,INV-DBR-01,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-02,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-03,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-04,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-05,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-06,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-07,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-08,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
+db-roles,invariant,INV-DBR-09,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
