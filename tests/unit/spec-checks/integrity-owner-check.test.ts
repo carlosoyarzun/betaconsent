@@ -123,7 +123,7 @@ test("TEST-CNS-1325 security-event-owner-check: solo la allowlist usa SET ROLE s
 });
 
 // ADR-010 PR-2 (INV-DBR-03): el mismo control para los owners nuevos de cluster (solo 0034 concede su membresia; nadie hace SET ROLE).
-test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo ni GRANT de su membresia fuera de 0034 (repo real); detecta variantes y no da falsos positivos", () => {
+test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo ni GRANT de su membresia fuera de 0034/0035 (repo real); detecta variantes y no da falsos positivos", () => {
   const files: { path: string; text: string }[] = [];
   collect(ROOT, files);
   assert.ok(files.some((f) => f.path === "db/migrations/0034_adr010_cluster_roles.sql"), "el escaneo debe alcanzar 0034");
@@ -140,10 +140,16 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
       assert.deepEqual(findAdr010OwnerUsages(role, "db/migrations/0099_x.sql", ok), [], `falso positivo: ${ok}`);
     }
   }
-  // 0034 pasa solo con su GRANT; una entrada obsoleta se marca; otra migracion con SET ROLE falla.
+  // 0034 pasa con su GRANT y 0035 (ADR-010 PR-3) con el SET LOCAL ROLE de sus tres owners; una entrada obsoleta se marca; otra migracion con SET ROLE falla.
   const real = ADR010_OWNER_ROLES.map((r) => `GRANT ${r} TO consent_owner WITH INHERIT FALSE, SET TRUE;`).join("\n");
   const m0034 = "db/migrations/0034_adr010_cluster_roles.sql";
-  assert.deepEqual(checkAdr010OwnerUsage([{ path: m0034, text: real }]), []);
-  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
-  assert.equal(checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: "db/migrations/0035_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
+  const m0035 = "db/migrations/0035_adr010_platform_schema.sql";
+  const set35 = ["platform_schema_owner", "membership_owner", "grant_owner"].map((r) => `SET LOCAL ROLE ${r};`).join("\n");
+  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }];
+  assert.deepEqual(checkAdr010OwnerUsage(base), []);
+  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
+  assert.equal(checkAdr010OwnerUsage([...base, { path: "db/migrations/0036_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
+  // 0035 solo puede asumir sus tres owners: case_state_owner y transition_owner son de PR-5.
+  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }]);
+  assert.equal(over.filter((e) => e.includes("fuera de la allowlist") && e.includes("transition_owner")).length, 1);
 });
