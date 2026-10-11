@@ -206,3 +206,15 @@ test("TEST-CNS-1339: V6a emite OTP_BUDGET_EXHAUSTED(DECISION, INVITATION) con wi
   const ev = s.securityEvents.listAll(T).filter((e) => e.eventType === "OTP_BUDGET_EXHAUSTED") as unknown as Array<{ scopeClass: string; keyKind: string; windowKind: string }>;
   assert.deepEqual(ev.map((e) => [e.scopeClass, e.keyKind, e.windowKind]), [["DECISION", "INVITATION", "LIFETIME"]]);
 });
+
+test("TEST-CNS-1342: V1 lee el reloj una sola vez: con un reloj que avanza 1 ms por lectura, sendsWindowStart <= lastSentAt (otp_send_marks_shape de 0032)", async () => {
+  const s = setup();
+  let tick = Date.now();
+  s.otp = { ...s.otp, now: () => (tick += 1) } as typeof s.otp;
+  const inv = await open(s.invitation, "1342");
+  const ver = fixtureUuid("ver-1342");
+  const rec = await requestOtp(s.otp, T, ver, inv, CH);
+  assert.ok(rec.sendsWindowStart !== undefined && rec.lastSentAt !== undefined);
+  assert.ok(rec.sendsWindowStart!.getTime() <= rec.lastSentAt!.getTime());
+  assert.equal(rec.sendsWindowStart!.getTime(), rec.lastSentAt!.getTime());
+});

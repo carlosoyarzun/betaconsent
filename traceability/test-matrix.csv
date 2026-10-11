@@ -694,3 +694,4 @@ TEST-CNS-1338,unit,tests/unit/postgres/retention-config.test.ts,"nucleo del CLI:
 TEST-CNS-1339,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V6a emite OTP_BUDGET_EXHAUSTED(DECISION, INVITATION) con windowKind LIFETIME",SEC-CNS-021;CA-146;GRD-OT-09;V6a,ACTIVE
 TEST-CNS-1340,integration,tests/integration/postgres/security-event-otp-family.test.ts,"pg: CHECK acepta INVITATION+LIFETIME y rechaza LIFETIME fuera de (DECISION, INVITATION)",SEC-CNS-021;CA-146;GRD-OT-09;V6a,ACTIVE
 TEST-CNS-1341,contract,tests/contract/ports/security-event-otp-family.test.ts,"schema y puerto validan windowKind LIFETIME solo en (DECISION, INVITATION)",SEC-CNS-021;CA-146;GRD-OT-09;V6a,ACTIVE
+TEST-CNS-1342,unit,tests/unit/otp-challenge/otp-budget.test.ts,"V1 lee el reloj una vez: sendsWindowStart <= lastSentAt con reloj que avanza",SEC-CNS-021;CA-146;GRD-OT-06;INV-21-17,ACTIVE
