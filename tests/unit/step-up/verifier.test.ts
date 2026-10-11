@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { runVerifierCycle } from "../../../src/server/modules/step-up/verifier.ts";
 import type { VerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
-import { computeSubHmac } from "../../../src/server/modules/step-up/id-token.ts";
+import { computeSubHmac, VerifierConfigError } from "../../../src/server/modules/step-up/id-token.ts";
 import { PlatformDeniedError } from "../../../src/server/ports/oidc-exchange.port.ts";
 import type { AssertionRecord, ClaimedExchange, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
 import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";
@@ -150,4 +150,30 @@ test("TEST-CNS-1371 platform-call: principal solo por set_config('app.principal_
     await assert.rejects(() => withPlatformTransaction(pool, bad, async () => 1), PlatformDeniedError, bad);
   }
   assert.equal(pool.connects, 0);
+});
+
+test("TEST-CNS-1370 verifier: una configuracion invalida (NaN, Infinity, negativo, enorme, vacio, K_sub corta) ABORTA con VerifierConfigError antes de tomar la cola y nunca registra REJECTED", async () => {
+  const p = idp();
+  const bad: Array<[string, Partial<VerifierConfig>]> = [
+    ["skew NaN", { clockSkewSeconds: Number.NaN }], ["skew Infinity", { clockSkewSeconds: Number.POSITIVE_INFINITY }], ["skew negativo", { clockSkewSeconds: -1 }], ["skew enorme", { clockSkewSeconds: 1e9 }],
+    ["maxAuth NaN", { maxAuthAgeSeconds: Number.NaN }], ["maxAuth Infinity", { maxAuthAgeSeconds: Number.POSITIVE_INFINITY }], ["maxAuth negativo", { maxAuthAgeSeconds: -1 }],
+    ["maxAuth enorme", { maxAuthAgeSeconds: 1e12 }], ["maxAuth 0", { maxAuthAgeSeconds: 0 }],
+    ["allowedAlgs vacio", { allowedAlgs: [] }], ["issuer vacio", { issuer: "" }], ["audience vacia", { audience: "" }],
+    ["lease NaN", { leaseSeconds: Number.NaN }], ["lease 0", { leaseSeconds: 0 }], ["lease 121", { leaseSeconds: 121 }], ["lease negativo", { leaseSeconds: -3 }],
+    ["K_sub corta", { subHmacKey: randomBytes(16) }],
+  ];
+  for (const [label, over] of bad) {
+    let claims = 0;
+    const store = new FakeStore([claimed(p, { sub: "s", nonce: NONCE })]);
+    const counting: OidcExchangeStorePort = { claim: async () => { claims += 1; return store.claim(); }, recordAssertion: (r) => store.recordAssertion(r) };
+    await assert.rejects(() => runVerifierCycle({ store: counting, idp: p, config: config(over), now: () => NOW_MS }), (e) => e instanceof VerifierConfigError, label);
+    assert.equal(claims, 0, `${label}: no toca la cola`);
+    assert.equal(store.records.length, 0, `${label}: no registra REJECTED`);
+  }
+  // Un token vencido hace 100.000 s con skew NaN (el P1): aborta; no se atesta ni se rechaza silenciosamente.
+  const old = p.signRaw({ iss: ISSUER, aud: AUDIENCE, sub: "s", iat: 1, exp: Math.floor(NOW_MS / 1000) - 100_000, nonce: NONCE, auth_time: Math.floor(NOW_MS / 1000) });
+  const idpOld = { exchangeCode: async () => ({ idToken: old }), getJwks: () => p.getJwks() };
+  const store = new FakeStore([{ exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", nonceHash: NONCE_HASH, principalRef: PRINCIPAL, code: "c", pkceVerifier: "p" }]);
+  await assert.rejects(() => runVerifierCycle({ store, idp: idpOld, config: config({ clockSkewSeconds: Number.NaN }), now: () => NOW_MS }), VerifierConfigError);
+  assert.equal(store.records.length, 0);
 });

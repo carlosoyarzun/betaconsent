@@ -156,7 +156,35 @@ ALTER TABLE platform.authorization_check
   ADD CONSTRAINT authorization_check_kind_enum CHECK (check_kind IN ('AUTHORIZE', 'ISSUE_NONCE', 'ENQUEUE_EXCHANGE', 'RECORD_ASSERTION')),
   ADD CONSTRAINT authorization_check_reason_enum CHECK (reason_code IN
     ('OK', 'UNKNOWN_ACTION', 'NO_PRINCIPAL', 'INVALID_RESOURCE', 'TENANT_SCOPE', 'CALLER_ROLE', 'NO_ROLE', 'TENANT_MISMATCH', 'REQUEST_NOT_FOUND', 'SELF_APPROVAL', 'STEP_UP_MISSING', 'INVALID_TTL',
-     'SELF_ACCESS', 'INVALID_INPUT', 'NONCE_NOT_FOUND', 'DUPLICATE_EXCHANGE', 'EXCHANGE_NOT_FOUND', 'SUB_MISMATCH', 'INVALID_CLAIMS', 'EXCHANGE_FAILED'));
+     'SELF_ACCESS', 'INVALID_INPUT', 'NONCE_NOT_FOUND', 'DUPLICATE_EXCHANGE', 'EXCHANGE_NOT_FOUND', 'SUB_MISMATCH', 'INVALID_CLAIMS', 'EXCHANGE_FAILED', 'RETRY_LIMIT'));
+
+-- action_nonce (0035) ya existe: el guard se amplia a INSERT. Un nonce solo nace SIN attested_at ni consumed_at; attested_at se fija unicamente con UPDATE
+-- (NULL -> instante), y el unico codigo que lo hace es platform.record_assertion (verificado en el $assert$ de esta migracion por prosrc).
+CREATE OR REPLACE FUNCTION platform.action_nonce_guard() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.attested_at IS NULL AND NEW.consumed_at IS NULL THEN RETURN NEW; END IF;
+    RAISE EXCEPTION 'platform.action_nonce: un nonce nace sin atestar ni consumir (ADR-010 §4.3)' USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  -- Unica mutacion: fijar attested_at (NULL -> instante) y consumed_at (NULL -> instante, ya atestado). Nada se borra.
+  IF TG_OP = 'UPDATE' THEN
+    IF (NEW.nonce_hash, NEW.scope, NEW.tenant_id, NEW.action, NEW.refs_digest, NEW.principal_ref, NEW.issued_at, NEW.expires_at, NEW.data_class)
+         IS NOT DISTINCT FROM (OLD.nonce_hash, OLD.scope, OLD.tenant_id, OLD.action, OLD.refs_digest, OLD.principal_ref, OLD.issued_at, OLD.expires_at, OLD.data_class)
+       AND (OLD.attested_at IS NULL OR NEW.attested_at IS NOT DISTINCT FROM OLD.attested_at)
+       AND (OLD.consumed_at IS NULL OR NEW.consumed_at IS NOT DISTINCT FROM OLD.consumed_at) THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+  RAISE EXCEPTION 'platform.action_nonce: solo se fija attested_at y consumed_at una vez; no se borra (ADR-010 §4.3)' USING ERRCODE = 'integrity_constraint_violation';
+END
+$$;
+DROP TRIGGER action_nonce_guard ON platform.action_nonce;
+CREATE TRIGGER action_nonce_guard BEFORE INSERT OR UPDATE OR DELETE ON platform.action_nonce
+  FOR EACH ROW EXECUTE FUNCTION platform.action_nonce_guard();
+ALTER TABLE platform.action_nonce ENABLE ALWAYS TRIGGER action_nonce_guard;
 
 -- Cola del canje OIDC (ADR-010 §4.3.2). code y pkce_verifier son secretos operativos (N4): ningun runtime hace SELECT; se anulan en la misma transaccion en que se
 -- consumen o rechazan (record_assertion) y el worker borra las filas vencidas. NO son datos de retencion LD-15. binding = sha256 hex del action nonce en claro,
@@ -422,6 +450,8 @@ DECLARE
   c_principal constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
   v_principal text := NULLIF(pg_catalog.current_setting('app.principal_ref', true), '');
   v_reason    text := NULL;
+  -- Tope de reencolados de un mismo nonce tras REJECTED (PLACEHOLDER tecnico, no es un parametro aprobado): evita usar la cola como oraculo de intentos.
+  c_max_rejects constant integer := 3;
   v_ref       uuid;
   v_action    text;
   v_tenant    uuid;
@@ -438,6 +468,9 @@ BEGIN
     SELECT n.action, n.tenant_id INTO v_action, v_tenant FROM platform.action_nonce n
      WHERE n.nonce_hash = p_binding AND n.principal_ref = v_principal AND n.attested_at IS NULL AND n.consumed_at IS NULL AND n.expires_at > pg_catalog.now();
     IF NOT FOUND THEN v_reason := 'NONCE_NOT_FOUND'; EXIT decide; END IF;
+    IF (SELECT pg_catalog.count(*) FROM platform.grant_assertion g WHERE g.binding = p_binding AND g.decision = 'REJECTED') >= c_max_rejects THEN
+      v_reason := 'RETRY_LIMIT'; EXIT decide;
+    END IF;
     INSERT INTO platform.oidc_exchange (binding, principal_ref, code, pkce_verifier, expires_at)
     VALUES (p_binding, v_principal, p_code, p_pkce_verifier, pg_catalog.now() + pg_catalog.make_interval(secs => p_ttl_seconds))
     ON CONFLICT (binding) WHERE status = 'PENDING' DO NOTHING
@@ -476,6 +509,7 @@ BEGIN
 END
 $$;
 
+-- NOTA: exige un lease vigente (claim_oidc_exchange): el timeout HTTP del IdP en el verifier debe ser MENOR que el lease, o la asercion se rechaza como EXCHANGE_NOT_FOUND.
 -- platform.record_assertion (integrity_verifier): UNICA forma de fijar action_nonce.attested_at. En una sola transaccion: cierra la solicitud (anula code + PKCE),
 -- guarda la asercion (solo claims minimos) y, si es ATTESTED, atesta el nonce del binding. DB-side (N6): el sub_hmac debe ser el mapeado a principal_ref en
 -- platform.principal_identity, o se degrada a REJECTED/SUB_MISMATCH aunque el verifier pida ATTESTED. Devuelve true solo si quedo ATTESTED.
@@ -501,7 +535,8 @@ BEGIN
   BEGIN
     IF session_user <> 'integrity_verifier' THEN v_reason := 'CALLER_ROLE'; EXIT decide; END IF;
     SELECT * INTO v_ex FROM platform.oidc_exchange e
-     WHERE e.exchange_ref = p_exchange_ref AND e.status = 'PENDING' AND e.expires_at > pg_catalog.now() FOR UPDATE;
+     WHERE e.exchange_ref = p_exchange_ref AND e.status = 'PENDING' AND e.expires_at > pg_catalog.now()
+       AND e.claimed_until IS NOT NULL AND e.claimed_until > pg_catalog.now() FOR UPDATE;
     IF NOT FOUND THEN v_reason := 'EXCHANGE_NOT_FOUND'; EXIT decide; END IF;
     v_found := true;
     v_input_ok := COALESCE(p_decision IN ('ATTESTED', 'REJECTED')
@@ -752,6 +787,17 @@ BEGIN
        WHERE n.nspname = 'platform' AND NOT g.tgisinternal)
      IS DISTINCT FROM 'action_nonce_guard:action_nonce_guard,action_nonce_no_truncate:authorization_check_guard,authorization_check_append_only:authorization_check_guard,authorization_check_no_truncate:authorization_check_guard,grant_assertion_immutable:deny_guard,grant_assertion_no_truncate:deny_guard,oidc_exchange_guard:oidc_exchange_guard,oidc_exchange_no_truncate:deny_guard,platform_role_assignment_guard:membership_guard,platform_role_assignment_no_truncate:membership_no_truncate,principal_identity_guard:identity_guard,principal_identity_no_truncate:membership_no_truncate,tenant_membership_guard:membership_guard,tenant_membership_no_truncate:membership_no_truncate' THEN
     RAISE EXCEPTION 'el mapeo trigger -> funcion de platform no es el declarado';
+  END IF;
+  -- Solo record_assertion fija attested_at (por codigo), y el guard de action_nonce cubre INSERT.
+  IF (SELECT pg_catalog.string_agg(p.proname::pg_catalog.text, ',' ORDER BY p.proname::pg_catalog.text COLLATE "C")
+        FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'platform' AND p.prosrc ~* 'set\s+attested_at') IS DISTINCT FROM 'record_assertion' THEN
+    RAISE EXCEPTION 'solo platform.record_assertion puede fijar attested_at';
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'platform' AND c.relname = 'action_nonce' AND g.tgname = 'action_nonce_guard'
+         AND g.tgenabled = 'A' AND (g.tgtype & 4) = 4 AND (g.tgtype & 8) = 8 AND (g.tgtype & 16) = 16) <> 1 THEN
+    RAISE EXCEPTION 'el guard de action_nonce debe cubrir INSERT, UPDATE y DELETE y estar ENABLE ALWAYS';
   END IF;
   -- PR-4: principal_ref UUIDv4 estricto (sin staff-synthetic-) en TODA constraint y funcion de platform; no_self_approval; secretos del canje solo PENDING.
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_namespace n ON n.oid = k.connamespace

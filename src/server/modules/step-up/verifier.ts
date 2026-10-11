@@ -5,7 +5,7 @@
 // se autentico en el IdP. La decision de si el sub_hmac corresponde al principal_ref la toma la BASE (platform.record_assertion, N6), no este modulo.
 // Cero PII y cero secretos en logs/errores: el resultado del ciclo es un enum; nunca se devuelve el token, el code ni los claims.
 
-import { computeSubHmac, IdTokenRejected, verifyIdToken } from "./id-token.ts";
+import { computeSubHmac, IdTokenRejected, validateIdTokenPolicy, VerifierConfigError, verifyIdToken } from "./id-token.ts";
 import type { IdTokenPolicy } from "./id-token.ts";
 import type { IdpClientPort } from "../../ports/idp-client.port.ts";
 import type { OidcExchangeStorePort, RejectionReason } from "../../ports/oidc-exchange.port.ts";
@@ -20,7 +20,10 @@ export interface VerifierConfig {
   requiredAcrAnyOf?: readonly string[];
   /** K_sub del SecretStore (F-X8-09 pendiente): >= 32 bytes. */
   subHmacKey: Buffer;
-  /** Lease del claim en segundos (1..120). Default 30. */
+  /**
+   * Lease del claim en segundos (entero 1..120, default 30). record_assertion exige un lease VIGENTE: el timeout HTTP del IdP (canje + JWKS) debe ser MENOR que el lease
+   * (el adaptador real lo impone; el sintetico no tiene red) o la asercion se rechaza.
+   */
   leaseSeconds?: number;
   clockSkewSeconds?: number;
 }
@@ -36,6 +39,22 @@ export interface VerifierDeps {
 /** Resultado de un ciclo: nunca incluye datos del token. */
 export type VerifierCycleResult = "IDLE" | "ATTESTED" | "REJECTED";
 
+/** Valida la configuracion COMPLETA antes de tomar nada de la cola. Lanza VerifierConfigError (el ciclo aborta; no se registra REJECTED). */
+export function validateVerifierConfig(config: VerifierConfig, nowSeconds: number): void {
+  validateIdTokenPolicy({
+    issuer: config.issuer,
+    audience: config.audience,
+    allowedAlgs: config.allowedAlgs,
+    maxAuthAgeSeconds: config.maxAuthAgeSeconds,
+    ...(config.requiredAcrAnyOf === undefined ? {} : { requiredAcrAnyOf: config.requiredAcrAnyOf }),
+    ...(config.clockSkewSeconds === undefined ? {} : { clockSkewSeconds: config.clockSkewSeconds }),
+    nowSeconds,
+  });
+  const lease = config.leaseSeconds ?? 30;
+  if (typeof lease !== "number" || !Number.isSafeInteger(lease) || lease < 1 || lease > 120) throw new VerifierConfigError("leaseSeconds debe ser un entero entre 1 y 120");
+  if (!Buffer.isBuffer(config.subHmacKey) || config.subHmacKey.length < 32) throw new VerifierConfigError("K_sub debe tener al menos 32 bytes");
+}
+
 function rejectionFor(error: unknown): RejectionReason {
   return error instanceof IdTokenRejected ? "INVALID_CLAIMS" : "EXCHANGE_FAILED";
 }
@@ -43,6 +62,7 @@ function rejectionFor(error: unknown): RejectionReason {
 export async function runVerifierCycle(deps: VerifierDeps): Promise<VerifierCycleResult> {
   const { store, idp, config } = deps;
   const now = deps.now ?? Date.now;
+  validateVerifierConfig(config, Math.floor(now() / 1000));
   const claimed = await store.claim(config.leaseSeconds ?? 30);
   if (claimed === null) return "IDLE";
 
@@ -71,6 +91,7 @@ export async function runVerifierCycle(deps: VerifierDeps): Promise<VerifierCycl
     // La base puede degradar a REJECTED (sub_hmac no mapeado al principal, nonce vencido): el resultado refleja lo que quedo registrado.
     return attested ? "ATTESTED" : "REJECTED";
   } catch (error) {
+    if (error instanceof VerifierConfigError) throw error; // despliegue roto: se aborta, no se "rechaza" al titular
     // Cualquier fallo del canje o de la verificacion cierra la solicitud como REJECTED (sin detalle). Si ni eso se puede registrar, la solicitud vence por TTL.
     await store.recordAssertion({ decision: "REJECTED", exchangeRef: claimed.exchangeRef, reason: rejectionFor(error) });
     return "REJECTED";

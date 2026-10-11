@@ -63,11 +63,14 @@ async function seedTenantAdmin(admin: Client, tenant: string, principal: string)
 
 /** Siembra un nonce ya ATTESTED (stand-in del verifier de PR-4) para el binding exacto (principal, accion, tenant, resource). */
 async function seedNonce(admin: Client, principal: string, action: string, tenant: string | null, resource: string): Promise<void> {
+  // El guard de action_nonce (0036) exige que un nonce nazca sin atestar: se inserta y luego se fija attested_at con UPDATE (stand-in del verifier, solo en tests).
+  const hash = (await admin.query<{ h: string }>("SELECT encode(sha256(convert_to($1, 'UTF8')), 'hex') AS h", [randomUUID()])).rows[0]!.h;
   await admin.query(
-    `INSERT INTO platform.action_nonce (nonce_hash, scope, tenant_id, action, refs_digest, principal_ref, expires_at, attested_at)
-     VALUES (encode(sha256(convert_to($1, 'UTF8')), 'hex'), $2, $3::uuid, $4, encode(sha256(convert_to($5, 'UTF8')), 'hex'), $6, now() + interval '5 minutes', now())`,
-    [randomUUID(), tenant === null ? "PLATFORM" : "TENANT", tenant, action, resource, principal],
+    `INSERT INTO platform.action_nonce (nonce_hash, scope, tenant_id, action, refs_digest, principal_ref, expires_at)
+     VALUES ($1, $2, $3::uuid, $4, encode(sha256(convert_to($5, 'UTF8')), 'hex'), $6, now() + interval '5 minutes')`,
+    [hash, tenant === null ? "PLATFORM" : "TENANT", tenant, action, resource, principal],
   );
+  await admin.query("UPDATE platform.action_nonce SET attested_at = now() WHERE nonce_hash = $1", [hash]);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

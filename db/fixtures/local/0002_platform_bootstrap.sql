@@ -4,11 +4,12 @@
 -- (NO implementada aqui). DEC-BR-014 §4 (solo datos sinteticos).
 --
 -- LOCAL-ONLY / SYNTHETIC DATA ONLY. NO es una migracion versionada: solo lo corre applyLocalFixtures (src/infra/adapters/postgres/local-fixtures.ts) como
--- consent_migrator -> consent_owner (tras el SET LOCAL ROLE consent_owner del runner, este archivo asume membership_owner; la membresia SET es IT0B_SYNTHETIC).
+-- consent_migrator -> consent_owner; el propio archivo hace SET LOCAL ROLE membership_owner (consent_owner tiene SET sobre ese owner solo en el modo IT0B_SYNTHETIC; en
+-- REAL_DATA esta membresia no existe y este fixture falla, como debe).
 -- Idempotente. Siembra DOS principals PLATFORM (A y B): el doble control exige solicitante <> aprobador y approved_by_ref <> principal_ref, asi que con uno solo
 -- nunca se podria aprobar un tercero. Cada fila nace PENDING (guard) y pasa a ACTIVE con approved_by_ref distinto de principal_ref y de requested_by_ref
 -- (los dos "sembradores" son UUIDv4 sinteticos sin rol). principal_identity vincula cada principal con un sub_hmac SINTETICO (sha256 de una etiqueta, NO el HMAC de
--- un sub real); un IdP sintetico LOCAL que quiera ingresar como A o B debe emitir un sub cuyo HMAC con la clave K_sub de ese LOCAL sea este valor, o el test
+-- un sub real ni del dominio consent-app/sub-hmac/v1); un IdP sintetico LOCAL que quiera ingresar como A o B debe emitir un sub cuyo HMAC con la clave K_sub de ese LOCAL sea este valor, o el test
 -- inserta su propio vinculo. Ningun dato personal; ninguna credencial.
 
 DO $$

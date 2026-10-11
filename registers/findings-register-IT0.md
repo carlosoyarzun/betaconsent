@@ -79,8 +79,14 @@ Vocabulario de estado (Carlos, 2026-10-08): DEFERRED-IT0b para los que se retoma
 | F-A10-17 | P2 | Vínculo `principal_ref` ↔ `sub_hmac` fuera de LOCAL: ninguna función de runtime lo crea (se evita trust-on-first-use) y el fixture solo existe en LOCAL; un principal nuevo de IT0b/STAGING/datos reales no puede ingresar | OPEN | lampone-security → Carlos | ADR-010 PR-4 (`db-roles.spec.yaml` OI-DBR-09) | Decisión: ceremonia de break-glass de PR-7 o alta con doble control que lleve el `sub_hmac` atestado fuera de banda. P1 antes de datos reales |
 | F-A10-18 | P2 | La lectura cross-tenant de `integrity.*` y el recomputo de cadena del verifier (spec `db-roles` rev. 0.2 los ubicaba en PR-4) no entran en el PR-4 de aserciones: exigen DDL sobre `integrity.*` (integrity_owner, allowlist SEC-CNS-021) | OPEN | lampone-architect | ADR-010 PR-4 (`db-roles.spec.yaml` OI-DBR-10) | PR-5 (conciliación) o PR propio, ANTES de PR-7 (DDL de `integrity.*`) |
 | F-A10-19 | P2 | ADR-010 §4.3.3 pide `security_event` ante un `sub_hmac` sin coincidencia; el verifier no tiene INSERT en `ops.security_event` (DDL como `security_event_owner`). Hoy la evidencia es `platform.authorization_check` (RECORD_ASSERTION/DENY/SUB_MISMATCH) | OPEN | lampone-security | ADR-010 PR-4 (`db-roles.spec.yaml` OI-DBR-11) | Policy de INSERT para el verifier en `ops.security_event` o aceptar `authorization_check` como evidencia (decisión de Carlos) |
+| F-A10-20 | P2 | Frescura de reautenticación (P-36): `maxAuthAgeSeconds` usa un tope técnico PLACEHOLDER (3600 s, `MAX_AUTH_AGE_CAP_SECONDS`), no un parámetro aprobado; el nonce no exige `auth_time` posterior a su emisión | OPEN | lampone-security → Carlos | Revisión de seguridad de la #87 (2026-10-11) | Decisión de Carlos sobre P-36 (parámetro) antes de datos reales |
+| F-A10-21 | P2 | MFA / `acr` / `amr` exigidos: `requiredAcrAnyOf` es configuración vacía por defecto; los valores dependen de APR-IDP (`PENDING — Carlos / studio`) | OPEN | lampone-security → Carlos | Revisión de seguridad de la #87 (2026-10-11) | APR-IDP aprobado |
+| F-A10-22 | P2 | El flujo de autorización no ata un `state` de sesión al canje (solo el `nonce` del step-up): el handler de callback de platform (PR-6) debe validarlo | OPEN | lampone-security | Revisión de seguridad de la #87 (2026-10-11) | PR-6 (entrypoint platform) |
+| F-A10-23 | P2 | El IdP sintético solo se rechaza en el constructor (`environment !== "LOCAL"`); startup-checks no impide cablearlo en un proceso fuera de LOCAL | OPEN | lampone-security | Revisión de seguridad de la #87 (2026-10-11) | PR-6: startup-checks del proceso verifier niega el adaptador sintético fuera de LOCAL |
+| F-A10-24 | P2 | El JWKS del IdP real debe venir de un `jwks_uri` FIJADO en configuración (issuer fijado, sin descubrimiento dinámico ni `jku`); el adaptador real aún no existe | OPEN | lampone-architect | Revisión de seguridad de la #87 (2026-10-11) | Adaptador real del IdP (IT0b, APR-IDP, P-45) |
+| F-A10-25 | P2 | `code` y `pkce_verifier` de `platform.oidc_exchange` se guardan en claro (secretos operativos de vida corta, sin SELECT para ningún runtime, anulados al decidir); el cifrado en reposo con clave del SecretStore queda pendiente | OPEN | lampone-security | Revisión de seguridad de la #87 (2026-10-11) | SecretStore (F-X8-09) antes de datos reales |
 
-Hallazgos ADR-010 rev. 4 (F-A10-01…19): P1: 2 (F-A10-01 pasa a P0 antes de datos reales), P2: 17. Ningún P0 en IT0b sintético.
+Hallazgos ADR-010 rev. 4 (F-A10-01…25): P1: 2 (F-A10-01 pasa a P0 antes de datos reales), P2: 23. Ningún P0 en IT0b sintético.
 
 ## Notas
 
@@ -93,6 +99,7 @@ Hallazgos ADR-010 rev. 4 (F-A10-01…19): P1: 2 (F-A10-01 pasa a P0 antes de dat
 
 ## Nota de versión
 
+- 2026-10-11 (lampone-dev, revisión de seguridad de la #87): el P1 de configuración numérica del verifier y los P2 de endurecimiento se corrigen en la propia 0036/`id-token.ts`; agrega F-A10-20…F-A10-25 (diferidos a Carlos/PR-6).
 - 2026-10-11 (lampone-dev, ADR-010 PR-4): F-A10-12 cerrado en el esquema; F-A10-07, F-A10-13 y F-A10-15 pasan a PARTIAL; agrega F-A10-17…F-A10-19 (vínculo sub_hmac fuera de LOCAL, lectura cross-tenant de `integrity.*` diferida, `security_event` del verifier).
 - 2026-10-11 (lampone-dev, revisión de seguridad de la #86): agrega F-A10-12…F-A10-16 (ADR-010 PR-3; B1 y B2 y P2-2/4/7/8 se corrigen en la propia 0035).
 - 2026-10-11 (lampone-dev, revisión de seguridad de la #85): agrega F-A10-09…F-A10-11 (ADR-010 PR-2).
