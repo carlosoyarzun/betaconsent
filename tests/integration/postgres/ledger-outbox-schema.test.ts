@@ -99,8 +99,26 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   ];
   const ownerOnly = all.filter((p) => p.roles.length === 1 && p.roles[0] === "security_event_owner");
   assert.deepEqual(ownerOnly.map((p) => p.k).sort(), PURGE_OWNER_POLICIES, "las policies TO security_event_owner son exactamente las de purga de 0031 y 0033");
+  // ADR-010 PR-3 (0035): policies del esquema platform, todas TO su dueno (sin runtime: ningun rol de runtime tiene privilegios sobre esas tablas). Lista EXACTA y cerrada.
+  const PLATFORM_OWNER_POLICIES: Array<[string, string]> = [
+    ["platform.action_nonce/action_nonce_owner_insert", "grant_owner"], ["platform.action_nonce/action_nonce_owner_select", "grant_owner"],
+    ["platform.action_nonce/action_nonce_owner_update", "grant_owner"],
+    ["platform.authorization_check/authorization_check_owner_insert", "grant_owner"], ["platform.authorization_check/authorization_check_owner_select", "grant_owner"],
+    ["platform.platform_role_assignment/platform_role_assignment_authorize_select", "grant_owner"],
+    ["platform.platform_role_assignment/platform_role_assignment_owner_insert", "membership_owner"],
+    ["platform.platform_role_assignment/platform_role_assignment_owner_select", "membership_owner"],
+    ["platform.platform_role_assignment/platform_role_assignment_owner_update", "membership_owner"],
+    ["platform.tenant_membership/tenant_membership_authorize_select", "grant_owner"], ["platform.tenant_membership/tenant_membership_owner_insert", "membership_owner"],
+    ["platform.tenant_membership/tenant_membership_owner_select", "membership_owner"], ["platform.tenant_membership/tenant_membership_owner_update", "membership_owner"],
+  ];
+  const platformPolicies = all.filter((p) => p.k.startsWith("platform."));
+  assert.deepEqual(
+    platformPolicies.map((p) => [p.k, p.roles.join(",")]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    [...PLATFORM_OWNER_POLICIES].sort((a, b) => a[0].localeCompare(b[0])),
+    "las policies de platform son exactamente las de 0035 y cada una es de UN solo owner",
+  );
   for (const p of all) {
-    if (ownerOnly.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

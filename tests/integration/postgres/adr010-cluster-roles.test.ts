@@ -54,10 +54,11 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
     // El migrador solo llega por consent_owner: sin membresia directa.
     assert.equal((await edges("u.rolname = 'consent_migrator' AND r.rolname = $1", [owner])).length, 0);
   }
-  // Ni los owners ni el verifier son duenos de nada todavia (PR-3..PR-5 les asignan objetos).
+  // case_state_owner, transition_owner, rights_operator y el verifier no son duenos de nada todavia (PR-4/PR-5 les asignan objetos). Los tres owners de
+  // platform_schema_owner, membership_owner y grant_owner (PR-3, 0035) tienen exactamente los objetos que fija TEST-CNS-1353.
   const owned = (await admin.query<{ n: number }>(
     "SELECT (SELECT count(*) FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE r.rolname = ANY($1)) AS n",
-    [[...NEW_OWNERS, "rights_operator", "integrity_verifier"]],
+    [["case_state_owner", "transition_owner", "rights_operator", "integrity_verifier"]],
   )).rows[0];
   assert.equal(Number(owned?.n), 0);
 
