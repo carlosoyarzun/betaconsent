@@ -1,3 +1,4 @@
+# rev. 4i (ADR-010 PR-1, 2026-10-11): agrega dbEnforcement (funciones SECURITY DEFINER por transición, trigger y revokes de ADR-010 rev. 4 §4.2; Q-17/Q-18 de Carlos, 2026-10-11). Sin cambio de guards, actores, estados, eventos ni semántica de consentimiento/revocación/elegibilidad.
 # Máquina RightsCase (escalamiento humano de revocación) del subconjunto IT0 (H01 / CA-116), rev. 4f (SM-CNS-001 v7 + R14; SEC-CNS-012 re-verificación, AUDIT-H01-rev3; F-011/SEC-CNS-013/F-CT-10/F-CT-11 fixes 2026-09-27).
 # rev. 4g (2026-09-27, DEC-BR-018): alinea con DEC-BR-018 (ACCEPTED 2026-09-27) — decision 9 (RightsCase y token por ciclo) queda DECIDED; nueva fila OPEN-RC-06 en traceability. Reemplaza citas de gobierno a scratchpad (CARLOS r3 R13-N/R14-X puros, S/PROPUESTA-Q18.md, S/R14-derivados.md) por DEC-BR-018; deja sin mapeo claro CARLOS r3 con codigos R1-R12/H1/C/F/(a), SM:NNN y DEC-BR-015:NN. Sin cambio de guards, errors ni semantica de consentimiento/revocacion/elegibilidad.
 # rev. 4c (2026-09-27): SEC-CNS-012 re-verificación rev. 4b N3-01 (GRD-CM-15 en la fuente SYSTEM de RC1).
@@ -21,7 +22,7 @@ title: "State machine RightsCase — escalamiento humano de revocación (IT0)"
 smId: SM-CNS-001
 smSection: "§5.2, §7 — v7 (RC3a, RC5, RC6, RC1c)"
 aggregateType: RightsCase
-version: "0.4.6"
+version: "0.4.7"
 status: PROPOSED
 jiraStory: CA-116
 owner: lampone-architect
@@ -586,6 +587,26 @@ invariants:
     statement: "El colegio (INVITER/TENANT_ADMIN, School Champion) solo reporta: nunca ejecuta R1–R4 ni RH2/RH3, nunca aporta ni cambia canal y solo ve 'en trámite'; sin aviso al colegio por defecto (LD-23)."
     governedBy: ["DEC-BR-017 §7, §8", "CARLOS r3 C", "REQ-CNS-TBD-08 AC-08.2"]
     testIds: [TEST-CNS-304]
+
+dbEnforcement:
+  governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
+  status: PROPOSED
+  implementedIn: "ADR-010 PR-5"
+  conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
+  functions:
+    - {id: FN-RC-01, name: case_state.open_rights_case_bearer, transitions: [RC1], source: BEARER, executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RC-02, name: case_state.confirm_case_return, transitions: [RC2u], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RC-03, name: case_state.express_revocation_intent_in_case, transitions: [RC3, RC3a], executedBy: app_rw, owner: transition_owner, sameAs: "FN-RV-06"}
+    - {id: FN-RC-04, name: case_state.start_case_contact, transitions: [RC2], sideEffects: [RV0], executedBy: worker, owner: transition_owner}
+    - {id: FN-RC-05, name: case_state.escalate_expired_revocation, transitions: [RC1], source: SYSTEM, executedBy: worker, owner: transition_owner, sameAs: "FN-RV-16"}
+    - {id: FN-RC-06, name: case_state.close_case, transitions: [RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6], executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner}
+    - {id: FN-RC-07, name: case_state.report_school_revocation_intent, transitions: [RC0], executedBy: app_rw, owner: transition_owner, note: "consola STAFF en web con RLS por tenant (Q-17 a); LD-03 (quién opera RC0) sigue como LEGAL DECISION"}
+  noFunction:
+    - {transitions: [RC1c], reason: "enabled: false (R13-2); habilitar = LEGAL DECISION LD-03/LD-04"}
+  trigger: {id: TRG-RC-01, name: case_state.rights_case_transition_guard, enable: ALWAYS, rules: ["grafo de transiciones del spec", "toda escritura exige current_user = transition_owner", "ningún timer cierra un caso (INV-RC-01)"]}
+  revokedFromAppRw: ["INSERT app.rights_case (0010:164-165)", "UPDATE app.rights_case (0010:166)", "INSERT directo al ledger de eventos RightsCase (policy, INV-DBR-07)"]
+  invariants:
+    - {id: INV-RC-07, statement: "Ningún rol de runtime escribe app.rights_case fuera de las funciones FN-RC-* (dueño transition_owner).", testIds: []}  # UNCOVERED en traceability hasta PR-5
 
 failClosed: >
   Ante cualquier fallo de guard del operador (sesión, grant, atestación, separación de funciones,

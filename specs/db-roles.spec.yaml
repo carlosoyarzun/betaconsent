@@ -1,0 +1,476 @@
+# Matriz de roles de base de datos (ADR-010 rev. 4 §4.1, §4.1.1, §4.5), unificada con SEC-CNS-021 tal como quedó en main.
+# rev. 0.2 (2026-10-11, lampone-architect, ADR-010 PR-1 `spec:`, sin código): incorpora Q-17 (a), Q-18 (a), Q-19 y Q-20 (c), decididas por Carlos el 2026-10-11.
+# rev. 0.1 (2026-10-11): primera versión sobre rev. 3.
+# Base verificada: origin/main 9c8a764, migraciones 0000–0033.
+# Estado por elemento: MAIN = existe hoy (cita archivo:línea); PR-2…PR-7 = lo crea o cambia ese PR de ADR-010 §7; DECIDIDO = decisión de Carlos
+# del 2026-10-11 (Q-17…Q-20) que no estaba en rev. 3. Los números de migración NO se fijan (ADR-010 §7).
+# No decide semántica de consentimiento, revocación ni elegibilidad. La autoridad de RH3 sigue siendo LEGAL DECISION LD-03 (ADR-010 Q12).
+specId: SPEC-CNS-DB-ROLES
+title: "Roles de PostgreSQL, membresías, privilegios y chequeos (IT0b / datos reales)"
+version: "0.2.0"
+status: PROPOSED
+owner: lampone-architect
+reviewers: [lampone-security, lampone-qa, carlosoyarzun]
+humanGate: "Solo Carlos cierra esta spec. Cambiar una membresía SET de un owner, el modo REAL_DATA o un residual aceptado es human gate."
+baseline: {ref: origin/main, commit: 9c8a764, migrations: "0000-0033"}
+relatedSpecs:
+  - specs/state-machines/revocation.spec.yaml   # dbEnforcement (funciones por transición, ADR-010 §4.2)
+  - specs/state-machines/rights-case.spec.yaml  # dbEnforcement
+  - specs/session.spec.yaml                     # STAFF sigue en web/app_rw (Q-17); CASE pasa a platform_rw en PR-5
+  - contracts/openapi/consent-platform.openapi.yaml
+governedBy:
+  - "ADR-010 rev. 4 §4.1, §4.1.1, §4.2, §4.3, §4.5, §7 (rev. 3 aceptada por Carlos para IT0b; Q-17…Q-20 decididas por Carlos el 2026-10-11; texto de Notion no verificado en esta sesión: FN-3)"
+  - "SEC-CNS-021 §3 (matriz de roles), D7/F-7, R-21-1, R-21-2 (= R-23 del registro de riesgos, propuesto)"
+  - "ADR-002 §2, §5; ADR-006 §1, §4-§6; DEC-BR-014 §4, §6; DEC-BR-015 §1 (tenant_id única clave)"
+  - "common.spec.yaml GRD-CM-11, GRD-CM-15, INV-CM-02, INV-CM-11"
+  - "R-10, R-16, R-22 / F-X8-11 (CA-144), FN-4, FN-6, FN-7, FN-8 (registers/risk-register-IT0.md, registers/findings-register-IT0.md)"
+
+decisions:
+  - {id: Q-17, decision: "(a) La consola STAFF del colegio (/staff/*) se sirve desde web con app_rw y RLS por tenant. platform_rw queda solo para el equipo de LectorPro (sesiones CASE y PLATFORM).", by: Carlos, date: "2026-10-11"}
+  - {id: Q-18, decision: "(a) transition_owner (NOLOGIN, NOSUPERUSER, NOBYPASSRLS) es dueño de TODAS las funciones SECURITY DEFINER de transición de revocation y rights_case (titular, escuela, operador y SYSTEM) y es el único rol con INSERT en el ledger de esos eventos. La escritura directa de app_rw se revoca en PR-5.", by: Carlos, date: "2026-10-11"}
+  - {id: Q-19, decision: "§4.1.1 incluye security_event_owner, tenant_resolve_owner, staff_roster_owner y outbox_claimer. La aserción de membresía por modo corre en el runner y en startup-checks.", by: Carlos, date: "2026-10-11"}
+  - {id: Q-20, decision: "(c) R-21-2 se cierra sin event trigger: sin membresía SET fuera de la ceremonia y con auditoría de las sesiones que usen el rol.", by: Carlos, date: "2026-10-11"}
+
+modes:
+  - id: IT0B_SYNTHETIC
+    rule: "Datos sintéticos. Residuales tipo R-22 aceptados solo aquí: consent_owner con SET (INHERIT FALSE) sobre owners de §4.1.1 (Q15 c) y consent_migrator con SET sobre outbox_claimer."
+  - id: REAL_DATA
+    rule: "Nadie tiene SET sobre los owners de §4.1.1 en operación normal; toda DDL sobre sus objetos va por la ceremonia ddl_breakglass (§4.5.3), con sesiones auditadas (Q-20 c). Requiere además Q1 (opción C), APR-IDP, DEC-BR nueva que enmiende DEC-BR-014, DEC-BR-003, G2, G3."
+  - note: "El modo lo declara el runner (variable de entorno del deploy, nunca la request) y lo verifica la aserción posterior al cluster y startup-checks (INV-DBR-03)."
+
+conventions:
+  roleAttributesDefault: "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS (patrón 0000:27, 0000:34)"
+  membershipNotation: "member -> role {inherit, set}. SET TRUE + INHERIT FALSE = solo SET [LOCAL] ROLE explícito, sin heredar privilegios."
+  securityDefinerHygiene: "SET search_path = pg_catalog, pg_temp; REVOKE EXECUTE … FROM PUBLIC; sin SQL dinámico (EXECUTE format) sobre objetos protegidos; tenant derivado del registro y comparado con app.current_tenant_id() (ADR-010 §4.2, D3); cada función de transición fija case_state.effect con su propio nombre al entrar."
+  passwords: "Solo roles LOGIN; las fija migrate.ts setRolePasswords desde el entorno; nunca en el repo (0000:7-9)."
+
+roles:
+  # ---------------------------------------------------------------- runtime (LOGIN)
+  - id: app_rw
+    class: RUNTIME
+    process: "web (titular + consola STAFF del colegio, Q-17)"
+    login: true
+    status: MAIN
+    createdBy: "0000:30-35"
+    settings: ["idle_in_transaction_session_timeout = 10s (0000:52)"]
+    memberOf:
+      - {role: staff_roster_reader, inherit: false, set: true, status: "MAIN (0018:32); se mantiene (Q-17: GET /staff/roster sigue en web)"}
+    setRoleBy: []
+    schemas:
+      - {schema: app, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: integrity, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: ops, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: tenant_resolve, privileges: [USAGE], status: "MAIN (0001:30)"}
+      - {schema: case_state, privileges: [USAGE], status: "PR-5 (solo EXECUTE de funciones del titular y de la escuela)"}
+      - {schema: platform, privileges: [USAGE], status: "PR-3 (solo EXECUTE de platform.request_membership para TENANT_ADMIN, Q4 + Q-17)"}
+    tables:
+      - {object: ops.db_catalog, privileges: [SELECT], status: "MAIN (0001:76)"}
+      - {object: integrity.audit_event, privileges: ["SELECT", "INSERT(columnas 0002:77-79, 0013:77-84)"], status: "MAIN; PR-5 policy de INSERT que excluye aggregate_type Revocation/RightsCase y CONSENT_REVOKED (DECIDIDO, Q-18; INV-DBR-07)"}
+      - {object: app.outbox, privileges: ["SELECT", "INSERT(columnas 0003:74-75)"], status: MAIN}
+      - {object: app.subject, privileges: ["SELECT(tenant_id, subject_ref)"], status: "MAIN (0005:58)"}
+      - {object: app.school_participation, privileges: ["SELECT(columnas 0005:59)"], status: MAIN}
+      - {object: app.consent_decision, privileges: ["SELECT", "INSERT(columnas)", "UPDATE(state, purposes, prior_steps_complete, steps_recorded, receipt_ref)"], status: "MAIN (0006:106-111); PR-5 policy WITH CHECK state <> 'REVOKED' (C6 solo por case_state.apply_revocation; DECIDIDO 2026-10-11, F-A10-06)"}
+      - {object: app.revocation, privileges: ["SELECT", "INSERT(0006:113-115, 0016:18)", "UPDATE(0006:116-118, 0016:19)"], status: "MAIN; PR-5 REVOKE INSERT y UPDATE (todas las transiciones por funciones); queda SELECT"}
+      - {object: app.recovery_token, privileges: ["SELECT", "INSERT(columnas)", "UPDATE(consumed_at)"], status: "MAIN (0006:120-123); sin cambio"}
+      - {object: app.invitation, privileges: ["SELECT", "INSERT(columnas)", "UPDATE(0010:156-157)", "UPDATE(otp_exhausted)"], status: "MAIN (0010:149-157, 0032:43)"}
+      - {object: app.otp_verification, privileges: ["SELECT", "INSERT/UPDATE(columnas 0010:159-162, 0032:55-56)"], status: "MAIN; residual declarado: vía OTP del titular (ADR-010 §4.2)"}
+      - {object: app.rights_case, privileges: ["SELECT", "INSERT(0010:164-165)", "UPDATE(status, revocation_ref, origin)"], status: "MAIN (0010:166); PR-5 REVOKE INSERT y UPDATE"}
+      - {object: app.enrollment, privileges: ["SELECT", "INSERT(columnas)", "UPDATE(state)"], status: "MAIN (0010:168-169)"}
+      - {object: app.idempotency_key, privileges: ["SELECT", "INSERT(columnas)", "UPDATE(columnas)"], status: "MAIN (0012:40-43)"}
+      - {object: ops.access_log, privileges: ["SELECT", "INSERT(columnas)"], status: "MAIN (0014:62-63); se mantiene (Q-17: lecturas del roster STAFF)"}
+      - {object: app.staff_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0021:66-69); se mantiene con RLS por tenant (Q-17)"}
+      - {object: app.case_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0022:65-68); PR-5 REVOKE ALL (pasa a platform)"}
+      - {object: ops.security_event, privileges: ["INSERT(columnas 0025:78, 0029:105)"], policy: "security_event_app_rw_insert (0029:96-103)", status: "MAIN; PR-5: la policy conserva OTP_*, RECOVERY_TOKEN_ISSUED, MANAGEMENT_TOKEN_ROTATED, STAFF_LOGIN, STAFF_LOGOUT y SESSION_REVOKED_BY_ROTATION con session_kind STAFF; quita CASE_LOGIN, CASE_LOGOUT y la rotación CASE (a platform_rw)"}
+      - {object: ops.otp_budget, privileges: [SELECT, "INSERT(columnas)", "UPDATE(failures, window_start, expires_at)"], status: "MAIN (0032:89-100)"}
+    functions:
+      - {name: "app.current_tenant_id()", status: "MAIN (0001:39)"}
+      - {name: "ops.catalog_environment()", status: "MAIN (0002:22)"}
+      - {name: "app.is_reserved_email(text)", status: "MAIN (0005:25)"}
+      - {name: "tenant_resolve.* (7 funciones SECURITY DEFINER)", status: "MAIN (0007:44,69; 0011:54,79,91,117,136)"}
+      - {name: "ops.retention_status()", status: "MAIN (0031:286)"}
+      - {name: "case_state.<funciones del titular> y case_state.report_school_revocation_intent (transitions.md §A, §B)", status: "PR-5 (dueño transition_owner, Q-18)"}
+      - {name: "platform.request_membership (solo solicitud de TENANT_ADMIN)", status: "PR-3 (Q4 + Q-17)"}
+    mustNot:
+      - "INSERT/UPDATE directo en app.revocation / app.rights_case (desde PR-5)"
+      - "Append directo al ledger de eventos Revocation, RightsCase o CONSENT_REVOKED (desde PR-5)"
+      - "consent_decision.state = 'REVOKED' (desde PR-5)"
+      - "Sesiones CASE; EXECUTE de funciones de operador, aprobador y SYSTEM (GRD-CM-15), de ops.purge_p34 y de aprobaciones de aprovisionamiento"
+      - "Ser miembro de cualquier owner, de rights_operator o de outbox_claimer"
+    verifiedBy:
+      startupChecks: ["expectedRole = app_rw (startup-checks.ts:86-88, F6)", "no miembro de owners (startup-checks.ts:93-100; PR-2 amplía la lista a §4.1.1)", "staff_roster_reader INHERIT FALSE/SET TRUE (startup-checks.ts:216-220; sin cambio por Q-17)", "sin CREATE, sin session_replication_role (:107-117)", "sin EXECUTE de ops.purge_p34 (:142-153)", "PR-5: sin EXECUTE de funciones de operador/SYSTEM"]
+      tests: [TEST-CNS-742, TEST-CNS-744, TEST-CNS-747, TEST-CNS-807, TEST-CNS-810, TEST-CNS-884, TEST-CNS-1087, TEST-CNS-1189, TEST-CNS-1306, TEST-CNS-444]
+      newTests: ["TEST-CNS-TBD-DBR-01: app_rw recibe 42501 en UPDATE/INSERT de app.revocation y app.rights_case (PR-5)", "TEST-CNS-TBD-DBR-02: app_rw recibe 42501/23514 al append directo de eventos Revocation/RightsCase o CONSENT_REVOKED (PR-5, INV-DBR-07)", "TEST-CNS-TBD-DBR-10: app_rw no puede poner consent_decision.state = 'REVOKED' (PR-5)"]
+
+  - id: platform_rw
+    class: RUNTIME
+    process: "platform (solo equipo de LectorPro, Q-17)"
+    login: true
+    status: MAIN
+    createdBy: "0000:30-35"
+    settings: ["idle_in_transaction_session_timeout = 10s (0000:54)"]
+    egress: none   # ADR-010 §4.3.2, Q14
+    memberOf:
+      - {role: rights_operator, inherit: false, set: true, status: PR-5}
+    schemas:
+      - {schema: app, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: integrity, privileges: [USAGE], status: "MAIN (0001:28); revisar si sigue haciendo falta tras PR-5"}
+      - {schema: ops, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: platform, privileges: [USAGE], status: PR-3}
+      - {schema: case_state, privileges: [USAGE], status: PR-5}
+    tables:
+      - {object: ops.db_catalog, privileges: [SELECT], status: "MAIN (0001:76)"}
+      - {object: platform.oidc_exchange, privileges: ["INSERT(columnas)"], note: "sin SELECT: code y PKCE son secretos operativos (N4)", status: PR-4}
+      - {object: ops.access_log, privileges: ["INSERT(columnas)"], status: "PR-5 (lecturas del operador); app_rw lo conserva para STAFF"}
+      - {object: ops.security_event, privileges: ["INSERT(columnas de sesión)"], policy: "nueva policy FOR INSERT TO platform_rw: CASE_LOGIN, CASE_LOGOUT y SESSION_REVOKED_BY_ROTATION con session_kind CASE (y PLATFORM si se agrega al enum)", status: "PR-5 (SEC-CNS-021 §3); DDL como security_event_owner"}
+      - {object: app.case_session, privileges: [], note: "sin DML directo; solo por funciones (N7)", status: PR-5}
+      - {object: "platform.tenant_membership / platform.platform_role_assignment", privileges: [], note: "sin DML; solo funciones de aprovisionamiento con doble control (Q4)", status: PR-3}
+    functions:
+      - {name: "app.current_tenant_id(), ops.catalog_environment(), app.is_reserved_email(text)", status: "MAIN (0001:39, 0002:22, 0005:25)"}
+      - {name: "platform.authorize(action, resource_ref)", status: PR-3}
+      - {name: "platform.issue_action_nonce(action, refs)", status: PR-3}
+      - {name: "platform.request_membership / approve_membership / request_role_assignment / approve_role_assignment", status: "PR-3 (nombres propuestos; Q4)"}
+      - {name: "platform.enqueue_oidc_exchange(...)", status: "PR-4 (alternativa a INSERT directo)"}
+      - {name: "platform.open_case_session / platform.open_platform_session / platform.validate_session / platform.revoke_session", status: "PR-5 (N7: exigen login ATTESTED; STAFF fuera, Q-17)"}
+      - {name: "case_state.approve_case_verification", status: "PR-5 (aprobador PRIVACY_LEGAL/SECURITY en sesión PLATFORM; dueño transition_owner)"}
+      - {name: "platform.request_grant / platform.approve_grant", status: "PR-5 (dueño grant_owner)"}
+    mustNot: ["Sesiones STAFF y rutas /staff/* (Q-17)", "DML directo en sesiones, membership, role_assignment, grants, aserciones", "Poner ATTESTED/REJECTED", "SELECT de oidc_exchange (code, PKCE)", "Egress", "EXECUTE de funciones del titular, de la escuela, SYSTEM y de ops.purge_p34", "Ser miembro de staff_roster_reader"]
+    verifiedBy:
+      startupChecks: ["expectedRole = platform_rw (PR-6)", "miembro de rights_operator exactamente INHERIT FALSE / SET TRUE (PR-5)", "no miembro de staff_roster_reader (MAIN, startup-checks.ts:221-223)", "sin SELECT en platform.oidc_exchange (PR-4)", "sin EXECUTE de ops.purge_p34 (MAIN :142-153)"]
+      tests: [TEST-CNS-742, TEST-CNS-744, TEST-CNS-747, TEST-CNS-884, TEST-CNS-1306]
+      newTests: ["TEST-CNS-TBD-DBR-03: platform_rw sin SET LOCAL ROLE rights_operator recibe 42501 en propose/record/cosign/close", "TEST-CNS-TBD-DBR-04: platform_rw no lee platform.oidc_exchange"]
+
+  - id: worker
+    class: RUNTIME
+    process: worker
+    login: true
+    status: MAIN
+    createdBy: "0000:30-35"
+    settings: ["idle_in_transaction_session_timeout = 10s (0000:53)"]
+    memberOf: []
+    schemas:
+      - {schema: app, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: integrity, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: ops, privileges: [USAGE], status: "MAIN (0001:28)"}
+      - {schema: case_state, privileges: [USAGE], status: PR-5}
+      - {schema: platform, privileges: [USAGE], status: "PR-4 (limpieza de oidc_exchange vencidos)"}
+    tables:
+      - {object: ops.db_catalog, privileges: [SELECT], status: "MAIN (0001:76)"}
+      - {object: app.outbox, privileges: [SELECT], policy: "solo filas CLAIMED de su tenant (TEST-CNS-813)", status: "MAIN (0003:73)"}
+    functions:
+      - {name: "app.outbox_claim(integer) (dueño outbox_claimer)", status: "MAIN (0003:109)"}
+      - {name: "ops.purge_p34(text, interval)", status: "MAIN (0031:270, 0033:206)"}
+      - {name: "ops.purge_run_summary(uuid)", status: "MAIN (0031:302)"}
+      - {name: "ops.retention_status()", status: "MAIN (0031:286)"}
+      - {name: "case_state.<funciones SYSTEM> (R4+C6, R5, R6, R7, R9+RC1 SYSTEM, RC2+RV0 SYSTEM; transitions.md §D)", status: "PR-5 (GRD-CM-15: EXECUTE solo worker; dueño transition_owner, que escribe el ledger)"}
+      - {name: "platform.purge_expired_oidc_exchange()", status: PR-4}
+    mustNot: ["DML directo en ledger, app.revocation, app.rights_case: el worker escribe ledger SOLO a través de las funciones SYSTEM (F-A10-02, Q-18)", "Aserciones ATTESTED", "Sesiones"]
+    verifiedBy:
+      startupChecks: ["expectedRole = worker (PR-6)", "no miembro de owners", "sin CREATE"]
+      tests: [TEST-CNS-742, TEST-CNS-744, TEST-CNS-747, TEST-CNS-791, TEST-CNS-813, TEST-CNS-444, TEST-CNS-1306]
+
+  - id: integrity_verifier
+    class: RUNTIME
+    process: verifier
+    login: true
+    status: "PR-2 (rol); PR-4 (privilegios de canje); PR-5 (conciliación); PR-7 (checkpoints del ancla y alertas de break-glass)"
+    egress: "solo token endpoint + JWKS del IdP por el proxy de egress (IT0b); JWKS sintético fijo en LOCAL (ADR-010 §4.3.3); P-45 sin aprobar"
+    memberOf: []
+    schemas:
+      - {schema: platform, privileges: [USAGE], status: PR-4}
+      - {schema: integrity, privileges: [USAGE], status: PR-4}
+    tables:
+      - {object: platform.oidc_exchange, privileges: ["SELECT(code, pkce_verifier, binding)", "UPDATE(status, code=NULL, pkce_verifier=NULL)"], status: PR-4}
+      - {object: platform.grant_assertion, privileges: ["solo vía función platform.record_assertion(ATTESTED|REJECTED)"], status: PR-4}
+      - {object: integrity.audit_event, privileges: ["SELECT (cross-tenant por policy o función de integrity_owner)"], status: "PR-4 (DDL integrity.* ANTES de PR-7)"}
+      - {object: "app.revocation / app.rights_case / app.consent_decision", privileges: ["SELECT(columnas de estado y refs, sin PII) cross-tenant"], status: "PR-5 (conciliación N2/FN-6/FN-7, ambos sentidos)"}
+      - {object: "integrity.checkpoint (o equivalente)", privileges: [INSERT], status: PR-7}
+      - {object: "pg_catalog.pg_roles / pg_stat_activity", privileges: [SELECT], note: "alertas Q-20 (c): ddl_breakglass con LOGIN o sesiones fuera de ceremonia", status: PR-7}
+    mustNot: ["DML de dominio", "PII (pii.*, channel_ref, case_contact)", "Sesiones", "Persistir el ID token crudo o el email"]
+    verifiedBy:
+      startupChecks: ["expectedRole = integrity_verifier", "no miembro de owners", "sin DML en app.*"]
+      newTests: ["TEST-CNS-TBD-DBR-05: integrity_verifier no puede INSERT/UPDATE en app.revocation ni leer pii.*"]
+
+  # ---------------------------------------------------------------- roles de alcance (NOLOGIN)
+  - id: rights_operator
+    class: SCOPED
+    login: false
+    status: "PR-2 (rol); PR-5 (EXECUTE)"
+    setRoleBy:
+      - {member: platform_rw, inherit: false, set: true, status: PR-5}
+    functions:
+      - {name: "case_state.propose_case_verification", status: PR-5}
+      - {name: "case_state.withdraw_case_verification_proposal", status: PR-5}
+      - {name: "case_state.record_case_confirmation", status: PR-5}
+      - {name: "case_state.cosign_case_confirmation", status: PR-5}
+      - {name: "case_state.close_case", status: PR-5}
+    tables: [{object: "vistas case_scope() (rights-case.spec.yaml:422)", privileges: [SELECT], status: PR-5}]
+    mustNot: ["DML directo", "CREATE", "Ser asumido por app_rw, worker o integrity_verifier"]
+    verifiedBy: {newTests: ["TEST-CNS-TBD-DBR-06: catálogo de rights_operator = exactamente las 5 funciones y las vistas case_scope"]}
+
+  - id: staff_roster_reader
+    class: SCOPED
+    login: false
+    status: MAIN
+    createdBy: "0018:19-28"
+    setRoleBy:
+      - {member: app_rw, inherit: false, set: true, status: "MAIN (0018:32); sin cambio (Q-17)"}
+    tables: [{object: app.staff_roster_invitation_status, privileges: [SELECT], status: "MAIN (0019:116)"}]
+    verifiedBy: {startupChecks: ["checkStaffRosterRoles (startup-checks.ts:207-259; sin cambio)"], tests: [TEST-CNS-1075, TEST-CNS-1087]}
+
+  # ---------------------------------------------------------------- migrador
+  - id: consent_migrator
+    class: MIGRATOR
+    process: "migrator (solo en deploy; nunca en web/platform/worker/verifier)"
+    login: true
+    status: MAIN
+    createdBy: "0000:30-35"
+    memberOf:
+      - {role: consent_owner, inherit: true, set: true, status: "MAIN (0000:41)"}
+      - {role: outbox_claimer, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0004:24); REAL_DATA: REVOKE en PR-7 (Q-19)"}
+    transitive: "Vía consent_owner puede SET ROLE los owners que consent_owner tenga en el modo vigente."
+    mustNot: ["Ser miembro (directo o transitivo) de integrity_owner tras PR-7", "En REAL_DATA: alcanzar por SET ningún owner de §4.1.1"]
+    verifiedBy:
+      postClusterAssertion: "PR-2 (estructura) + PR-7 (integrity_owner y modo REAL_DATA): pg_has_role('consent_migrator', <owner>, 'MEMBER') = lista declarada por modo; fail-closed"
+      tests: [TEST-CNS-747, TEST-CNS-915, TEST-CNS-1230]
+
+  # ---------------------------------------------------------------- owners (NOLOGIN)
+  - id: consent_owner
+    class: OWNER
+    login: false
+    status: MAIN
+    createdBy: "0000:23-27"
+    owns:
+      - {object: "esquemas app y ops", status: "MAIN (0001:13, 0001:15). FN-6/R-21-1: puede DROP de objetos de esos esquemas"}
+      - {object: "tablas de app y ops no transferidas (incl. app.revocation, app.rights_case, app.staff_session, app.case_session, ops.access_log)", status: "MAIN; PR-7 mueve app.revocation/app.rights_case a case_state (Q16)"}
+      - {object: "base de datos (datdba)", status: "MAIN (precondición de 0027:10-11); PR-7 ALTER DATABASE … OWNER TO db_owner_nologin"}
+    memberOf:
+      - {role: tenant_resolve_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0000:44); REAL_DATA: REVOKE en PR-7 (Q-19)"}
+      - {role: staff_roster_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0018:30); REAL_DATA: REVOKE en PR-7 (Q-19)"}
+      - {role: integrity_owner, inherit: false, set: true, status: "MAIN (0026:29, re-otorgado en cada corrida de cluster: migrate.ts:84-90); PR-7 REVOKE en ambos modos + aserción"}
+      - {role: security_event_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0028:26) transitorio IT0B (F-7); REAL_DATA: REVOKE en PR-7 (D7, Q-19, Q-20 c)"}
+      - {role: platform_schema_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {role: grant_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {role: membership_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {role: case_state_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {role: transition_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (DECIDIDO, Q-18 + Q15 c)"}
+    defaultPrivileges: ["REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC (0001:19)"]
+    createOnDatabase: "Implícito como datdba (MAIN); tras PR-7 GRANT CREATE ON DATABASE temporal solo en migraciones que crean esquemas (patrón 0027:16-21, ADR-010 §4.5.2)"
+    verifiedBy: {tests: [TEST-CNS-743, TEST-CNS-1230, TEST-CNS-1307]}
+
+  - id: tenant_resolve_owner
+    class: OWNER
+    login: false
+    status: MAIN
+    createdBy: "0000:23-27"
+    owns: [{object: "esquema tenant_resolve, sus tablas y funciones SECURITY DEFINER", status: "MAIN (0001:16, 0007, 0011)"}]
+    grantsHeld: ["USAGE app, EXECUTE app.current_tenant_id() (0007:20-21)"]
+    grantsGiven: [{to: transition_owner, privileges: "EXECUTE de register_recovery_token / by_recovery_token_hash / by_handle_hash (RC2+RV0 SYSTEM, R1r)", status: PR-5}]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0000:44)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: "PR-7 (DECIDIDO, Q-19)"}
+    note: "ADR-010 §4.1/P2-15: distinto de membership_owner (= 'tenant_resolver' de DF-13)."
+    verifiedBy: {startupChecks: ["runtime no miembro (startup-checks.ts:95)", "aserción por modo (Q-19)"], tests: [TEST-CNS-743, TEST-CNS-793, TEST-CNS-810]}
+
+  - id: outbox_claimer
+    class: OWNER
+    login: false
+    status: MAIN
+    createdBy: "0004:17-21"
+    owns: [{object: "app.outbox_claim(integer)", status: "MAIN (0003:88-111)"}]
+    grantsHeld: ["USAGE app; SELECT(event_id, tenant_id, status, claimed_at, created_at, attempts) y UPDATE(status, claimed_at, attempts) en app.outbox (0003:77-79)"]
+    setRoleBy:
+      - {member: consent_migrator, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0004:24)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: "PR-7 (DECIDIDO, Q-19)"}
+    verifiedBy: {startupChecks: ["PR-2: agregar a la lista de owners de startup-checks.ts:95 (Q-19)"], tests: [TEST-CNS-743, TEST-CNS-791, TEST-CNS-793]}
+
+  - id: staff_roster_owner
+    class: OWNER
+    login: false
+    status: MAIN
+    createdBy: "0018:19-28"
+    owns: [{object: app.staff_roster_invitation_status, status: "MAIN (0019)"}]
+    grantsHeld: ["SELECT por columnas en app.invitation, app.subject, app.enrollment, app.school_participation (0019:35-39)"]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0018:30)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: "PR-7 (DECIDIDO, Q-19)"}
+    verifiedBy: {startupChecks: ["runtime no miembro (startup-checks.ts:95)", "sin CREATE (:249-255)", "aserción por modo (Q-19)"], tests: [TEST-CNS-1075, TEST-CNS-1087]}
+
+  - id: integrity_owner
+    class: OWNER
+    login: false
+    status: MAIN
+    createdBy: "0026:20-27"
+    owns: [{object: "esquema integrity, integrity.audit_event, integrity.audit_event_immutable()", status: "MAIN (0027:24-28)"}]
+    grantsGiven:
+      - {to: transition_owner, privileges: "INSERT(columnas de 0002:77-79 y 0013:77-84) + policy de INSERT para aggregate_type Revocation/RightsCase y CONSENT_REVOKED; único escritor de esos eventos", status: "PR-5 (DECIDIDO, Q-18)"}
+      - {to: app_rw, privileges: "policy de INSERT que excluye esos eventos (INV-DBR-07)", status: "PR-5 (DECIDIDO, Q-18)"}
+      - {to: integrity_verifier, privileges: "SELECT cross-tenant (policy o función)", status: PR-4}
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, status: "MAIN (0026:29); PR-7 REVOKE en ambos modos (§4.5.1)"}
+      - {member: ddl_breakglass, inherit: false, set: true, status: PR-7}
+    ddlRule: "Toda DDL sobre integrity.* (PR-4 y PR-5) se mergea ANTES de PR-7. Después, solo por ceremonia (db/ceremonies/); tools/spec-checks/integrity-owner-checker.ts rechaza asumir integrity_owner (SET ROLE) en db/migrations/ posteriores al revoke (N3)."
+    verifiedBy:
+      migrationAsserts: ["0027:44-88"]
+      postClusterAssertion: "PR-7: consent_owner y consent_migrator NO miembros (pg_has_role MEMBER), fail-closed tras re-ejecutar 0026"
+      startupChecks: ["runtime no miembro (startup-checks.ts:95)", "PR-7: consent_owner no miembro"]
+      tests: [TEST-CNS-1230, TEST-CNS-1231, TEST-CNS-1234, TEST-CNS-1235, TEST-CNS-1236, TEST-CNS-1237, TEST-CNS-915]
+      testChanges: ["TEST-CNS-1230 hoy afirma la membresía de consent_owner (db/README.md:68-69): PR-7 la invierte"]
+
+  - id: security_event_owner
+    class: OWNER
+    login: false
+    status: MAIN
+    createdBy: "0028:17-24"
+    owns:
+      - {object: "ops.security_event (+ ops.security_event_guard(), ops.security_event_immutable())", status: "MAIN (0029:111-112, 0031)"}
+      - {object: "ops.retention_policy, ops.purge_run, ops.otp_budget, ops.append_only_guard()", status: "MAIN (0031, 0032)"}
+      - {object: "ops.purge_p34(text, interval), ops.purge_run_summary(uuid), ops.retention_status() (SECURITY DEFINER)", status: "MAIN (0031:175-302, 0033)"}
+    grantsHeld: ["USAGE app (0031:33); SELECT ops.db_catalog; EXECUTE ops.catalog_environment()", "SELECT(tenant_id, expires_at) + DELETE en app.otp_verification con policies de vencidas (0031:307-311)", "SELECT(tenant_id, expires_at) + DELETE en ops.otp_budget (0033:31-35)"]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0028:26), transitorio F-7"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: "PR-7 (D7, Q-19, Q-20 c)"}
+    ddlRule: "Toda DDL declara el cambio local de rol (SET LOCAL ROLE) hacia security_event_owner; allowlist SECURITY_EVENT_OWNER_ALLOWLIST (tools/spec-checks/integrity-owner-checker.ts). PR-5 (policy INSERT de platform_rw para CASE_* y retiro de esos tipos a app_rw) entra en esa allowlist."
+    verifiedBy:
+      migrationAsserts: ["0029:121-175", "0031 §D", "0033:244-335"]
+      startupChecks: ["runtime no miembro (startup-checks.ts:95)", "checkPurgeExecuteIsolation (:142-153)", "checkRetentionConfig (:167-183)", "aserción por modo (Q-19)"]
+      tests: [TEST-CNS-1306, TEST-CNS-1307, TEST-CNS-1325, TEST-CNS-1326]
+      testChanges: ["TEST-CNS-1306 (platform_rw sin DML) y TEST-CNS-1189 cambian en PR-5", "TEST-CNS-1307 (consent_owner SET TRUE) cambia en PR-7 para REAL_DATA"]
+
+  - id: platform_schema_owner
+    class: OWNER
+    login: false
+    status: "PR-2 (rol); PR-3 (CREATE SCHEMA platform AUTHORIZATION platform_schema_owner, patrón 0027; Q8)"
+    owns: [{object: "esquema platform y sus tablas de §4.4 salvo las que se asignen a grant_owner/membership_owner", status: PR-3}]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: PR-7}
+
+  - id: membership_owner
+    class: OWNER
+    login: false
+    status: "PR-2 (rol); PR-3 (dueño de platform.tenant_membership, platform.platform_role_assignment y sus funciones de aprovisionamiento)"
+    note: "= 'tenant_resolver' de DF-13 (P2-15). platform_role_assignment es cross-tenant y solo contiene roles PLATFORM (§4.2)."
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: PR-7}
+
+  - id: grant_owner
+    class: OWNER
+    login: false
+    status: "PR-2 (rol); PR-3 (action_nonce, issue_action_nonce, authorization_check); PR-4 (grant_assertion); PR-5 (grant_request, rights_case_grant, case_verification, request_grant, approve_grant, open_case_session, open_platform_session)"
+    owns:
+      - {object: "platform.action_nonce, platform.grant_request, platform.rights_case_grant, platform.grant_assertion, platform.case_verification, platform.authorization_check", status: "PR-3..PR-5"}
+      - {object: "platform.issue_action_nonce, platform.request_grant, platform.approve_grant, platform.open_case_session, platform.open_platform_session, platform.validate_session, platform.revoke_session", status: "PR-3..PR-5"}
+    grantsGiven: [{to: transition_owner, privileges: "SELECT de grants, aserciones, nonces y sesiones CASE/PLATFORM; INSERT/UPDATE por columnas de platform.case_verification", status: PR-5}]
+    note: "Rev. 4 (Q-18): grant_owner YA NO es dueño de funciones de transición ni tiene INSERT en el ledger (reemplaza el P1-9 de rev. 3)."
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: PR-7}
+
+  - id: transition_owner
+    class: OWNER
+    login: false
+    attributes: "NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION"
+    status: "DECIDIDO (Q-18, Carlos 2026-10-11). PR-2 rol; PR-5 funciones y grants"
+    owns: [{object: "Todas las funciones SECURITY DEFINER de transición de revocation y rights_case en case_state: titular y escuela (EXECUTE app_rw), operador (EXECUTE rights_operator), aprobador (EXECUTE platform_rw) y SYSTEM (EXECUTE solo worker, GRD-CM-15)", status: PR-5}]
+    grantsHeld:
+      - "UPDATE/INSERT por columnas en app.revocation y app.rights_case (todas las de transición; el trigger acota por función)"
+      - "INSERT en integrity.audit_event (único escritor de eventos Revocation, RightsCase y CONSENT_REVOKED)"
+      - "INSERT en app.outbox; UPDATE(state) en app.consent_decision solo para C6; UPDATE(consumed_at) en app.recovery_token"
+      - "EXECUTE de funciones de tenant_resolve; SELECT/INSERT/UPDATE por columnas en tablas de grant_owner (ver grant_owner.grantsGiven)"
+    mustNot: ["Ser dueño de las tablas que escribe (case_state_owner y consent_owner lo son)", "Ser asumido por roles de runtime", "SQL dinámico en sus funciones"]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: PR-7}
+    verifiedBy: {newTests: ["TEST-CNS-TBD-DBR-11: todas las funciones de case_state son de transition_owner, SECURITY DEFINER, search_path fijo, sin EXECUTE PUBLIC; EXECUTE exacto por rol (PR-5)"]}
+
+  - id: case_state_owner
+    class: OWNER
+    login: false
+    status: "PR-2 (rol); PR-5 (CREATE SCHEMA case_state AUTHORIZATION case_state_owner, para las funciones); PR-7 (ALTER TABLE app.revocation / app.rights_case SET SCHEMA case_state, Q16)"
+    note: "Mientras las tablas sigan en app (dueño consent_owner), FN-6 sigue abierto y solo lo detecta la conciliación del verifier."
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
+      - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: PR-7}
+
+  - id: breakglass_log_owner
+    class: OWNER
+    login: false
+    status: "PR-7 (rol y esquema breakglass, tabla breakglass.ceremony append-only ENABLE ALWAYS, sin tenant_id, sin purga; N5)"
+    setRoleBy: []   # nadie, nunca: escribe el superusuario dentro de la ceremonia (§4.1.1)
+    verifiedBy: {postClusterAssertion: "pg_auth_members sin filas con roleid = breakglass_log_owner (ambos modos)"}
+
+  - id: db_owner_nologin
+    class: OWNER
+    login: false
+    status: "PR-7 (rol + ALTER DATABASE … OWNER TO db_owner_nologin; §4.5.2)"
+    setRoleBy: []
+    verifiedBy: {postClusterAssertion: "datdba = db_owner_nologin; nadie miembro"}
+
+  # ---------------------------------------------------------------- break-glass
+  - id: ddl_breakglass
+    class: BREAKGLASS
+    login: "false por defecto; LOGIN PASSWORD <nueva> VALID UNTIL <= P-46 solo durante la ceremonia (lo abre el superusuario)"
+    status: "PR-7"
+    memberOf:
+      - {roles: [integrity_owner, security_event_owner, tenant_resolve_owner, staff_roster_owner, outbox_claimer, platform_schema_owner, grant_owner, membership_owner, case_state_owner, transition_owner], inherit: false, set: true, note: "Q-19 (DECIDIDO)"}
+    pgHba: "host <db> ddl_breakglass 127.0.0.1/32 scram-sha-256; sin línea peer ni cert"
+    sessionAudit: "Q-20 (c), DECIDIDO: ALTER ROLE ddl_breakglass SET log_statement = 'all' y log_connections/log_disconnections activos; logs fuera del host (TP-08); el verifier alerta si rolcanlogin = true o hay sesiones de ddl_breakglass fuera de una ceremonia abierta. Sin event trigger."
+    close: "ALTER ROLE ddl_breakglass NOLOGIN; pg_terminate_backend de sus sesiones; contraseña aleatoria descartada"
+    evidence: "breakglass.ceremony (secundario) + checkpoint firmado del ancla antes y después (primario, Q13) + log de la sesión auditada"
+    verifiedBy: {newTests: ["TEST-CNS-TBD-DBR-08: ensayo de ceremonia con evidencia (PR-7)", "TEST-CNS-TBD-DBR-12: el catálogo de ddl_breakglass tiene log_statement = 'all' (pg_db_role_setting) y NOLOGIN fuera de ceremonia (PR-7)"]}
+
+membershipAssertion:   # ADR-010 §4.1.1 (Q-19); runner (posterior al cluster, migrate.ts) + startup-checks; igualdad EXACTA, fail-closed
+  id: INV-DBR-03
+  status: "PR-2 (mecanismo, lista IT0B y check en startup-checks); PR-7 (integrity_owner fuera de la lista y modo REAL_DATA)"
+  IT0B_SYNTHETIC:
+    - "consent_migrator -> consent_owner {inherit: true, set: true}"
+    - "consent_migrator -> outbox_claimer {inherit: false, set: true}"
+    - "consent_owner -> tenant_resolve_owner | staff_roster_owner | security_event_owner | platform_schema_owner | grant_owner | membership_owner | case_state_owner | transition_owner {inherit: false, set: true}"
+    - "consent_owner -> integrity_owner {inherit: false, set: true}  # solo hasta PR-7"
+    - "app_rw -> staff_roster_reader {inherit: false, set: true}"
+    - "platform_rw -> rights_operator {inherit: false, set: true}  # desde PR-5"
+    - "ddl_breakglass -> <los 10 owners de §4.1.1> {inherit: false, set: true}  # desde PR-7"
+  REAL_DATA:
+    - "consent_migrator -> consent_owner {inherit: true, set: true}"
+    - "consent_owner -> (ningún owner de §4.1.1); consent_migrator -> (ninguno salvo consent_owner)"
+    - "app_rw -> staff_roster_reader {inherit: false, set: true}"
+    - "platform_rw -> rights_operator {inherit: false, set: true}"
+    - "ddl_breakglass -> <los 10 owners de §4.1.1> {inherit: false, set: true}"
+    - "breakglass_log_owner, db_owner_nologin: sin miembros"
+  rule: "Cualquier fila extra o faltante en pg_auth_members para estos roles aborta el deploy y el arranque."
+
+invariants:
+  - {id: INV-DBR-01, statement: "Ningún rol de runtime (app_rw, platform_rw, worker, integrity_verifier) es superusuario, BYPASSRLS, miembro de un owner, ni tiene CREATE en ningún esquema.", status: "MAIN para 3 roles (startup-checks.ts:79-117); PR-2 suma integrity_verifier, outbox_claimer y los owners nuevos", testIds: [TEST-CNS-744, TEST-CNS-747]}
+  - {id: INV-DBR-02, statement: "Cada proceso arranca solo con su rol exacto (expectedRole): web=app_rw, platform=platform_rw, worker=worker, verifier=integrity_verifier.", status: "MAIN solo web (F6); PR-6 el resto", testIds: [TEST-CNS-884]}
+  - {id: INV-DBR-03, statement: "La membresía real coincide exactamente con membershipAssertion del modo declarado (runner y startup-checks).", status: "PR-2/PR-7 (Q-19)", testIds: [TEST-CNS-TBD-DBR-07]}
+  - {id: INV-DBR-04, statement: "Toda transición de app.revocation y app.rights_case ocurre dentro de una función SECURITY DEFINER de transition_owner; ningún rol de runtime tiene INSERT/UPDATE directo.", status: PR-5, testIds: [TEST-CNS-TBD-DBR-01]}
+  - {id: INV-DBR-05, statement: "verified_recovery_method = HUMAN_ASSISTED, columnas RH2, attested_*, recorded_by_ref y cosigned_by_ref solo se escriben con current_user = transition_owner y case_state.effect = la función de efecto que las declara (trigger ENABLE ALWAYS).", status: PR-5, testIds: [TEST-CNS-TBD-RV-DB-01]}
+  - {id: INV-DBR-06, statement: "Las funciones SYSTEM no tienen EXECUTE para PUBLIC, app_rw, platform_rw ni integrity_verifier (GRD-CM-15).", status: "MAIN como regla de spec (TEST-CNS-444); PR-5 para las funciones nuevas", testIds: [TEST-CNS-444]}
+  - {id: INV-DBR-07, statement: "Solo transition_owner puede append de eventos con aggregate_type Revocation o RightsCase y de CONSENT_REVOKED (policy de INSERT por rol en integrity.audit_event, como 0029:96-103). RECEIPT_CREATED queda como residual (lo emiten C5 en web y R4/R7).", status: "PR-5 (DECIDIDO, Q-18; DDL integrity.* antes de PR-7)", testIds: [TEST-CNS-TBD-DBR-02]}
+  - {id: INV-DBR-08, statement: "El verifier concilia en cada corrida estado de filas <-> eventos del ledger en ambos sentidos (fila sin evento, evento sin fila, valores distintos), incluido consent_decision REVOKED <-> CONSENT_REVOKED, y lo deja en el checkpoint.", status: PR-5, testIds: [TEST-CNS-TBD-DBR-09]}
+  - {id: INV-DBR-09, statement: "En REAL_DATA, ddl_breakglass es NOLOGIN fuera de ceremonia, tiene log_statement = 'all' y es el único miembro SET de los owners de §4.1.1.", status: "PR-7 (Q-20 c)", testIds: [TEST-CNS-TBD-DBR-12]}
+
+residuals:
+  - {id: R-22 / F-X8-11, text: "consent_owner (y el migrador) puede asumir integrity_owner (SET ROLE) y controlar el ledger; consent_owner es datdba.", acceptedFor: IT0_SYNTHETIC, closesIn: "PR-7 (revoke, db_owner_nologin, ancla); reduce, no cierra (ADR-010 §5)"}
+  - {id: R-21-1 (F-2), text: "consent_owner es dueño del esquema ops y puede DROP de tablas de ops aunque cambie el dueño de la tabla (0028:14-15, 0029:13).", acceptedFor: IT0B_SYNTHETIC, closesIn: "OPEN: Q-20 no lo cubre; revisar antes de datos reales (ADR-010 §4.5, OI-DBR-08)"}
+  - id: "R-21-2 (= R-23 propuesto en el registro de riesgos)"
+    text: "Quien pueda asumir security_event_owner (SET ROLE) puede borrar sin dejar rastro: DISABLE TRIGGER, NO FORCE ROW LEVEL SECURITY, DROP POLICY o DROP TABLE sobre security_event / retention_policy / purge_run / otp_budget; bajar la retención y con ello borrar OTP activos (incluido el lockout de app.otp_verification); o borrar otp_verification vencidas sin purge_run (0031:17-22, 0033:16)."
+    acceptedFor: "IT0B_SYNTHETIC; pasa a P1 antes de datos reales"
+    closesIn: "PR-7, mecanismo (c) DECIDIDO (Q-20): (1) en REAL_DATA nadie tiene SET sobre security_event_owner salvo ddl_breakglass (NOLOGIN fuera de ceremonia); (2) auditoría de sesiones de ddl_breakglass (log_statement = 'all', conexiones y desconexiones, logs fuera del host, alerta del verifier). SIN event trigger. 0031:18-19 y db/README.md:90 prometían un event trigger: 0031 no se edita, db/README.md se corrige."
+    remaining: "El superusuario y root (R-16/R-03) siguen pudiendo borrar sin rastro en ops.*, que no está anclado; se cierra con Q1 opción C."
+  - {id: FN-4, text: "La base no impone las máquinas de estado; app_rw escribe HUMAN_ASSISTED/RH2/sesiones CASE.", acceptedFor: "IT0 sintético vía R-10", closesIn: PR-5}
+  - {id: FN-6, text: "consent_owner es dueño del esquema app y de app.revocation/app.rights_case: puede DISABLE TRIGGER o DROP y fabricar HUMAN_ASSISTED/RH2/RH3.", acceptedFor: "IT0B_SYNTHETIC (detecta la conciliación)", closesIn: "PR-7 (Q16, SET SCHEMA case_state); P0 si llegara a datos reales sin Q16"}
+  - {id: RES-OTP-WEB, text: "web controla la vía OTP del titular (app.otp_verification, 0010:162; 0032): un RCE en web puede completar una revocación por OTP.", acceptedFor: "Por diseño del spec (ADR-010 §4.2)", closesIn: "No se cierra; mitigan SEC-CNS-021 (presupuesto) y el ledger"}
+  - {id: RES-STAFF-WEB, text: "Q-17: sesiones STAFF en web con DML de app_rw y RLS. Un RCE en web puede fabricar una sesión STAFF de su tenant y actuar como TENANT_ADMIN/INVITER (invitaciones, matrículas, RC0). No alcanza efectos de revocación ni sesiones CASE. N7 (login ATTESTED) queda solo para CASE/PLATFORM hasta APR-IDP.", acceptedFor: "IT0B_SYNTHETIC (consecuencia de Q-17, a declarar en ADR-010 §5)", closesIn: "Re-evaluar con APR-IDP antes de datos reales"}
+  - {id: "R-16 / R-03", text: "root obtiene superusuario por peer en el host único (Q2).", acceptedFor: "IT0b sintético/datos del equipo", closesIn: "Opción C antes de datos de titulares (Q1)"}
+
+openItems:
+  - {id: OI-DBR-01, item: "Q-17: dónde vive la consola STAFF.", owner: Carlos, status: "DECIDED (a), 2026-10-11"}
+  - {id: OI-DBR-02, item: "Q-19: extender §4.1.1 a security_event_owner, tenant_resolve_owner, staff_roster_owner y outbox_claimer.", owner: Carlos, status: "DECIDED, 2026-10-11"}
+  - {id: OI-DBR-03, item: "Q-18: dueño de las funciones de transición.", owner: Carlos, status: "DECIDED (a) transition_owner, 2026-10-11"}
+  - {id: OI-DBR-04, item: "Q-20: mecanismo de cierre de R-21-2.", owner: Carlos, status: "DECIDED (c) sin event trigger, 2026-10-11"}
+  - {id: OI-DBR-05, item: "C6 (consent_decision -> REVOKED) fuera de §4.2.", owner: Carlos, status: "DECIDED: entra en el alcance de PR-5 (F-A10-06)"}
+  - {id: OI-DBR-06, item: "session.spec.yaml lista RIGHTS_OPERATOR y APPROVER como roles de la sesión STAFF; con Q-17 son equipo de LectorPro y deberían entrar por PLATFORM/CASE en platform. Ajustar en PR-1 o PR-5.", owner: "lampone-architect -> Carlos", status: OPEN}
+  - {id: OI-DBR-07, item: "Colisión de IDs: R-21 del registro de riesgos (egress al IdP) vs R-21-1…R-21-5 de SEC-CNS-021. Se propone registrar R-21-2 como R-23 con alias (F-A10-08).", owner: "lampone-security -> Carlos", status: OPEN}
+  - {id: OI-DBR-08, item: "R-21-1 (DROP de tablas de ops por el dueño del esquema) no queda cubierto por Q-20.", owner: "lampone-security -> Carlos", status: OPEN}
