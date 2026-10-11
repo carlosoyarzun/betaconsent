@@ -19,6 +19,22 @@ import type { Queryable } from "./pool.ts";
 import { checkRoleMemberships, resolveDbRoleMode } from "./role-membership.ts";
 import type { DbRoleMode } from "./role-membership.ts";
 
+/**
+ * Serializa toda mutacion del catalogo global de roles (pg_authid / pg_auth_members: CREATE/ALTER ROLE, GRANT/REVOKE de
+ * membresias, contrasenas) entre procesos que usan la misma base de conexion. Sin ella dos escritores concurrentes sobre la misma fila
+ * fallan con "tuple concurrently updated" (XX000): Postgres no serializa las actualizaciones del catalogo de roles. Es el mismo lock que
+ * toma el alcance cluster. Los advisory locks son POR BASE DE DATOS: todos los escritores de roles deben conectarse a la misma base
+ * (la de conexion del superusuario del deploy). Reentrante en la misma sesion.
+ */
+export async function withClusterRoleLock<T>(superuser: Queryable, fn: () => Promise<T>): Promise<T> {
+  await superuser.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+  try {
+    return await fn();
+  } finally {
+    await superuser.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
+  }
+}
+
 export type MigrationScope = "cluster" | "database";
 
 export interface Migration {
@@ -99,8 +115,7 @@ export async function applyClusterScope(
 ): Promise<string[]> {
   const mode = options.mode ?? resolveDbRoleMode(process.env);
   const applied: string[] = [];
-  await superuser.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
-  try {
+  await withClusterRoleLock(superuser, async () => {
     for (const m of migrations.filter((x) => x.scope === "cluster")) {
       await superuser.query(m.sql);
       applied.push(m.version);
@@ -109,9 +124,7 @@ export async function applyClusterScope(
     if (problems.length > 0) {
       throw new MigrationError(`Aserción de membresía de roles posterior al cluster falló (INV-DBR-03): ${problems.join("; ")}.`);
     }
-  } finally {
-    await superuser.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
-  }
+  });
   return applied;
 }
 
@@ -127,13 +140,16 @@ export async function setRolePasswords(
   superuser: Queryable & { escapeLiteral(value: string): string },
   passwords: Partial<Record<RoleName, string>>,
 ): Promise<void> {
-  for (const role of ROLE_NAMES) {
-    const password = passwords[role];
-    if (password === undefined) continue;
-    if (password.length < 8) throw new MigrationError(`Contraseña demasiado corta para ${role}.`);
-    // role viene de una lista cerrada; la contraseña se escapa como literal.
-    await superuser.query(`ALTER ROLE ${role} PASSWORD ${superuser.escapeLiteral(password)}`);
-  }
+  // ALTER ROLE ... PASSWORD actualiza pg_authid: va dentro del lock de cluster (ver withClusterRoleLock).
+  await withClusterRoleLock(superuser, async () => {
+    for (const role of ROLE_NAMES) {
+      const password = passwords[role];
+      if (password === undefined) continue;
+      if (password.length < 8) throw new MigrationError(`Contraseña demasiado corta para ${role}.`);
+      // role viene de una lista cerrada; la contraseña se escapa como literal.
+      await superuser.query(`ALTER ROLE ${role} PASSWORD ${superuser.escapeLiteral(password)}`);
+    }
+  });
 }
 
 export interface DatabaseScopeOptions {

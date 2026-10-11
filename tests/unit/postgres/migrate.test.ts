@@ -57,6 +57,12 @@ test("TEST-CNS-749 setRolePasswords escapa la contraseña como literal y rechaza
     escapeLiteral: (v: string) => `'${v.replace(/'/g, "''")}'`,
   };
   await setRolePasswords(superuser, { app_rw: "pa'ss-word-1", consent_migrator: "otra-clave-9" });
-  assert.deepEqual(issued, ["ALTER ROLE consent_migrator PASSWORD 'otra-clave-9'", "ALTER ROLE app_rw PASSWORD 'pa''ss-word-1'"]);
+  // Las mutaciones de pg_authid van dentro del lock de cluster (carrera "tuple concurrently updated").
+  assert.deepEqual(issued, [
+    "SELECT pg_advisory_lock($1)",
+    "ALTER ROLE consent_migrator PASSWORD 'otra-clave-9'",
+    "ALTER ROLE app_rw PASSWORD 'pa''ss-word-1'",
+    "SELECT pg_advisory_unlock($1)",
+  ]);
   await assert.rejects(() => setRolePasswords(superuser, { worker: "corta" }), MigrationError);
 });

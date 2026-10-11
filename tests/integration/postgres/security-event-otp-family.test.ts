@@ -292,7 +292,7 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
 
   // 0028 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const sql0028 = readFileSync(join(MIGRATIONS_DIR, "0028_security_event_owner_role.sql"), "utf8");
-  await admin.query(sql0028);
+  await ctx.withRoleCatalogLock(async () => { await admin.query(sql0028); }); // catalogo global de roles: serializado con el provisionado
   const again = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
     `SELECT m.rolname AS member, a.inherit_option, a.set_option FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member WHERE r.rolname = 'security_event_owner'`,
   )).rows;

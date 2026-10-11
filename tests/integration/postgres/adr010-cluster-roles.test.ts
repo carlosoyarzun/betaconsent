@@ -63,7 +63,8 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
 
   // 0034 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const before = await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]);
-  await admin.query(readFileSync(join(MIGRATIONS_DIR, "0034_adr010_cluster_roles.sql"), "utf8"));
+  const sql0034 = readFileSync(join(MIGRATIONS_DIR, "0034_adr010_cluster_roles.sql"), "utf8");
+  await ctx.withRoleCatalogLock(async () => { await admin.query(sql0034); }); // catalogo global de roles: serializado con el provisionado
   assert.deepEqual(await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]), before);
   assert.deepEqual(await attrs(nologin), [...nologin].sort().map((rolname) => ({ rolname, ...NOLOGIN_FLAGS })));
 });
@@ -84,24 +85,28 @@ pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coi
     ["security_event_owner", "consent_migrator", " WITH INHERIT FALSE, SET TRUE", /consent_migrator -> security_event_owner/],
     ["tenant_resolve_owner", "consent_owner", " WITH INHERIT TRUE, SET TRUE", /tenant_resolve_owner \{inherit: true/],
   ];
-  for (const [role, member, options, pattern] of extras) {
+  // Toda mutacion del catalogo global de roles (aunque se revierta) va dentro del lock de cluster: otros archivos de test provisionan en
+  // paralelo (applyClusterScope/setRolePasswords) y chocarian con "tuple concurrently updated".
+  await ctx.withRoleCatalogLock(async () => {
+    for (const [role, member, options, pattern] of extras) {
+      await admin.query("BEGIN");
+      try {
+        await admin.query(`GRANT ${role} TO ${member}${options}`);
+        const problems = await checkRoleMemberships(admin, "IT0B_SYNTHETIC");
+        assert.ok(problems.some((p) => pattern.test(p)), `${role} -> ${member} :: ${problems.join(" | ")}`);
+      } finally {
+        await admin.query("ROLLBACK");
+      }
+    }
+    // Fila faltante.
     await admin.query("BEGIN");
     try {
-      await admin.query(`GRANT ${role} TO ${member}${options}`);
-      const problems = await checkRoleMemberships(admin, "IT0B_SYNTHETIC");
-      assert.ok(problems.some((p) => pattern.test(p)), `${role} -> ${member} :: ${problems.join(" | ")}`);
+      await admin.query("REVOKE staff_roster_owner FROM consent_owner");
+      assert.ok((await checkRoleMemberships(admin, "IT0B_SYNTHETIC")).some((p) => /falta la membresía.*consent_owner -> staff_roster_owner/.test(p)));
     } finally {
       await admin.query("ROLLBACK");
     }
-  }
-  // Fila faltante.
-  await admin.query("BEGIN");
-  try {
-    await admin.query("REVOKE staff_roster_owner FROM consent_owner");
-    assert.ok((await checkRoleMemberships(admin, "IT0B_SYNTHETIC")).some((p) => /falta la membresía.*consent_owner -> staff_roster_owner/.test(p)));
-  } finally {
-    await admin.query("ROLLBACK");
-  }
+  });
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), [], "los ROLLBACK dejaron el cluster intacto");
 
   // startup-checks (con las listas nuevas) sigue pasando como app_rw.

@@ -28,6 +28,7 @@ import {
   loadMigrations,
   migrationSetDigest,
   setRolePasswords,
+  withClusterRoleLock,
 } from "../../../src/infra/adapters/postgres/migrate.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,13 @@ export interface PgTestContext {
   connectAs(role: PgRole): Promise<Client>;
   /** Conexión de superusuario a la base de este archivo (solo para preparar/inspeccionar). */
   connectAsSuperuser(): Promise<Client>;
+  /**
+   * Ejecuta `fn` con el lock de cluster de mutaciones del catalogo de roles (el mismo de migrate.ts). OBLIGATORIO para todo test que haga
+   * CREATE/ALTER/GRANT/REVOKE sobre roles: el catalogo es global al cluster y los archivos de test corren en paralelo; sin el lock otro
+   * archivo que provisiona (applyClusterScope/setRolePasswords) falla con "tuple concurrently updated". El lock se toma en una conexion
+   * a la base de conexion (los advisory locks son por base de datos), no en la base del archivo.
+   */
+  withRoleCatalogLock<T>(fn: () => Promise<T>): Promise<T>;
   /** URL de conexión del rol (para createPool). */
   urlFor(role: PgRole): string;
 }
@@ -136,6 +144,15 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
       await client.connect();
       clients.push(client);
       return client;
+    },
+    async withRoleCatalogLock(fn) {
+      const locker = new pg.Client({ connectionString: config.url });
+      await locker.connect();
+      try {
+        return await withClusterRoleLock(locker, fn);
+      } finally {
+        await locker.end();
+      }
     },
     async connectAsSuperuser() {
       const u = new URL(config.url);
