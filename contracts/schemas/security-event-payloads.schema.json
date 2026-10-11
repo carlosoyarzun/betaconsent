@@ -103,7 +103,8 @@
         "windowKind": {
           "enum": [
             "DAY_1",
-            "DAYS_30"
+            "DAYS_30",
+            "LIFETIME"
           ]
         }
       },
@@ -113,7 +114,7 @@
         "keyKind",
         "windowKind"
       ],
-      "description": "CFG-OT-BUDGET: INVITATION solo en DECISION, CHAIN solo en RIGHTS, DAYS_30 solo en (RIGHTS, CHAIN).",
+      "description": "CFG-OT-BUDGET: INVITATION solo en DECISION, CHAIN solo en RIGHTS, DAYS_30 solo en (RIGHTS, CHAIN), LIFETIME solo en (DECISION, INVITATION) [V6a].",
       "allOf": [
         {
           "if": {
@@ -171,6 +172,28 @@
               },
               "keyKind": {
                 "const": "CHAIN"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "windowKind": {
+                "const": "LIFETIME"
+              }
+            },
+            "required": [
+              "windowKind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "scopeClass": {
+                "const": "DECISION"
+              },
+              "keyKind": {
+                "const": "INVITATION"
               }
             }
           }

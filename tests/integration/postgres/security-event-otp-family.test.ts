@@ -48,6 +48,7 @@ const VALID: Array<[string, Row]> = [
   ["OTP_BUDGET_EXHAUSTED CHAIN/RIGHTS/DAYS_30", row("OTP_BUDGET_EXHAUSTED", { verification_ref: VERIFICATION, scope_class: "RIGHTS", key_kind: "CHAIN", window_kind: "DAYS_30" })],
   ["RECOVERY_TOKEN_ISSUED", row("RECOVERY_TOKEN_ISSUED", { recovery_ref: RECOVERY, trigger_kind: "REQUESTER_ASKED" })],
   ["MANAGEMENT_TOKEN_ROTATED", row("MANAGEMENT_TOKEN_ROTATED", { chain_ref: CHAIN, trigger_kind: "FAILURE_CAP" })],
+  ["OTP_BUDGET_EXHAUSTED INVITATION/DECISION/LIFETIME (V6a)", row("OTP_BUDGET_EXHAUSTED", { verification_ref: VERIFICATION, scope_class: "DECISION", key_kind: "INVITATION", window_kind: "LIFETIME" })],
 ];
 
 pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVERY, MANAGEMENT): cada tipo con columnas faltantes o sobrantes, refs no UUIDv4 o enums fuera de rango da 23514 (INV-21-04)", async (ctx) => {
@@ -95,6 +96,10 @@ pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVE
   const budget = (over: Row): Row => row("OTP_BUDGET_EXHAUSTED", { verification_ref: VERIFICATION, scope_class: "DECISION", key_kind: "CHANNEL", window_kind: "DAY_1", ...over });
   await expectFail("INVITATION en RIGHTS", budget({ scope_class: "RIGHTS", key_kind: "INVITATION" }), SHAPE);
   await expectFail("CHAIN en DECISION", budget({ key_kind: "CHAIN" }), SHAPE);
+  // TEST-CNS-1340 (V6a LIFETIME): LIFETIME solo con (DECISION, INVITATION); INVITATION+DAY_1 sigue valido (V6) y ya esta en VALID.
+  await expectFail("LIFETIME en CHANNEL", budget({ window_kind: "LIFETIME" }), SHAPE);
+  await expectFail("LIFETIME en RIGHTS/CHAIN", budget({ scope_class: "RIGHTS", key_kind: "CHAIN", window_kind: "LIFETIME" }), SHAPE);
+  await expectFail("LIFETIME en RIGHTS/INVITATION", budget({ scope_class: "RIGHTS", key_kind: "INVITATION", window_kind: "LIFETIME" }), SHAPE);
   await expectFail("DAYS_30 en DECISION", budget({ window_kind: "DAYS_30" }), SHAPE);
   await expectFail("DAYS_30 en RIGHTS/CHANNEL", budget({ scope_class: "RIGHTS", window_kind: "DAYS_30" }), SHAPE);
   // Disparadores por familia.

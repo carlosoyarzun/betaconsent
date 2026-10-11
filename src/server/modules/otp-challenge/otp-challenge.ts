@@ -319,7 +319,7 @@ async function submitCore(
       const lockedCount = await ports.otpRepo.countLockedByParent(tenantId, found.parentRef, "DECISION");
       if (lockedCount >= budget.maxLocked && invitation.otpExhausted !== true) {
         await ports.invitation.invitationRepo.markOtpExhausted(tenantId, found.parentRef);
-        await ports.securityEvents.record({ tenantId, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "DAY_1" });
+        await ports.securityEvents.record({ tenantId, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "LIFETIME" });
       }
     }
     return { fail: "ERR-OT-04" };
@@ -346,6 +346,7 @@ async function issueChallengeTx(
   parentRef: string,
   channelRef: string,
 ): Promise<Issued> {
+  const sentAtMs = clockMs(ports);
   const code = generateCode(ports.policy.codeLength);
   const codeHash = hashCode(ports.secret, verificationRef, code).toString("hex");
   const record: OtpVerificationRecord = {
@@ -356,12 +357,13 @@ async function issueChallengeTx(
     channelRef,
     codeHash,
     attempts: 0,
-    expiresAt: new Date(clockMs(ports) + ports.policy.ttlMs),
+    expiresAt: new Date(sentAtMs + ports.policy.ttlMs),
     state: "CODE_SENT",
     resendCount: 0,
     // P-06 (D8): el envio inicial cuenta como el primero de la ventana de 1 h.
-    lastSentAt: new Date(clockMs(ports)),
-    sendsWindowStart: new Date(clockMs(ports)),
+    // Una sola lectura del reloj: dos lecturas pueden diferir en 1 ms y violar otp_send_marks_shape (sends_window_start <= last_sent_at).
+    lastSentAt: new Date(sentAtMs),
+    sendsWindowStart: new Date(sentAtMs),
     sendsInWindow: 1,
   };
   await ports.otpRepo.save(record);

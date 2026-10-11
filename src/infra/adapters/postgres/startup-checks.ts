@@ -160,7 +160,7 @@ export const MAX_PURGE_AGE_MS = 26 * 60 * 60_000;
 interface RetentionStatusRow { store: string; retention_days: string | number; last_run_at: Date | string | null }
 
 function expectedRetentionDays(config: RetentionConfig): Readonly<Record<string, number>> {
-  return { security_event: config.securityEventDays, otp_verification: config.otpVerificationDays, purge_run: config.purgeRunDays };
+  return { security_event: config.securityEventDays, otp_budget: config.otpBudgetDays, otp_verification: config.otpVerificationDays, purge_run: config.purgeRunDays };
 }
 
 /** SEC-CNS-021 PR-3: la retencion configurada debe existir (STAGING) y coincidir con ops.retention_policy. Fail-closed. */
