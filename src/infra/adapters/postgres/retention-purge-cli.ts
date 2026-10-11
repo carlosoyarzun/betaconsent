@@ -9,6 +9,7 @@
 
 import { loadRetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import { createPool } from "./pool.ts";
+import { resolveDbRoleMode } from "./role-membership.ts";
 import { executeRetentionPurge, formatPurgeLine } from "./retention-purge.ts";
 import { assertStartupChecks } from "./startup-checks.ts";
 
@@ -41,7 +42,7 @@ const pool = createPool({ connectionString: url, max: 1, applicationName: "reten
 try {
   const client = await pool.connect();
   try {
-    await assertStartupChecks(client, { expectedEnvironment: environment, expectedRole: "worker", retention: loaded.config });
+    await assertStartupChecks(client, { expectedEnvironment: environment, expectedRole: "worker", roleMode: resolveDbRoleMode(process.env, environment), retention: loaded.config });
     for (const result of await executeRetentionPurge(client, loaded.config)) console.log(formatPurgeLine(result));
   } finally {
     client.release();

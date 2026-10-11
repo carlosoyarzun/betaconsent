@@ -1,6 +1,9 @@
 // Gobierna: CA-124 (H09), common.spec.yaml GRD-CM-11 (synthetic_only_environment, ERR-CM-11),
 // ADR-002 §2/§8, SEC-CNS-012 N2-06; TEST-CNS-747 (propuesto TEST-CNS-724 en el diseño).
 // SEC-CNS-021 PR-1 (CA-146 / P-34; INV-21-06): la lista de owners incluye security_event_owner (0028).
+// ADR-010 PR-2 (INV-DBR-01/03, Q-19): la lista de owners incluye outbox_claimer, platform_schema_owner, grant_owner, membership_owner,
+// case_state_owner y transition_owner; ademas la membresia de los roles gobernados debe coincidir EXACTAMENTE con la del modo
+// (role-membership.ts), fail-closed. integrity_verifier es un rol de runtime mas.
 // SEC-CNS-021 PR-3 (INV-21-10/19): en STAGING la configuracion CNS_RETENTION_* es obligatoria y debe coincidir con ops.retention_policy
 // (via ops.retention_status(); el runtime no lee la tabla); checkRetentionPurgeFreshness emite la senal retention_purge_stale.
 //
@@ -18,6 +21,8 @@
 
 import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { Queryable } from "./pool.ts";
+import { checkRoleMemberships, OWNER_ROLES, resolveDbRoleMode, RoleModeError } from "./role-membership.ts";
+import type { DbRoleMode } from "./role-membership.ts";
 
 /** F-7: tolerancia entre el reloj de la BD (vista del roster) y el del proceso (dominio). */
 export const MAX_CLOCK_SKEW_MS = 2000;
@@ -34,6 +39,8 @@ export interface StartupCheckOptions {
   expectedRole?: string;
   /** SEC-CNS-021 PR-3: retencion configurada (retention.config.ts). Obligatoria en STAGING; si se pasa, debe coincidir con ops.retention_policy. */
   retention?: RetentionConfig;
+  /** ADR-010 PR-2: modo de roles declarado por el deploy (nunca por la request). Por defecto resolveDbRoleMode(process.env, expectedEnvironment); REAL_DATA no esta activado hasta PR-7. */
+  roleMode?: DbRoleMode;
 }
 
 export interface StartupCheckResult {
@@ -92,11 +99,20 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 
   const membership = await db.query<{ owner: string; member: boolean }>(
     `SELECT o.rolname AS owner, pg_catalog.pg_has_role(current_user, o.oid, 'MEMBER') AS member
-       FROM pg_catalog.pg_roles o WHERE o.rolname IN ('consent_owner', 'tenant_resolve_owner', 'staff_roster_owner', 'integrity_owner', 'security_event_owner')`,
+       FROM pg_catalog.pg_roles o WHERE o.rolname = ANY($1::text[])`,
+    [[...OWNER_ROLES]],
   );
-  if (membership.rows.length < 5) failures.push("faltan los roles owner (base sin migrar)");
+  if (membership.rows.length < OWNER_ROLES.length) failures.push("faltan los roles owner (base sin migrar)");
   for (const row of membership.rows) {
     if (row.member) failures.push(`el rol de la conexión es miembro de ${row.owner}`);
+  }
+
+  try {
+    // El modo lo declara el deploy (CNS_DB_ROLE_MODE), el mismo que usa el runner; vacio solo vale en LOCAL/DEV. Sin modo valido, no arranca.
+    const roleMode = options.roleMode ?? resolveDbRoleMode(process.env, options.expectedEnvironment);
+    for (const problem of await checkRoleMemberships(db, roleMode)) failures.push(`${problem} (INV-DBR-03)`);
+  } catch (error) {
+    failures.push(error instanceof RoleModeError ? `${error.message} (INV-DBR-03)` : "no se pudo verificar la membresía de los roles (INV-DBR-03)");
   }
 
   await checkStaffRosterRoles(db, me?.rolname, failures);

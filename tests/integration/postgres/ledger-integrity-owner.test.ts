@@ -5,6 +5,7 @@
 // Requiere Postgres real (harness.ts); skip sin entorno.
 
 import assert from "node:assert/strict";
+import { checkRoleMemberships, EXPECTED_MEMBERSHIPS } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
@@ -16,7 +17,13 @@ pgTest("TEST-CNS-1230 pg: consent_owner (migrador) no puede alterar ni escribir 
        FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
       WHERE r.rolname = 'integrity_owner'`,
   )).rows;
-  assert.deepEqual(members, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
+  // ADR-010 PR-2 (INV-DBR-03): la membresia se afirma contra la lista exacta del modo (role-membership.ts), no contra una constante local.
+  // Hoy (IT0B_SYNTHETIC) consent_owner conserva SET sobre integrity_owner; PR-7 lo saca de esa lista y de este test (REVOKE + aserción).
+  const expectedMembers = EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.filter((e) => e.role === "integrity_owner")
+    .map((e) => ({ member: e.member, inherit_option: e.inherit, set_option: e.set }));
+  assert.deepEqual(expectedMembers, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
+  assert.deepEqual(members, expectedMembers);
+  assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), [], "la membresia de todos los roles gobernados coincide con el modo");
 
   const migrator = await ctx.connectAs("consent_migrator");
   const statements = [

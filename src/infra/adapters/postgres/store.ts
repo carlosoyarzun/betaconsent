@@ -15,6 +15,7 @@ import type { RetentionConfig } from "../../../server/modules/common/retention.c
 import type { TenantHandlePort } from "../../../server/ports/tenant-handle.port.ts";
 import type { TenantResolverPort } from "../../../server/ports/tenant-resolver.port.ts";
 import type { TenantTxPorts } from "../../../server/ports/unit-of-work.port.ts";
+import { resolveDbRoleMode } from "./role-membership.ts";
 import { createPool, guardBorrowedClient } from "./pool.ts";
 import { assertStartupChecks, checkRetentionPurgeFreshness, RETENTION_PURGE_STALE_SIGNAL } from "./startup-checks.ts";
 import { createPgTenantHandleAdapter } from "./tenant-handle.adapter.ts";
@@ -112,7 +113,7 @@ export async function openPostgresStore(options: OpenPostgresStoreOptions): Prom
   try {
     const client = guardBorrowedClient(await pool.connect());
     try {
-      await assertStartupChecks(client, { expectedEnvironment: options.environment, expectedRole: "app_rw", ...(retention === undefined ? {} : { retention }) });
+      await assertStartupChecks(client, { expectedEnvironment: options.environment, expectedRole: "app_rw", roleMode: resolveDbRoleMode(process.env, options.environment), ...(retention === undefined ? {} : { retention }) });
       if (options.environment === "STAGING") {
         // INV-21-19: senal (no fallo) si algun store no tiene una corrida de purga de menos de 26 h. Solo nombres de store, sin tenant.
         const freshness = await checkRetentionPurgeFreshness(client);

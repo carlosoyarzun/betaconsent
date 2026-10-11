@@ -6,7 +6,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ADR010_OWNER_ROLES,
+  checkAdr010OwnerUsage,
   checkIntegrityOwnerUsage,
+  findAdr010OwnerUsages,
   checkSecurityEventOwnerUsage,
   findSecurityEventOwnerUsages,
   findUsages,
@@ -117,4 +120,30 @@ test("TEST-CNS-1325 security-event-owner-check: solo la allowlist usa SET ROLE s
   assert.ok(checkSecurityEventOwnerUsage(real.map((f) => ({ ...f, text: "SELECT 1;" }))).every((e) => e.includes("obsoleta")));
   // El checker de integrity_owner no se altera por security_event_owner.
   assert.deepEqual(findUsages("db/migrations/0099_x.sql", "SET LOCAL ROLE security_event_owner;"), []);
+});
+
+// ADR-010 PR-2 (INV-DBR-03): el mismo control para los owners nuevos de cluster (solo 0034 concede su membresia; nadie hace SET ROLE).
+test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo ni GRANT de su membresia fuera de 0034 (repo real); detecta variantes y no da falsos positivos", () => {
+  const files: { path: string; text: string }[] = [];
+  collect(ROOT, files);
+  assert.ok(files.some((f) => f.path === "db/migrations/0034_adr010_cluster_roles.sql"), "el escaneo debe alcanzar 0034");
+  assert.deepEqual(checkAdr010OwnerUsage(files), []);
+
+  for (const role of ADR010_OWNER_ROLES) {
+    const variants = [`SET LOCAL ROLE ${role};`, `set role ${role};`, `SET SESSION ROLE "${role}";`, "await c.query(`SET ROLE " + role + "`);", `SELECT set_config('role', '${role}', true);`];
+    for (const v of variants) {
+      const path = v.includes("await") ? "src/infra/x.ts" : "db/migrations/0099_x.sql";
+      assert.ok(checkAdr010OwnerUsage([{ path, text: v }]).some((e) => e.includes(path) && e.includes("set-role") && e.includes(role)), `no detecto: ${v}`);
+    }
+    assert.ok(findAdr010OwnerUsages(role, "db/migrations/0099_x.sql", `GRANT ${role} TO app_rw;`).some((u) => u.kind === "grant-membership"));
+    for (const ok of [`GRANT USAGE ON SCHEMA platform TO ${role};`, `-- SET ROLE ${role};`, `SET LOCAL ROLE ${role}_x;`, `REVOKE ${role} FROM app_rw;`]) {
+      assert.deepEqual(findAdr010OwnerUsages(role, "db/migrations/0099_x.sql", ok), [], `falso positivo: ${ok}`);
+    }
+  }
+  // 0034 pasa solo con su GRANT; una entrada obsoleta se marca; otra migracion con SET ROLE falla.
+  const real = ADR010_OWNER_ROLES.map((r) => `GRANT ${r} TO consent_owner WITH INHERIT FALSE, SET TRUE;`).join("\n");
+  const m0034 = "db/migrations/0034_adr010_cluster_roles.sql";
+  assert.deepEqual(checkAdr010OwnerUsage([{ path: m0034, text: real }]), []);
+  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
+  assert.equal(checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: "db/migrations/0035_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
 });

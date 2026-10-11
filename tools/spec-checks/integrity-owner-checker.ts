@@ -43,6 +43,14 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
   "tests/integration/postgres/security-event-otp-family.test.ts": ["set-role"],
 };
 
+/** ADR-010 PR-2 (INV-DBR-03): owners nuevos de cluster. Mismas reglas; solo 0034 concede su membresia a consent_owner. */
+export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner"];
+export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {
+  // 0034: GRANT <owner> TO consent_owner WITH INHERIT FALSE, SET TRUE (Q-15 c, transitorio IT0B; PR-7 lo revoca en REAL_DATA).
+  "db/migrations/0034_adr010_cluster_roles.sql": ["grant-membership"],
+  // Sin otros caminos en PR-2: PR-3..PR-7 amplian esta allowlist con revision (CODEOWNERS).
+};
+
 /** Extensiones que pueden ejecutar SQL / abrir sesiones (el checker se ignora a si mismo y a su test, ver SELF_EXCLUDED). */
 export const SCANNED_EXT_RE = /\.(sql|ts|tsx|mts|js|cjs|mjs|sh|ya?ml)$/;
 export const SELF_EXCLUDED: readonly string[] = [
@@ -138,4 +146,18 @@ export function checkSecurityEventOwnerUsage(
   excluded: readonly string[] = SELF_EXCLUDED,
 ): string[] {
   return checkUsageFor(SECURITY_EVENT_RE, "SEC-CNS-021 INV-21-06; CA-146", files, allowlist, excluded);
+}
+
+/** ADR-010 PR-2: usos de `SET ROLE <owner nuevo>` / GRANT de su membresia fuera de la allowlist. Una entrada de la allowlist vale para cada owner. */
+export function findAdr010OwnerUsages(role: string, path: string, text: string): Usage[] {
+  return findUsagesFor(regexesFor(role), path, text);
+}
+
+export function checkAdr010OwnerUsage(
+  files: readonly SourceFile[],
+  allowlist: Readonly<Record<string, readonly UsageKind[]>> = ADR010_OWNER_ALLOWLIST,
+  excluded: readonly string[] = SELF_EXCLUDED,
+  roles: readonly string[] = ADR010_OWNER_ROLES,
+): string[] {
+  return roles.flatMap((role) => checkUsageFor(regexesFor(role), "ADR-010 PR-2; INV-DBR-03", files, allowlist, excluded));
 }

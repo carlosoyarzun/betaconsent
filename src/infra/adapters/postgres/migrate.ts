@@ -16,6 +16,24 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Queryable } from "./pool.ts";
+import { checkRoleMemberships, resolveDbRoleMode } from "./role-membership.ts";
+import type { DbRoleMode } from "./role-membership.ts";
+
+/**
+ * Serializa toda mutacion del catalogo global de roles (pg_authid / pg_auth_members: CREATE/ALTER ROLE, GRANT/REVOKE de
+ * membresias, contrasenas) entre procesos que usan la misma base de conexion. Sin ella dos escritores concurrentes sobre la misma fila
+ * fallan con "tuple concurrently updated" (XX000): Postgres no serializa las actualizaciones del catalogo de roles. Es el mismo lock que
+ * toma el alcance cluster. Los advisory locks son POR BASE DE DATOS: todos los escritores de roles deben conectarse a la misma base
+ * (la de conexion del superusuario del deploy). Reentrante en la misma sesion.
+ */
+export async function withClusterRoleLock<T>(superuser: Queryable, fn: () => Promise<T>): Promise<T> {
+  await superuser.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+  try {
+    return await fn();
+  } finally {
+    await superuser.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
+  }
+}
 
 export type MigrationScope = "cluster" | "database";
 
@@ -76,27 +94,50 @@ export function migrationSetDigest(migrations: readonly Migration[]): string {
   return h.digest("hex");
 }
 
+export interface ClusterScopeOptions {
+  /** Modo de roles (ADR-010 §4.1.1). Por defecto lo declara el deploy en CNS_DB_ROLE_MODE; sin valor = IT0B_SYNTHETIC. */
+  mode?: DbRoleMode;
+  /** Entorno del deploy (LOCAL/DEV/STAGING). Si falta CNS_DB_ROLE_MODE, solo LOCAL y DEV caen a IT0B_SYNTHETIC; sin entorno declarado es error. */
+  environment?: string;
+}
+
 /**
  * Alcance cluster (superusuario): aplica los archivos `-- scope: cluster` en orden. Son
  * idempotentes y no se registran. Requiere una conexión con privilegio de crear roles; es
  * el único uso de superusuario y solo crea roles (P1-3).
+ *
+ * ADR-010 PR-2 (INV-DBR-03, Q-19): al terminar, aserción posterior al cluster. La membresía de
+ * los roles gobernados debe coincidir EXACTAMENTE con la lista del modo; cualquier fila extra o
+ * faltante aborta el deploy (fail-closed). Un modo no activado (REAL_DATA hasta PR-7) también aborta.
  */
-export async function applyClusterScope(superuser: Queryable, migrations: readonly Migration[]): Promise<string[]> {
+export async function applyClusterScope(
+  superuser: Queryable,
+  migrations: readonly Migration[],
+  options: ClusterScopeOptions = {},
+): Promise<string[]> {
+  const mode = options.mode ?? resolveDbRoleMode(process.env, options.environment);
   const applied: string[] = [];
-  await superuser.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
-  try {
-    for (const m of migrations.filter((x) => x.scope === "cluster")) {
-      await superuser.query(m.sql);
-      applied.push(m.version);
+  await withClusterRoleLock(superuser, async () => {
+    // GUC de sesion que leen las migraciones de cluster (0034: sin GRANT de SET a consent_owner en REAL_DATA). Se limpia al terminar.
+    await superuser.query("SELECT set_config('cns.db_role_mode', $1, false)", [mode]);
+    try {
+      for (const m of migrations.filter((x) => x.scope === "cluster")) {
+        await superuser.query(m.sql);
+        applied.push(m.version);
+      }
+    } finally {
+      await superuser.query("SELECT set_config('cns.db_role_mode', '', false)");
     }
-  } finally {
-    await superuser.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
-  }
+    const problems = await checkRoleMemberships(superuser, mode);
+    if (problems.length > 0) {
+      throw new MigrationError(`Aserción de membresía de roles posterior al cluster falló (INV-DBR-03): ${problems.join("; ")}.`);
+    }
+  });
   return applied;
 }
 
-export type RoleName = "consent_migrator" | "app_rw" | "worker" | "platform_rw";
-const ROLE_NAMES: readonly RoleName[] = ["consent_migrator", "app_rw", "worker", "platform_rw"];
+export type RoleName = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier";
+const ROLE_NAMES: readonly RoleName[] = ["consent_migrator", "app_rw", "worker", "platform_rw", "integrity_verifier"];
 
 /**
  * Fija contraseñas de roles LOGIN (las recibe del entorno; jamás del repo). Un rol sin
@@ -107,13 +148,16 @@ export async function setRolePasswords(
   superuser: Queryable & { escapeLiteral(value: string): string },
   passwords: Partial<Record<RoleName, string>>,
 ): Promise<void> {
-  for (const role of ROLE_NAMES) {
-    const password = passwords[role];
-    if (password === undefined) continue;
-    if (password.length < 8) throw new MigrationError(`Contraseña demasiado corta para ${role}.`);
-    // role viene de una lista cerrada; la contraseña se escapa como literal.
-    await superuser.query(`ALTER ROLE ${role} PASSWORD ${superuser.escapeLiteral(password)}`);
-  }
+  // ALTER ROLE ... PASSWORD actualiza pg_authid: va dentro del lock de cluster (ver withClusterRoleLock).
+  await withClusterRoleLock(superuser, async () => {
+    for (const role of ROLE_NAMES) {
+      const password = passwords[role];
+      if (password === undefined) continue;
+      if (password.length < 8) throw new MigrationError(`Contraseña demasiado corta para ${role}.`);
+      // role viene de una lista cerrada; la contraseña se escapa como literal.
+      await superuser.query(`ALTER ROLE ${role} PASSWORD ${superuser.escapeLiteral(password)}`);
+    }
+  });
 }
 
 export interface DatabaseScopeOptions {

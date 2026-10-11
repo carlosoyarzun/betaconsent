@@ -297,7 +297,7 @@ pgTest("TEST-CNS-1313 pg: el CLI retention-purge-cli purga como worker e imprime
   assert.ok(differs.failures.some((f) => /otp_verification difiere de ops\.retention_policy/.test(f)), differs.failures.join("|"));
   const differsBudget = await runStartupChecks(app, { expectedEnvironment: "LOCAL", expectedRole: "app_rw", retention: { ...same, otpBudgetDays: 7 } });
   assert.ok(differsBudget.failures.some((f) => /otp_budget difiere de ops\.retention_policy/.test(f)), differsBudget.failures.join("|"));
-  const noConfig = await runStartupChecks(app, { expectedRole: "app_rw" });
+  const noConfig = await runStartupChecks(app, { expectedEnvironment: "LOCAL", expectedRole: "app_rw" });
   assert.equal(noConfig.ok, true, "LOCAL sin configuracion: arranca (purga deshabilitada)");
 });
 

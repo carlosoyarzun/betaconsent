@@ -6,12 +6,17 @@
 
 import assert from "node:assert/strict";
 import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
+import { OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { pgTest } from "./harness.ts";
 import type { PgRole } from "./harness.ts";
 
 const RUNTIME_ROLES: PgRole[] = ["app_rw", "worker", "platform_rw"];
-// SEC-CNS-021 PR-1 (INV-21-06): security_event_owner (0028) es owner NOLOGIN y ningun rol de runtime es miembro.
-const OWNERS = ["consent_owner", "tenant_resolve_owner", "integrity_owner", "security_event_owner"];
+// ADR-010 PR-2 (INV-DBR-01): integrity_verifier es un rol de runtime mas (LOGIN, sin privilegios sobre objetos todavia); no entra en RUNTIME_ROLES
+// porque los tests de abajo asumen SELECT en ops.db_catalog, que el verifier recibe en PR-4.
+const VERIFIER: PgRole = "integrity_verifier";
+// SEC-CNS-021 PR-1 (INV-21-06) + ADR-010 PR-2 (Q-19): todos los owners NOLOGIN de §4.1.1 (incluye outbox_claimer, staff_roster_owner y los 5 nuevos).
+const OWNERS: readonly string[] = OWNER_ROLES;
+const NOLOGIN_ROLES: readonly string[] = [...OWNERS, "rights_operator", "staff_roster_reader"];
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
 pgTest("TEST-CNS-744 pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, fuera de los owners y sin session_replication_role", async (ctx) => {
@@ -21,14 +26,14 @@ pgTest("TEST-CNS-744 pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, 
   }>(
     `SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication, rolcanlogin
        FROM pg_roles WHERE rolname = ANY($1)`,
-    [[...RUNTIME_ROLES, "consent_migrator", ...OWNERS]],
+    [[...RUNTIME_ROLES, VERIFIER, "consent_migrator", ...NOLOGIN_ROLES]],
   )).rows;
-  assert.equal(roles.length, 8);
+  assert.equal(roles.length, RUNTIME_ROLES.length + 1 + 1 + NOLOGIN_ROLES.length);
   for (const r of roles) {
     assert.equal(r.rolsuper, false, `${r.rolname} superusuario`);
     assert.equal(r.rolbypassrls, false, `${r.rolname} BYPASSRLS`);
     assert.equal(r.rolcreaterole || r.rolcreatedb || r.rolreplication, false, `${r.rolname} privilegios de cluster`);
-    assert.equal(r.rolcanlogin, !OWNERS.includes(r.rolname), `${r.rolname} rolcanlogin (los owners son NOLOGIN)`);
+    assert.equal(r.rolcanlogin, !NOLOGIN_ROLES.includes(r.rolname), `${r.rolname} rolcanlogin (los owners, rights_operator y staff_roster_reader son NOLOGIN)`);
   }
 
   const schemas = (await admin.query<{ nspname: string }>(
@@ -36,8 +41,8 @@ pgTest("TEST-CNS-744 pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, 
   )).rows.map((r) => r.nspname);
   assert.ok(["app", "integrity", "ops", "tenant_resolve", "public"].every((s) => schemas.includes(s)));
 
-  for (const role of RUNTIME_ROLES) {
-    for (const owner of OWNERS) {
+  for (const role of [...RUNTIME_ROLES, VERIFIER]) {
+    for (const owner of [...OWNERS, "rights_operator"]) {
       const m = (await admin.query<{ m: boolean }>("SELECT pg_has_role($1, $2, 'MEMBER') AS m", [role, owner])).rows[0];
       assert.equal(m?.m, false, `${role} es miembro de ${owner}`);
     }

@@ -28,6 +28,7 @@ import {
   loadMigrations,
   migrationSetDigest,
   setRolePasswords,
+  withClusterRoleLock,
 } from "../../../src/infra/adapters/postgres/migrate.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +36,7 @@ export const MIGRATIONS_DIR = join(HERE, "..", "..", "..", "db", "migrations");
 const HARNESS_LOCK_KEY = 7_240_125;
 const IN_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
-export type PgRole = "consent_migrator" | "app_rw" | "worker" | "platform_rw";
+export type PgRole = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier";
 
 export interface PgTestContext {
   dbName: string;
@@ -43,6 +44,13 @@ export interface PgTestContext {
   connectAs(role: PgRole): Promise<Client>;
   /** Conexión de superusuario a la base de este archivo (solo para preparar/inspeccionar). */
   connectAsSuperuser(): Promise<Client>;
+  /**
+   * Ejecuta `fn` con el lock de cluster de mutaciones del catalogo de roles (el mismo de migrate.ts). OBLIGATORIO para todo test que haga
+   * CREATE/ALTER/GRANT/REVOKE sobre roles: el catalogo es global al cluster y los archivos de test corren en paralelo; sin el lock otro
+   * archivo que provisiona (applyClusterScope/setRolePasswords) falla con "tuple concurrently updated". El lock se toma en una conexion
+   * a la base de conexion (los advisory locks son por base de datos), no en la base del archivo.
+   */
+  withRoleCatalogLock<T>(fn: () => Promise<T>): Promise<T>;
   /** URL de conexión del rol (para createPool). */
   urlFor(role: PgRole): string;
 }
@@ -83,12 +91,13 @@ async function provisionTemplate(config: Config, admin: Client): Promise<string>
   const migrations = loadMigrations(MIGRATIONS_DIR);
   const template = `consent_tpl_${migrationSetDigest(migrations).slice(0, 16)}`;
 
-  await applyClusterScope(admin, migrations);
+  await applyClusterScope(admin, migrations, { environment: "LOCAL" }); // la plantilla es LOCAL sintetica; sin CNS_DB_ROLE_MODE el modo cae a IT0B_SYNTHETIC
   await setRolePasswords(admin, {
     consent_migrator: config.migratorPassword,
     app_rw: config.appPassword,
     worker: config.appPassword,
     platform_rw: config.appPassword,
+    integrity_verifier: config.appPassword, // ADR-010 PR-2 (0034)
   });
 
   const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);
@@ -135,6 +144,15 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
       await client.connect();
       clients.push(client);
       return client;
+    },
+    async withRoleCatalogLock(fn) {
+      const locker = new pg.Client({ connectionString: config.url });
+      await locker.connect();
+      try {
+        return await withClusterRoleLock(locker, fn);
+      } finally {
+        await locker.end();
+      }
     },
     async connectAsSuperuser() {
       const u = new URL(config.url);
