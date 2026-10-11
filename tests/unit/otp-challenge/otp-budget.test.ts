@@ -117,6 +117,7 @@ test("TEST-CNS-393/394: V6a: el 3.er LOCKED marca otpExhausted + OTP_BUDGET_EXHA
   const ev = s.securityEvents.listAll(T).filter((e) => e.eventType === "OTP_BUDGET_EXHAUSTED");
   assert.equal(ev.length, 1);
   assert.equal((ev[0] as unknown as { keyKind: string }).keyKind, "INVITATION");
+  assert.equal((ev[0] as unknown as { windowKind: string }).windowKind, "LIFETIME", "V6a: los 3 LOCKED se cuentan de por vida (Carlos 2026-10-10, opcion A)");
   await assert.rejects(() => requestOtp(s.otp, T, fixtureUuid("ver-393-x"), inv, CH), (e) => code(e) === "ERR-OT-06");
 });
 
@@ -192,4 +193,16 @@ test("TEST-CNS-1335: clave posterior agotada revierte las reservas previas de la
   assert.equal(await b.reserveFailure(T, [iv], at, 1000, 1), null);
   assert.equal((await b.reserveFailure(T, [ch, iv], at, 1000, 1))?.keyKind, "INVITATION");
   assert.equal(b.rows(T).find((r) => r.keyKind === "CHANNEL"), undefined, "CHANNEL no quedo reservada");
+});
+
+test("TEST-CNS-1339: V6a emite OTP_BUDGET_EXHAUSTED(DECISION, INVITATION) con windowKind LIFETIME, no DAY_1", async () => {
+  const s = setup({ maxAttempts: 1, budgetMaxFailures: 1000 });
+  const inv = await open(s.invitation, "1339");
+  for (let i = 0; i < 3; i += 1) {
+    const ver = fixtureUuid(`ver-1339-${i}`);
+    await requestOtp(s.otp, T, ver, inv, CH);
+    await assert.rejects(() => submitOtp(s.otp, T, ver, wrongOf(s.channel.sent.at(-1)!.code), fixtureUuid("dm"), 2), (e) => code(e) === "ERR-OT-04");
+  }
+  const ev = s.securityEvents.listAll(T).filter((e) => e.eventType === "OTP_BUDGET_EXHAUSTED") as unknown as Array<{ scopeClass: string; keyKind: string; windowKind: string }>;
+  assert.deepEqual(ev.map((e) => [e.scopeClass, e.keyKind, e.windowKind]), [["DECISION", "INVITATION", "LIFETIME"]]);
 });

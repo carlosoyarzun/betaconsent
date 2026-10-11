@@ -44,6 +44,7 @@ const VALID: OtpFamilySecurityEventEntry[] = [
   { tenantId: T, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef: V, scopeClass: "RIGHTS", keyKind: "CHAIN", windowKind: "DAYS_30" },
   { tenantId: T, eventType: "RECOVERY_TOKEN_ISSUED", recoveryRef: RC, trigger: "LIMIT_REACHED" },
   { tenantId: T, eventType: "MANAGEMENT_TOKEN_ROTATED", chainRef: CN, trigger: "RECEIPT_REISSUED" },
+  { tenantId: T, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef: V, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "LIFETIME" }, // V6a (TEST-CNS-1341)
 ];
 
 /** Proyeccion al sobre SecurityEvent (payload del contrato; el sobre lleva eventId/tenantRef/occurredAt/environment/dataClass). */
@@ -86,6 +87,8 @@ test("TEST-CNS-1304 contrato: la familia OTP/RECOVERY/MANAGEMENT del puerto vali
     budget({ keyKind: "CHAIN" }),
     budget({ windowKind: "DAYS_30" }),
     budget({ scopeClass: "RIGHTS", windowKind: "DAYS_30" }),
+    budget({ windowKind: "LIFETIME" }), // LIFETIME solo en (DECISION, INVITATION)
+    budget({ scopeClass: "RIGHTS", keyKind: "CHAIN", windowKind: "LIFETIME" }),
   ];
   const probe = createInMemorySecurityEventLog();
   for (const bad of forbidden) {
@@ -133,6 +136,10 @@ test("TEST-CNS-1304 contrato: la familia OTP/RECOVERY/MANAGEMENT del puerto vali
   assert.deepEqual([...schema.$defs.MANAGEMENT_TOKEN_ROTATED.properties.trigger.enum].sort(), [...MANAGEMENT_TOKEN_TRIGGERS].sort());
 
   const sql = readFileSync(join(ROOT, "db", "migrations", "0029_security_event_otp_family.sql"), "utf8").replace(/--[^\n]*/g, "");
+  // 0033 reemplaza security_event_window_kind_enum (LIFETIME, V6a): el vocabulario vigente de window_kind es el de 0033.
+  const sql33 = readFileSync(join(ROOT, "db", "migrations", "0033_retention_purge_otp_budget.sql"), "utf8").replace(/--[^\n]*/g, "");
+  const win = /security_event_window_kind_enum CHECK \(window_kind IN \(([^)]*)\)\)/.exec(sql33);
+  assert.ok(win, "no hay security_event_window_kind_enum en 0033");
   const listOf = (column: string): string[] => {
     const m = new RegExp(`CHECK \\(${column} IN \\(([^)]*)\\)\\)`).exec(sql);
     assert.ok(m, `no hay CHECK de enum para ${column} en 0029`);
@@ -141,7 +148,7 @@ test("TEST-CNS-1304 contrato: la familia OTP/RECOVERY/MANAGEMENT del puerto vali
   assert.deepEqual(listOf("otp_scope"), [...SECURITY_EVENT_OTP_SCOPES].sort());
   assert.deepEqual(listOf("scope_class"), [...SECURITY_EVENT_SCOPE_CLASSES].sort());
   assert.deepEqual(listOf("key_kind"), [...SECURITY_EVENT_KEY_KINDS].sort());
-  assert.deepEqual(listOf("window_kind"), [...SECURITY_EVENT_WINDOW_KINDS].sort());
+  assert.deepEqual([...win![1]!.matchAll(/'([A-Z0-9_]+)'/g)].map((x) => x[1]!).sort(), [...SECURITY_EVENT_WINDOW_KINDS].sort(), "CHECK vigente (0033) == puerto");
   assert.deepEqual(listOf("trigger_kind"), [...RECOVERY_TOKEN_TRIGGERS, ...MANAGEMENT_TOKEN_TRIGGERS].sort());
   const typeEnum = /security_event_type_enum CHECK \(event_type IN \(([^)]*)\)\)/.exec(sql);
   assert.ok(typeEnum, "no hay security_event_type_enum en 0029");

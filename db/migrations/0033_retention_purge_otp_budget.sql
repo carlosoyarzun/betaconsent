@@ -35,6 +35,54 @@ CREATE POLICY otp_budget_purge_select ON ops.otp_budget FOR SELECT TO security_e
 CREATE POLICY otp_budget_purge_delete ON ops.otp_budget FOR DELETE TO security_event_owner
   USING (expires_at < pg_catalog.now() - (SELECT p.retention FROM ops.retention_policy p WHERE p.store = 'otp_budget'));
 
+-- V6a windowKind = LIFETIME (Carlos, 2026-10-10, opcion A): los 3 LOCKED por invitacion se cuentan de por vida, sin ventana. Se reemplazan, con los
+-- mismos nombres, el CHECK del vocabulario y el de forma de ops.security_event (tabla de security_event_owner; los triggers ENABLE ALWAYS son de
+-- UPDATE/DELETE/TRUNCATE y no intervienen en DDL de constraints). Regla: LIFETIME solo vale para (DECISION, INVITATION) [V6a]. INVITATION conserva
+-- DAY_1 porque V6 (presupuesto P-04 por invitacion, ventana DAY_1) tambien emite OTP_BUDGET_EXHAUSTED con INVITATION; por eso NO se prohibe INVITATION+DAY_1.
+-- ops.otp_budget.window_kind NO cambia (V6a no reserva en esa tabla). ADD CONSTRAINT valida las filas existentes (todas siguen cumpliendo).
+ALTER TABLE ops.security_event DROP CONSTRAINT security_event_window_kind_enum;
+ALTER TABLE ops.security_event ADD CONSTRAINT security_event_window_kind_enum CHECK (window_kind IN ('DAY_1', 'DAYS_30', 'LIFETIME'));
+ALTER TABLE ops.security_event DROP CONSTRAINT security_event_otp_shape;
+ALTER TABLE ops.security_event ADD CONSTRAINT security_event_otp_shape CHECK (
+  CASE
+    WHEN event_type IN ('STAFF_LOGIN', 'STAFF_LOGOUT', 'CASE_LOGIN', 'CASE_LOGOUT', 'SESSION_REVOKED_BY_ROTATION') THEN
+      verification_ref IS NULL AND otp_scope IS NULL AND scope_class IS NULL AND channel_ref IS NULL AND key_kind IS NULL
+      AND window_kind IS NULL AND chain_ref IS NULL AND recovery_ref IS NULL AND trigger_kind IS NULL
+    ELSE
+      actor_ref IS NULL AND actor_role IS NULL AND session_kind IS NULL AND session_ref IS NULL AND case_ref IS NULL
+      AND CASE event_type
+        WHEN 'OTP_ISSUED' THEN
+          verification_ref IS NOT NULL AND otp_scope IS NOT NULL AND channel_ref IS NOT NULL AND scope_class IS NULL AND key_kind IS NULL
+          AND window_kind IS NULL AND chain_ref IS NULL AND recovery_ref IS NULL AND trigger_kind IS NULL
+        WHEN 'OTP_FAILED' THEN
+          verification_ref IS NOT NULL AND otp_scope IS NOT NULL AND channel_ref IS NULL AND scope_class IS NULL AND key_kind IS NULL
+          AND window_kind IS NULL AND chain_ref IS NULL AND recovery_ref IS NULL AND trigger_kind IS NULL
+        WHEN 'OTP_LOCKED' THEN
+          verification_ref IS NOT NULL AND otp_scope IS NOT NULL AND channel_ref IS NULL AND scope_class IS NULL AND key_kind IS NULL
+          AND window_kind IS NULL AND chain_ref IS NULL AND recovery_ref IS NULL AND trigger_kind IS NULL
+        WHEN 'OTP_EXPIRED' THEN
+          verification_ref IS NOT NULL AND otp_scope IS NOT NULL AND channel_ref IS NULL AND scope_class IS NULL AND key_kind IS NULL
+          AND window_kind IS NULL AND chain_ref IS NULL AND recovery_ref IS NULL AND trigger_kind IS NULL
+        WHEN 'OTP_BUDGET_EXHAUSTED' THEN
+          verification_ref IS NOT NULL AND scope_class IS NOT NULL AND key_kind IS NOT NULL AND window_kind IS NOT NULL
+          AND otp_scope IS NULL AND channel_ref IS NULL AND chain_ref IS NULL AND recovery_ref IS NULL AND trigger_kind IS NULL
+          AND (key_kind <> 'INVITATION' OR scope_class = 'DECISION')
+          AND (key_kind <> 'CHAIN' OR scope_class = 'RIGHTS')
+          AND (window_kind <> 'DAYS_30' OR (scope_class = 'RIGHTS' AND key_kind = 'CHAIN'))
+          AND (window_kind <> 'LIFETIME' OR (scope_class = 'DECISION' AND key_kind = 'INVITATION'))
+        WHEN 'RECOVERY_TOKEN_ISSUED' THEN
+          recovery_ref IS NOT NULL AND trigger_kind IS NOT NULL AND trigger_kind IN ('REQUESTER_ASKED', 'LIMIT_REACHED', 'CASE_CONTACT', 'SCHOOL_REPORTED')
+          AND verification_ref IS NULL AND otp_scope IS NULL AND scope_class IS NULL AND channel_ref IS NULL AND key_kind IS NULL
+          AND window_kind IS NULL AND chain_ref IS NULL
+        WHEN 'MANAGEMENT_TOKEN_ROTATED' THEN
+          chain_ref IS NOT NULL AND trigger_kind IS NOT NULL AND trigger_kind IN ('RECEIPT_REISSUED', 'FAILURE_CAP')
+          AND verification_ref IS NULL AND otp_scope IS NULL AND scope_class IS NULL AND channel_ref IS NULL AND key_kind IS NULL
+          AND window_kind IS NULL AND recovery_ref IS NULL
+        ELSE false
+      END
+  END
+);
+
 -- Aserciones sobre la politica (consent_owner no puede leer retention_policy: se verifican aqui, como security_event_owner).
 DO $policy$
 BEGIN
@@ -330,6 +378,14 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.oid = 'ops.otp_budget'::pg_catalog.regclass AND c.relrowsecurity AND c.relforcerowsecurity
                     AND pg_catalog.pg_get_userbyid(c.relowner) = 'security_event_owner') THEN
     RAISE EXCEPTION 'ops.otp_budget perdio ENABLE/FORCE ROW LEVEL SECURITY o su dueno';
+  END IF;
+  -- V6a LIFETIME: ambos CHECK de ops.security_event reemplazados con el mismo nombre, validados y con la regla nueva.
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_constraint c
+       WHERE c.conrelid = 'ops.security_event'::pg_catalog.regclass AND c.convalidated
+         AND ((c.conname = 'security_event_window_kind_enum' AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%DAY_1%' AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%DAYS_30%' AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%LIFETIME%')
+           OR (c.conname = 'security_event_otp_shape' AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%LIFETIME%' AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%DAYS_30%'
+               AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%OTP_BUDGET_EXHAUSTED%'))) <> 2 THEN
+    RAISE EXCEPTION 'security_event_window_kind_enum / security_event_otp_shape no admiten LIFETIME (V6a) o no estan validados';
   END IF;
 END
 $assert$;

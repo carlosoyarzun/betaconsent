@@ -319,7 +319,7 @@ async function submitCore(
       const lockedCount = await ports.otpRepo.countLockedByParent(tenantId, found.parentRef, "DECISION");
       if (lockedCount >= budget.maxLocked && invitation.otpExhausted !== true) {
         await ports.invitation.invitationRepo.markOtpExhausted(tenantId, found.parentRef);
-        await ports.securityEvents.record({ tenantId, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "DAY_1" });
+        await ports.securityEvents.record({ tenantId, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "LIFETIME" });
       }
     }
     return { fail: "ERR-OT-04" };

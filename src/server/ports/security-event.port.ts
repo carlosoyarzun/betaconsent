@@ -38,13 +38,13 @@ export const ALL_SECURITY_EVENT_TYPES: readonly AnySecurityEventType[] = [...SEC
 export type SecurityEventOtpScope = "DECISION" | "REVOCATION" | "MANAGE";
 export type SecurityEventScopeClass = "DECISION" | "RIGHTS";
 export type SecurityEventKeyKind = "CHANNEL" | "INVITATION" | "CHAIN";
-export type SecurityEventWindowKind = "DAY_1" | "DAYS_30";
+export type SecurityEventWindowKind = "DAY_1" | "DAYS_30" | "LIFETIME";
 export type RecoveryTokenTrigger = "REQUESTER_ASKED" | "LIMIT_REACHED" | "CASE_CONTACT" | "SCHOOL_REPORTED";
 export type ManagementTokenTrigger = "RECEIPT_REISSUED" | "FAILURE_CAP";
 export const SECURITY_EVENT_OTP_SCOPES: readonly SecurityEventOtpScope[] = ["DECISION", "REVOCATION", "MANAGE"];
 export const SECURITY_EVENT_SCOPE_CLASSES: readonly SecurityEventScopeClass[] = ["DECISION", "RIGHTS"];
 export const SECURITY_EVENT_KEY_KINDS: readonly SecurityEventKeyKind[] = ["CHANNEL", "INVITATION", "CHAIN"];
-export const SECURITY_EVENT_WINDOW_KINDS: readonly SecurityEventWindowKind[] = ["DAY_1", "DAYS_30"];
+export const SECURITY_EVENT_WINDOW_KINDS: readonly SecurityEventWindowKind[] = ["DAY_1", "DAYS_30", "LIFETIME"];
 export const RECOVERY_TOKEN_TRIGGERS: readonly RecoveryTokenTrigger[] = ["REQUESTER_ASKED", "LIMIT_REACHED", "CASE_CONTACT", "SCHOOL_REPORTED"];
 export const MANAGEMENT_TOKEN_TRIGGERS: readonly ManagementTokenTrigger[] = ["RECEIPT_REISSUED", "FAILURE_CAP"];
 
@@ -227,6 +227,7 @@ function validateOtpFamilyEntry(entry: OtpFamilySecurityEventEntry): void {
       if (entry.keyKind === "INVITATION" && entry.scopeClass !== "DECISION") fail("keyKind");
       if (entry.keyKind === "CHAIN" && entry.scopeClass !== "RIGHTS") fail("keyKind");
       if (entry.windowKind === "DAYS_30" && !(entry.scopeClass === "RIGHTS" && entry.keyKind === "CHAIN")) fail("windowKind");
+      if (entry.windowKind === "LIFETIME" && !(entry.scopeClass === "DECISION" && entry.keyKind === "INVITATION")) fail("windowKind");
       return;
     case "RECOVERY_TOKEN_ISSUED":
       ref("recoveryRef"); oneOf("trigger", RECOVERY_TOKEN_TRIGGERS);

@@ -56,8 +56,8 @@ budget:
   enums:
     scope_class: [DECISION, RIGHTS]
     key_kind: [CHANNEL, INVITATION, CHAIN] # estable, sin alias (DEC-BR-017 §6)
-    window_kind: [DAY_1, DAYS_30]
-  checks: ["INVITATION solo en DECISION", "CHAIN solo en RIGHTS", "DAYS_30 solo en (RIGHTS, CHAIN)"]
+    window_kind: [DAY_1, DAYS_30, LIFETIME]
+  checks: ["INVITATION solo en DECISION", "CHAIN solo en RIGHTS", "DAYS_30 solo en (RIGHTS, CHAIN)", "LIFETIME solo en (DECISION, INVITATION): V6a, 3 LOCKED por invitacion de por vida"]
   governedBy: ["SEC-CNS-006 P-04, P-04a, P-04b, P-04c, P-05, P-07", "ADR-002 §3", "DEC-BR-017 §6, §9"]
 
 parametersRef:
