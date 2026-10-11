@@ -43,12 +43,27 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
   "tests/integration/postgres/security-event-otp-family.test.ts": ["set-role"],
 };
 
-/** ADR-010 PR-2 (INV-DBR-03): owners nuevos de cluster. Mismas reglas; solo 0034 concede su membresia a consent_owner. */
+/**
+ * ADR-010 PR-2 (INV-DBR-03): owners nuevos de cluster. Mismas reglas; solo 0034 concede su membresia a consent_owner.
+ * ADR-010 PR-3: 0035 crea el esquema platform y sus objetos con SET LOCAL ROLE de platform_schema_owner, membership_owner y grant_owner
+ * (patron 0027); la allowlist es POR ROL (una entrada que el rol no usa se marca obsoleta).
+ */
 export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner"];
-export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {
+const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
+const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
+export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Record<string, readonly UsageKind[]>>>> = {
   // 0034: GRANT <owner> TO consent_owner WITH INHERIT FALSE, SET TRUE (Q-15 c, transitorio IT0B; PR-7 lo revoca en REAL_DATA).
-  "db/migrations/0034_adr010_cluster_roles.sql": ["grant-membership"],
-  // Sin otros caminos en PR-2: PR-3..PR-7 amplian esta allowlist con revision (CODEOWNERS).
+  // 0035 (PR-3): SET LOCAL ROLE para crear el esquema platform (platform_schema_owner) y sus tablas/funciones (membership_owner, grant_owner).
+  platform_schema_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"] },
+  membership_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"] },
+  grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"] },
+  // Sin otros caminos: PR-5 (case_state_owner, transition_owner) y PR-7 amplian esta allowlist con revision (CODEOWNERS).
+  case_state_owner: { [M0034]: ["grant-membership"] },
+  transition_owner: { [M0034]: ["grant-membership"] },
+};
+/** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
+export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {
+  [M0034]: ["grant-membership"],
 };
 
 /** Extensiones que pueden ejecutar SQL / abrir sesiones (el checker se ignora a si mismo y a su test, ver SELF_EXCLUDED). */
@@ -155,9 +170,10 @@ export function findAdr010OwnerUsages(role: string, path: string, text: string):
 
 export function checkAdr010OwnerUsage(
   files: readonly SourceFile[],
-  allowlist: Readonly<Record<string, readonly UsageKind[]>> = ADR010_OWNER_ALLOWLIST,
+  allowlist: Readonly<Record<string, readonly UsageKind[]>> | undefined = undefined,
   excluded: readonly string[] = SELF_EXCLUDED,
   roles: readonly string[] = ADR010_OWNER_ROLES,
 ): string[] {
-  return roles.flatMap((role) => checkUsageFor(regexesFor(role), "ADR-010 PR-2; INV-DBR-03", files, allowlist, excluded));
+  return roles.flatMap((role) =>
+    checkUsageFor(regexesFor(role), "ADR-010 PR-2/PR-3; INV-DBR-03", files, allowlist ?? ADR010_OWNER_ALLOWLIST_BY_ROLE[role] ?? ADR010_OWNER_ALLOWLIST, excluded));
 }

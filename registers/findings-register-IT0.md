@@ -71,8 +71,13 @@ Vocabulario de estado (Carlos, 2026-10-08): DEFERRED-IT0b para los que se retoma
 | F-A10-09 | P2 | Huecos del checker de owners (`tools/spec-checks/integrity-owner-checker.ts`) de ADR-010 PR-2: no detecta `SET role = ...`, `CREATE ROLE ... IN ROLE <owner>`, `ALTER GROUP ... ADD USER`, SQL dinámico (`format('SET ROLE %I')`); `rights_operator` no está incluido en `ADR010_OWNER_ROLES` | OPEN | lampone-dev | Revisión de seguridad de la #85 (2026-10-11) | Ampliar el checker o cubrirlo con la aserción de membresía; antes de ADR-010 PR-7 |
 | F-A10-10 | P2 | `PUBLIC` tiene TEMP (base) y CONNECT por defecto: todos los roles de runtime (incl. `integrity_verifier`) pueden crear tablas temporales y conectarse a cualquier base del cluster | OPEN | lampone-security | Revisión de seguridad de la #85 (2026-10-11) | REVOKE de PUBLIC y GRANT explícito por rol; decidir antes de datos reales |
 | F-A10-11 | P2 | La aserción de membresía no se repite tras `applyDatabaseScope` (una migración de base podría alterar `pg_auth_members`), y los `ALTER ROLE ... SET` de los owners nuevos (p. ej. timeouts) no se restablecen en cada deploy | OPEN | lampone-dev | Revisión de seguridad de la #85 (2026-10-11) | Repetir la aserción tras la fase database y reafirmar `ALTER ROLE ... SET` en el cluster scope |
+| F-A10-12 | P2 | Alias de principal y unicidad de `sub_hmac`: un mismo humano podría tener varios `principal_ref` (y así cumplir el doble control con dos identidades); el mapeo `sub_hmac` → `principal_ref` no existe en PR-3 | OPEN | lampone-dev | Revisión de seguridad de la #86 (2026-10-11) (P2-1) | Cerrar en ADR-010 PR-4 (mapeo con UNIQUE sobre `sub_hmac`); P1 antes de datos reales |
+| F-A10-13 | P2 | Las funciones de aprovisionamiento no lanzan ante un DENY (devuelven NULL/false) para que la evidencia de `authorization_check` se confirme: el adapter debe hacer COMMIT ante un DENY y responder un error genérico uniforme (sin revelar el motivo) | OPEN | lampone-dev | Revisión de seguridad de la #86 (2026-10-11) (P2-5) | Cerrar al escribir el adapter de `platform` (PR-4/PR-5) |
+| F-A10-14 | P2 | `platform.authorize(action, resource_ref)` es un dry-run (decide y deja evidencia pero no consume el nonce) y `platform_rw` puede invocarlo directamente; el contrato OpenAPI no lo declara | OPEN | lampone-architect | Revisión de seguridad de la #86 (2026-10-11) (P2-6) | Declarar la semántica de dry-run en el contrato de plataforma o retirar el EXECUTE directo |
+| F-A10-15 | P2 | `authorization_check` y `action_nonce` no tienen retención ni purga (append-only; sin DELETE) ni rate-limit de emisión de nonces. LEGAL DECISION sobre el plazo (LD-15/P-34). P1 antes de datos reales | OPEN | lampone-security | Revisión de seguridad de la #86 (2026-10-11) (P2-9) | Decisión de Carlos (LEGAL DECISION) sobre retención; purga como migración nueva (PR-4); rate-limit de `issue_action_nonce` |
+| F-A10-16 | P2 | Drift con ADR-010 §4.6: pide RLS por tenant en `authorization_check`, pero el código usa policies de dueño (`TO grant_owner USING (true)`) y ningún runtime tiene acceso a la tabla | OPEN | lampone-architect | Revisión de seguridad de la #86 (2026-10-11) (P2-10) | Alinear el ADR con el código o agregar policies por tenant cuando un rol de runtime lea la tabla |
 
-Hallazgos ADR-010 rev. 4 (F-A10-01…11): P1: 2 (F-A10-01 pasa a P0 antes de datos reales), P2: 9. Ningún P0 en IT0b sintético.
+Hallazgos ADR-010 rev. 4 (F-A10-01…16): P1: 2 (F-A10-01 pasa a P0 antes de datos reales), P2: 14. Ningún P0 en IT0b sintético.
 
 ## Notas
 
@@ -85,6 +90,7 @@ Hallazgos ADR-010 rev. 4 (F-A10-01…11): P1: 2 (F-A10-01 pasa a P0 antes de dat
 
 ## Nota de versión
 
+- 2026-10-11 (lampone-dev, revisión de seguridad de la #86): agrega F-A10-12…F-A10-16 (ADR-010 PR-3; B1 y B2 y P2-2/4/7/8 se corrigen en la propia 0035).
 - 2026-10-11 (lampone-dev, revisión de seguridad de la #85): agrega F-A10-09…F-A10-11 (ADR-010 PR-2).
 - 2026-10-11 (lampone-architect, decisiones de Carlos Q-17…Q-20): agrega F-A10-01…F-A10-08 (ADR-010 rev. 4, PR-1).
 - 2026-10-08 (lampone-dev, Carlos): F-X8-09, F-X8-10 y F-X8-14 pasan de OPEN a DEFERRED-IT0b por decisión de Carlos (no afectan IT0 sintético). R-10 y R-02 del risk-register no cambian de estado.

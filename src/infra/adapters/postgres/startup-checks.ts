@@ -4,6 +4,8 @@
 // ADR-010 PR-2 (INV-DBR-01/03, Q-19): la lista de owners incluye outbox_claimer, platform_schema_owner, grant_owner, membership_owner,
 // case_state_owner y transition_owner; ademas la membresia de los roles gobernados debe coincidir EXACTAMENTE con la del modo
 // (role-membership.ts), fail-closed. integrity_verifier es un rol de runtime mas.
+// ADR-010 PR-3 (INV-DBR-01; Q4, Q-17): el rol de runtime no tiene ningun privilegio sobre las tablas del esquema platform (sin DML: solo funciones
+// SECURITY DEFINER) y solo puede ejecutar las funciones de platform que su rol declara (PLATFORM_RUNTIME_EXECUTE).
 // SEC-CNS-021 PR-3 (INV-21-10/19): en STAGING la configuracion CNS_RETENTION_* es obligatoria y debe coincidir con ops.retention_policy
 // (via ops.retention_status(); el runtime no lee la tabla); checkRetentionPurgeFreshness emite la senal retention_purge_stale.
 //
@@ -56,6 +58,17 @@ export class StartupCheckError extends Error {
     this.failures = failures;
   }
 }
+
+/**
+ * ADR-010 PR-3 (specs/db-roles.spec.yaml): funciones de platform ejecutables por cada rol de runtime. app_rw (web, consola STAFF, Q-17) solo SOLICITA
+ * membership de TENANT_ADMIN; platform_rw (equipo de LectorPro) el resto. worker e integrity_verifier no ejecutan ninguna en PR-3 (PR-4 amplia).
+ */
+export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]>> = {
+  app_rw: ["request_membership"],
+  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce"],
+  worker: [],
+  integrity_verifier: [],
+};
 
 const ALLOWED_ENVIRONMENTS = new Set(["LOCAL", "DEV", "STAGING"]);
 
@@ -116,6 +129,8 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   }
 
   await checkStaffRosterRoles(db, me?.rolname, failures);
+  await checkPlatformSchemaExposure(db, me?.rolname, failures);
+  await checkNoAppGucDefaults(db, failures);
 
   const clock = await checkClockSkew(db, options.nowMs ?? Date.now).catch(() => ({ ok: false, skewMs: Number.NaN }));
   if (!clock.ok) failures.push(`el reloj de la base difiere del proceso en más de ${MAX_CLOCK_SKEW_MS / 1000} s o no se pudo leer (F-7)`);
@@ -152,6 +167,52 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   await checkPurgeExecuteIsolation(db, failures);
 
   return { ok: failures.length === 0, failures };
+}
+
+/**
+ * ADR-010 PR-3 (P2-7): el principal y el tenant los fija el adapter con set_config(..., true) por transaccion. Ningun default de rol o de base
+ * (pg_db_role_setting) puede traer una GUC app.* para los roles de runtime: fijaria un principal o un tenant fuera de la transaccion.
+ */
+async function checkNoAppGucDefaults(db: Queryable, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ scope: string; setting: string }>(
+      `SELECT COALESCE(r.rolname::pg_catalog.text, '(todos los roles)') AS scope, pg_catalog.split_part(c, '=', 1) AS setting
+         FROM pg_catalog.pg_db_role_setting s
+         LEFT JOIN pg_catalog.pg_roles r ON r.oid = s.setrole
+         CROSS JOIN LATERAL pg_catalog.unnest(s.setconfig) AS c
+        WHERE pg_catalog.lower(c) LIKE 'app.%'
+          AND s.setdatabase IN (0, (SELECT d.oid FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()))
+          AND (s.setrole = 0 OR r.rolname = ANY($1::text[]))`,
+      [Object.keys(PLATFORM_RUNTIME_EXECUTE)],
+    );
+    for (const row of r.rows) failures.push(`pg_db_role_setting fija la GUC ${row.setting} para ${row.scope}: las GUC app.* solo se fijan por transaccion (ADR-010 PR-3)`);
+  } catch {
+    failures.push("no se pudo verificar pg_db_role_setting (GUC app.*)");
+  }
+}
+
+/** ADR-010 PR-3: sin privilegios sobre tablas de platform y EXECUTE solo de las funciones declaradas para el rol. Fail-closed si no se puede verificar. */
+async function checkPlatformSchemaExposure(db: Queryable, runtimeRole: string | undefined, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ kind: string; name: string }>(
+      `SELECT 'table' AS kind, c.relname::pg_catalog.text AS name
+         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'platform' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND (pg_catalog.has_table_privilege(current_user, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+               OR pg_catalog.has_any_column_privilege(current_user, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES'))
+       UNION ALL
+       SELECT 'function' AS kind, p.proname::pg_catalog.text AS name
+         FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'platform' AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')`,
+    );
+    const allowed = new Set(PLATFORM_RUNTIME_EXECUTE[runtimeRole ?? ""] ?? []);
+    for (const row of r.rows) {
+      if (row.kind === "table") failures.push(`el rol de la conexión tiene privilegios sobre la tabla platform.${row.name} (sin DML, ADR-010 §4.4)`);
+      else if (!allowed.has(row.name)) failures.push(`el rol de la conexión puede ejecutar platform.${row.name}() y no le corresponde (ADR-010 PR-3)`);
+    }
+  } catch {
+    failures.push("no se pudo verificar la exposición del esquema platform");
+  }
 }
 
 /** SEC-CNS-021 PR-3 (P2-F): solo worker puede ejecutar ops.purge_p34; app_rw y platform_rw no. Fail-closed si no se puede verificar. */
