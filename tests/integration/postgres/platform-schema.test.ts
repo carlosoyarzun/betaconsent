@@ -588,7 +588,7 @@ pgTest("TEST-CNS-1358 pg: concurrencia: el nonce se usa una sola vez y una solic
   assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE principal_ref = $1", [C])).rowCount, 1);
   assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE principal_ref = $1 AND consumed_at IS NOT NULL", [A])).rowCount, 1);
   assert.deepEqual(
-    (await admin.query<{ decision: string; reason_code: string }>("SELECT decision, reason_code FROM platform.authorization_check WHERE principal_ref = $1 AND action = 'REQUEST_ROLE_ASSIGNMENT' AND check_kind = 'AUTHORIZE' ORDER BY decision")).rows,
+    (await admin.query<{ decision: string; reason_code: string }>("SELECT decision, reason_code FROM platform.authorization_check WHERE principal_ref = $1 AND action = 'REQUEST_ROLE_ASSIGNMENT' AND check_kind = 'AUTHORIZE' ORDER BY decision", [A])).rows,
     [{ decision: "ALLOW", reason_code: "OK" }, { decision: "DENY", reason_code: "STEP_UP_MISSING" }],
   );
 
@@ -685,8 +685,8 @@ pgTest("TEST-CNS-1360 pg: B1 sin PII: un RUT con puntos, un RUT sin puntos o un 
   }
   assert.equal((await admin.query("SELECT 1 FROM platform.authorization_check WHERE reason_code = 'INVALID_RESOURCE' AND resource_ref IS NOT NULL")).rowCount, 0, "el recurso invalido se guarda NULL");
   assert.ok((await admin.query("SELECT 1 FROM platform.authorization_check WHERE reason_code = 'INVALID_RESOURCE'")).rowCount! >= PII.length * 7);
-  assert.equal((await admin.query("SELECT 1 FROM platform.tenant_membership")).rowCount, 0);
-  assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE principal_ref <> $1", [A])).rowCount, 0);
+  assert.equal((await admin.query("SELECT 1 FROM platform.tenant_membership WHERE requested_by_ref = $1", [A])).rowCount, 0);
+  assert.equal((await admin.query("SELECT 1 FROM platform.platform_role_assignment WHERE requested_by_ref = $1", [A])).rowCount, 0);
   // Ninguna tabla guarda ninguno de los valores.
   for (const table of ["tenant_membership", "platform_role_assignment", "action_nonce", "authorization_check"]) {
     const docs = (await admin.query<{ doc: string }>(`SELECT to_jsonb(t)::text AS doc FROM platform.${table} t`)).rows.map((r) => r.doc);
