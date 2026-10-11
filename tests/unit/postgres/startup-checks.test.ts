@@ -5,6 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertStartupChecks, runStartupChecks, StartupCheckError } from "../../../src/infra/adapters/postgres/startup-checks.ts";
+import { EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
+import type { DbRoleMode, MembershipEdge } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { FakeClient } from "./fakes.ts";
 
 interface Scenario {
@@ -18,6 +20,10 @@ interface Scenario {
   runtimeRole?: string;
   readerMembership?: Array<{ inherit_option: boolean; set_option: boolean }>;
   readerExtraGrants?: string[];
+  // ADR-010 PR-2 (INV-DBR-03): filas de pg_auth_members de los roles gobernados (por defecto, la lista exacta de IT0B_SYNTHETIC).
+  memberships?: MembershipEdge[];
+  membershipsError?: boolean;
+  ownersPresent?: string[];
   readerSelectOnView?: boolean;
   runtimeSelectOnView?: boolean;
   schemaCreate?: boolean;
@@ -27,6 +33,10 @@ interface Scenario {
 
 function db(s: Scenario = {}): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("u.rolname AS member")) {
+      if (s.membershipsError) return new Error("boom");
+      return { rows: (s.memberships ?? EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC).map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set })) };
+    }
     if (text.includes("FROM pg_catalog.pg_auth_members")) {
       if (s.rosterRolesError) return new Error("boom");
       return { rows: s.readerMembership ?? [{ inherit_option: false, set_option: true }] };
@@ -44,7 +54,7 @@ function db(s: Scenario = {}): FakeClient {
     }
     if (text.includes("pg_has_role")) {
       const member = new Set(s.memberOf ?? []);
-      return { rows: ["consent_owner", "tenant_resolve_owner", "staff_roster_owner", "integrity_owner", "security_event_owner"].map((owner) => ({ owner, member: member.has(owner) })) };
+      return { rows: (s.ownersPresent ?? [...OWNER_ROLES]).map((owner) => ({ owner, member: member.has(owner) })) };
     }
     if (text.includes("has_schema_privilege")) return { rows: (s.createOn ?? []).map((nspname) => ({ nspname })) };
     if (text.includes("has_parameter_privilege")) return { rows: [{ can_set: s.canSetReplicationRole ?? false }] };
@@ -71,6 +81,13 @@ test("TEST-CNS-747 no arranca: superusuario, BYPASSRLS, miembro de owner, CREATE
     [{ memberOf: ["staff_roster_owner"] }, /miembro de staff_roster_owner/],
     [{ memberOf: ["integrity_owner"] }, /miembro de integrity_owner/],
     [{ memberOf: ["security_event_owner"] }, /miembro de security_event_owner/], // SEC-CNS-021 PR-1, INV-21-06
+    // ADR-010 PR-2 (Q-19, INV-DBR-01): owners nuevos y outbox_claimer
+    [{ memberOf: ["outbox_claimer"] }, /miembro de outbox_claimer/],
+    [{ memberOf: ["platform_schema_owner"] }, /miembro de platform_schema_owner/],
+    [{ memberOf: ["grant_owner"] }, /miembro de grant_owner/],
+    [{ memberOf: ["membership_owner"] }, /miembro de membership_owner/],
+    [{ memberOf: ["case_state_owner"] }, /miembro de case_state_owner/],
+    [{ memberOf: ["transition_owner"] }, /miembro de transition_owner/],
     [{ createOn: ["public"] }, /CREATE en el esquema public/],
     [{ canSetReplicationRole: true }, /session_replication_role/],
   ];
@@ -140,4 +157,33 @@ test("TEST-CNS-1088 F-7: no arranca si |reloj BD - Date.now()| > 2 s o si el rel
   // El reloj del proceso es inyectable: un proceso adelantado 5 s respecto de la BD falla.
   const skewed = await runStartupChecks(db(), { nowMs: () => Date.now() + 5000 });
   assert.equal(skewed.ok, false);
+});
+
+const setOf = (edges: readonly MembershipEdge[]): MembershipEdge[] => [...edges];
+const edge = (member: string, role: string, inherit: boolean, set: boolean): MembershipEdge => ({ member, role, inherit, set });
+
+test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los roles gobernados no coincide EXACTAMENTE con el modo (fila extra, faltante, opciones distintas, error de lectura, modo no activado)", async () => {
+  const base = setOf(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC);
+  assert.deepEqual(await runStartupChecks(db({ memberships: base }), { expectedEnvironment: "LOCAL" }), { ok: true, failures: [] });
+  const cases: Array<[Scenario, RegExp]> = [
+    [{ memberships: [...base, edge("app_rw", "transition_owner", false, true)] }, /no esperada.*app_rw -> transition_owner/],
+    [{ memberships: [...base, edge("worker", "outbox_claimer", false, true)] }, /no esperada.*worker -> outbox_claimer/],
+    [{ memberships: [...base, edge("integrity_verifier", "consent_owner", true, true)] }, /no esperada.*integrity_verifier -> consent_owner/],
+    [{ memberships: [...base, edge("platform_rw", "rights_operator", false, true)] }, /no esperada.*platform_rw -> rights_operator/], // llega en PR-5
+    [{ memberships: [...base, edge("ddl_breakglass", "grant_owner", false, true)] }, /no esperada.*ddl_breakglass/], // llega en PR-7
+    [{ memberships: base.filter((e) => !(e.member === "consent_owner" && e.role === "security_event_owner")) }, /falta la membresía.*consent_owner -> security_event_owner/],
+    [{ memberships: base.filter((e) => e.role !== "outbox_claimer") }, /falta la membresía.*consent_migrator -> outbox_claimer/],
+    [{ memberships: base.map((e) => (e.role === "tenant_resolve_owner" ? edge(e.member, e.role, true, true) : e)) }, /no esperada.*tenant_resolve_owner \{inherit: true/],
+    [{ membershipsError: true }, /no se pudo verificar la membresía de los roles/],
+    [{ ownersPresent: ["consent_owner"] }, /faltan los roles owner/],
+  ];
+  for (const [scenario, pattern] of cases) {
+    const result = await runStartupChecks(db(scenario), { expectedEnvironment: "LOCAL" });
+    assert.equal(result.ok, false, String(pattern));
+    assert.ok(result.failures.some((f) => pattern.test(f)), `${pattern} :: ${result.failures.join(" | ")}`);
+  }
+  // REAL_DATA esta definido pero no activado hasta PR-7: falla cerrado en vez de aceptar o saltarse la aserción.
+  const real = await runStartupChecks(db(), { expectedEnvironment: "LOCAL", roleMode: "REAL_DATA" satisfies DbRoleMode });
+  assert.equal(real.ok, false);
+  assert.ok(real.failures.some((f) => /REAL_DATA no está activado/.test(f)));
 });

@@ -16,6 +16,8 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Queryable } from "./pool.ts";
+import { checkRoleMemberships, resolveDbRoleMode } from "./role-membership.ts";
+import type { DbRoleMode } from "./role-membership.ts";
 
 export type MigrationScope = "cluster" | "database";
 
@@ -76,12 +78,26 @@ export function migrationSetDigest(migrations: readonly Migration[]): string {
   return h.digest("hex");
 }
 
+export interface ClusterScopeOptions {
+  /** Modo de roles (ADR-010 §4.1.1). Por defecto lo declara el deploy en CNS_DB_ROLE_MODE; sin valor = IT0B_SYNTHETIC. */
+  mode?: DbRoleMode;
+}
+
 /**
  * Alcance cluster (superusuario): aplica los archivos `-- scope: cluster` en orden. Son
  * idempotentes y no se registran. Requiere una conexión con privilegio de crear roles; es
  * el único uso de superusuario y solo crea roles (P1-3).
+ *
+ * ADR-010 PR-2 (INV-DBR-03, Q-19): al terminar, aserción posterior al cluster. La membresía de
+ * los roles gobernados debe coincidir EXACTAMENTE con la lista del modo; cualquier fila extra o
+ * faltante aborta el deploy (fail-closed). Un modo no activado (REAL_DATA hasta PR-7) también aborta.
  */
-export async function applyClusterScope(superuser: Queryable, migrations: readonly Migration[]): Promise<string[]> {
+export async function applyClusterScope(
+  superuser: Queryable,
+  migrations: readonly Migration[],
+  options: ClusterScopeOptions = {},
+): Promise<string[]> {
+  const mode = options.mode ?? resolveDbRoleMode(process.env);
   const applied: string[] = [];
   await superuser.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
   try {
@@ -89,14 +105,18 @@ export async function applyClusterScope(superuser: Queryable, migrations: readon
       await superuser.query(m.sql);
       applied.push(m.version);
     }
+    const problems = await checkRoleMemberships(superuser, mode);
+    if (problems.length > 0) {
+      throw new MigrationError(`Aserción de membresía de roles posterior al cluster falló (INV-DBR-03): ${problems.join("; ")}.`);
+    }
   } finally {
     await superuser.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
   }
   return applied;
 }
 
-export type RoleName = "consent_migrator" | "app_rw" | "worker" | "platform_rw";
-const ROLE_NAMES: readonly RoleName[] = ["consent_migrator", "app_rw", "worker", "platform_rw"];
+export type RoleName = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier";
+const ROLE_NAMES: readonly RoleName[] = ["consent_migrator", "app_rw", "worker", "platform_rw", "integrity_verifier"];
 
 /**
  * Fija contraseñas de roles LOGIN (las recibe del entorno; jamás del repo). Un rol sin
