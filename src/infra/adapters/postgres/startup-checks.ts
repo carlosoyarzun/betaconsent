@@ -61,13 +61,14 @@ export class StartupCheckError extends Error {
 
 /**
  * ADR-010 PR-3 (specs/db-roles.spec.yaml): funciones de platform ejecutables por cada rol de runtime. app_rw (web, consola STAFF, Q-17) solo SOLICITA
- * membership de TENANT_ADMIN; platform_rw (equipo de LectorPro) el resto. worker e integrity_verifier no ejecutan ninguna en PR-3 (PR-4 amplia).
+ * membership de TENANT_ADMIN; platform_rw (equipo de LectorPro) el resto. ADR-010 PR-4: platform_rw encola el canje OIDC (enqueue_oidc_exchange, sin
+ * SELECT sobre oidc_exchange); el worker purga las solicitudes vencidas; integrity_verifier toma el canje y registra la asercion (UNICO que atesta).
  */
 export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]>> = {
   app_rw: ["request_membership"],
-  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce"],
-  worker: [],
-  integrity_verifier: [],
+  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "enqueue_oidc_exchange"],
+  worker: ["purge_expired_oidc_exchange"],
+  integrity_verifier: ["claim_oidc_exchange", "record_assertion"],
 };
 
 const ALLOWED_ENVIRONMENTS = new Set(["LOCAL", "DEV", "STAGING"]);

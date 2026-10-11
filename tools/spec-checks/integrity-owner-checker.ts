@@ -51,12 +51,16 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
 export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner"];
 const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
 const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
+const M0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
+/** ADR-010 PR-4: fixture LOCAL sintetico del bootstrap del primer PLATFORM (membership_owner), patron TEST-CNS-879. Solo LOCAL; STAFF/datos reales: ceremonia PR-7. */
+const FIX_PLATFORM = "db/fixtures/local/0002_platform_bootstrap.sql";
 export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Record<string, readonly UsageKind[]>>>> = {
   // 0034: GRANT <owner> TO consent_owner WITH INHERIT FALSE, SET TRUE (Q-15 c, transitorio IT0B; PR-7 lo revoca en REAL_DATA).
   // 0035 (PR-3): SET LOCAL ROLE para crear el esquema platform (platform_schema_owner) y sus tablas/funciones (membership_owner, grant_owner).
-  platform_schema_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"] },
-  membership_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"] },
-  grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"] },
+  // 0036 (PR-4): identidad, no_self_approval, oidc_exchange, grant_assertion y funciones del verifier (mismos tres owners; platform_schema_owner para USAGE/CREATE temporal).
+  platform_schema_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"] },
+  membership_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [FIX_PLATFORM]: ["set-role"] },
+  grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"] },
   // Sin otros caminos: PR-5 (case_state_owner, transition_owner) y PR-7 amplian esta allowlist con revision (CODEOWNERS).
   case_state_owner: { [M0034]: ["grant-membership"] },
   transition_owner: { [M0034]: ["grant-membership"] },
