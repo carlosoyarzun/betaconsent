@@ -165,7 +165,7 @@ CREATE TABLE platform.oidc_exchange (
   exchange_ref  uuid        NOT NULL DEFAULT pg_catalog.gen_random_uuid() CONSTRAINT oidc_exchange_pkey PRIMARY KEY,
   binding       text        NOT NULL CONSTRAINT oidc_exchange_binding_shape CHECK (binding ~ '^[0-9a-f]{64}$'),
   principal_ref text        NOT NULL CONSTRAINT oidc_exchange_principal_shape CHECK (principal_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
-  code          text        CONSTRAINT oidc_exchange_code_shape CHECK (code ~ '^[!-~]{1,512}$'),
+  code          text        CONSTRAINT oidc_exchange_code_shape CHECK (pg_catalog.length(code) BETWEEN 1 AND 512 AND code ~ '^[!-~]+$'),
   pkce_verifier text        CONSTRAINT oidc_exchange_pkce_shape CHECK (pkce_verifier ~ '^[A-Za-z0-9._~-]{43,128}$'),
   status        text        NOT NULL DEFAULT 'PENDING' CONSTRAINT oidc_exchange_status_enum CHECK (status IN ('PENDING', 'ATTESTED', 'REJECTED')),
   created_at    timestamptz NOT NULL DEFAULT pg_catalog.now(),
@@ -431,7 +431,7 @@ BEGIN
     IF v_principal IS NULL OR v_principal !~ c_principal THEN v_reason := 'NO_PRINCIPAL'; EXIT decide; END IF;
     IF session_user <> 'platform_rw' THEN v_reason := 'CALLER_ROLE'; EXIT decide; END IF;
     IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 600 THEN v_reason := 'INVALID_TTL'; EXIT decide; END IF;
-    IF p_binding IS NULL OR p_binding !~ '^[0-9a-f]{64}$' OR p_code IS NULL OR p_code !~ '^[!-~]{1,512}$'
+    IF p_binding IS NULL OR p_binding !~ '^[0-9a-f]{64}$' OR p_code IS NULL OR pg_catalog.length(p_code) > 512 OR p_code !~ '^[!-~]+$'
        OR p_pkce_verifier IS NULL OR p_pkce_verifier !~ '^[A-Za-z0-9._~-]{43,128}$' THEN
       v_reason := 'INVALID_INPUT'; EXIT decide;
     END IF;
