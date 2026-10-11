@@ -11,6 +11,9 @@ import { checkRetentionPurgeFreshness, MAX_PURGE_AGE_MS, RETENTION_PURGE_STALE_S
 import { EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { FakeClient } from "./fakes.ts";
 
+// ADR-010 PR-2: el modo de roles lo declara el deploy; fuera de LOCAL/DEV es obligatorio. Los dobles de abajo asumen el modo vigente (IT0B).
+process.env.CNS_DB_ROLE_MODE ??= "IT0B_SYNTHETIC";
+
 const ALL = {
   CNS_RETENTION_SECURITY_EVENT_DAYS: "30",
   CNS_RETENTION_OTP_BUDGET_DAYS: "30",
@@ -78,7 +81,7 @@ function healthyDb(status: Array<{ store: string; retention_days: string; last_r
   return new FakeClient((text) => {
     if (text.includes("to_regprocedure")) return purgeExecRow === undefined ? { rows: [{ app_rw: false, platform_rw: false }] } : { rows: [purgeExecRow] };
     if (text.includes("ops.retention_status")) return status === "error" ? new Error("boom") : { rows: status };
-    if (text.includes("u.rolname AS member")) return { rows: EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set })) }; // ADR-010 PR-2
+    if (text.includes("u.rolname AS member")) return { rows: EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin })) }; // ADR-010 PR-2
     if (text.includes("FROM pg_catalog.pg_auth_members")) return { rows: [{ inherit_option: false, set_option: true }] };
     if (text.includes("has_table_privilege('staff_roster_reader', c.oid")) return { rows: [] };
     if (text.includes("reader_select")) return { rows: [{ reader_select: true, runtime_select: false, schema_create: false }] };

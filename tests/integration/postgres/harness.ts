@@ -91,7 +91,7 @@ async function provisionTemplate(config: Config, admin: Client): Promise<string>
   const migrations = loadMigrations(MIGRATIONS_DIR);
   const template = `consent_tpl_${migrationSetDigest(migrations).slice(0, 16)}`;
 
-  await applyClusterScope(admin, migrations);
+  await applyClusterScope(admin, migrations, { environment: "LOCAL" }); // la plantilla es LOCAL sintetica; sin CNS_DB_ROLE_MODE el modo cae a IT0B_SYNTHETIC
   await setRolePasswords(admin, {
     consent_migrator: config.migratorPassword,
     app_rw: config.appPassword,

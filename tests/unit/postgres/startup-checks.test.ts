@@ -7,7 +7,11 @@ import assert from "node:assert/strict";
 import { assertStartupChecks, runStartupChecks, StartupCheckError } from "../../../src/infra/adapters/postgres/startup-checks.ts";
 import { EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import type { DbRoleMode, MembershipEdge } from "../../../src/infra/adapters/postgres/role-membership.ts";
+import { applyClusterScope, parseMigration } from "../../../src/infra/adapters/postgres/migrate.ts";
 import { FakeClient } from "./fakes.ts";
+
+// ADR-010 PR-2: el modo de roles lo declara el deploy; fuera de LOCAL/DEV es obligatorio. Los dobles de abajo asumen el modo vigente (IT0B).
+process.env.CNS_DB_ROLE_MODE ??= "IT0B_SYNTHETIC";
 
 interface Scenario {
   rolsuper?: boolean;
@@ -35,7 +39,7 @@ function db(s: Scenario = {}): FakeClient {
   return new FakeClient((text) => {
     if (text.includes("u.rolname AS member")) {
       if (s.membershipsError) return new Error("boom");
-      return { rows: (s.memberships ?? EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC).map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set })) };
+      return { rows: (s.memberships ?? EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC).map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin })) };
     }
     if (text.includes("FROM pg_catalog.pg_auth_members")) {
       if (s.rosterRolesError) return new Error("boom");
@@ -160,7 +164,7 @@ test("TEST-CNS-1088 F-7: no arranca si |reloj BD - Date.now()| > 2 s o si el rel
 });
 
 const setOf = (edges: readonly MembershipEdge[]): MembershipEdge[] => [...edges];
-const edge = (member: string, role: string, inherit: boolean, set: boolean): MembershipEdge => ({ member, role, inherit, set });
+const edge = (member: string, role: string, inherit: boolean, set: boolean, admin = false): MembershipEdge => ({ member, role, inherit, set, admin });
 
 test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los roles gobernados no coincide EXACTAMENTE con el modo (fila extra, faltante, opciones distintas, error de lectura, modo no activado)", async () => {
   const base = setOf(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC);
@@ -174,6 +178,8 @@ test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los r
     [{ memberships: base.filter((e) => !(e.member === "consent_owner" && e.role === "security_event_owner")) }, /falta la membresía.*consent_owner -> security_event_owner/],
     [{ memberships: base.filter((e) => e.role !== "outbox_claimer") }, /falta la membresía.*consent_migrator -> outbox_claimer/],
     [{ memberships: base.map((e) => (e.role === "tenant_resolve_owner" ? edge(e.member, e.role, true, true) : e)) }, /no esperada.*tenant_resolve_owner \{inherit: true/],
+    [{ memberships: base.map((e) => (e.role === "grant_owner" ? edge(e.member, e.role, e.inherit, e.set, true) : e)) }, /no esperada.*consent_owner -> grant_owner \{inherit: false, set: true, admin: true/], // P1-1: ADMIN OPTION
+    [{ memberships: [...base, base[0] as MembershipEdge] }, /duplicada.*consent_migrator -> consent_owner/], // P2-4: multiconjunto
     [{ membershipsError: true }, /no se pudo verificar la membresía de los roles/],
     [{ ownersPresent: ["consent_owner"] }, /faltan los roles owner/],
   ];
@@ -186,4 +192,41 @@ test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los r
   const real = await runStartupChecks(db(), { expectedEnvironment: "LOCAL", roleMode: "REAL_DATA" satisfies DbRoleMode });
   assert.equal(real.ok, false);
   assert.ok(real.failures.some((f) => /REAL_DATA no está activado/.test(f)));
+});
+
+test("TEST-CNS-1351 ADR-010 PR-2 P1-2/P1-3: runner y startup-checks reciben el MISMO modo declarado (CNS_DB_ROLE_MODE); vacio solo vale en LOCAL/DEV; el runner fija el GUC cns.db_role_mode", async () => {
+  const migrations = [parseMigration("0000_roles.sql", "-- scope: cluster\nSELECT 1;\n")];
+  const rows = EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin }));
+  const runner = (): FakeClient => new FakeClient((text) => (text.includes("u.rolname AS member") ? { rows } : undefined));
+  const saved = process.env.CNS_DB_ROLE_MODE;
+  const outcomes = async (environment: "LOCAL" | "STAGING"): Promise<{ runner: boolean; startup: boolean }> => {
+    const r = runner();
+    const runnerOk = await applyClusterScope(r, migrations, { environment }).then(() => true, () => false);
+    // STAGING exige ademas retencion configurada (otro chequeo): aqui solo importa la parte de modo/membresia (INV-DBR-03).
+    const result = await runStartupChecks(db({ catalog: [{ data_class: "SYNTHETIC", environment }] }), { expectedEnvironment: environment });
+    const startupOk = !result.failures.some((f) => /INV-DBR-03/.test(f));
+    return { runner: runnerOk, startup: startupOk };
+  };
+  try {
+    delete process.env.CNS_DB_ROLE_MODE;
+    assert.deepEqual(await outcomes("LOCAL"), { runner: true, startup: true });
+    assert.deepEqual(await outcomes("STAGING"), { runner: false, startup: false }, "sin modo declarado fuera de LOCAL/DEV ninguno de los dos arranca");
+    process.env.CNS_DB_ROLE_MODE = "IT0B_SYNTHETIC";
+    assert.deepEqual(await outcomes("STAGING"), { runner: true, startup: true });
+    process.env.CNS_DB_ROLE_MODE = "REAL_DATA";
+    assert.deepEqual(await outcomes("LOCAL"), { runner: false, startup: false }, "REAL_DATA no esta activado: ambos fallan cerrado");
+    // El GUC lo fija el runner ANTES del SQL de cluster y se limpia despues.
+    process.env.CNS_DB_ROLE_MODE = "IT0B_SYNTHETIC";
+    const r = runner();
+    await applyClusterScope(r, migrations, { environment: "STAGING" });
+    const texts = r.queries.map((q) => q.text);
+    const iSet = texts.findIndex((t) => t.includes("set_config('cns.db_role_mode', $1"));
+    const iSql = texts.indexOf("-- scope: cluster\nSELECT 1;\n");
+    const iClear = texts.findIndex((t) => t.includes("set_config('cns.db_role_mode', ''"));
+    assert.ok(iSet >= 0 && iSql > iSet && iClear > iSql, texts.join(" | "));
+    assert.deepEqual(r.queries[iSet]?.values, ["IT0B_SYNTHETIC"]);
+  } finally {
+    if (saved === undefined) delete process.env.CNS_DB_ROLE_MODE;
+    else process.env.CNS_DB_ROLE_MODE = saved;
+  }
 });

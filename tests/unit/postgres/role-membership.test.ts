@@ -20,7 +20,7 @@ import { FakeClient } from "./fakes.ts";
 import type { MembershipEdge } from "../../../src/infra/adapters/postgres/role-membership.ts";
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "db", "migrations");
-const edge = (member: string, role: string, inherit: boolean, set: boolean): MembershipEdge => ({ member, role, inherit, set });
+const edge = (member: string, role: string, inherit: boolean, set: boolean, admin = false): MembershipEdge => ({ member, role, inherit, set, admin });
 
 test("TEST-CNS-1343 la lista exacta de IT0B_SYNTHETIC cubre Q-19 y no incluye lo de PR-5/PR-7; REAL_DATA queda definido", () => {
   const it0b = EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC;
@@ -53,17 +53,25 @@ test("TEST-CNS-1343 diffMemberships: igualdad exacta (extra, faltante, opciones 
   assert.equal(diffMemberships([...ok, edge("worker", "grant_owner", false, true)], "IT0B_SYNTHETIC").length, 1);
   assert.equal(diffMemberships(ok.slice(1), "IT0B_SYNTHETIC").length, 1);
   assert.equal(diffMemberships(ok.map((e) => (e.role === "grant_owner" ? edge(e.member, e.role, true, true) : e)), "IT0B_SYNTHETIC").length, 2);
-  assert.equal(resolveDbRoleMode({}), "IT0B_SYNTHETIC");
-  assert.equal(resolveDbRoleMode({ CNS_DB_ROLE_MODE: "" }), "IT0B_SYNTHETIC");
-  assert.equal(resolveDbRoleMode({ CNS_DB_ROLE_MODE: "IT0B_SYNTHETIC" }), "IT0B_SYNTHETIC");
-  assert.throws(() => resolveDbRoleMode({ CNS_DB_ROLE_MODE: "REAL_DATA" }), RoleModeError);
-  assert.throws(() => resolveDbRoleMode({ CNS_DB_ROLE_MODE: "otro" }), RoleModeError);
+  // P1-1: admin_option cuenta; P2-4: multiconjunto (fila duplicada = diferencia).
+  assert.equal(diffMemberships(ok.map((e) => (e.role === "grant_owner" ? edge(e.member, e.role, e.inherit, e.set, true) : e)), "IT0B_SYNTHETIC").length, 2);
+  assert.ok(ok.every((e) => e.admin === false), "ADMIN OPTION esperado false en toda fila");
+  assert.deepEqual(diffMemberships([...ok, ok[0] as MembershipEdge], "IT0B_SYNTHETIC").map((p) => /duplicada/.test(p)), [true]);
+  // P1-3: modo vacio = IT0B solo en LOCAL/DEV; en STAGING o sin entorno es error; valor desconocido o REAL_DATA (no activado) tambien.
+  assert.equal(resolveDbRoleMode({}, "LOCAL"), "IT0B_SYNTHETIC");
+  assert.equal(resolveDbRoleMode({ CNS_DB_ROLE_MODE: "" }, "DEV"), "IT0B_SYNTHETIC");
+  assert.throws(() => resolveDbRoleMode({}, "STAGING"), RoleModeError);
+  assert.throws(() => resolveDbRoleMode({}, undefined), RoleModeError);
+  assert.throws(() => resolveDbRoleMode({ CNS_DB_ROLE_MODE: "" }, "STAGING"), RoleModeError);
+  assert.equal(resolveDbRoleMode({ CNS_DB_ROLE_MODE: "IT0B_SYNTHETIC" }, "STAGING"), "IT0B_SYNTHETIC");
+  assert.throws(() => resolveDbRoleMode({ CNS_DB_ROLE_MODE: "REAL_DATA" }, "LOCAL"), RoleModeError);
+  assert.throws(() => resolveDbRoleMode({ CNS_DB_ROLE_MODE: "otro" }, "LOCAL"), RoleModeError);
 });
 
 function fakeSuperuser(rows: readonly MembershipEdge[]): FakeClient {
   return new FakeClient((text) =>
     text.includes("u.rolname AS member")
-      ? { rows: rows.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set })) }
+      ? { rows: rows.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin })) }
       : undefined,
   );
 }
@@ -100,6 +108,11 @@ test("TEST-CNS-1346 0034 es de alcance cluster, idempotente y sin secretos: role
   assert.match(sql, /ALTER ROLE integrity_verifier LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
   assert.doesNotMatch(sql, /\bPASSWORD\b/i);
   assert.doesNotMatch(sql, /INHERIT TRUE|WITH ADMIN/i);
+  // P1-1: REVOKE ADMIN OPTION condicional; P2-2: GRANT de SET condicionado al GUC cns.db_role_mode; P2-1: platform_rw/rights_operator fuera del REVOKE de runtime.
+  assert.match(sql, /m\.admin_option\) THEN\s+EXECUTE pg_catalog\.format\('REVOKE ADMIN OPTION FOR %I FROM consent_owner'/);
+  assert.match(sql, /current_setting\('cns\.db_role_mode', true\)[^;]*<> 'REAL_DATA' THEN\s+GRANT platform_schema_owner/);
+  assert.match(sql, /FOREACH u IN ARRAY ARRAY\['app_rw', 'worker', 'integrity_verifier', 'consent_migrator'\]/);
+  assert.doesNotMatch(sql, /FOREACH u IN ARRAY[^;]*platform_rw/);
   assert.equal([...sql.matchAll(/GRANT (\w+) TO consent_owner WITH INHERIT FALSE, SET TRUE;/g)].length, 5);
   assert.doesNotMatch(sql, /\bGRANT\b[^;]*\bTO\b[^;]*\b(app_rw|worker|platform_rw|integrity_verifier|consent_migrator)\b/);
 });

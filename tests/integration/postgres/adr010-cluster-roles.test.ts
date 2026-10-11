@@ -67,6 +67,40 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
   await ctx.withRoleCatalogLock(async () => { await admin.query(sql0034); }); // catalogo global de roles: serializado con el provisionado
   assert.deepEqual(await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]), before);
   assert.deepEqual(await attrs(nologin), [...nologin].sort().map((rolname) => ({ rolname, ...NOLOGIN_FLAGS })));
+
+  // Camino del REVOKE: re-ejecutar 0034 con membresias extra YA presentes las limpia; platform_rw -> rights_operator NO se revoca (la aserción la
+  // detecta, PR-5 la agrega a la lista); ADMIN OPTION de consent_owner sobre un owner nuevo se revoca. Todo dentro del lock y con ROLLBACK.
+  const sql = readFileSync(join(MIGRATIONS_DIR, "0034_adr010_cluster_roles.sql"), "utf8");
+  const extra: Array<[string, string, string]> = [
+    ["transition_owner", "app_rw", ""], ["grant_owner", "worker", ""], ["case_state_owner", "integrity_verifier", ""],
+    ["membership_owner", "consent_migrator", ""], ["outbox_claimer", "integrity_verifier", ""], ["rights_operator", "integrity_verifier", ""],
+    ["platform_schema_owner", "consent_owner", " WITH ADMIN OPTION"],
+  ];
+  await ctx.withRoleCatalogLock(async () => {
+    await admin.query("BEGIN");
+    try {
+      for (const [role, member, options] of extra) await admin.query(`GRANT ${role} TO ${member}${options}`);
+      await admin.query("GRANT rights_operator TO platform_rw WITH INHERIT FALSE, SET TRUE");
+      assert.ok((await checkRoleMemberships(admin, "IT0B_SYNTHETIC")).length >= 8, "las membresias extra se detectan antes de 0034");
+      await admin.query(sql);
+      assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), [
+        "membresía no esperada en modo IT0B_SYNTHETIC: platform_rw -> rights_operator {inherit: false, set: true, admin: false}",
+      ]);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+    // Modo REAL_DATA declarado por el runner (GUC de sesion): 0034 no otorga SET a consent_owner sobre los owners nuevos.
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SELECT set_config('cns.db_role_mode', 'REAL_DATA', true)");
+      await admin.query(NEW_OWNERS.map((r) => `REVOKE ${r} FROM consent_owner`).join(";"));
+      await admin.query(sql);
+      assert.deepEqual(await edges("r.rolname = ANY($1)", [NEW_OWNERS]), [], "en REAL_DATA 0034 no concede SET a consent_owner");
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+    assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), [], "los ROLLBACK dejaron el cluster intacto");
+  });
 });
 
 pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coincide con el catalogo; detecta fila extra/faltante; REAL_DATA falla cerrado; el arranque de app_rw sigue pasando", async (ctx) => {
@@ -84,6 +118,9 @@ pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coi
     ["rights_operator", "platform_rw", " WITH INHERIT FALSE, SET TRUE", /platform_rw -> rights_operator/],
     ["security_event_owner", "consent_migrator", " WITH INHERIT FALSE, SET TRUE", /consent_migrator -> security_event_owner/],
     ["tenant_resolve_owner", "consent_owner", " WITH INHERIT TRUE, SET TRUE", /tenant_resolve_owner \{inherit: true/],
+    // P1-1: ADMIN OPTION (re-GRANT de la fila existente) tambien es una diferencia.
+    ["grant_owner", "consent_owner", " WITH ADMIN OPTION", /consent_owner -> grant_owner \{inherit: false, set: true, admin: true/],
+    ["staff_roster_owner", "consent_owner", " WITH ADMIN OPTION", /consent_owner -> staff_roster_owner \{inherit: false, set: true, admin: true/],
   ];
   // Toda mutacion del catalogo global de roles (aunque se revierta) va dentro del lock de cluster: otros archivos de test provisionan en
   // paralelo (applyClusterScope/setRolePasswords) y chocarian con "tuple concurrently updated".

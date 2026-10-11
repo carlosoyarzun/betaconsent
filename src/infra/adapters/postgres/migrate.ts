@@ -97,6 +97,8 @@ export function migrationSetDigest(migrations: readonly Migration[]): string {
 export interface ClusterScopeOptions {
   /** Modo de roles (ADR-010 §4.1.1). Por defecto lo declara el deploy en CNS_DB_ROLE_MODE; sin valor = IT0B_SYNTHETIC. */
   mode?: DbRoleMode;
+  /** Entorno del deploy (LOCAL/DEV/STAGING). Si falta CNS_DB_ROLE_MODE, solo LOCAL y DEV caen a IT0B_SYNTHETIC; sin entorno declarado es error. */
+  environment?: string;
 }
 
 /**
@@ -113,12 +115,18 @@ export async function applyClusterScope(
   migrations: readonly Migration[],
   options: ClusterScopeOptions = {},
 ): Promise<string[]> {
-  const mode = options.mode ?? resolveDbRoleMode(process.env);
+  const mode = options.mode ?? resolveDbRoleMode(process.env, options.environment);
   const applied: string[] = [];
   await withClusterRoleLock(superuser, async () => {
-    for (const m of migrations.filter((x) => x.scope === "cluster")) {
-      await superuser.query(m.sql);
-      applied.push(m.version);
+    // GUC de sesion que leen las migraciones de cluster (0034: sin GRANT de SET a consent_owner en REAL_DATA). Se limpia al terminar.
+    await superuser.query("SELECT set_config('cns.db_role_mode', $1, false)", [mode]);
+    try {
+      for (const m of migrations.filter((x) => x.scope === "cluster")) {
+        await superuser.query(m.sql);
+        applied.push(m.version);
+      }
+    } finally {
+      await superuser.query("SELECT set_config('cns.db_role_mode', '', false)");
     }
     const problems = await checkRoleMemberships(superuser, mode);
     if (problems.length > 0) {

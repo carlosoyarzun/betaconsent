@@ -24,6 +24,12 @@
 --     sin privilegios sobre ningun objeto en PR-2 (los de canje, conciliacion y checkpoints llegan en PR-4, PR-5 y PR-7).
 --     Su contrasena la fija setRolePasswords.
 --
+-- Modo de roles (ADR-010 §4.1.1): el runner (migrate.ts applyClusterScope) fija el GUC de sesion cns.db_role_mode (IT0B_SYNTHETIC o
+-- REAL_DATA) antes de la fase de cluster. El GRANT de SET de consent_owner sobre los 5 owners nuevos se omite si el modo es REAL_DATA
+-- (nadie tiene SET sobre los owners de §4.1.1 en operacion normal). Si el GUC falta o esta vacio, aplica el comportamiento IT0B_SYNTHETIC.
+-- Tampoco se otorga ADMIN OPTION a nadie: si consent_owner lo tuviera sobre un owner nuevo, se revoca (la aserción compara admin_option).
+-- platform_rw -> rights_operator NO se revoca aqui: la aserción de membresia detecta una concesion prematura y PR-5 la agrega a la lista.
+--
 -- Fuera de PR-2: ddl_breakglass, breakglass_log_owner, db_owner_nologin y el retiro de las membresias de consent_owner
 -- (PR-7); la membresia platform_rw -> rights_operator (PR-5).
 
@@ -45,23 +51,43 @@ BEGIN
 END
 $roles$;
 
--- Q-15 (c): consent_owner solo puede SET (sin INHERIT) sobre los owners nuevos.
-GRANT platform_schema_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
-GRANT membership_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
-GRANT grant_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
-GRANT case_state_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
-GRANT transition_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
+-- Q-15 (c): consent_owner solo puede SET (sin INHERIT, sin ADMIN) sobre los owners nuevos, salvo en REAL_DATA (ver cabecera).
+DO $grants$
+BEGIN
+  IF COALESCE(NULLIF(pg_catalog.current_setting('cns.db_role_mode', true), ''), 'IT0B_SYNTHETIC') <> 'REAL_DATA' THEN
+    GRANT platform_schema_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
+    GRANT membership_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
+    GRANT grant_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
+    GRANT case_state_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
+    GRANT transition_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
+  END IF;
+END
+$grants$;
 
--- Ningun rol de runtime ni el migrador es miembro de los owners nuevos ni de rights_operator (el migrador solo llega a
--- ellos de forma transitiva por consent_owner, y solo con un cambio de rol explicito). Solo si hay membresia (REVOKE
--- sobre un no miembro emite un WARNING por corrida). platform_rw -> rights_operator se otorga en PR-5, no aqui.
+-- Un GRANT repetido no quita ADMIN OPTION: se revoca de forma condicional (solo si existe, para no emitir WARNING por corrida).
+DO $admin$
+DECLARE
+  g text;
+BEGIN
+  FOREACH g IN ARRAY ARRAY['platform_schema_owner', 'membership_owner', 'grant_owner', 'case_state_owner', 'transition_owner'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
+                 JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles x ON x.oid = m.member
+                WHERE r.rolname = g AND x.rolname = 'consent_owner' AND m.admin_option) THEN
+      EXECUTE pg_catalog.format('REVOKE ADMIN OPTION FOR %I FROM consent_owner', g);
+    END IF;
+  END LOOP;
+END
+$admin$;
+
+-- Ningun rol de runtime ni el migrador es miembro de los owners nuevos (el migrador solo llega a ellos de forma transitiva por consent_owner,
+-- y solo con un cambio de rol explicito). Solo si hay membresia (REVOKE sobre un no miembro emite un WARNING por corrida).
 DO $revoke$
 DECLARE
   g text;
   u text;
 BEGIN
-  FOREACH g IN ARRAY ARRAY['platform_schema_owner', 'membership_owner', 'grant_owner', 'case_state_owner', 'transition_owner', 'rights_operator'] LOOP
-    FOREACH u IN ARRAY ARRAY['app_rw', 'worker', 'platform_rw', 'integrity_verifier', 'consent_migrator'] LOOP
+  FOREACH g IN ARRAY ARRAY['platform_schema_owner', 'membership_owner', 'grant_owner', 'case_state_owner', 'transition_owner'] LOOP
+    FOREACH u IN ARRAY ARRAY['app_rw', 'worker', 'integrity_verifier', 'consent_migrator'] LOOP
       IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
                    JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles x ON x.oid = m.member
                   WHERE r.rolname = g AND x.rolname = u) THEN
@@ -70,8 +96,8 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- integrity_verifier no pertenece a ningun owner preexistente ni a staff_roster_reader.
-  FOREACH g IN ARRAY ARRAY['consent_owner', 'tenant_resolve_owner', 'staff_roster_owner', 'staff_roster_reader', 'integrity_owner', 'security_event_owner', 'outbox_claimer'] LOOP
+  -- integrity_verifier no pertenece a ningun owner preexistente ni a staff_roster_reader. (platform_rw tampoco, pero ver cabecera.)
+  FOREACH g IN ARRAY ARRAY['consent_owner', 'tenant_resolve_owner', 'staff_roster_owner', 'staff_roster_reader', 'integrity_owner', 'security_event_owner', 'outbox_claimer', 'rights_operator'] LOOP
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
                  JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles x ON x.oid = m.member
                 WHERE r.rolname = g AND x.rolname = 'integrity_verifier') THEN

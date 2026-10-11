@@ -68,8 +68,11 @@ Vocabulario de estado (Carlos, 2026-10-08): DEFERRED-IT0b para los que se retoma
 | F-A10-06 | P2 | DEC-BR-017 §7 / revocation R4 (C6 solo en el lote de APPLY_REVOCATION) vs `app_rw` con UPDATE(state) en `app.consent_decision` (`0006:111`): puede poner REVOKED fuera de R4 | OPEN; en alcance de ADR-010 PR-5 (Carlos 2026-10-11) | lampone-architect / lampone-dev | Carlos 2026-10-11 | Policy `WITH CHECK (state <> 'REVOKED')` para `app_rw`; C6 solo en `case_state.apply_revocation`; conciliación REVOKED↔CONSENT_REVOKED. TEST-CNS-TBD-DBR-10 |
 | F-A10-07 | P2 | API-CNS-100 ("ningún request acepta `tenantRef`", `consent-it0.openapi.yaml:25-26`) vs ADR-010 Q4 (aprovisionamiento de membership PLATFORM, que necesita el tenant destino) | OPEN | lampone-architect / lampone-security | ADR-010 rev. 4 FN-11 | Excepción explícita solo para la clase PLATFORM en `consent-platform.openapi.yaml` (ADR-010 PR-1/PR-3), revisada por lampone-security |
 | F-A10-08 | P2 | IDs de riesgo: R-21 del registro (egress al IdP) vs R-21-1…R-21-5 de SEC-CNS-021 (`0028:14`, `0031:17`, `db/README.md:90`). Además, R-21-1 (DROP de tablas de `ops` por el dueño del esquema) no queda cubierto por ADR-010 Q-20 | OPEN | lampone-security → Carlos | ADR-010 rev. 4 FN-12 | R-21-2 registrado como R-23 (alias) en `risk-register-IT0.md`; R-21-1 con decisión propia antes de datos reales |
+| F-A10-09 | P2 | Huecos del checker de owners (`tools/spec-checks/integrity-owner-checker.ts`) de ADR-010 PR-2: no detecta `SET role = ...`, `CREATE ROLE ... IN ROLE <owner>`, `ALTER GROUP ... ADD USER`, SQL dinámico (`format('SET ROLE %I')`); `rights_operator` no está incluido en `ADR010_OWNER_ROLES` | OPEN | lampone-dev | Revisión de seguridad de la #85 (2026-10-11) | Ampliar el checker o cubrirlo con la aserción de membresía; antes de ADR-010 PR-7 |
+| F-A10-10 | P2 | `PUBLIC` tiene TEMP (base) y CONNECT por defecto: todos los roles de runtime (incl. `integrity_verifier`) pueden crear tablas temporales y conectarse a cualquier base del cluster | OPEN | lampone-security | Revisión de seguridad de la #85 (2026-10-11) | REVOKE de PUBLIC y GRANT explícito por rol; decidir antes de datos reales |
+| F-A10-11 | P2 | La aserción de membresía no se repite tras `applyDatabaseScope` (una migración de base podría alterar `pg_auth_members`), y los `ALTER ROLE ... SET` de los owners nuevos (p. ej. timeouts) no se restablecen en cada deploy | OPEN | lampone-dev | Revisión de seguridad de la #85 (2026-10-11) | Repetir la aserción tras la fase database y reafirmar `ALTER ROLE ... SET` en el cluster scope |
 
-Hallazgos ADR-010 rev. 4 (F-A10-01…08): P1: 2 (F-A10-01 pasa a P0 antes de datos reales), P2: 6. Ningún P0 en IT0b sintético.
+Hallazgos ADR-010 rev. 4 (F-A10-01…11): P1: 2 (F-A10-01 pasa a P0 antes de datos reales), P2: 9. Ningún P0 en IT0b sintético.
 
 ## Notas
 
@@ -82,6 +85,7 @@ Hallazgos ADR-010 rev. 4 (F-A10-01…08): P1: 2 (F-A10-01 pasa a P0 antes de dat
 
 ## Nota de versión
 
+- 2026-10-11 (lampone-dev, revisión de seguridad de la #85): agrega F-A10-09…F-A10-11 (ADR-010 PR-2).
 - 2026-10-11 (lampone-architect, decisiones de Carlos Q-17…Q-20): agrega F-A10-01…F-A10-08 (ADR-010 rev. 4, PR-1).
 - 2026-10-08 (lampone-dev, Carlos): F-X8-09, F-X8-10 y F-X8-14 pasan de OPEN a DEFERRED-IT0b por decisión de Carlos (no afectan IT0 sintético). R-10 y R-02 del risk-register no cambian de estado.
 - 2026-10-08 (lampone-dev): estados alineados a las decisiones de Carlos del 2026-10-06 (rev. 8 de ADR-001 aceptada para IT0; DEFER de ADR-002/006 a ADR-010/IT0b; 2º code owner a IT0b). F-X8-05/06/07 siguen OPEN (CSP, lints §6.1 y SBOM/SAST pendientes).

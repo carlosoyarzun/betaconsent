@@ -21,7 +21,7 @@
 
 import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { Queryable } from "./pool.ts";
-import { checkRoleMemberships, DEFAULT_DB_ROLE_MODE, OWNER_ROLES } from "./role-membership.ts";
+import { checkRoleMemberships, OWNER_ROLES, resolveDbRoleMode, RoleModeError } from "./role-membership.ts";
 import type { DbRoleMode } from "./role-membership.ts";
 
 /** F-7: tolerancia entre el reloj de la BD (vista del roster) y el del proceso (dominio). */
@@ -39,7 +39,7 @@ export interface StartupCheckOptions {
   expectedRole?: string;
   /** SEC-CNS-021 PR-3: retencion configurada (retention.config.ts). Obligatoria en STAGING; si se pasa, debe coincidir con ops.retention_policy. */
   retention?: RetentionConfig;
-  /** ADR-010 PR-2: modo de roles declarado por el deploy (nunca por la request). Por defecto IT0B_SYNTHETIC; REAL_DATA no esta activado hasta PR-7. */
+  /** ADR-010 PR-2: modo de roles declarado por el deploy (nunca por la request). Por defecto resolveDbRoleMode(process.env, expectedEnvironment); REAL_DATA no esta activado hasta PR-7. */
   roleMode?: DbRoleMode;
 }
 
@@ -108,9 +108,11 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   }
 
   try {
-    for (const problem of await checkRoleMemberships(db, options.roleMode ?? DEFAULT_DB_ROLE_MODE)) failures.push(`${problem} (INV-DBR-03)`);
-  } catch {
-    failures.push("no se pudo verificar la membresía de los roles (INV-DBR-03)");
+    // El modo lo declara el deploy (CNS_DB_ROLE_MODE), el mismo que usa el runner; vacio solo vale en LOCAL/DEV. Sin modo valido, no arranca.
+    const roleMode = options.roleMode ?? resolveDbRoleMode(process.env, options.expectedEnvironment);
+    for (const problem of await checkRoleMemberships(db, roleMode)) failures.push(`${problem} (INV-DBR-03)`);
+  } catch (error) {
+    failures.push(error instanceof RoleModeError ? `${error.message} (INV-DBR-03)` : "no se pudo verificar la membresía de los roles (INV-DBR-03)");
   }
 
   await checkStaffRosterRoles(db, me?.rolname, failures);

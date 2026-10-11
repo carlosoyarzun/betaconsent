@@ -24,9 +24,11 @@ export interface MembershipEdge {
   readonly role: string;
   readonly inherit: boolean;
   readonly set: boolean;
+  /** admin_option de pg_auth_members: quien lo tiene puede conceder el rol a otros (escalada de membresia). Esperado false en toda fila. */
+  readonly admin: boolean;
 }
 
-const edge = (member: string, role: string, inherit: boolean, set: boolean): MembershipEdge => ({ member, role, inherit, set });
+const edge = (member: string, role: string, inherit: boolean, set: boolean, admin = false): MembershipEdge => ({ member, role, inherit, set, admin });
 
 /** Owners de §4.1.1 que consent_owner puede asumir con SET (INHERIT FALSE) en IT0B_SYNTHETIC. */
 export const CONSENT_OWNER_SET_ROLES: readonly string[] = [
@@ -98,38 +100,59 @@ export function assertModeActive(mode: DbRoleMode): void {
   }
 }
 
-/** Resuelve el modo desde el entorno del deploy. Vacío = IT0B_SYNTHETIC; valor desconocido o no activado = error (fail-closed). */
-export function resolveDbRoleMode(env: Readonly<Record<string, string | undefined>>): DbRoleMode {
+/** Entornos en los que CNS_DB_ROLE_MODE vacio equivale a IT0B_SYNTHETIC (LOCAL y DEV sinteticos). En cualquier otro, o sin entorno, el modo es obligatorio. */
+export const ENVIRONMENTS_WITH_DEFAULT_MODE: readonly string[] = ["LOCAL", "DEV"];
+
+/**
+ * Resuelve el modo desde el entorno del deploy (nunca la request). Vacio = IT0B_SYNTHETIC SOLO si `environment` es LOCAL o DEV;
+ * en STAGING, sin entorno declarado o cualquier otro, falta de CNS_DB_ROLE_MODE es error (fail-closed). Valor desconocido o no activado = error.
+ */
+export function resolveDbRoleMode(env: Readonly<Record<string, string | undefined>>, environment: string | undefined): DbRoleMode {
   const raw = env[DB_ROLE_MODE_ENV];
-  if (raw === undefined || raw === "") return DEFAULT_DB_ROLE_MODE;
+  if (raw === undefined || raw === "") {
+    if (environment !== undefined && ENVIRONMENTS_WITH_DEFAULT_MODE.includes(environment)) return DEFAULT_DB_ROLE_MODE;
+    throw new RoleModeError(`${DB_ROLE_MODE_ENV} es obligatorio fuera de LOCAL/DEV (entorno: ${environment ?? "no declarado"}).`);
+  }
   if (raw !== "IT0B_SYNTHETIC" && raw !== "REAL_DATA") throw new RoleModeError(`${DB_ROLE_MODE_ENV} desconocido: "${raw}".`);
   assertModeActive(raw);
   return raw;
 }
 
-const keyOf = (e: MembershipEdge): string => `${e.member} -> ${e.role} {inherit: ${e.inherit}, set: ${e.set}}`;
+const keyOf = (e: MembershipEdge): string => `${e.member} -> ${e.role} {inherit: ${e.inherit}, set: ${e.set}, admin: ${e.admin}}`;
 
-/** Compara membresías reales con las esperadas del modo; devuelve una descripción por diferencia (vacío = coincide). Solo nombres de rol. */
+/**
+ * Compara membresias reales con las esperadas del modo como MULTICONJUNTO (una fila duplicada, p. ej. con otro grantor, es una diferencia).
+ * Devuelve una descripcion por diferencia (vacio = coincide). Solo nombres de rol.
+ */
 export function diffMemberships(actual: readonly MembershipEdge[], mode: DbRoleMode): string[] {
-  const expected = new Set(EXPECTED_MEMBERSHIPS[mode].map(keyOf));
-  const found = new Set(actual.map(keyOf));
+  const count = (edges: readonly MembershipEdge[]): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const e of edges) m.set(keyOf(e), (m.get(keyOf(e)) ?? 0) + 1);
+    return m;
+  };
+  const expected = count(EXPECTED_MEMBERSHIPS[mode]);
+  const found = count(actual);
   const problems: string[] = [];
-  for (const k of [...found].sort()) if (!expected.has(k)) problems.push(`membresía no esperada en modo ${mode}: ${k}`);
-  for (const k of [...expected].sort()) if (!found.has(k)) problems.push(`falta la membresía esperada en modo ${mode}: ${k}`);
+  for (const [k, n] of [...found].sort(([x], [y]) => x.localeCompare(y))) {
+    const want = expected.get(k) ?? 0;
+    if (want === 0) problems.push(`membresía no esperada en modo ${mode}: ${k}`);
+    else if (n > want) problems.push(`membresía duplicada (${n} filas) en modo ${mode}: ${k}`);
+  }
+  for (const k of [...expected.keys()].sort()) if (!found.has(k)) problems.push(`falta la membresía esperada en modo ${mode}: ${k}`);
   return problems;
 }
 
 /** Lee de pg_auth_members toda fila que toque un rol gobernado (como miembro o como rol concedido). */
 export async function readGovernedMemberships(db: Queryable): Promise<MembershipEdge[]> {
-  const r = await db.query<{ member: string; role: string; inherit_option: boolean; set_option: boolean }>(
-    `SELECT u.rolname AS member, g.rolname AS role, m.inherit_option, m.set_option
+  const r = await db.query<{ member: string; role: string; inherit_option: boolean; set_option: boolean; admin_option: boolean }>(
+    `SELECT u.rolname AS member, g.rolname AS role, m.inherit_option, m.set_option, m.admin_option
        FROM pg_catalog.pg_auth_members m
        JOIN pg_catalog.pg_roles g ON g.oid = m.roleid
        JOIN pg_catalog.pg_roles u ON u.oid = m.member
       WHERE g.rolname = ANY($1::text[]) OR u.rolname = ANY($1::text[])`,
     [[...GOVERNED_ROLES]],
   );
-  return r.rows.map((x) => edge(x.member, x.role, x.inherit_option, x.set_option));
+  return r.rows.map((x) => edge(x.member, x.role, x.inherit_option, x.set_option, x.admin_option));
 }
 
 /** Verifica la igualdad exacta de membresías para el modo; devuelve las diferencias (vacío = ok). Modo no activado = una diferencia. */
