@@ -145,11 +145,14 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
   const m0034 = "db/migrations/0034_adr010_cluster_roles.sql";
   const m0035 = "db/migrations/0035_adr010_platform_schema.sql";
   const set35 = ["platform_schema_owner", "membership_owner", "grant_owner"].map((r) => `SET LOCAL ROLE ${r};`).join("\n");
-  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }];
+  // 0036 (PR-4) asume los mismos tres owners y platform_schema_owner; el fixture LOCAL del bootstrap PLATFORM (patron TEST-CNS-879) asume membership_owner.
+  const m0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
+  const fixPlatform = "db/fixtures/local/0002_platform_bootstrap.sql";
+  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }];
   assert.deepEqual(checkAdr010OwnerUsage(base), []);
-  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
-  assert.equal(checkAdr010OwnerUsage([...base, { path: "db/migrations/0036_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
+  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }, { path: m0036, text: "SELECT 1;" }, { path: fixPlatform, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
+  assert.equal(checkAdr010OwnerUsage([...base, { path: "db/migrations/0037_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
   // 0035 solo puede asumir sus tres owners: case_state_owner y transition_owner son de PR-5.
-  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }]);
+  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }, { path: m0036, text: set35 }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }]);
   assert.equal(over.filter((e) => e.includes("fuera de la allowlist") && e.includes("transition_owner")).length, 1);
 });

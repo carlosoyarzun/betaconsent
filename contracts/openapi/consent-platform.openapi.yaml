@@ -26,16 +26,20 @@ info:
     - Ningun GET transiciona (INV-CM-08).
     - El actor se toma de la sesion, nunca del body.
     - Respuestas 404 uniformes.
-    - Excepcion a revisar (F-A10-07, P2, OPEN): API-CNS-100 dice "ningun request acepta tenantRef"; el aprovisionamiento PLATFORM (Q4) necesita el tenant destino. Se declarara una excepcion explicita solo para la clase PLATFORM, revisada por lampone-security.
+    - Excepcion de tenantRef (F-A10-07; decision de Carlos 2026-10-11 (4)): API-CNS-100 dice "ningun request acepta tenantRef". La excepcion aplica SOLO en esta API del proceso `platform` (equipo de LectorPro, clase PLATFORM con step-up): el aprovisionamiento de membership (Q4) y de role-assignment (cross-tenant) necesita el tenant destino. La via web (consola STAFF, app_rw, `POST /staff/membership-requests` en consent-it0) NO lo acepta: lo deriva de la sesion STAFF.
+    - Nadie aprueba su propio acceso (decision de Carlos 2026-10-11 (6)): la aprobacion de una membership o de un rol exige un aprobador distinto del solicitante Y distinto del principal que recibe el acceso; la base lo impone (CHECK approved_by_ref <> principal_ref y reason_code SELF_ACCESS). Un DENY responde un error generico uniforme: el motivo queda en platform.authorization_check, no en la respuesta (F-A10-13).
+    - Enums de rol fijos (decision de Carlos 2026-10-11 (2)): membership TENANT_ADMIN | INVITER; plataforma PLATFORM | RIGHTS_OPERATOR | APPROVER (clase PRIVACY_LEGAL | SECURITY) | CONTEXT_OWNER. `principalRef` es un UUIDv4 opaco.
 
     Extensiones por operacion: `x-session`, `x-roles`, `x-step-up` (accion del nonce, P-36), `x-db-role`, `x-db-function` (las de case_state.* son de transition_owner, Q-18; las de platform.*, de grant_owner o membership_owner), `x-authorize` (platform.authorize(), 4.6; por definir), `x-delivery` (PR de entrega).
   x-pending:
     - "OPEN-CT-04: rango API-CNS reconciliar con Notion."
-    - "F-A10-07: excepcion tenantRef para la clase PLATFORM."
+    - "F-A10-07: excepcion tenantRef para la clase PLATFORM — decidida por Carlos el 2026-10-11 (4): solo en esta API; falta revision de lampone-security."
     - "P-26 / APR-IDP: nombres de cookie y parametros del IdP pendientes (PENDING - Carlos / studio)."
   x-not-exposed:
     - "Canje del code, ATTESTED/REJECTED, checkpoints y alertas de break-glass: proceso verifier, sin HTTP."
-    - "Bootstrap y re-bootstrap de principals PLATFORM (Q10): ceremonia."
+    - "Bootstrap y re-bootstrap de principals PLATFORM (Q10): LOCAL = fixture sintetico (db/fixtures/local/0002_platform_bootstrap.sql, decision de Carlos 2026-10-11 (3)); STAGING y datos reales = ceremonia de break-glass de PR-7, no implementada."
+    - "Vinculo principal_ref <-> sub_hmac (platform.principal_identity): sin operacion HTTP; fuera de LOCAL queda pendiente (OI-DBR-09 de specs/db-roles.spec.yaml)."
+    - "platform.record_assertion, claim_oidc_exchange y purge_expired_oidc_exchange: las ejecutan el verifier y el worker; platform solo encola con platform.enqueue_oidc_exchange (sin SELECT sobre la cola)."
     - "Funciones SYSTEM (R4-R7, R9+RC1, RC2+RV0): las ejecuta worker."
     - "R8h y RC1c: deshabilitadas (LEGAL DECISION LD-03/LD-04)."
   x-stays-in-it0: "/i/, /m/, /r/, /invitation/open, /otp/*, /decision/*, /manage/revocation*, /manage/recovery-link, /recovery/revoke, /rights-case/*, y toda la consola STAFF (/staff/*; staffSession, RLS por tenant). Solicitud de membership de un TENANT_ADMIN: ruta nueva POST /staff/membership-requests en consent-it0 (fuera de este PR); la aprobacion es siempre la operacion approveMembership."

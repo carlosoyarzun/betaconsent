@@ -63,11 +63,14 @@ async function seedTenantAdmin(admin: Client, tenant: string, principal: string)
 
 /** Siembra un nonce ya ATTESTED (stand-in del verifier de PR-4) para el binding exacto (principal, accion, tenant, resource). */
 async function seedNonce(admin: Client, principal: string, action: string, tenant: string | null, resource: string): Promise<void> {
+  // El guard de action_nonce (0036) exige que un nonce nazca sin atestar: se inserta y luego se fija attested_at con UPDATE (stand-in del verifier, solo en tests).
+  const hash = (await admin.query<{ h: string }>("SELECT encode(sha256(convert_to($1, 'UTF8')), 'hex') AS h", [randomUUID()])).rows[0]!.h;
   await admin.query(
-    `INSERT INTO platform.action_nonce (nonce_hash, scope, tenant_id, action, refs_digest, principal_ref, expires_at, attested_at)
-     VALUES (encode(sha256(convert_to($1, 'UTF8')), 'hex'), $2, $3::uuid, $4, encode(sha256(convert_to($5, 'UTF8')), 'hex'), $6, now() + interval '5 minutes', now())`,
-    [randomUUID(), tenant === null ? "PLATFORM" : "TENANT", tenant, action, resource, principal],
+    `INSERT INTO platform.action_nonce (nonce_hash, scope, tenant_id, action, refs_digest, principal_ref, expires_at)
+     VALUES ($1, $2, $3::uuid, $4, encode(sha256(convert_to($5, 'UTF8')), 'hex'), $6, now() + interval '5 minutes')`,
+    [hash, tenant === null ? "PLATFORM" : "TENANT", tenant, action, resource, principal],
   );
+  await admin.query("UPDATE platform.action_nonce SET attested_at = now() WHERE nonce_hash = $1", [hash]);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -97,17 +100,27 @@ const EXPECTED_EXECUTE: Record<string, string[]> = {
   membership_no_truncate: [],
   action_nonce_guard: [],
   authorization_check_guard: [],
+  identity_guard: [],
+  oidc_exchange_guard: [],
+  deny_guard: [],
+  enqueue_oidc_exchange: ["platform_rw"],
+  claim_oidc_exchange: ["integrity_verifier"],
+  record_assertion: ["integrity_verifier"],
+  purge_expired_oidc_exchange: ["worker"],
 };
 const FUNCTION_OWNERS: Record<string, string> = {
   request_membership: "membership_owner", approve_membership: "membership_owner", request_role_assignment: "membership_owner", approve_role_assignment: "membership_owner",
   membership_guard: "membership_owner", membership_no_truncate: "membership_owner",
   authorize: "grant_owner", issue_action_nonce: "grant_owner", authorize_target: "grant_owner", action_nonce_guard: "grant_owner", authorization_check_guard: "grant_owner",
+  identity_guard: "membership_owner", oidc_exchange_guard: "grant_owner", deny_guard: "grant_owner", enqueue_oidc_exchange: "grant_owner", claim_oidc_exchange: "grant_owner",
+  record_assertion: "grant_owner", purge_expired_oidc_exchange: "grant_owner",
 };
 const TABLE_OWNERS: Record<string, string> = {
-  tenant_membership: "membership_owner", platform_role_assignment: "membership_owner", action_nonce: "grant_owner", authorization_check: "grant_owner",
+  tenant_membership: "membership_owner", platform_role_assignment: "membership_owner", principal_identity: "membership_owner",
+  action_nonce: "grant_owner", authorization_check: "grant_owner", oidc_exchange: "grant_owner", grant_assertion: "grant_owner",
 };
 
-pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 4 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 11 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
+pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 7 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 18 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
 
   const ns = (await admin.query<{ owner: string }>("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'platform'")).rows;
@@ -137,7 +150,7 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 4 tablas de
     const publicAcl = (await admin.query("SELECT 1 FROM pg_class c, aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a WHERE c.oid = $1::regclass AND a.grantee = 0", [`platform.${table}`])).rowCount;
     assert.equal(publicAcl, 0, `PUBLIC sobre platform.${table}`);
   }
-  for (const table of ["tenant_membership", "platform_role_assignment"]) {
+  for (const table of ["tenant_membership", "platform_role_assignment", "principal_identity"]) {
     const g = (await admin.query<{ s: boolean; w: boolean }>(
       "SELECT has_table_privilege('grant_owner', $1::regclass, 'SELECT') AS s, has_any_column_privilege('grant_owner', $1::regclass, 'INSERT,UPDATE,REFERENCES') AS w",
       [`platform.${table}`],
@@ -145,15 +158,15 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 4 tablas de
     assert.deepEqual(g, { s: false, w: false }, `grant_owner sobre platform.${table}: solo SELECT por columnas`);
     assert.equal((await admin.query("SELECT 1 FROM information_schema.column_privileges WHERE table_schema = 'platform' AND table_name = $1 AND grantee = 'grant_owner' AND privilege_type = 'SELECT'", [table])).rowCount! > 0, true);
   }
-  for (const table of ["action_nonce", "authorization_check"]) {
+  for (const table of ["action_nonce", "authorization_check", "oidc_exchange", "grant_assertion"]) {
     assert.equal((await admin.query<{ p: boolean }>("SELECT has_any_column_privilege('membership_owner', $1::regclass, 'SELECT,INSERT,UPDATE,REFERENCES') AS p", [`platform.${table}`])).rows[0]?.p, false);
   }
 
-  // Esquema: nadie CREA salvo el dueno; USAGE solo para los dos owners de objetos, app_rw y platform_rw (worker y verifier no, hasta PR-4); PUBLIC nada.
+  // Esquema: nadie CREA salvo el dueno; USAGE para los dos owners de objetos, app_rw, platform_rw, worker (purga) e integrity_verifier (PR-4); PUBLIC nada.
   for (const role of ["membership_owner", "grant_owner", "consent_owner", "consent_migrator", "app_rw", "platform_rw", "worker", "integrity_verifier"]) {
     assert.equal((await admin.query<{ p: boolean }>("SELECT has_schema_privilege($1, 'platform', 'CREATE') AS p", [role])).rows[0]?.p, false, `${role} CREATE en platform`);
   }
-  for (const [role, usage] of [["membership_owner", true], ["grant_owner", true], ["app_rw", true], ["platform_rw", true], ["worker", false], ["integrity_verifier", false], ["consent_owner", false], ["consent_migrator", false]] as const) {
+  for (const [role, usage] of [["membership_owner", true], ["grant_owner", true], ["app_rw", true], ["platform_rw", true], ["worker", true], ["integrity_verifier", true], ["consent_owner", false], ["consent_migrator", false]] as const) {
     assert.equal((await admin.query<{ p: boolean }>("SELECT has_schema_privilege($1, 'platform', 'USAGE') AS p", [role])).rows[0]?.p, usage, `${role} USAGE en platform`);
   }
   assert.equal((await admin.query("SELECT 1 FROM pg_namespace n, aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a WHERE n.nspname = 'platform' AND a.grantee = 0")).rowCount, 0);
@@ -178,14 +191,16 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 4 tablas de
     }
   }
 
-  // Triggers: 8, BEFORE, ENABLE ALWAYS.
+  // Triggers: 14, BEFORE, ENABLE ALWAYS.
   const triggers = (await admin.query<{ tgname: string; tgenabled: string; tgtype: number }>(
     `SELECT g.tgname, g.tgenabled, g.tgtype FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'platform' AND NOT g.tgisinternal ORDER BY g.tgname`,
   )).rows;
   assert.deepEqual(triggers.map((t) => t.tgname), [
     "action_nonce_guard", "action_nonce_no_truncate", "authorization_check_append_only", "authorization_check_no_truncate",
-    "platform_role_assignment_guard", "platform_role_assignment_no_truncate", "tenant_membership_guard", "tenant_membership_no_truncate",
+    "grant_assertion_immutable", "grant_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
+    "platform_role_assignment_guard", "platform_role_assignment_no_truncate", "principal_identity_guard", "principal_identity_no_truncate",
+    "tenant_membership_guard", "tenant_membership_no_truncate",
   ]);
   for (const t of triggers) {
     assert.equal(t.tgenabled, "A", `${t.tgname} ENABLE ALWAYS`);
