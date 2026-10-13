@@ -16,7 +16,9 @@ export interface VerifierConfig {
   allowedAlgs: IdTokenPolicy["allowedAlgs"];
   /** P-36 (PENDING): se pasa explicito; no hay default. */
   maxAuthAgeSeconds: number;
-  /** APR-IDP (PENDING): vacio/ausente = no se exige. */
+  /** Entorno del proceso (sin default). Fuera de LOCAL, `requiredAcrAnyOf` no vacio es obligatorio (decision de Carlos 2026-10-12). */
+  environment: string;
+  /** APR-IDP (PENDING): los valores los fija Carlos/studio. Vacio/ausente solo se admite en LOCAL; fuera de LOCAL la configuracion falla cerrada. */
   requiredAcrAnyOf?: readonly string[];
   /** K_sub del SecretStore (F-X8-09 pendiente): >= 32 bytes. */
   subHmacKey: Buffer;
@@ -46,6 +48,7 @@ export function validateVerifierConfig(config: VerifierConfig, nowSeconds: numbe
     audience: config.audience,
     allowedAlgs: config.allowedAlgs,
     maxAuthAgeSeconds: config.maxAuthAgeSeconds,
+    environment: config.environment,
     ...(config.requiredAcrAnyOf === undefined ? {} : { requiredAcrAnyOf: config.requiredAcrAnyOf }),
     ...(config.clockSkewSeconds === undefined ? {} : { clockSkewSeconds: config.clockSkewSeconds }),
     nowSeconds,
@@ -75,6 +78,7 @@ export async function runVerifierCycle(deps: VerifierDeps): Promise<VerifierCycl
       audience: config.audience,
       allowedAlgs: config.allowedAlgs,
       maxAuthAgeSeconds: config.maxAuthAgeSeconds,
+      environment: config.environment,
       ...(config.requiredAcrAnyOf === undefined ? {} : { requiredAcrAnyOf: config.requiredAcrAnyOf }),
       ...(config.clockSkewSeconds === undefined ? {} : { clockSkewSeconds: config.clockSkewSeconds }),
       nowSeconds: Math.floor(now() / 1000),

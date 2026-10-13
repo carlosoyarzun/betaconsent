@@ -152,14 +152,16 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
   const m0037 = "db/migrations/0037_adr010_case_state_revocation.sql";
   const m0038 = "db/migrations/0038_adr010_case_state_rights_case.sql"; // PR-5b: mismos dos owners que 0037
   const m0039 = "db/migrations/0039_adr010_ledger_allowlist_close_case_d6.sql"; // PR-5b D5/D6: mismos dos owners
+  const m0040 = "db/migrations/0040_adr010_record_assertion_fresh_auth.sql"; // PR-6-0: platform_schema_owner (CREATE temporal) y grant_owner (record_assertion v2)
+  const set40 = ["platform_schema_owner", "grant_owner"].map((r) => `SET LOCAL ROLE ${r};`).join("\n");
   const t5b = "tests/integration/postgres/adr010-pr5b-rights-case.test.ts";
   const set37 = ["case_state_owner", "transition_owner"].map((r) => `SET LOCAL ROLE ${r};`).join("\n");
   const t5a = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
-  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }];
+  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: m0040, text: set40 }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }];
   assert.deepEqual(checkAdr010OwnerUsage(base), []);
-  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }, { path: m0036, text: "SELECT 1;" }, { path: m0037, text: "SELECT 1;" }, { path: m0038, text: "SELECT 1;" }, { path: m0039, text: "SELECT 1;" }, { path: t5a, text: "SELECT 1;" }, { path: t5b, text: "SELECT 1;" }, { path: fixPlatform, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
+  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }, { path: m0036, text: "SELECT 1;" }, { path: m0037, text: "SELECT 1;" }, { path: m0038, text: "SELECT 1;" }, { path: m0039, text: "SELECT 1;" }, { path: m0040, text: "SELECT 1;" }, { path: t5a, text: "SELECT 1;" }, { path: t5b, text: "SELECT 1;" }, { path: fixPlatform, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
   assert.equal(checkAdr010OwnerUsage([...base, { path: "db/migrations/0038_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
   // 0035 solo puede asumir sus tres owners: case_state_owner y transition_owner son de 0037 (PR-5a).
-  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }]);
+  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: m0040, text: set40 }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }]);
   assert.equal(over.filter((e) => e.includes("fuera de la allowlist") && e.includes("transition_owner")).length, 1);
 });
