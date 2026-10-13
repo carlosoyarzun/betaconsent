@@ -27,7 +27,7 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0038_adr010_case_state_rights_case.sql": ["set-role"],
   // 0039 (ADR-010 PR-5b, D5): INV-DBR-07 como allowlist (CHECK de aggregate_type, ALTER POLICY de app_rw y trigger de un aggregate_type por aggregate_id; DDL sobre integrity.*).
   "db/migrations/0039_adr010_ledger_allowlist_close_case_d6.sql": ["set-role"],
-  // 0042 (ADR-010 PR-6a): GRANT SELECT y policy por tenant de SOLO LECTURA sobre integrity.audit_event para el worker (ejecutor de R5-R7; DDL sobre integrity.*, antes de PR-7; F-PR6-10).
+  // 0042 (ADR-010 PR-6a): GRANT SELECT y policy por tenant de SOLO LECTURA sobre integrity.audit_event para el worker (ejecutor de R5-R7; DDL sobre integrity.*, antes de PR-7; F-PR6-20).
   "db/migrations/0042_adr010_worker_downstream_only.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],

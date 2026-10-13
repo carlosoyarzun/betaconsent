@@ -6,7 +6,7 @@
 // Un ciclo hace: (1) purga de canjes OIDC vencidos (platform.purge_expired_oidc_exchange); (2) claim del outbox (app.outbox_claim, sin tenant) y, por cada evento consent.revoked,
 // R5 -> R6 -> R7 de la Revocation contra el stub interno. Las transiciones las escriben las funciones case_state.* (SYSTEM_GUARD); el worker no tiene DML directo.
 // IT0 sintetico: el unico consumidor downstream es el stub en memoria (LOCAL); firma la evidencia el propio proceso porque el stub representa al consumidor. Fuera de LOCAL no hay
-// consumidor downstream: el ciclo NO ejecuta R5-R7 (cuenta `skippedDownstream`) y deja el evento reclamable (at-least-once; sin funcion de acuse del outbox todavia: F-PR6-10).
+// consumidor downstream: el ciclo NO ejecuta R5-R7 (cuenta `skippedDownstream`) y deja el evento reclamable (at-least-once; sin funcion de acuse del outbox todavia: F-PR6-20).
 // Cero PII y cero secretos en logs: solo contadores y nombres de error.
 
 import { createHash } from "node:crypto";

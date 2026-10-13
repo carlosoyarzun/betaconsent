@@ -44,3 +44,7 @@ Misma mecánica para `__Host-cns-case` (RIGHTS_OPERATOR/APPROVER), con la ligadu
 La consola `/__dev/staff-console` se mantiene. El copy legal es un marcador (`COPY LEGAL PENDIENTE — Carlos`).
 
 CA-141: login, logout y rotación de las sesiones STAFF y CASE se registran en `ops.security_event` (migración `0025`, append-only, RLS FORCE, `app_rw` solo INSERT; puerto `ports/security-event.port.ts`, adaptadores Postgres e in-memory) en la MISMA transacción que crea o revoca la sesión (`session_ref` UUIDv4 de la base, migración `0023`). Si el evento no se puede escribir: 503 sin Set-Cookie ni borrado de cookies (fail-closed). Retención LD-15 PENDING; sin purga en IT0. Ver `specs/session.spec.yaml` GRD-SE-14.
+
+## Entrypoints por proceso (ADR-010 PR-6a)
+
+`src/server/entrypoints/{web,platform,worker,verifier}/main.ts`, uno por rol de Postgres (INV-DBR-02). Cada uno falla cerrado al arrancar si la URL no es de su rol, el `current_user` difiere o la membresía de roles no cumple. `platform`: solo `GET /healthz`. `worker`: purga de canjes OIDC y R5–R7 (solo LOCAL, stub interno). `verifier`: sin HTTP; no arranca con el IdP sintético fuera de LOCAL. `web` delega en `dev.ts` (LOCAL). Unidades de servicio: `infra/systemd/`.

@@ -1,5 +1,5 @@
 // Gobierna: ADR-010 rev. 4 §7 fila PR-6 (6a: "Entrypoints web/platform/worker/verifier; unidades en infra/ (ADR-003); pools por rol"), INV-DBR-02, §4.2 (SYSTEM solo `worker`, GRD-CM-15);
-// specs/state-machines/revocation.spec.yaml R5-R7 (FN-RV-13..15); db/migrations/0042_adr010_worker_downstream_only.sql; plan PR-6 sub-PR 6a; F-A10-23, F-PR6-06, F-PR6-10.
+// specs/state-machines/revocation.spec.yaml R5-R7 (FN-RV-13..15); db/migrations/0042_adr010_worker_downstream_only.sql; plan PR-6 sub-PR 6a; F-A10-23, F-PR6-06, F-PR6-20.
 // TEST-CNS-1395: cada proceso (web/platform/worker/verifier) arranca con SU rol y los chequeos de arranque rechazan el rol equivocado (expectedRole por proceso); platform sirve solo /healthz.
 // TEST-CNS-1398: 0042 - app_rw/platform_rw/integrity_verifier sin EXECUTE de R5-R7 (42501 real), worker si; R4 intacta; el worker solo LEE app.revocation e integrity.audit_event bajo RLS.
 // TEST-CNS-1399: el worker ejecuta R5-R7 hasta COMPLETED (stub interno, LOCAL); el web ya no (42501, el estado no cambia); fuera de LOCAL el worker no ejecuta R5-R7.

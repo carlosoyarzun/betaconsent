@@ -98,8 +98,8 @@ Vocabulario de estado (Carlos, 2026-10-08): DEFERRED-IT0b para los que se retoma
 | F-PR6-08 | P2 | `environment` del verifier (`VerifierConfig`/`IdTokenPolicy`) no está ligado a una fuente confiable: el llamador lo declara, así que declarar "LOCAL" omite el MFA obligatorio. Además la base acepta ATTESTED con `p_acr` nulo fuera de LOCAL | OPEN | lampone-security | Revisión de seguridad de PR #91 | PR-6b: enum cerrado desde `CNS_ENVIRONMENT` contrastado con `ops.db_catalog.environment`; en la base exigir `p_acr` no nulo para ATTESTED fuera de LOCAL |
 | F-PR6-09 | P2 (opcional) | `record_assertion` rechaza el `auth_time` no fresco con `INVALID_CLAIMS`, indistinguible de otros claims inválidos; un `reason_code` propio `AUTH_NOT_FRESH` mejoraría la evidencia (exige ampliar los enums de `grant_assertion` y `authorization_check`) | OPEN | lampone-security | Revisión de seguridad de PR #91 | Decidir junto con PR-6b |
 | F-PR6-06 | P2 | Notion↔repo: §7 PR-4 decía "Proceso verifier" y solo se entregó el módulo | RESUELTO (PR-6a: entrypoints web/platform/worker/verifier, pools por rol, unidades en infra/systemd) | lampone-dev | plan PR-6 §5.3 | — |
-| F-PR6-10 | P2 | 0042 amplía la superficie de lectura del worker: SELECT (bajo RLS por tenant) sobre app.revocation e integrity.audit_event para ejecutar R5-R7; el worker sigue sin DML. Además el outbox no tiene función de acuse: el evento consent.revoked se reclama de nuevo al vencer el lease (R5-R7 idempotentes). Alternativa: funciones de lectura SECURITY DEFINER | OPEN | lampone-security → Carlos | PR-6a | Revisar antes de PR-6d |
-| F-PR6-11 | P2 | 0042 da a integrity_verifier USAGE en app y ops y SELECT de ops.db_catalog (necesario para los chequeos de arranque y contrastar CNS_ENVIRONMENT con la base, F-PR6-08); db-roles.spec no lo listaba | OPEN | lampone-security → Carlos | PR-6a | Ratificar o reemplazar por chequeo reducido del verifier |
+| F-PR6-20 | P2 | 0042 amplía la superficie de lectura del worker: SELECT (bajo RLS por tenant) sobre app.revocation e integrity.audit_event para ejecutar R5-R7; el worker sigue sin DML. Además el outbox no tiene función de acuse: el evento consent.revoked se reclama de nuevo al vencer el lease (R5-R7 idempotentes). Alternativa: funciones de lectura SECURITY DEFINER | OPEN | lampone-security → Carlos | PR-6a | Revisar antes de PR-6d |
+| F-PR6-21 | P2 | 0042 da a integrity_verifier USAGE en app y ops y SELECT de ops.db_catalog (necesario para los chequeos de arranque y contrastar CNS_ENVIRONMENT con la base, F-PR6-08); db-roles.spec no lo listaba | OPEN | lampone-security → Carlos | PR-6a | Ratificar o reemplazar por chequeo reducido del verifier |
 
 Hallazgos ADR-010 rev. 4 (F-A10-01…33): P1: 5 (F-A10-01, F-A10-02, F-A10-26, F-A10-30, F-A10-32; F-A10-01 y F-A10-32 resueltos en su alcance (el P0 antes de datos reales de F-A10-01 pasa a su residual F-A10-30); F-A10-26 y F-A10-30 pasan a P0 antes de datos reales), P2: 28. Ningún P0 en IT0b sintético.
 
@@ -114,7 +114,7 @@ Hallazgos ADR-010 rev. 4 (F-A10-01…33): P1: 5 (F-A10-01, F-A10-02, F-A10-26, F
 
 ## Nota de versión
 
-- 2026-10-13 (lampone-dev, ADR-010 PR-6a): F-A10-23 y F-PR6-06 resueltos; agrega F-PR6-10 y F-PR6-11 (P2, 0042). R4 queda fuera (enmienda P6-2); F-A10-26 sigue abierto.
+- 2026-10-13 (lampone-dev, ADR-010 PR-6a): F-A10-23 y F-PR6-06 resueltos; agrega F-PR6-20 y F-PR6-21 (P2, 0042). R4 queda fuera (enmienda P6-2); F-A10-26 sigue abierto.
 
 - 2026-10-13 (lampone-dev, ADR-010 PR-6-0): F-A10-20 y F-A10-21 resueltos en su regla estructural por la decisión de Carlos del 2026-10-12 (0040 + verifier TS); quedan PENDING el valor numérico de P-36, la tolerancia (skew) y los valores acr/amr (APR-IDP). Agrega F-PR6-03 (P2, decisión↔código) como RESUELTO.
 - 2026-10-13 (lampone-dev, ADR-010 PR-5b, decisiones D1–D6 de Carlos): F-A10-01 resuelto en su alcance (allowlist), F-A10-30 sube a P1, F-A10-32 resuelto, F-A10-31 → PR-6, F-A10-33 → cuando el dominio lo implemente.

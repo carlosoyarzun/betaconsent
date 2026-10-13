@@ -168,7 +168,7 @@ roles:
       - {name: "platform.request_grant / platform.approve_grant", status: "PR-5 (dueño grant_owner)"}
     mustNot: ["Sesiones STAFF y rutas /staff/* (Q-17)", "DML directo en sesiones, membership, role_assignment, grants, aserciones", "Poner ATTESTED/REJECTED", "SELECT de oidc_exchange (code, PKCE)", "Egress", "EXECUTE de funciones del titular, de la escuela, SYSTEM y de ops.purge_p34", "Ser miembro de staff_roster_reader"]
     verifiedBy:
-      startupChecks: ["expectedRole = platform_rw (PR-6)", "miembro de rights_operator exactamente INHERIT FALSE / SET TRUE (PR-5)", "no miembro de staff_roster_reader (MAIN, startup-checks.ts:221-223)", "sin privilegios sobre ninguna tabla de platform (MAIN, startup-checks checkPlatformSchemaExposure; PLATFORM_RUNTIME_EXECUTE)", "sin EXECUTE de ops.purge_p34 (MAIN :142-153)"]
+      startupChecks: ["expectedRole = platform_rw (MAIN PR-6a: entrypoints/platform)", "miembro de rights_operator exactamente INHERIT FALSE / SET TRUE (PR-5)", "no miembro de staff_roster_reader (MAIN, startup-checks.ts:221-223)", "sin privilegios sobre ninguna tabla de platform (MAIN, startup-checks checkPlatformSchemaExposure; PLATFORM_RUNTIME_EXECUTE)", "sin EXECUTE de ops.purge_p34 (MAIN :142-153)"]
       tests: [TEST-CNS-742, TEST-CNS-744, TEST-CNS-747, TEST-CNS-884, TEST-CNS-1306]
       newTests: ["TEST-CNS-TBD-DBR-03: platform_rw sin SET LOCAL ROLE rights_operator recibe 42501 en propose/record/cosign/close", "TEST-CNS-TBD-DBR-04: platform_rw no lee platform.oidc_exchange"]
 
@@ -189,16 +189,17 @@ roles:
     tables:
       - {object: ops.db_catalog, privileges: [SELECT], status: "MAIN (0001:76)"}
       - {object: app.outbox, privileges: [SELECT], policy: "solo filas CLAIMED de su tenant (TEST-CNS-813)", status: "MAIN (0003:73)"}
+      - {object: "app.revocation / integrity.audit_event", privileges: [SELECT], policy: "bajo RLS por tenant (app.current_tenant_id()); sin DML", status: "INTERINO 0042 (ADR-010 PR-6a): pendiente de ratificacion F-PR6-20 (alternativa: funciones de lectura SECURITY DEFINER)"}
     functions:
       - {name: "app.outbox_claim(integer) (dueño outbox_claimer)", status: "MAIN (0003:109)"}
       - {name: "ops.purge_p34(text, interval)", status: "MAIN (0031:270, 0033:206)"}
       - {name: "ops.purge_run_summary(uuid)", status: "MAIN (0031:302)"}
       - {name: "ops.retention_status()", status: "MAIN (0031:286)"}
-      - {name: "case_state.<funciones SYSTEM> (R4+C6, R5, R6, R7, R9+RC1 SYSTEM, RC2+RV0 SYSTEM; transitions.md §D)", status: "PR-5 (GRD-CM-15: EXECUTE solo worker; dueño transition_owner, que escribe el ledger)"}
+      - {name: "case_state.<funciones SYSTEM> (R4+C6, R5, R6, R7, R9+RC1 SYSTEM, RC2+RV0 SYSTEM; transitions.md §D)", status: "PR-5 (GRD-CM-15: EXECUTE solo worker; dueño transition_owner, que escribe el ledger). PR-6a (0042): R5–R7 solo worker; R4 sigue con EXECUTE app_rw hasta la enmienda P6-2"}
       - {name: "platform.purge_expired_oidc_exchange() (dueño grant_owner; borra solo filas con expires_at <= now())", status: "MAIN (0036)"}
     mustNot: ["DML directo en ledger, app.revocation, app.rights_case: el worker escribe ledger SOLO a través de las funciones SYSTEM (F-A10-02, Q-18)", "Aserciones ATTESTED", "Sesiones"]
     verifiedBy:
-      startupChecks: ["expectedRole = worker (PR-6)", "no miembro de owners", "sin CREATE"]
+      startupChecks: ["expectedRole = worker (MAIN PR-6a: runtime-process.ts + entrypoints/worker)", "no miembro de owners", "sin CREATE"]
       tests: [TEST-CNS-742, TEST-CNS-744, TEST-CNS-747, TEST-CNS-791, TEST-CNS-813, TEST-CNS-444, TEST-CNS-1306]
 
   - id: integrity_verifier
@@ -211,7 +212,10 @@ roles:
     schemas:
       - {schema: platform, privileges: [USAGE], status: "MAIN (0036)"}
       - {schema: integrity, privileges: [USAGE], status: "PR-4 diferido (OI-DBR-10): lectura cross-tenant de integrity.* aún no implementada"}
+      - {schema: app, privileges: [USAGE], status: "INTERINO 0042 (ADR-010 PR-6a): para los chequeos de arranque; pendiente de ratificacion F-PR6-21"}
+      - {schema: ops, privileges: [USAGE], status: "INTERINO 0042 (ADR-010 PR-6a): pendiente de ratificacion F-PR6-21"}
     tables:
+      - {object: ops.db_catalog, privileges: [SELECT], note: "contrastar CNS_ENVIRONMENT con la base (F-PR6-08)", status: "INTERINO 0042 (ADR-010 PR-6a): pendiente de ratificacion F-PR6-21"}
       - {object: platform.oidc_exchange, privileges: [], note: "sin privilegios de tabla (más estricto que SELECT(code, pkce_verifier, binding)/UPDATE de la rev. 0.2): toma la solicitud con platform.claim_oidc_exchange(lease) y la cierra con platform.record_assertion, que anula code y PKCE en la misma transacción", status: "MAIN (0036)"}
       - {object: platform.grant_assertion, privileges: [], note: "solo vía función platform.record_assertion(ATTESTED|REJECTED); append-only; la ÚNICA forma de fijar action_nonce.attested_at", status: "MAIN (0036)"}
       - {object: integrity.audit_event, privileges: ["SELECT (cross-tenant por policy o función de integrity_owner)"], status: "PR-4 (DDL integrity.* ANTES de PR-7)"}
@@ -220,7 +224,7 @@ roles:
       - {object: "pg_catalog.pg_roles / pg_stat_activity", privileges: [SELECT], note: "alertas Q-20 (c): ddl_breakglass con LOGIN o sesiones fuera de ceremonia", status: PR-7}
     mustNot: ["DML de dominio", "PII (pii.*, channel_ref, case_contact)", "Sesiones", "Persistir el ID token crudo o el email"]
     verifiedBy:
-      startupChecks: ["expectedRole = integrity_verifier", "no miembro de owners", "sin DML en app.*", "EXECUTE exacto en platform: claim_oidc_exchange y record_assertion (PLATFORM_RUNTIME_EXECUTE)"]
+      startupChecks: ["expectedRole = integrity_verifier (MAIN PR-6a: entrypoints/verifier; IdP sintetico negado fuera de LOCAL, F-A10-23)", "no miembro de owners", "sin DML en app.*", "EXECUTE exacto en platform: claim_oidc_exchange y record_assertion (PLATFORM_RUNTIME_EXECUTE)"]
       tests: [TEST-CNS-1365, TEST-CNS-1366, TEST-CNS-1367, TEST-CNS-1372]
       newTests: ["TEST-CNS-TBD-DBR-05: integrity_verifier no puede INSERT/UPDATE en app.revocation ni leer pii.*"]
 

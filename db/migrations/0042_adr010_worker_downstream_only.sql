@@ -1,17 +1,17 @@
 -- scope: database
 -- Gobierna: ADR-010 rev. 4 §7 fila PR-6 ("Entrypoints web/platform/worker/verifier; unidades en infra/ (ADR-003); pools por rol"), §4.2 (funciones SYSTEM: EXECUTE solo `worker`,
 -- GRD-CM-15), INV-DBR-06; specs/state-machines/revocation.spec.yaml R5/R6/R7 (FN-RV-13..15, executedBy worker); plan PR-6 sub-PR 6a (rev. 2 §5.1); registers/findings-register-IT0.md
--- F-A10-26 (parcial), F-PR6-10. 0037 y 0039 estan mergeadas y son inmutables (regla de Carlos, 2026-10-01): este cambio va en migracion nueva.
+-- F-A10-26 (parcial), F-PR6-20. 0037 y 0039 estan mergeadas y son inmutables (regla de Carlos, 2026-10-01): este cambio va en migracion nueva.
 --
 -- 1) R5-R7 solo worker: REVOKE EXECUTE de case_state.mark_downstream_emitted / record_downstream_ack / record_erasure_attestation a app_rw. R4 (apply_revocation) NO se toca
 --    (queda EXECUTE app_rw + worker hasta la enmienda P6-2 de ADR-010, decision de Carlos pendiente).
 -- 2) Lectura minima del worker para ejecutar R5-R7 (el dominio lee la Revocation y el ledger del agregado ANTES de llamar a la funcion SYSTEM: expectedSequence, subscriptionRefs congeladas):
 --    SELECT (sin DML) sobre app.revocation y integrity.audit_event, siempre bajo RLS por tenant (policy TO worker con app.current_tenant_id()). El worker sigue sin DML directo en ledger ni
---    app.revocation (spec db-roles `mustNot`); escribe solo por las funciones SYSTEM. Es una ampliacion de superficie de lectura del worker: F-PR6-10 (P2) para revision de lampone-security.
+--    app.revocation (spec db-roles `mustNot`); escribe solo por las funciones SYSTEM. Es una ampliacion de superficie de lectura del worker: F-PR6-20 (P2) para revision de lampone-security.
 --    DDL sobre integrity.* como integrity_owner (allowlist de integrity-owner-checker.ts; antes de PR-7), con USAGE/EXECUTE temporales sobre app igual que 0037.
 -- 3) integrity_verifier: USAGE sobre app y ops + SELECT de ops.db_catalog (una fila, sin PII), lo que 0001 da a app_rw/worker/platform_rw y catalog.test.ts ya anticipaba ("el verifier
 --    recibe en PR-4", nunca entregado). Sin eso el verifier NO puede ejecutar los chequeos de arranque de INV-DBR-02 (leer ops.db_catalog para contrastar CNS_ENVIRONMENT con la base,
---    F-PR6-08) y el proceso verifier no arranca. Sin privilegios de tabla en app.* ni EXECUTE de funciones de app/ops (aserciones). F-PR6-11 (P2) para revision de lampone-security.
+--    F-PR6-08) y el proceso verifier no arranca. Sin privilegios de tabla en app.* ni EXECUTE de funciones de app/ops (aserciones). F-PR6-21 (P2) para revision de lampone-security.
 -- 4) $assert$ final con el estado exacto resultante.
 -- Idempotente: REVOKE/GRANT repetibles y DROP POLICY IF EXISTS + CREATE POLICY.
 
