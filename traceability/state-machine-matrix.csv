@@ -430,7 +430,7 @@ tenant-context,event,TENANT_STATUS_CHANGED,SM-CNS-001 §6 (SM:170: 'TENANT_STATU
 tenant-context,event,SCHOOL_PARTICIPATION_STATUS_CHANGED,SM-CNS-001 §6 (SM:172);SM-CNS-001 R0.1 (sin cambio de estado sin evento),UNCOVERED,sin test que cite SCHOOL_PARTICIPATION_STATUS_CHANGED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 tenant-context,event,ENROLLMENT_STATUS_CHANGED,SM-CNS-001 §6 (SM:173);SM-CNS-001 R0.1,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-710;TEST-CNS-1002); ninguno cubre tenant-context
 tenant-context,event,CONSENT_CONTEXT_STATUS_CHANGED,[N-SM] §1 'Audit',UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-912); ninguno cubre tenant-context
-revocation,invariant,INV-RV-12,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04, INV-DBR-05;GRD-CM-15",UNCOVERED,"sin test; implementacion en ADR-010 PR-5 (TEST-CNS-TBD-DBR-01, TEST-CNS-TBD-RV-DB-01)"
+revocation,invariant,INV-RV-12,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04, INV-DBR-05;GRD-CM-15",TEST-CNS-1373;TEST-CNS-1374;TEST-CNS-1375;TEST-CNS-1376,
 revocation,open_item,OPEN-RV-16,"ADR-010 rev. 4 §4.2 (Q-18 a, Carlos 2026-10-11);F-A10-01",UNCOVERED,"decision tomada (transition_owner); implementacion y prueba en ADR-010 PR-5"
 rights-case,invariant,INV-RC-07,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04",UNCOVERED,"sin test; implementacion en ADR-010 PR-5 (TEST-CNS-TBD-DBR-01)"
 db-roles,invariant,INV-DBR-01,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",TEST-CNS-744;TEST-CNS-1349;TEST-CNS-1350;TEST-CNS-1348;TEST-CNS-747;TEST-CNS-1344;TEST-CNS-1352;TEST-CNS-1353;TEST-CNS-1363;TEST-CNS-1367,

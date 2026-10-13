@@ -1067,8 +1067,8 @@ invariants:
 
 dbEnforcement:
   governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
-  status: PROPOSED
-  implementedIn: "ADR-010 PR-5"
+  status: "PARTIAL (ADR-010 PR-5a, db/migrations/0037): FN-RV-01..15, TRG-RV-01 y newChecks; PR-5b: FN-RV-16, rights_case, INSERT de ledger de app_rw. Desviaciones de PR-5a: EXECUTE de FN-RV-07..15 tambien para app_rw (interino hasta PR-6); sin validacion de sesion CASE/PLATFORM ni grants; proposal_* sigue en app.revocation"
+  implementedIn: "ADR-010 PR-5a (0037); PR-5b"
   conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
   functions:
     - {id: FN-RV-01, name: case_state.request_revocation, transitions: [R1], executedBy: app_rw, owner: transition_owner}
@@ -1094,7 +1094,7 @@ dbEnforcement:
   newChecks: ["cosigned_by_ref <> recorded_by_ref (GRD-RV-26)", "verification_ref UNIQUE (GRD-RV-05)", "verified_auth_path NOT NULL desde VERIFIED (GRD-RV-29)"]
   revokedFromAppRw: ["INSERT app.revocation (0006:113-115, 0016:18)", "UPDATE app.revocation (0006:116-118, 0016:19)", "INSERT directo al ledger de eventos Revocation y CONSENT_REVOKED (policy, INV-DBR-07)", "consent_decision.state = REVOKED (policy; C6 solo por FN-RV-12)"]
   invariants:
-    - {id: INV-RV-12, statement: "Ningún rol de runtime escribe app.revocation fuera de las funciones FN-RV-* (dueño transition_owner); verified_recovery_method = HUMAN_ASSISTED, columnas RH2/attested_* y recorded_by_ref/cosigned_by_ref solo las escribe su función de efecto (case_state.effect).", testIds: []}  # UNCOVERED en traceability hasta PR-5
+    - {id: INV-RV-12, statement: "Ningún rol de runtime escribe app.revocation fuera de las funciones FN-RV-* (dueño transition_owner); verified_recovery_method = HUMAN_ASSISTED, columnas RH2/attested_* y recorded_by_ref/cosigned_by_ref solo las escribe su función de efecto (case_state.effect).", testIds: [TEST-CNS-1373, TEST-CNS-1374, TEST-CNS-1375, TEST-CNS-1376]}
   openItems:
     - {id: OPEN-RV-16, item: "Dueño de las funciones de transición y escritura del ledger: DECIDIDO Q-18 (a) transition_owner, único escritor de eventos Revocation/RightsCase/CONSENT_REVOKED (Carlos, 2026-10-11). Implementación en ADR-010 PR-5.", owner: Carlos, status: "DECIDED (Q-18)", blocksDataReal: true}
 

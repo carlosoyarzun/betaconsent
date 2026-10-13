@@ -55,6 +55,8 @@ const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
 const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
 const M0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
 const M0037 = "db/migrations/0037_adr010_case_state_revocation.sql";
+/** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
+const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
 /** ADR-010 PR-4: fixture LOCAL sintetico del bootstrap del primer PLATFORM (membership_owner), patron TEST-CNS-879. Solo LOCAL; STAFF/datos reales: ceremonia PR-7. */
 const FIX_PLATFORM = "db/fixtures/local/0002_platform_bootstrap.sql";
 export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Record<string, readonly UsageKind[]>>>> = {
@@ -67,7 +69,7 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // 0037 (PR-5a): case_state_owner crea el esquema case_state y le da USAGE/CREATE temporal a transition_owner; transition_owner crea las funciones
   // de transicion (SET LOCAL ROLE). Sin otros caminos: PR-5b y PR-7 amplian esta allowlist con revision (CODEOWNERS).
   case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"] },
-  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"] },
+  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [T5A]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

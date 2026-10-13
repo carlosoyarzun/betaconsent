@@ -151,11 +151,12 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
   // 0037 (PR-5a): case_state_owner y transition_owner (esquema case_state y funciones de transicion).
   const m0037 = "db/migrations/0037_adr010_case_state_revocation.sql";
   const set37 = ["case_state_owner", "transition_owner"].map((r) => `SET LOCAL ROLE ${r};`).join("\n");
-  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }];
+  const t5a = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
+  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }];
   assert.deepEqual(checkAdr010OwnerUsage(base), []);
-  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }, { path: m0036, text: "SELECT 1;" }, { path: m0037, text: "SELECT 1;" }, { path: fixPlatform, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
+  assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }, { path: m0036, text: "SELECT 1;" }, { path: m0037, text: "SELECT 1;" }, { path: t5a, text: "SELECT 1;" }, { path: fixPlatform, text: "SELECT 1;" }]).every((e) => e.includes("obsoleta")));
   assert.equal(checkAdr010OwnerUsage([...base, { path: "db/migrations/0038_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);
   // 0035 solo puede asumir sus tres owners: case_state_owner y transition_owner son de 0037 (PR-5a).
-  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }]);
+  const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }]);
   assert.equal(over.filter((e) => e.includes("fuera de la allowlist") && e.includes("transition_owner")).length, 1);
 });
