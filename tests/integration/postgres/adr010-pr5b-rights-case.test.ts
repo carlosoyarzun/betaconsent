@@ -350,6 +350,11 @@ pgTest("TEST-CNS-1387 pg: INV-DBR-07 como allowlist (D5): pares (aggregate_type,
     // Control positivo: pares permitidos.
     await uow.withTenantTx(T, (tx) => tx.query(row("Invitation", "ok-i", "INVITATION_OPENED", 12)));
     await uow.withTenantTx(T, (tx) => tx.query(row("ConsentDecision", "ok-c", "CONSENT_GRANTED", 13)));
+    // Trigger ejecutado como app_rw (no superusuario): el mismo aggregate_id con otro aggregate_type (par permitido) da 23000 exacto.
+    await assert.rejects(
+      () => uow.withTenantTx(T, (tx) => tx.query(row("ConsentDecision", "ok-i", "CONSENT_GRANTED", 17, "current_setting('app.tenant_id')::uuid", 2))),
+      (e: unknown) => codeOf(e) === "23000",
+    );
   } finally {
     await pool.end();
   }
@@ -413,5 +418,67 @@ pgTest("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation de
     assert.deepEqual(ev.rows, [{ recorded_by_ref: "op-1390", actor_role: "RIGHTS_OPERATOR" }]);
   } finally {
     await pool.end();
+  }
+});
+
+pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
+  const T = fixtureUuid("t1391");
+  const admin = await ctx.connectAsSuperuser();
+  const D = fixtureUuid("d1391");
+  await seedDecision(admin, T, D, "ch1391");
+  await seedDecision(admin, T, fixtureUuid("d1391-b"), "ch1391-b");
+  await admin.query(SEED_RC);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-a', 'ch1391', $2, 'CONTACTING', 'LIMIT_REACHED')", [T, D]);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-b', 'ch1391-b', $2, 'CONTACTING', 'LIMIT_REACHED')", [T, fixtureUuid("d1391-b")]);
+  await admin.query("RESET ALL");
+  const H = "a".repeat(64);
+  const invite = (id: string, chainSeq: number): string =>
+    `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, chain_seq, payload_hash, previous_event_hash, event_hash)
+     VALUES (current_setting('app.tenant_id')::uuid, 'Invitation', '${id}', 1, 'INVITATION_OPENED', 'HUMAN', '${JSON.stringify(invitationRefPayload("1391"))}'::jsonb, ${chainSeq}, '${H}', '${String(chainSeq).padStart(64, "d")}', '${String(chainSeq).padStart(64, "c")}')`;
+  const rc3 = (cs: string, chain: string, dec: string, x: string): string =>
+    `SELECT case_state.express_revocation_intent_in_case('${cs}', '${chain}', '${dec}', 'DECISION_MAKER', '${x}', false, 0)`;
+  const open = async (): Promise<import("pg").Client> => {
+    const c = await ctx.connectAs("app_rw");
+    await c.query("BEGIN");
+    await c.query("SELECT set_config('app.tenant_id', $1, true)", [T]);
+    return c;
+  };
+  const types = async (x: string): Promise<string[]> =>
+    (await admin.query<{ t: string }>("SELECT DISTINCT aggregate_type AS t FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 ORDER BY 1", [T, x])).rows.map((r) => r.t);
+  const waiting = async (): Promise<void> => {
+    for (let i = 0; i < 100; i += 1) {
+      const r = await admin.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()");
+      if (r.rowCount && r.rowCount > 0) return;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    throw new Error("la segunda transaccion no quedo esperando el lock del ledger del tenant");
+  };
+
+  // Orden A: RC3 (sin commit) toma el lock del ledger del tenant; el INSERT de Invitation:X espera y, tras el COMMIT de RC3, falla por el trigger (23000).
+  {
+    const X = fixtureUuid("x1391-a");
+    const rc = await open();
+    const inv = await open();
+    await rc.query(rc3("c-a", "ch1391", D, X));
+    const pending = inv.query(invite(X, 9101)).then(() => "ok", (e: unknown) => codeOf(e));
+    await waiting();
+    await rc.query("COMMIT");
+    assert.equal(await pending, "23000");
+    await inv.query("ROLLBACK");
+    assert.deepEqual(await types(X), ["Revocation"]);
+  }
+  // Orden B: Invitation:X (sin commit) toma el lock; RC3 sobre la misma X espera y, tras el COMMIT, falla (el agregado ya tiene un evento) y no deja un segundo tipo.
+  {
+    const X = fixtureUuid("x1391-b");
+    const inv = await open();
+    const rc = await open();
+    await inv.query(invite(X, 9102));
+    const pending = rc.query(rc3("c-b", "ch1391-b", fixtureUuid("d1391-b"), X)).then(() => "ok", (e: unknown) => codeOf(e));
+    await waiting();
+    await inv.query("COMMIT");
+    const outcome = await pending;
+    assert.ok(outcome === "RV409" || outcome === "23000", `RC3 tras el commit de Invitation:X: ${String(outcome)}`);
+    await rc.query("ROLLBACK");
+    assert.deepEqual(await types(X), ["Invitation"]);
   }
 });

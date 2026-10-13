@@ -31,7 +31,8 @@
 --     catalogo no es LOCAL y app_rw puede ejecutarla; startup-checks.ts tambien.
 --   * app.case_session y los CASE_* de ops.security_event NO se tocan: el spec los asigna a PR-5 pero dependen de platform.open_case_session /
 --     platform_rw (entrypoint platform, PR-6); retirarlos hoy rompe la consola CASE del proceso web (hallazgo F-A10-31).
---   * GRD-RC-09 (cierre solo tras R4 APPLIED o R8) se impone en la base; el dominio TS no lo comprueba (hallazgo F-A10-32).
+--   * GRD-RC-09 (cierre solo tras R4 APPLIED o R8) y RC3 solo desde CONTACTING se imponen en la base Y en el dominio TS (D1, Carlos 2026-10-13; F-A10-32
+--     resuelto). D6 (la Revocation que cierra el caso es posterior a su apertura) solo la impone la base: el registro in-memory no lleva fecha.
 
 -- 1. Grants de transition_owner -----------------------------------------------------------------------------------------------------
 SET LOCAL ROLE case_state_owner;
@@ -87,6 +88,9 @@ CREATE FUNCTION integrity.audit_event_single_aggregate_type() RETURNS trigger
   SET search_path = pg_catalog, pg_temp
 AS $fn$
 BEGIN
+  -- Misma clave de lock por tenant que case_state.ledger_append (y que el adaptador del ledger): serializa los INSERT concurrentes del tenant; sin ella,
+  -- dos transacciones (READ COMMITTED) podrian crear el mismo aggregate_id con dos aggregate_type sin verse. Tras el lock el EXISTS ve lo ya confirmado.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('ledger-chain:' || NEW.tenant_id::text, 0));
   IF EXISTS (SELECT 1 FROM integrity.audit_event e
               WHERE e.tenant_id = NEW.tenant_id AND e.aggregate_id = NEW.aggregate_id AND e.aggregate_type <> NEW.aggregate_type) THEN
     RAISE EXCEPTION 'un aggregate_id no se reutiliza entre aggregate_type distintos' USING ERRCODE = 'integrity_constraint_violation';
@@ -550,10 +554,21 @@ BEGIN
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'Revocation') = 0
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'RightsCase') = 0
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'CONSENT_REVOKED') = 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'REVOCATION_') = 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'RIGHTS_CASE_') = 0
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'revocation_ref') > 0
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'case_ref') > 0) THEN
     RAISE EXCEPTION 'la policy de INSERT de app_rw sobre integrity.audit_event debe ser la allowlist de pares sin Revocation/RightsCase/CONSENT_REVOKED (INV-DBR-07)';
   END IF;
+  -- Ningun rol del que app_rw herede o pueda asumir (USAGE/SET) tiene INSERT sobre el ledger ni una policy de INSERT/ALL propia: seria otra via de escritura.
+  FOR r IN SELECT x.rolname::text FROM pg_catalog.pg_roles x
+            WHERE x.rolname <> 'app_rw' AND (pg_catalog.pg_has_role('app_rw', x.oid, 'USAGE') OR pg_catalog.pg_has_role('app_rw', x.oid, 'SET')) LOOP
+    IF pg_catalog.has_any_column_privilege(r, led, 'INSERT') THEN RAISE EXCEPTION 'app_rw alcanza por membresia a % con INSERT sobre integrity.audit_event', r; END IF;
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = led AND p.polcmd IN ('a', '*')
+                AND (SELECT y.oid FROM pg_catalog.pg_roles y WHERE y.rolname = r) = ANY (p.polroles)) THEN
+      RAISE EXCEPTION 'app_rw alcanza por membresia a % con una policy de INSERT sobre integrity.audit_event', r;
+    END IF;
+  END LOOP;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = led AND k.conname = 'audit_event_aggregate_type_enum' AND k.convalidated)
      OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = led AND t.tgname = 'audit_event_single_aggregate_type' AND t.tgenabled = 'A' AND NOT t.tgisinternal) <> 1 THEN
     RAISE EXCEPTION 'faltan el CHECK de aggregate_type o el trigger de un aggregate_type por aggregate_id en integrity.audit_event';
