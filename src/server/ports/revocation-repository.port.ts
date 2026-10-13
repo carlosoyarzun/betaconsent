@@ -63,5 +63,7 @@ export interface RevocationRepositoryPort {
    * decisión, o null. "Una crea, las demás se adjuntan": R1 con otro revocationRef sobre la misma
    * decisión devuelve esta en vez de crear (Carlos, 2026-10-01, GRD-RV-04 opción a). */
   findOpenByDecision(tenantId: TenantId, revokedDecisionRef: string): Promise<RevocationRecord | null>;
+  /** ADR-010 PR-5b (GRD-RC-09, D1): todas las Revocations (cualquier estado) que revocan esta decision, para decidir el cierre del caso. */
+  listByDecision(tenantId: TenantId, revokedDecisionRef: string): Promise<readonly RevocationRecord[]>;
   save(record: RevocationRecord): Promise<void>;
 }

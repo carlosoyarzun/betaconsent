@@ -42,8 +42,11 @@ test("TEST-CNS-461: RC4/RC5/RC6 (cierre de RightsCase) se ejecutan con tenant SU
     status: "IN_VERIFICATION",
   });
   const ledger = createInMemoryLedgerAdapter();
+  // ADR-010 PR-5b (D1, GRD-RC-09): el cierre exige la Revocation del ciclo en APPLIED o posterior (siembra de fixture; no cambia lo que se afirma).
+  const revocationRepo = createInMemoryRevocationRepository();
+  await revocationRepo.save({ revocationRef: fixtureUuid("rev-suspended"), tenantId: "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", chainRef: fixtureUuid("chain-1"), revokedDecisionRef: fixtureUuid("decision-1"), status: "APPLIED" });
 
-  const closed = await closeCase({ rightsCaseRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo }).uow }, "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", fixtureUuid("case-suspended"), "RESOLVED");
+  const closed = await closeCase({ rightsCaseRepo, ledger, uow: createInMemoryTenancy({ ledger, rightsCaseRepo, revocationRepo }).uow }, "b4d4a4b6-7361-48c5-8a6c-9cef3198a66d", fixtureUuid("case-suspended"), "RESOLVED");
 
   assert.equal(closed.status, "RESOLVED");
 });

@@ -41,9 +41,9 @@ type RightsCaseTxBag = Pick<RightsCasePorts, "rightsCaseRepo" | "ledger" | "uow"
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, repos y ledger son los de la tx
  * (SEC-CNS-015 P2-E). No se anida `inTenant`; `fn` puede reejecutarse si la unidad se reintenta. */
-function inTx<P extends RightsCaseTxBag, T>(ports: P, tenantId: string, fn: (txPorts: P) => Promise<T>): Promise<T> {
+function inTx<P extends RightsCaseTxBag, T>(ports: P, tenantId: string, fn: (txPorts: P & { readonly revocationRepo: RevocationRepositoryPort }) => Promise<T>): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) =>
-    fn({ ...ports, rightsCaseRepo: tx.rightsCaseRepo, ledger: tx.ledger, ...(ports.revocationRepo ? { revocationRepo: tx.revocationRepo } : {}), ...(tx.revocationTransitions ? { revocationTransitions: tx.revocationTransitions } : {}), ...(tx.rightsCaseTransitions ? { rightsCaseTransitions: tx.rightsCaseTransitions } : {}) }),
+    fn({ ...ports, rightsCaseRepo: tx.rightsCaseRepo, ledger: tx.ledger, revocationRepo: tx.revocationRepo, ...(tx.revocationTransitions ? { revocationTransitions: tx.revocationTransitions } : {}), ...(tx.rightsCaseTransitions ? { rightsCaseTransitions: tx.rightsCaseTransitions } : {}) }),
   );
 }
 
@@ -117,6 +117,10 @@ export async function expressRevocationIntentInCase(
     const open = await openCaseForResolvedHandle(p, resolved);
     const rightsCase = await lockCase(p, resolved.tenantId, open.caseRef);
 
+    // D1 (Carlos, 2026-10-13; spec RC3/RC3a): RC3 solo desde CONTACTING; el reintento sobre la Revocation ya ligada (R12) exige IN_VERIFICATION.
+    if (rightsCase.status !== (rightsCase.revocationRef ? "IN_VERIFICATION" : "CONTACTING")) {
+      throw new DomainError("ERR-CM-06");
+    }
     if (!rightsCase.revocationRef) {
       // RC3: no hay Revocation abierta -> crea REQUESTED en el mismo lote.
       const revocationRef = randomUUID(); // Ref UUIDv4 (common.schema.json); antes `rv-${caseRef}` (FINDING P1).
@@ -367,6 +371,18 @@ export function closeCase(
     if (found.status !== "CONTACTING" && found.status !== "IN_VERIFICATION") {
       throw new DomainError("ERR-CM-06");
     }
+    // D1 (Carlos, 2026-10-13; GRD-RC-09): RC4.RESOLVED/RC5 solo con la Revocation del caso en APPLIED o posterior; RC4.WITHDRAWN/RC6 solo con
+    // REVOCATION_FAILED WITHDRAWN_BY_REQUESTER de esa misma Revocation. Sin ello, ERR-RC-03 y el caso sigue abierto. (D6, que la Revocation sea
+    // posterior al caso, solo lo puede imponer la base: el registro in-memory no lleva fecha.)
+    const candidates: readonly RevocationRecord[] = found.revocationRef
+      ? [await p.revocationRepo.findByRef(tenantId, found.revocationRef)].filter((r): r is RevocationRecord => r !== null)
+      : (await p.revocationRepo.listByDecision(tenantId, found.revokedDecisionRef)).filter((r) => r.chainRef === found.chainRef);
+    const closable = candidates.some((r) =>
+      outcome === "RESOLVED"
+        ? r.status === "APPLIED" || r.status === "DOWNSTREAM_PENDING" || r.status === "DELIVERED" || r.status === "COMPLETED"
+        : r.status === "FAILED" && r.reasonCode === "WITHDRAWN_BY_REQUESTER",
+    );
+    if (!closable) throw new DomainError("ERR-RC-03");
     const closed: RightsCaseRecord = { ...found, status: outcome };
     if (p.rightsCaseTransitions) {
       if (operatorRef === undefined) throw new DomainError("ERR-CM-10"); // sin sesion CASE no se atribuye el cierre a un operador anonimo

@@ -56,6 +56,7 @@ async function withMutationsAllowed(admin: import("pg").Client, mutate: () => Pr
     await admin.query("ALTER TABLE integrity.audit_event ADD CONSTRAINT audit_event_occurred_at_is_now CHECK (occurred_at = pg_catalog.now()) NOT VALID");
     await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_update_delete");
     await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_no_truncate");
+    await admin.query("ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_single_aggregate_type"); // 0038 (PR-5b)
   }
 }
 
@@ -87,7 +88,7 @@ pgTest("TEST-CNS-913 pg: verifyLedgerChain detecta la mutacion de una fila hecha
       await admin.query("UPDATE integrity.audit_event SET event_hash = $2 WHERE tenant_id = $1 AND chain_seq = 3", [tHash, H]);
     });
     const triggers = (await admin.query<{ tgenabled: string }>("SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'integrity.audit_event'::regclass AND NOT tgisinternal")).rows;
-    assert.ok(triggers.length === 2 && triggers.every((t) => t.tgenabled === "A"), "triggers restaurados ENABLE ALWAYS");
+    assert.ok(triggers.length === 3 && triggers.every((t) => t.tgenabled === "A"), "triggers restaurados ENABLE ALWAYS");
 
     assert.deepEqual(await verify(tPayload), { ok: false, verified: 1, brokenAt: { chainSeq: 2, aggregateId: fixtureUuid(`agg-${tPayload}`), sequence: 2, reason: "PAYLOAD_HASH_MISMATCH" } });
     const gap = await verify(tGap);
@@ -101,7 +102,7 @@ pgTest("TEST-CNS-913 pg: verifyLedgerChain detecta la mutacion de una fila hecha
   const t = fixtureUuid("t913-checks");
   const insert = (over: Record<string, string>): Promise<unknown> => {
     const cols: Record<string, string> = {
-      tenant_id: `'${t}'`, aggregate_type: "'A'", aggregate_id: `'agg-${Math.random().toString(16).slice(2)}'`, sequence: "1",
+      tenant_id: `'${t}'`, aggregate_type: "'ConsentDecision'", aggregate_id: `'agg-${Math.random().toString(16).slice(2)}'`, sequence: "1",
       event_type: "'CONSENT_GRANTED'", actor_type: "'HUMAN'", payload: "'{}'::jsonb",
       chain_seq: "1", payload_hash: `'${H}'`, previous_event_hash: `'${Z}'`, event_hash: `'${H}'`, ...over,
     };
@@ -251,7 +252,7 @@ pgTest("TEST-CNS-920 pg: el CLI falla si hay una fila sin eslabon (chain_seq NUL
   try {
     await admin.query(
       `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload)
-       VALUES ($1, 'Legacy', 'legacy-1', 1, 'TENANT_STATUS_CHANGED', 'HUMAN', '{}'::jsonb)`,
+       VALUES ($1, 'Tenant', 'legacy-1', 1, 'TENANT_STATUS_CHANGED', 'HUMAN', '{}'::jsonb)`,
       [t],
     );
   } finally {
@@ -271,7 +272,7 @@ pgTest("TEST-CNS-920 pg: el CLI falla si hay una fila sin eslabon (chain_seq NUL
   try {
     await admin.query(
       `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload)
-       VALUES ($1, 'Evasion', 'evasion-1', 1, 'TENANT_STATUS_CHANGED', 'HUMAN', '{}'::jsonb)`,
+       VALUES ($1, 'Tenant', 'evasion-1', 1, 'TENANT_STATUS_CHANGED', 'HUMAN', '{}'::jsonb)`,
       [t],
     );
   } finally {
@@ -289,7 +290,7 @@ pgTest("TEST-CNS-921 pg: app_rw no puede falsear occurred_at ni environment: la 
     app.query(
       `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload,
                                           chain_seq, payload_hash, previous_event_hash, event_hash, ${over})
-       VALUES ($1, 'A', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 1, repeat('a', 64), repeat('0', 64), repeat('a', 64), ${params.length > 1 ? "$2" : "$2"})`,
+       VALUES ($1, 'ConsentDecision', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 1, repeat('a', 64), repeat('0', 64), repeat('a', 64), ${params.length > 1 ? "$2" : "$2"})`,
       [t, ...params],
     );
   for (const [col, value] of [["environment", "STAGING"], ["occurred_at", "2020-01-01T00:00:00Z"]] as const) {

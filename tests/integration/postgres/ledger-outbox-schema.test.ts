@@ -149,7 +149,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     () => app.query(
       `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, environment,
                                            chain_seq, payload_hash, previous_event_hash, event_hash)
-       VALUES ($1, 'A', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 'DEV', 1, repeat('a', 64), repeat('0', 64), repeat('a', 64))`,
+       VALUES ($1, 'ConsentDecision', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 'DEV', 1, repeat('a', 64), repeat('0', 64), repeat('a', 64))`,
       [fixtureUuid("t787")],
     ),
     (e: unknown) => codeOf(e) === "23514", // 0013 (P2-1): el grant existe pero el CHECK fija environment = catalogo
@@ -178,7 +178,7 @@ pgTest("TEST-CNS-788 pg: el ledger es append-only: UPDATE/DELETE/TRUNCATE fallan
   const triggers = (await admin.query<{ tgname: string; tgenabled: string }>(
     "SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'integrity.audit_event'::regclass AND NOT tgisinternal",
   )).rows;
-  assert.deepEqual(triggers.map((t) => t.tgname).sort(), ["audit_event_no_truncate", "audit_event_no_update_delete"]);
+  assert.deepEqual(triggers.map((t) => t.tgname).sort(), ["audit_event_no_truncate", "audit_event_no_update_delete", "audit_event_single_aggregate_type"]); // 0038 (PR-5b)
   assert.ok(triggers.every((t) => t.tgenabled === "A"), "ENABLE ALWAYS");
   const n = (await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [tenant])).rows[0]?.n;
   assert.equal(n, 1, "la fila sigue intacta");
@@ -188,7 +188,7 @@ pgTest("TEST-CNS-789 pg: CHECK y UNIQUE: data_class SYNTHETIC, FIXTURE solo LOCA
   const admin = await ctx.connectAsSuperuser();
   const t = fixtureUuid("t789");
   const base = (over: Record<string, string>): Promise<unknown> => {
-    const cols = { tenant_id: `'${t}'`, aggregate_type: "'A'", aggregate_id: "'agg789'", sequence: "1", event_type: "'CONSENT_GRANTED'", actor_type: "'HUMAN'", payload: "'{}'::jsonb",
+    const cols = { tenant_id: `'${t}'`, aggregate_type: "'ConsentDecision'", aggregate_id: "'agg789'", sequence: "1", event_type: "'CONSENT_GRANTED'", actor_type: "'HUMAN'", payload: "'{}'::jsonb",
       chain_seq: "1", payload_hash: "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'", previous_event_hash: "'0000000000000000000000000000000000000000000000000000000000000000'", event_hash: "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'", ...over };
     return admin.query(`INSERT INTO integrity.audit_event (${Object.keys(cols).join(",")}) VALUES (${Object.values(cols).join(",")})`);
   };
@@ -233,7 +233,7 @@ pgTest("TEST-CNS-790 pg: sin tenant no hay filas ni escritura, y la conexion reu
     assert.equal(seen, 0, `tenant ${JSON.stringify(setting)}`);
     await assert.rejects(
       () => app.query(
-        "INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload) VALUES ($1, 'A', 'x', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb)",
+        "INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload) VALUES ($1, 'ConsentDecision', 'x', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb)",
         [ta],
       ),
       (e: unknown) => codeOf(e) === "42501",

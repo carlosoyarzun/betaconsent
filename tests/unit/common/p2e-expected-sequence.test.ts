@@ -210,6 +210,8 @@ test("TEST-CNS-844: rights-case RC2u y RC4-6: expectedSequence = base previa al 
     const tenantHandle = createInMemoryTenantHandleAdapter([{ handle: "h-844", tenantId: T, chainRef: fixtureUuid("chain-844"), revokedDecisionRef: fixtureUuid("dec-844") }]);
     const ports: RightsCasePorts = { tenantHandle, rightsCaseRepo, revocationRepo, ledger, uow: tenancy.uow };
     await baseRepo.save({ caseRef: fixtureUuid("case-844"), tenantId: T, chainRef: fixtureUuid("chain-844"), revokedDecisionRef: fixtureUuid("dec-844"), status: "OPEN", origin: "CHANNEL_UNREACHABLE" });
+    // ADR-010 PR-5b (D1, GRD-RC-09): el cierre exige la Revocation del ciclo en APPLIED o posterior (siembra de fixture).
+    await revocationRepo.save({ revocationRef: fixtureUuid("rev-844"), tenantId: T, chainRef: fixtureUuid("chain-844"), revokedDecisionRef: fixtureUuid("dec-844"), status: "APPLIED" });
     await ledger.append({ expectedSequence: 0, eventType: "RIGHTS_CASE_OPENED", tenantId: T, aggregateType: "RightsCase", aggregateId: fixtureUuid("case-844"), actorType: "HUMAN", payload: { ...rightsCaseOpenedPayload("844"), caseRef: fixtureUuid("case-844") }, idempotencyKey: "opened-844" });
     return { ledger, seen, ports, baseRepo };
   };
