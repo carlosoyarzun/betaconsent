@@ -43,8 +43,34 @@ export function parseRuntimeEnvironment(value: string | undefined): RuntimeEnvir
   throw new ProcessRoleError(`CNS_ENVIRONMENT debe ser LOCAL, DEV o STAGING (recibido: "${value === undefined || value === "" ? "(vacio)" : "otro valor"}")`);
 }
 
+/** Variables de entorno que libpq/pg leen y que pueden cambiar la identidad o los GUC de la conexion (INV-DBR-02). */
+const FORBIDDEN_PG_ENV = ["PGOPTIONS", "PGUSER", "PGPASSWORD", "PGSERVICE", "PGSERVICEFILE", "PGPASSFILE"] as const;
+/** Unicos parametros de query admitidos en CNS_DATABASE_URL (TLS y timeout). `user`, `password`, `options`, `host`, `dbname`... se rechazan. */
+const ALLOWED_URL_QUERY_PARAMS: ReadonlySet<string> = new Set(["sslmode", "sslrootcert", "connect_timeout"]);
+
 /**
- * Credencial del proceso: solo del entorno, nunca el migrador y el usuario de la URL debe ser exactamente el rol del proceso. Nunca incluye la URL ni la clave en el mensaje.
+ * Valida la URL de conexion de un rol de runtime (INV-DBR-02): protocolo postgres(ql):, sin parametros de query fuera de la allowlist (pg toma ?user=, ?password= y options de la
+ * query) y sin PGOPTIONS/PGUSER/PGPASSWORD/... en el entorno (ni en el inyectado ni en process.env, que es lo que pg lee). Devuelve el usuario decodificado. Mensajes sin la URL ni la clave.
+ */
+export function assertSafeConnectionUrl(url: string, env: Readonly<Record<string, string | undefined>>): string {
+  for (const name of FORBIDDEN_PG_ENV) {
+    if ((env[name] ?? "") !== "" || (process.env[name] ?? "") !== "") throw new ProcessRoleError(`la variable ${name} no puede estar presente en el entorno del proceso`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ProcessRoleError("CNS_DATABASE_URL no es una URL valida");
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") throw new ProcessRoleError("CNS_DATABASE_URL debe usar el protocolo postgres: o postgresql:");
+  for (const key of new Set(parsed.searchParams.keys())) {
+    if (!ALLOWED_URL_QUERY_PARAMS.has(key)) throw new ProcessRoleError(`CNS_DATABASE_URL no admite el parametro de query "${key}" (solo sslmode, sslrootcert, connect_timeout)`);
+  }
+  return decodeURIComponent(parsed.username);
+}
+
+/**
+ * Credencial del proceso: solo del entorno, nunca el migrador, URL saneada (assertSafeConnectionUrl) y el usuario de la URL debe ser exactamente el rol del proceso.
  */
 export function readProcessDatabaseUrl(runtimeProcess: RuntimeProcess, env: Readonly<Record<string, string | undefined>>): string {
   const role = expectedRoleFor(runtimeProcess);
@@ -52,12 +78,7 @@ export function readProcessDatabaseUrl(runtimeProcess: RuntimeProcess, env: Read
   if (migratorVars.length > 0) throw new ProcessRoleError(`el proceso ${runtimeProcess} no debe recibir la credencial del migrador (variables *MIGRATOR* presentes)`);
   const url = env.CNS_DATABASE_URL;
   if (url === undefined || url === "") throw new ProcessRoleError(`el proceso ${runtimeProcess} requiere CNS_DATABASE_URL (credencial de ${role}, solo por entorno)`);
-  let user: string;
-  try {
-    user = decodeURIComponent(new URL(url).username);
-  } catch {
-    throw new ProcessRoleError("CNS_DATABASE_URL no es una URL valida");
-  }
+  const user = assertSafeConnectionUrl(url, env);
   if (user !== role) throw new ProcessRoleError(`el proceso ${runtimeProcess} solo puede conectar como ${role} (la URL usa otro rol)`);
   return url;
 }

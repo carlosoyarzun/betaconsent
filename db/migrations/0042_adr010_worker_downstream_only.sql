@@ -108,6 +108,10 @@ BEGIN
                     OR pg_catalog.has_any_column_privilege('integrity_verifier', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')) LOOP
     RAISE EXCEPTION 'integrity_verifier tiene privilegios sobre %', fn;
   END LOOP;
+  FOR fn IN SELECT n.nspname || '.' || c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname IN ('app', 'ops') AND CASE WHEN c.relkind = 'S' THEN pg_catalog.has_sequence_privilege('integrity_verifier', c.oid, 'USAGE,SELECT,UPDATE') ELSE false END LOOP
+    RAISE EXCEPTION 'integrity_verifier tiene privilegios sobre la secuencia %', fn;
+  END LOOP;
   IF NOT pg_catalog.has_table_privilege('integrity_verifier', 'ops.db_catalog', 'SELECT')
      OR pg_catalog.has_table_privilege('integrity_verifier', 'ops.db_catalog', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
     RAISE EXCEPTION 'integrity_verifier debe tener solo SELECT sobre ops.db_catalog';

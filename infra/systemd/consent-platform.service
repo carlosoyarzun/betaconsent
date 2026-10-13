@@ -1,6 +1,6 @@
 # Gobierna: ADR-010 rev. 4 §7 fila PR-6 ("unidades en infra/ (ADR-003); pools por rol"), INV-DBR-02 (platform = platform_rw), ADR-003 rev. 7 (host dedicado de LectorPro, sin proveedor cloud).
 # ARTEFACTO de IT0 (EXIT-LOCAL, solo datos sinteticos): NO se instala ni se ejecuta en este repo; sin despliegue. Un usuario de SO por proceso (consent-platform), un rol LOGIN de Postgres por proceso.
-# La credencial va SOLO en /etc/consent/platform.env (modo 0600, dueno consent-platform); nunca en el repo. Plantilla de variables: infra/systemd/platform.env.example.
+# La credencial va SOLO en /etc/consent/platform.env (root:root, modo 0600: systemd la lee como root antes de bajar privilegios; el proceso no necesita leerla); nunca en el repo. Plantilla de variables: infra/systemd/platform.env.example.
 [Unit]
 Description=Consent App - Proceso platform (HTTP del equipo de LectorPro; sin egress) (rol platform_rw)
 After=network.target postgresql.service
@@ -35,6 +35,13 @@ SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+RestrictRealtime=true
+RemoveIPC=true
 
 # Red: sin salidas a internet. Solo loopback (Postgres en el mismo host dedicado; si la base va en otro host, el IPAddressAllow se completa en la primera historia de infraestructura).
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

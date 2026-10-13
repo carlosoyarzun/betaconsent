@@ -6,7 +6,7 @@
 // Un ciclo hace: (1) purga de canjes OIDC vencidos (platform.purge_expired_oidc_exchange); (2) claim del outbox (app.outbox_claim, sin tenant) y, por cada evento consent.revoked,
 // R5 -> R6 -> R7 de la Revocation contra el stub interno. Las transiciones las escriben las funciones case_state.* (SYSTEM_GUARD); el worker no tiene DML directo.
 // IT0 sintetico: el unico consumidor downstream es el stub en memoria (LOCAL); firma la evidencia el propio proceso porque el stub representa al consumidor. Fuera de LOCAL no hay
-// consumidor downstream: el ciclo NO ejecuta R5-R7 (cuenta `skippedDownstream`) y deja el evento reclamable (at-least-once; sin funcion de acuse del outbox todavia: F-PR6-20).
+// consumidor downstream: el ciclo NO reclama el outbox ni ejecuta R5-R7 (sin funcion de acuse ni tope de intentos todavia: F-PR6-20).
 // Cero PII y cero secretos en logs: solo contadores y nombres de error.
 
 import { createHash } from "node:crypto";
@@ -29,8 +29,6 @@ export interface WorkerCycleResult {
   readonly claimed: number;
   /** Revocations que llegaron a COMPLETED (R5-R7) en este ciclo. */
   readonly completed: number;
-  /** Eventos no procesables aqui (fuera de LOCAL no hay consumidor downstream). */
-  readonly skippedDownstream: number;
   /** Eventos cuyo procesamiento fallo (se reintentan al vencer el lease del claim). */
   readonly failed: number;
 }
@@ -96,22 +94,18 @@ export async function runWorkerCycle(deps: WorkerCycleDeps): Promise<WorkerCycle
   try {
     const purged = await client.query<{ n: number }>("SELECT platform.purge_expired_oidc_exchange() AS n");
     purgedExchanges = Number(purged.rows[0]?.n ?? 0);
-    claimedRefs = await claimOutbox(client, deps.batchSize ?? 20);
+    // Fuera de LOCAL no hay consumidor downstream: NO se reclama el outbox (reclamar sin procesar infla `attempts` y retrasa a quien si lo procesara). F-PR6-20.
+    if (deps.environment === "LOCAL") claimedRefs = await claimOutbox(client, deps.batchSize ?? 20);
   } finally {
     client.release();
   }
 
   let completed = 0;
-  let skippedDownstream = 0;
   let failed = 0;
   for (const ref of claimedRefs) {
     try {
       const envelope = await uow.withTenantTx(ref.tenantId, (tx) => readOutboxEnvelope(tx, ref.eventId));
       if (envelope === null) continue;
-      if (deps.environment !== "LOCAL") {
-        skippedDownstream++;
-        continue;
-      }
       const status = await runDownstreamForRevocation(ports, stub, ref.tenantId, envelope.payload.revocationRef);
       if (status === "COMPLETED") completed++;
     } catch (error) {
@@ -119,7 +113,7 @@ export async function runWorkerCycle(deps: WorkerCycleDeps): Promise<WorkerCycle
       console.error(`worker_event_error name=${(error as Error).name}${typeof (error as { code?: unknown }).code === "string" ? ` code=${(error as { code: string }).code}` : ""}`);
     }
   }
-  return { purgedExchanges, claimed: claimedRefs.length, completed, skippedDownstream, failed };
+  return { purgedExchanges, claimed: claimedRefs.length, completed, failed };
 }
 
 export interface StartWorkerProcessOptions {

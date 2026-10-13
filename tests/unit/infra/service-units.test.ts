@@ -41,6 +41,11 @@ test("TEST-CNS-1400 infra/systemd: endurecimiento minimo y sin salidas a interne
     const text = read(`infra/systemd/consent-${p}.service`);
     for (const key of ["NoNewPrivileges", "PrivateTmp", "ProtectHome", "RestrictSUIDSGID", "LockPersonality"]) assert.equal(directive(text, key), "true", `${p}: ${key}`);
     assert.equal(directive(text, "ProtectSystem"), "strict", `${p}: ProtectSystem`);
+    for (const key of ["ProtectClock", "ProtectHostname", "RestrictRealtime", "RemoveIPC"]) assert.equal(directive(text, key), "true", `${p}: ${key}`);
+    assert.equal(directive(text, "ProtectProc"), "invisible", `${p}: ProtectProc`);
+    assert.equal(directive(text, "ProcSubset"), "pid", `${p}: ProcSubset`);
+    assert.equal(directive(text, "SystemCallFilter"), "@system-service", `${p}: SystemCallFilter`);
+    assert.match(text, /root:root, modo 0600/, `${p}: EnvironmentFile root:root 0600 documentado`);
     assert.equal(directive(text, "CapabilityBoundingSet"), "", `${p}: sin capacidades`);
     assert.equal(directive(text, "IPAddressDeny"), "any", `${p}: sin egress`);
     assert.equal(directive(text, "IPAddressAllow"), "localhost", `${p}: solo loopback (el egress del verifier espera P-45)`);

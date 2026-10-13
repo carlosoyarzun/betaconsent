@@ -13,6 +13,7 @@ import {
   RUNTIME_PROCESS_ROLES,
 } from "../../../src/infra/adapters/postgres/runtime-process.ts";
 import type { RuntimeProcess } from "../../../src/infra/adapters/postgres/runtime-process.ts";
+import { readRuntimeDatabaseUrl } from "../../../src/infra/adapters/postgres/store.ts";
 import { startPlatformProcess } from "../../../src/server/entrypoints/platform/platform-process.ts";
 import { startVerifierProcess } from "../../../src/server/entrypoints/verifier/verifier-process.ts";
 import { startWorkerProcess } from "../../../src/server/entrypoints/worker/worker-process.ts";
@@ -75,4 +76,35 @@ test("TEST-CNS-1396 cada entrypoint rechaza el rol equivocado antes de conectar 
   // environment fuera del enum: ninguno arranca
   await assert.rejects(() => startPlatformProcess({ env: { CNS_ENVIRONMENT: "PRODUCTION", CNS_DATABASE_URL: urlFor("platform_rw") }, port: 0 }), ProcessRoleError);
   await assert.rejects(() => startWorkerProcess({ env: { CNS_ENVIRONMENT: "", CNS_DATABASE_URL: urlFor("worker") } }), ProcessRoleError);
+});
+
+test("TEST-CNS-1396 INV-DBR-02 (P1-1 de la revision de #92): ?user=, ?password=, options, host por query, protocolo ajeno y PGOPTIONS/PGUSER/PGPASSWORD/PGSERVICE en el entorno fallan cerrado", () => {
+  const base = "postgresql://worker:s3cr3t-pw@127.0.0.1:1/db";
+  const bad = [
+    `${base}?user=consent_owner`,
+    `${base}?options=-c%20role%3Dworker`,
+    `${base}?password=otra`,
+    `${base}?host=otro-host`,
+    `${base}?sslmode=require&user=consent_owner`,
+    "http://worker:x@h/db",
+    "mysql://worker:x@h/db",
+  ];
+  for (const url of bad) {
+    assert.throws(() => readProcessDatabaseUrl("worker", { CNS_DATABASE_URL: url }), (e: unknown) => e instanceof ProcessRoleError && !String(e.message).includes("s3cr3t-pw"), url);
+  }
+  // Allowlist: sslmode, sslrootcert, connect_timeout.
+  const ok = `${base}?sslmode=require&connect_timeout=5`;
+  assert.equal(readProcessDatabaseUrl("worker", { CNS_DATABASE_URL: ok }), ok);
+  for (const name of ["PGOPTIONS", "PGUSER", "PGPASSWORD", "PGSERVICE"]) {
+    assert.throws(() => readProcessDatabaseUrl("worker", { CNS_DATABASE_URL: base, [name]: "x" }), (e: unknown) => e instanceof ProcessRoleError && e.message.includes(name), name);
+    process.env[name] = "-c role=consent_owner";
+    try {
+      assert.throws(() => readProcessDatabaseUrl("worker", { CNS_DATABASE_URL: base }), (e: unknown) => e instanceof ProcessRoleError && e.message.includes(name), `process.env ${name}`);
+    } finally {
+      delete process.env[name];
+    }
+  }
+  // El mismo saneamiento rige para el proceso web (store.ts).
+  assert.throws(() => readRuntimeDatabaseUrl({ CNS_DATABASE_URL: "postgresql://app_rw:x@h/db?user=consent_owner" }), /query|parametro/);
+  assert.throws(() => readRuntimeDatabaseUrl({ CNS_DATABASE_URL: "postgresql://app_rw:x@h/db", PGOPTIONS: "-c role=app_rw" }), /PGOPTIONS/);
 });

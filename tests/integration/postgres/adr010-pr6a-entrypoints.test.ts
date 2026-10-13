@@ -6,6 +6,7 @@
 // Requiere Postgres real (harness.ts); skip sin entorno. Solo datos sinteticos.
 
 import assert from "node:assert/strict";
+import pg from "pg";
 import type { Client } from "pg";
 
 import { createInMemoryDownstreamStub } from "../../../src/infra/adapters/in-memory-downstream-stub.adapter.ts";
@@ -13,7 +14,7 @@ import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapte
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { openProcessPool, RUNTIME_PROCESS_ROLES } from "../../../src/infra/adapters/postgres/runtime-process.ts";
 import type { RuntimeProcess } from "../../../src/infra/adapters/postgres/runtime-process.ts";
-import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
+import { assertStartupChecks, runStartupChecks, StartupCheckError } from "../../../src/infra/adapters/postgres/startup-checks.ts";
 import { createPgTenantResolver } from "../../../src/infra/adapters/postgres/tenant-resolver.adapter.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { startPlatformProcess } from "../../../src/server/entrypoints/platform/platform-process.ts";
@@ -21,6 +22,7 @@ import { startVerifierProcess } from "../../../src/server/entrypoints/verifier/v
 import { runWorkerCycle, startWorkerProcess } from "../../../src/server/entrypoints/worker/worker-process.ts";
 import { emitRevocationDownstream } from "../../../src/server/modules/revocation/downstream.ts";
 import type { RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
+import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { revokeVia } from "../../contract/x6-revocation-scenarios.ts";
 import type { X6Env } from "../../contract/x6-revocation-scenarios.ts";
@@ -63,6 +65,33 @@ pgTest("TEST-CNS-1395 pg: cada proceso abre SU pool con SU rol (chequeos de arra
       assert.ok(r.failures.some((f) => f.includes(`no es ${RUNTIME_PROCESS_ROLES[p]}`)), `${p} acepto la conexion de ${actual}`);
     }
   }
+});
+
+pgTest("TEST-CNS-1395 pg: identidad disfrazada (P1-1 de #92): consent_migrator con options=-c role=consent_owner, o un rol con GUC app.* del cliente, no pasa los chequeos de arranque (StartupCheckError STARTUP_CHECK_FAILED)", async (ctx) => {
+  const attempt = async (url: string, expectedRole: string): Promise<StartupCheckError> => {
+    const c = new pg.Client({ connectionString: url });
+    await c.connect();
+    try {
+      await assert.rejects(() => assertStartupChecks(c, { expectedEnvironment: "LOCAL", expectedRole }), (e: unknown) => e instanceof StartupCheckError && e.code === "STARTUP_CHECK_FAILED");
+      try {
+        await assertStartupChecks(c, { expectedEnvironment: "LOCAL", expectedRole });
+      } catch (e) {
+        return e as StartupCheckError;
+      }
+      throw new Error("debio fallar");
+    } finally {
+      await c.end();
+    }
+  };
+  // session_user = consent_migrator pero current_user = consent_owner (SET ROLE por options).
+  const disguised = await attempt(`${ctx.urlFor("consent_migrator")}?options=${encodeURIComponent("-c role=consent_owner")}`, "worker");
+  assert.ok(disguised.failures.some((f) => f.includes("session_user difiere de current_user")), disguised.failures.join("|"));
+  assert.ok(disguised.failures.some((f) => f.includes("session_user no es worker")));
+  // GUC app.* fijado por el cliente con el rol correcto.
+  const guc = await attempt(`${ctx.urlFor("worker")}?options=${encodeURIComponent("-c app.tenant_id=00000000-0000-4000-8000-000000000001")}`, "worker");
+  assert.ok(guc.failures.some((f) => f.includes("el GUC app.tenant_id desde el cliente")), guc.failures.join("|"));
+  // Y el proceso no abre pool con esa URL (query fuera de allowlist) ni con PGOPTIONS.
+  await assert.rejects(() => openProcessPool({ process: "worker", environment: "LOCAL", env: { CNS_ENVIRONMENT: "LOCAL", CNS_DATABASE_URL: `${ctx.urlFor("worker")}?options=${encodeURIComponent("-c role=worker")}` } }), (e: unknown) => (e as { code?: string }).code === "PROCESS_ROLE_MISMATCH");
 });
 
 pgTest("TEST-CNS-1395 pg: platform arranca como platform_rw y sirve solo GET /healthz (404 uniforme en el resto: sin rutas de login en 6a); verifier y worker arrancan con su rol", async (ctx) => {
@@ -150,10 +179,28 @@ pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 int
   assert.deepEqual(await refsAs(A), ["r1398-a"]);
   assert.deepEqual(await refsAs(B), ["r1398-b"]);
   assert.deepEqual(await refsAs(null), []);
-  await worker.query("BEGIN");
-  await worker.query("SELECT set_config('app.tenant_id', $1, true)", [A]);
-  assert.equal(Number((await worker.query<{ n: string }>("SELECT count(*) AS n FROM integrity.audit_event")).rows[0]?.n), 0, "el ledger se lee bajo RLS (sin filas del tenant)");
-  await worker.query("ROLLBACK");
+  // Ledger: siembra eventos en A y B (por el adaptador del ledger como app_rw) y el worker solo ve los del tenant fijado.
+  const seedPool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  try {
+    const seedUow = new PgUnitOfWork(seedPool);
+    for (const [t, agg] of [[A, "agg1398-a"], [B, "agg1398-b"]] as const) {
+      await seedUow.inTenant(t, ({ ledger }) => ledger.append({ eventType: "INVITATION_OPENED", tenantId: t, aggregateType: "Invitation", aggregateId: agg, actorType: "HUMAN", expectedSequence: 0, payload: invitationRefPayload(agg) }));
+    }
+  } finally {
+    await seedPool.end();
+  }
+  const ledgerAs = async (tenant: string | null): Promise<string[]> => {
+    await worker.query("BEGIN");
+    try {
+      if (tenant !== null) await worker.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      return (await worker.query<{ aggregate_id: string }>("SELECT aggregate_id FROM integrity.audit_event WHERE aggregate_id LIKE 'agg1398-%' ORDER BY 1")).rows.map((r) => r.aggregate_id);
+    } finally {
+      await worker.query("ROLLBACK");
+    }
+  };
+  assert.deepEqual(await ledgerAs(A), ["agg1398-a"], "el worker solo ve el ledger de A");
+  assert.deepEqual(await ledgerAs(B), ["agg1398-b"], "el worker solo ve el ledger de B");
+  assert.deepEqual(await ledgerAs(null), [], "sin tenant no ve nada");
   for (const sql of [
     "UPDATE app.revocation SET status = 'COMPLETED' WHERE revocation_ref = 'r1398-a'",
     "DELETE FROM app.revocation WHERE revocation_ref = 'r1398-a'",
@@ -201,7 +248,6 @@ pgTest("TEST-CNS-1399 pg: el worker ejecuta R5-R7 hasta COMPLETED (stub interno,
     try {
       const result = await runWorkerCycle({ pool, environment: "LOCAL" });
       assert.equal(result.failed, 0);
-      assert.equal(result.skippedDownstream, 0);
       assert.equal(result.completed, 3);
     } finally {
       await pool.end();
@@ -212,16 +258,34 @@ pgTest("TEST-CNS-1399 pg: el worker ejecuta R5-R7 hasta COMPLETED (stub interno,
       for (const t of ["REVOCATION_DOWNSTREAM_EMITTED", "REVOCATION_DELIVERED", "DOWNSTREAM_ERASURE_ATTESTED"]) assert.equal(types.filter((x) => x === t).length, 1, `${ref} ${t}`);
     }
 
-    // Fuera de LOCAL no hay consumidor downstream: el worker reclama el evento pero NO ejecuta R5-R7 (la Revocation sigue APPLIED).
+    // Re-claim (at-least-once sin acuse, F-PR6-20): vencido el lease, un segundo ciclo reclama de nuevo los eventos y NO agrega eventos al ledger (R5-R7 idempotentes).
+    const ledgerCounts = async (): Promise<number[]> => Promise.all(refs.map(async (r) => (await outside.ledger.listByAggregate(T, "Revocation", r)).length));
+    const before = await ledgerCounts();
+    const adminRc = await ctx.connectAsSuperuser();
+    await adminRc.query("UPDATE app.outbox SET claimed_at = now() - interval '5 minutes' WHERE status = 'CLAIMED'");
+    const poolRc = await openProcessPool({ process: "worker", environment: "LOCAL", env: envFor(ctx, "worker") });
+    try {
+      const again = await runWorkerCycle({ pool: poolRc, environment: "LOCAL" });
+      assert.ok(again.claimed >= 3, "reclama de nuevo");
+      assert.equal(again.failed, 0);
+    } finally {
+      await poolRc.end();
+    }
+    assert.deepEqual(await ledgerCounts(), before, "el re-claim no agrega eventos al ledger");
+
+    // Fuera de LOCAL no hay consumidor downstream: el worker NO reclama el outbox ni ejecuta R5-R7 (la Revocation sigue APPLIED y el evento PENDING).
     const dev = (await revokeVia(env, T, "1399-DEV", "OTP")).revocationRef;
     const pool2 = await openProcessPool({ process: "worker", environment: "LOCAL", env: envFor(ctx, "worker") });
     try {
       const result = await runWorkerCycle({ pool: pool2, environment: "DEV" });
       assert.equal(result.completed, 0);
-      assert.equal(result.skippedDownstream, 1);
+      assert.equal(result.claimed, 0);
     } finally {
       await pool2.end();
     }
     assert.equal((await outside.revocationRepo.findByRef(T, dev))?.status, "APPLIED");
+    const st = await adminRc.query<{ status: string; attempts: number }>("SELECT status, attempts FROM app.outbox WHERE tenant_id = $1 AND payload->>'revocationRef' = $2", [T, dev]);
+    assert.deepEqual(st.rows, [{ status: "PENDING", attempts: 0 }], "el evento no se reclamo fuera de LOCAL");
+    await adminRc.end();
   });
 });
