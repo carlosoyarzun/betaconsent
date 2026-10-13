@@ -40,7 +40,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_'",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$'",
       [table],
     )).rows;
     // ADR-010 PR-5a: app_rw solo lee app.revocation (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_* abajo).
@@ -64,7 +64,8 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     for (const role of ["worker", "platform_rw"]) {
       for (const privilege of ["SELECT", "INSERT", "UPDATE"]) {
         const r = (await admin.query<{ p: boolean }>("SELECT has_any_column_privilege($1, $2, $3) AS p", [role, qname, privilege])).rows[0];
-        assert.equal(r?.p, false, `${role} ${privilege} ${qname}`);
+        const expected = role === "worker" && privilege === "SELECT" && table === "revocation"; // ADR-010 PR-6a (0042): lectura bajo RLS para R5-R7
+        assert.equal(r?.p, expected, `${role} ${privilege} ${qname}`);
       }
     }
     // data_class y created_at los fija la base: nunca insertables ni actualizables por runtime.

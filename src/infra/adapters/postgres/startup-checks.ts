@@ -51,6 +51,7 @@ export interface StartupCheckResult {
 }
 
 export class StartupCheckError extends Error {
+  readonly code = "STARTUP_CHECK_FAILED";
   readonly failures: string[];
   constructor(failures: string[]) {
     super(`ERR-CM-11: chequeo de arranque de la base falló: ${failures.join("; ")}`);
@@ -97,8 +98,10 @@ export async function checkClockSkew(db: Queryable, nowMs: () => number = Date.n
 export async function runStartupChecks(db: Queryable, options: StartupCheckOptions = {}): Promise<StartupCheckResult> {
   const failures: string[] = [];
 
-  const role = await db.query<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean }>(
-    "SELECT rolname, rolsuper, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user",
+  const role = await db.query<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean; session_user_name: string; session_super: boolean | null }>(
+    `SELECT rolname, rolsuper, rolbypassrls, session_user::pg_catalog.text AS session_user_name,
+            (SELECT s.rolsuper FROM pg_catalog.pg_roles s WHERE s.rolname = session_user) AS session_super
+       FROM pg_catalog.pg_roles WHERE rolname = current_user`,
   );
   const me = role.rows[0];
   if (me === undefined) {
@@ -109,7 +112,12 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
     }
     if (me.rolsuper) failures.push("el rol de la conexión es superusuario");
     if (me.rolbypassrls) failures.push("el rol de la conexión tiene BYPASSRLS");
+    // INV-DBR-02: la identidad de autenticacion (session_user) debe ser el rol esperado Y coincidir con current_user: un `options=-c role=...` o `?user=` no puede disfrazar otra identidad.
+    if (me.session_user_name !== me.rolname) failures.push("session_user difiere de current_user (la conexión asumió otro rol, INV-DBR-02)");
+    if (options.expectedRole !== undefined && me.session_user_name !== options.expectedRole) failures.push(`session_user no es ${options.expectedRole} (INV-DBR-02)`);
+    if (me.session_super !== false) failures.push("session_user es superusuario o no se pudo verificar");
   }
+  await checkNoClientGucOverrides(db, failures);
 
   const membership = await db.query<{ owner: string; member: boolean }>(
     `SELECT o.rolname AS owner, pg_catalog.pg_has_role(current_user, o.oid, 'MEMBER') AS member
@@ -227,6 +235,21 @@ async function checkNoAppGucDefaults(db: Queryable, failures: string[]): Promise
     for (const row of r.rows) failures.push(`pg_db_role_setting fija la GUC ${row.setting} para ${row.scope}: las GUC app.* solo se fijan por transaccion (ADR-010 PR-3)`);
   } catch {
     failures.push("no se pudo verificar pg_db_role_setting (GUC app.*)");
+  }
+}
+
+/** INV-DBR-02: ningun GUC `role`, `session_authorization` ni `app.*` puede venir del cliente (options/PGOPTIONS en la conexion). Fail-closed si no se puede verificar. */
+async function checkNoClientGucOverrides(db: Queryable, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ name: string }>(
+      // Los placeholders `app.*` fijados por options NO aparecen en pg_settings: se leen por nombre (los unicos app.* del sistema: tenant_id, principal_ref, session_ref).
+      `SELECT name FROM pg_catalog.pg_settings WHERE source = 'client' AND (name IN ('role', 'session_authorization') OR name LIKE 'app.%')
+       UNION ALL
+       SELECT n FROM pg_catalog.unnest(ARRAY['app.tenant_id', 'app.principal_ref', 'app.session_ref']) AS n WHERE COALESCE(pg_catalog.current_setting(n, true), '') <> ''`,
+    );
+    for (const row of r.rows) failures.push(`la conexión fija el GUC ${row.name} desde el cliente (options/PGOPTIONS, INV-DBR-02)`);
+  } catch {
+    failures.push("no se pudo verificar los GUC fijados por el cliente");
   }
 }
 

@@ -17,6 +17,7 @@ import type { TenantResolverPort } from "../../../server/ports/tenant-resolver.p
 import type { TenantTxPorts } from "../../../server/ports/unit-of-work.port.ts";
 import { resolveDbRoleMode } from "./role-membership.ts";
 import { createPool, guardBorrowedClient } from "./pool.ts";
+import { assertSafeConnectionUrl } from "./runtime-process.ts";
 import { assertStartupChecks, checkRetentionPurgeFreshness, RETENTION_PURGE_STALE_SIGNAL } from "./startup-checks.ts";
 import { createPgTenantHandleAdapter } from "./tenant-handle.adapter.ts";
 import { createPgTenantResolver } from "./tenant-resolver.adapter.ts";
@@ -91,10 +92,12 @@ export function readRuntimeDatabaseUrl(env: NodeJS.ProcessEnv): string {
   }
   let user: string;
   try {
-    user = decodeURIComponent(new URL(url).username);
+    new URL(url);
   } catch {
     throw new Error("CNS_DATABASE_URL no es una URL valida. Abortando.");
   }
+  // INV-DBR-02: protocolo, query (?user=, ?password=, options) y PGOPTIONS/PGUSER/PGPASSWORD del entorno no pueden cambiar la identidad.
+  user = assertSafeConnectionUrl(url, env);
   if (user === "consent_migrator" || user === "postgres" || user === "consent_owner") {
     throw new Error(`CNS_DATABASE_URL usa el rol "${user}": el proceso web solo puede usar el rol de runtime (app_rw). Abortando.`);
   }

@@ -79,6 +79,7 @@ test("TEST-CNS-1312 el nucleo del CLI purga purge_run primero, llama ops.purge_p
 
 function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error", purgeExecRow?: { app_rw: boolean; platform_rw: boolean }): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("pg_catalog.pg_settings")) return { rows: [] };
     if (text.includes("to_regprocedure")) return purgeExecRow === undefined ? { rows: [{ app_rw: false, platform_rw: false }] } : { rows: [purgeExecRow] };
     if (text.includes("ops.retention_status")) return status === "error" ? new Error("boom") : { rows: status };
     if (text.includes("u.rolname AS member")) return { rows: EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin })) }; // ADR-010 PR-2
@@ -86,7 +87,7 @@ function healthyDb(status: Array<{ store: string; retention_days: string; last_r
     if (text.includes("has_table_privilege('staff_roster_reader', c.oid")) return { rows: [] };
     if (text.includes("reader_select")) return { rows: [{ reader_select: true, runtime_select: false, schema_create: false }] };
     if (text.includes("clock_timestamp")) return { rows: [{ db_ms: String(Date.now()) }] };
-    if (text.includes("FROM pg_catalog.pg_roles WHERE rolname = current_user")) return { rows: [{ rolname: "app_rw", rolsuper: false, rolbypassrls: false }] };
+    if (text.includes("FROM pg_catalog.pg_roles WHERE rolname = current_user")) return { rows: [{ rolname: "app_rw", session_user_name: "app_rw", session_super: false, rolsuper: false, rolbypassrls: false }] };
     if (text.includes("pg_has_role")) return { rows: OWNER_ROLES.map((owner) => ({ owner, member: false })) };
     if (text.includes("has_schema_privilege")) return { rows: [] };
     if (text.includes("has_parameter_privilege")) return { rows: [{ can_set: false }] };

@@ -39,6 +39,10 @@ interface Scenario {
   appGucDefaults?: Array<{ scope: string; setting: string }> | "error";
   // ADR-010 PR-5a (F-A10-26): funciones case_state de operador/SYSTEM/siembra con EXECUTE para el rol de conexion.
   transitionExecute?: string[] | "error";
+  // INV-DBR-02: identidad de autenticacion y GUC fijados por el cliente.
+  sessionUser?: string;
+  sessionSuper?: boolean | null;
+  clientGucs?: string[] | "error";
 }
 
 function db(s: Scenario = {}): FakeClient {
@@ -71,8 +75,12 @@ function db(s: Scenario = {}): FakeClient {
       const offset = s.dbClockOffsetMs ?? 0;
       return { rows: [{ db_ms: offset === "nan" ? "x" : String(Date.now() + offset) }] };
     }
+    if (text.includes("pg_catalog.pg_settings")) {
+      if (s.clientGucs === "error") return new Error("boom");
+      return { rows: (s.clientGucs ?? []).map((name) => ({ name })) };
+    }
     if (text.includes("FROM pg_catalog.pg_roles WHERE rolname = current_user")) {
-      return { rows: [{ rolname: s.runtimeRole ?? "app_rw", rolsuper: s.rolsuper ?? false, rolbypassrls: s.rolbypassrls ?? false }] };
+      return { rows: [{ rolname: s.runtimeRole ?? "app_rw", session_user_name: s.sessionUser ?? s.runtimeRole ?? "app_rw", session_super: s.sessionSuper === undefined ? false : s.sessionSuper, rolsuper: s.rolsuper ?? false, rolbypassrls: s.rolbypassrls ?? false }] };
     }
     if (text.includes("pg_has_role")) {
       const member = new Set(s.memberOf ?? []);
@@ -112,6 +120,14 @@ test("TEST-CNS-747 no arranca: superusuario, BYPASSRLS, miembro de owner, CREATE
     [{ memberOf: ["transition_owner"] }, /miembro de transition_owner/],
     [{ createOn: ["public"] }, /CREATE en el esquema public/],
     [{ canSetReplicationRole: true }, /session_replication_role/],
+    // INV-DBR-02 (P1-1 de la revision de seguridad de #92): identidad de autenticacion y GUC del cliente
+    [{ sessionUser: "consent_owner" }, /session_user difiere de current_user/],
+    [{ sessionUser: "consent_migrator", runtimeRole: "worker" }, /session_user no es|difiere/],
+    [{ sessionSuper: true }, /session_user es superusuario/],
+    [{ sessionSuper: null }, /session_user es superusuario o no se pudo verificar/],
+    [{ clientGucs: ["role"] }, /fija el GUC role desde el cliente/],
+    [{ clientGucs: ["app.tenant_id"] }, /fija el GUC app\.tenant_id desde el cliente/],
+    [{ clientGucs: "error" }, /no se pudo verificar los GUC/],
   ];
   for (const [scenario, expected] of cases) {
     const result = await runStartupChecks(db(scenario));

@@ -16,10 +16,11 @@ import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapte
 import { canonicalJson, verifyLedgerChain } from "../../../src/server/modules/common/ledger-chain.ts";
 import type { RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { completeDownstream, revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
+import { revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
 import { runFA1029Scenarios } from "../../contract/f-a10-29-scenarios.ts";
 import { pgTest } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
+import { completeDownstreamAsWorker } from "./worker-env.ts";
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
 const constraintOf = (e: unknown): string | undefined => (e as { constraint?: string }).constraint;
@@ -158,7 +159,7 @@ pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json =
     const T = fixtureUuid("t1375");
     for (const path of ["OTP", "LINK", "CASE"] as const) {
       const { revocationRef } = await revokeVia(env, T, `1375-${path}`, path);
-      await completeDownstream(env, T, revocationRef, `1375-${path}`);
+      await completeDownstreamAsWorker(ctx, env, T, revocationRef, `1375-${path}`); // ADR-010 PR-6a: R5-R7 solo worker
     }
     const report = await verifyLedgerChain({ readChain: (t) => outside.ledger.readChain(t) }, T);
     assert.equal(report.ok, true, JSON.stringify(report));
