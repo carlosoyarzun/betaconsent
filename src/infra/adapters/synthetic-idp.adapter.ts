@@ -33,6 +33,8 @@ export interface SyntheticIdpOptions {
 }
 
 export class SyntheticIdpAdapter implements IdpClientPort {
+  /** Marca estructural (F-A10-23): el proceso verifier niega cualquier IdP con esta marca fuera de LOCAL, ademas del constructor. */
+  readonly synthetic = true as const;
   readonly issuer: string;
   readonly audience: string;
   private readonly now: () => number;

@@ -13,10 +13,11 @@ import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapte
 import type { RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { LedgerPayloadViolationError } from "../../../src/server/modules/common/ledger-payload-contract.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { completeDownstream, REVOCATION_PATHS, revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
+import { REVOCATION_PATHS, revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
+import { completeDownstreamAsWorker } from "./worker-env.ts";
 
 async function withEnv<R>(ctx: PgTestContext, body: (env: X6Env, outside: ReturnType<typeof pgOutsideTxPorts>) => Promise<R>): Promise<R> {
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
@@ -44,7 +45,7 @@ for (const path of REVOCATION_PATHS) {
     const T = fixtureUuid(`t969-${path}`);
     await withEnv(ctx, async (env, outside) => {
       const { revocationRef } = await revokeVia(env, T, `969-${path}`, path);
-      await completeDownstream(env, T, revocationRef, `969-${path}`);
+      await completeDownstreamAsWorker(ctx, env, T, revocationRef, `969-${path}`); // ADR-010 PR-6a: R5-R7 solo worker
       assert.equal((await outside.revocationRepo.findByRef(T, revocationRef))?.status, "COMPLETED");
       const events = await outside.ledger.listByAggregate(T, "Revocation", revocationRef);
       assert.deepEqual(events.map((e) => e.sequence), events.map((_, i) => i + 1));

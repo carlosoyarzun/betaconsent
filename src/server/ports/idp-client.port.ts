@@ -22,6 +22,8 @@ export interface Jwks {
 }
 
 export interface IdpClientPort {
+  /** true SOLO en el adaptador sintetico (LOCAL). El entrypoint del verifier lo niega fuera de LOCAL (F-A10-23). Ausente en un adaptador real. */
+  readonly synthetic?: true;
   /** Canjea el code (+ PKCE) en el token endpoint. Devuelve el ID token crudo (vive solo en memoria del verifier). Cualquier fallo lanza. */
   exchangeCode(input: { code: string; pkceVerifier: string }): Promise<{ idToken: string }>;
   /** JWKS del issuer fijado (cache y rotacion son del adaptador). */

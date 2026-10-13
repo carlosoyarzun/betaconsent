@@ -56,10 +56,10 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
         assert.equal(r?.p, false, `${role} ${privilege} ${schema}.${table}`);
       }
     }
-    // worker: SELECT solo del outbox (filtrado por tenant via policy); INSERT nunca. platform_rw: nada.
+    // worker: SELECT solo del outbox (y del ledger desde 0042) (filtrado por tenant via policy); INSERT nunca. platform_rw: nada.
     for (const role of ["worker", "platform_rw"]) {
       for (const privilege of ["SELECT", "INSERT"]) {
-        const expected = role === "worker" && privilege === "SELECT" && table === "outbox";
+        const expected = role === "worker" && privilege === "SELECT" && (table === "outbox" || table === "audit_event"); // ADR-010 PR-6a (0042): el worker lee el ledger bajo RLS para R5-R7
         const r = (await admin.query<{ p: boolean }>("SELECT has_table_privilege($1, $2, $3) AS p", [role, `${schema}.${table}`, privilege])).rows[0];
         assert.equal(r?.p, expected, `${role} ${privilege} ${schema}.${table}`);
       }
