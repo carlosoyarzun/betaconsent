@@ -131,12 +131,15 @@ pgTest("TEST-CNS-824 pg: GRD-RV-04: una sola Revocation no terminal por decision
     await outside.revocationRepo.save({ ...base, revocationRef: fixtureUuid("r824-1") });
     // Segunda abierta sobre la misma decision: violacion del UNIQUE parcial (nombre exacto).
     await assert.rejects(
-      () => uow.withTenantTx(T, (tx) => tx.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, revoked_decision_ref) VALUES ($1, 'r824-2', 'c', 'APPLIED', $2)", [T, D])),
+      () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.seed_local_revocation($1::uuid, 'r824-2', 'c', NULL, 'APPLIED', NULL, NULL, NULL, NULL, $2, 'OTP', NULL, NULL, NULL, NULL, NULL, NULL, NULL)", [T, D])),
       (e: unknown) => codeOf(e) === "23505" && (e as { constraint?: string }).constraint === "revocation_open_per_decision_uq",
     );
     // Sin decision: NOT NULL.
     await assert.rejects(
-      () => admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r824-3', 'c', 'REQUESTED')", [T]),
+      async () => {
+        await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // 0037: siembra LOCAL como superusuario
+        await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r824-3', 'c', 'REQUESTED')", [T]);
+      },
       (e: unknown) => codeOf(e) === "23502",
     );
     // Otra decision u otro tenant con la misma decision: permitido. FAILED libera la decision.

@@ -40,10 +40,11 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$'",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_'",
       [table],
     )).rows;
-    const expectedCmds = READ_ONLY.includes(table as (typeof READ_ONLY)[number]) ? ["SELECT"] : ["INSERT", "SELECT", "UPDATE"];
+    // ADR-010 PR-5a: app_rw solo lee app.revocation (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_* abajo).
+    const expectedCmds = READ_ONLY.includes(table as (typeof READ_ONLY)[number]) || table === "revocation" ? ["SELECT"] : ["INSERT", "SELECT", "UPDATE"];
     assert.deepEqual(policies.map((p) => p.cmd).sort(), expectedCmds, `${qname}: policies`);
     for (const p of policies) {
       assert.deepEqual(p.roles, ["app_rw"], `${qname}: policy solo TO app_rw`);
@@ -81,11 +82,20 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
   }
   assert.deepEqual(await columnsWith(admin, "app.subject", "app_rw", "SELECT"), ["subject_ref", "tenant_id"]);
 
-  assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["prior_steps_complete", "purposes", "receipt_ref", "state", "steps_recorded"]);
-  assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "UPDATE"), [
-    "attested_case_ref", "attested_revocation_ref", "case_ref", "cosigned_by_ref", "proposal_ref", "proposed_by_ref", "reason_code",
-    "recorded_by_ref", "second_approver_ref", "status", "verification_script_version", "verified_auth_path", "verified_recovery_method",
+  // Policies de transition_owner (0037): exactas por tabla, siempre acotadas por tenant.
+  const transitionPolicies = (await admin.query<{ t: string; p: string; c: string }>(
+    "SELECT tablename AS t, policyname AS p, cmd AS c FROM pg_policies WHERE schemaname = 'app' AND roles = '{transition_owner}' ORDER BY 1, 2",
+  )).rows.map((r) => `${r.t}.${r.p}:${r.c}`);
+  assert.deepEqual(transitionPolicies, [
+    "consent_decision.consent_decision_transition_select:SELECT", "consent_decision.consent_decision_transition_update:UPDATE",
+    "outbox.outbox_transition_insert:INSERT", "outbox.outbox_transition_select:SELECT",
+    "recovery_token.recovery_token_transition_select:SELECT", "recovery_token.recovery_token_transition_update:UPDATE",
+    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
   ]);
+  assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["prior_steps_complete", "purposes", "receipt_ref", "state", "steps_recorded"]);
+  // ADR-010 PR-5a (INV-RV-12, F-A10-01): app_rw ya no escribe app.revocation (ni INSERT ni UPDATE); solo transition_owner via case_state.*.
+  assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "UPDATE"), []);
+  assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "INSERT"), []);
   assert.deepEqual(await columnsWith(admin, "app.recovery_token", "app_rw", "UPDATE"), ["consumed_at"]);
   assert.deepEqual(await columnsWith(admin, "app.recovery_token", "app_rw", "INSERT"), [
     "chain_ref", "consumed_at", "expires_at", "recovery_ref", "revoked_decision_ref", "tenant_id", "token_hash",
@@ -98,6 +108,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
 
 pgTest("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums, forma del hash, longitudes, par de atestacion)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
+  await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   const t = fixtureUuid("t808");
   const expectFail = async (sql: string, values: unknown[], constraint: string): Promise<void> => {
     await admin.query("SAVEPOINT s");
@@ -143,6 +154,7 @@ pgTest("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id fal
   const ta = fixtureUuid("t809-a");
   const tb = fixtureUuid("t809-b");
   const admin = await ctx.connectAsSuperuser();
+  await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   await admin.query("INSERT INTO app.subject (tenant_id, subject_ref) VALUES ($1, 's809')", [ta]);
   await admin.query("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, 'p809', 'c', 'p', 'ACTIVE')", [ta]);
   await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r809', 'ch', 'REQUESTED')", [ta]);
@@ -193,8 +205,11 @@ pgTest("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id fal
       );
     }
     // UPDATE de filas ajenas: 0 filas afectadas bajo RLS (y no cambia nada).
-    const upd = await uow.withTenantTx(tb, (tx) => tx.query("UPDATE app.revocation SET status = 'FAILED' WHERE revocation_ref = 'r809'"));
-    assert.equal(upd.rowCount, 0);
+    // ADR-010 PR-5a: app_rw ya no tiene UPDATE sobre app.revocation (0037): el rechazo es por privilegio (42501), antes de RLS.
+    await assert.rejects(
+      () => uow.withTenantTx(tb, (tx) => tx.query("UPDATE app.revocation SET status = 'FAILED' WHERE revocation_ref = 'r809'")),
+      (e: unknown) => codeOf(e) === "42501",
+    );
     // Mover una fila propia a otro tenant tambien falla (WITH CHECK del UPDATE): tenant_id ni siquiera es actualizable.
     await assert.rejects(
       () => uow.withTenantTx(ta, (tx) => tx.query("UPDATE app.revocation SET tenant_id = $1 WHERE revocation_ref = 'r809'", [tb])),
@@ -428,6 +443,7 @@ pgTest("TEST-CNS-813 pg: el worker solo lee el sobre del outbox de eventos CLAIM
 pgTest("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el runtime no puede borrar ni escribir columnas fijadas por la base", async (ctx) => {
   const t = fixtureUuid("t814");
   const admin = await ctx.connectAsSuperuser();
+  await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r814', 'ch', 'REQUESTED')", [t]);
   await admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
@@ -457,12 +473,12 @@ pgTest("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el run
     for (const sql of denied) {
       await assert.rejects(() => uow.withTenantTx(t, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === "42501", sql);
     }
-    // Lo permitido si funciona: el estado y el consumo.
-    await uow.withTenantTx(t, (tx) => tx.query("UPDATE app.revocation SET status = 'VERIFIED' WHERE revocation_ref = 'r814'"));
+    // ADR-010 PR-5a: el estado de app.revocation ya NO lo cambia app_rw (solo las funciones case_state); el consumo del token si.
+    await assert.rejects(() => uow.withTenantTx(t, (tx) => tx.query("UPDATE app.revocation SET status = 'VERIFIED' WHERE revocation_ref = 'r814'")), (e: unknown) => codeOf(e) === "42501");
     await uow.withTenantTx(t, (tx) => tx.query("UPDATE app.recovery_token SET consumed_at = now() WHERE recovery_ref = 'rec814'"));
   } finally {
     await pool.end();
   }
   const row = (await admin.query<{ status: string; chain_ref: string }>("SELECT status, chain_ref FROM app.revocation WHERE revocation_ref = 'r814'")).rows[0];
-  assert.deepEqual(row, { status: "VERIFIED", chain_ref: "ch" });
+  assert.deepEqual(row, { status: "REQUESTED", chain_ref: "ch" });
 });

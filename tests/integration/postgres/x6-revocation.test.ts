@@ -62,10 +62,11 @@ for (const path of REVOCATION_PATHS) {
 pgTest("TEST-CNS-970 pg: 0015 admite los estados DOWNSTREAM_PENDING/DELIVERED/COMPLETED, rechaza otros y el UNIQUE de GRD-RV-04 excluye COMPLETED (no DELIVERED)", async (ctx) => {
   const T = fixtureUuid("t970");
   const admin = await ctx.connectAsSuperuser();
+  await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   try {
     const D = fixtureUuid("d970");
     const ins = (ref: string, status: string) =>
-      admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, $2, 'c970', $3, $4)", [T, ref, D, status]);
+      admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, $2, 'c970', $3, $4, 'OTP')", [T, ref, D, status]);
     await assert.rejects(() => ins("r970-x", "EXPIRED"), (e: unknown) => (e as { code?: string }).code === "23514");
     await ins("r970-1", "DELIVERED");
     await assert.rejects(() => ins("r970-2", "REQUESTED"), (e: unknown) => (e as { constraint?: string }).constraint === "revocation_open_per_decision_uq");

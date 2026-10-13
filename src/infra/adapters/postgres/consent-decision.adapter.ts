@@ -85,6 +85,12 @@ export function createPgConsentDecisionRepository(tx: TenantTx): ConsentDecision
       return row ? toRecord(row) : null;
     },
     async save(record) {
+      if (record.state === "REVOKED") {
+        // ADR-010 PR-5a (F-A10-06): app_rw ya no puede dejar una decision en REVOKED; C6 real = case_state.apply_revocation. Este camino es la
+        // siembra LOCAL del contrato `save` (GRANTED -> REVOKED; la funcion falla fuera de LOCAL).
+        await tx.query("SELECT case_state.seed_local_revoke_decision($1::uuid, $2::text)", [record.tenantId, record.consentId]);
+        return;
+      }
       try {
       // Upsert. Las columnas de identidad/vinculo (context, product, subject, decision maker,
       // invitation, verification, chain) se fijan al crear y no son actualizables (sin grant).

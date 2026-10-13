@@ -720,6 +720,21 @@ BEGIN
 END
 $fn$;
 
+-- Siembra SOLO LOCAL del contrato `save` de consent_decision con state = REVOKED (F-A10-06: app_rw ya no puede escribirlo): GRANTED -> REVOKED.
+CREATE FUNCTION case_state.seed_local_revoke_decision(p_tenant_id uuid, p_consent_id text) RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  PERFORM pg_catalog.set_config('case_state.effect', 'seed_local_revoke_decision', true);
+  IF app.current_tenant_id() IS NULL OR p_tenant_id IS DISTINCT FROM app.current_tenant_id() THEN
+    RAISE EXCEPTION 'tenant distinto del de la tx' USING ERRCODE = '42501';
+  END IF;
+  IF ops.catalog_environment() IS DISTINCT FROM 'LOCAL' THEN RAISE EXCEPTION 'seed_local_revoke_decision solo existe en LOCAL' USING ERRCODE = '42501'; END IF;
+  UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = p_tenant_id AND consent_id = p_consent_id AND state = 'GRANTED';
+END
+$fn$;
+
 -- TRG-RV-01: trigger de grafo y efecto. SECURITY INVOKER a proposito: current_user es el rol que ejecuta la sentencia (dentro de una
 -- funcion SECURITY DEFINER de transition_owner es transition_owner; para cualquier otro rol, el rol real).
 CREATE FUNCTION case_state.revocation_transition_guard() RETURNS trigger
@@ -733,6 +748,11 @@ DECLARE
   v_allowed_cols text[];
   v_changed text[] := ARRAY[]::text[];
 BEGIN
+  -- Siembra de fixtures LOCAL como superusuario (admin de los tests): un superusuario ya podria deshabilitar el trigger; no es rol de runtime.
+  IF v_effect = 'seed_local_revocation' AND current_user <> 'transition_owner' AND ops.catalog_environment() = 'LOCAL'
+     AND (SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) THEN
+    RETURN NEW;
+  END IF;
   IF current_user <> 'transition_owner' OR v_effect IS NULL THEN
     RAISE EXCEPTION 'app.revocation solo se escribe por las funciones case_state de transition_owner (INV-RV-12)' USING ERRCODE = '42501';
   END IF;
@@ -848,6 +868,7 @@ REVOKE ALL ON FUNCTION case_state.apply_revocation(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.mark_downstream_emitted(text, text[], integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.record_downstream_ack(text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.record_erasure_attestation(text, text, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.seed_local_revoke_decision(uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.seed_local_revocation(uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION case_state.request_revocation(text, text, text) TO app_rw;
@@ -866,6 +887,7 @@ GRANT EXECUTE ON FUNCTION case_state.apply_revocation(text, integer) TO app_rw, 
 GRANT EXECUTE ON FUNCTION case_state.mark_downstream_emitted(text, text[], integer) TO app_rw, worker;
 GRANT EXECUTE ON FUNCTION case_state.record_downstream_ack(text, text, integer) TO app_rw, worker;
 GRANT EXECUTE ON FUNCTION case_state.record_erasure_attestation(text, text, integer) TO app_rw, worker;
+GRANT EXECUTE ON FUNCTION case_state.seed_local_revoke_decision(uuid, text) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.seed_local_revocation(uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) TO app_rw;
 -- CREATE TRIGGER exige EXECUTE al creador (consent_owner, dueno de la tabla); se revoca enseguida (el disparo no lo comprueba).
 GRANT EXECUTE ON FUNCTION case_state.revocation_transition_guard() TO consent_owner;
@@ -898,7 +920,7 @@ DECLARE
     'propose_case_verification', ARRAY['app_rw'], 'approve_case_verification', ARRAY['app_rw'], 'withdraw_case_verification_proposal', ARRAY['app_rw'],
     'record_case_confirmation', ARRAY['app_rw'], 'cosign_case_confirmation', ARRAY['app_rw'],
     'apply_revocation', ARRAY['app_rw', 'worker'], 'mark_downstream_emitted', ARRAY['app_rw', 'worker'], 'record_downstream_ack', ARRAY['app_rw', 'worker'],
-    'record_erasure_attestation', ARRAY['app_rw', 'worker'], 'seed_local_revocation', ARRAY['app_rw'],
+    'record_erasure_attestation', ARRAY['app_rw', 'worker'], 'seed_local_revocation', ARRAY['app_rw'], 'seed_local_revoke_decision', ARRAY['app_rw'],
     'canonical_json', ARRAY[]::text[], 'ledger_append', ARRAY[]::text[], 'lock_revocation', ARRAY[]::text[], 'assert_sequence', ARRAY[]::text[], 'assert_decision_revocable', ARRAY[]::text[],
     'revocation_transition_guard', ARRAY[]::text[]);
 BEGIN
@@ -918,8 +940,8 @@ BEGIN
   END IF;
 
   -- Funciones: conjunto exacto, dueno transition_owner, search_path fijo, EXECUTE exacto, sin SQL dinamico.
-  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state') <> 22 THEN
-    RAISE EXCEPTION 'case_state debe tener exactamente 22 funciones en PR-5a';
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state') <> 23 THEN
+    RAISE EXCEPTION 'case_state debe tener exactamente 23 funciones en PR-5a';
   END IF;
   FOR f IN SELECT p.oid, p.proname, p.prosecdef, p.proconfig, p.proacl, p.proowner, p.prosrc, pg_catalog.pg_get_userbyid(p.proowner) AS owner
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state' LOOP
