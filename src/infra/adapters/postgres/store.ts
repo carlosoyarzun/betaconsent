@@ -46,6 +46,7 @@ export function createForbiddenOutsideTxPorts(): TenantTxPorts {
     invitationRepo: forbidden("invitationRepo"),
     otpRepo: forbidden("otpRepo"),
     rightsCaseRepo: forbidden("rightsCaseRepo"),
+    rightsCaseTransitions: forbidden("rightsCaseTransitions"),
     enrollmentRepo: forbidden("enrollmentRepo"),
     ledger: forbidden("ledger"),
     outbox: forbidden("outbox"),

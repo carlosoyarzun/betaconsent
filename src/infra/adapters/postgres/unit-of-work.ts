@@ -34,6 +34,7 @@ import { createPgRecoveryTokenRepository } from "./recovery-token.adapter.ts";
 import { createPgRevocationRepository, OPEN_REVOCATION_UNIQUE } from "./revocation.adapter.ts";
 import { createPgRevocationTransitions } from "./revocation-transitions.adapter.ts";
 import { createPgRightsCaseRepository, RIGHTS_CASE_SINGLE_OPEN_UNIQUE } from "./rights-case.adapter.ts";
+import { createPgRightsCaseTransitions } from "./rights-case-transitions.adapter.ts";
 import { DomainError } from "../../../server/modules/common/errors.ts";
 import type { DomainErrorCode } from "../../../server/modules/common/errors.ts";
 import { LedgerSequenceConflictError } from "../../../server/ports/ledger.port.ts";
@@ -115,6 +116,7 @@ export function createPgTenantTxPorts(tx: TenantTx, idempotencyPolicy?: Idempote
     invitationRepo: createPgInvitationRepository(tx),
     otpRepo: createPgOtpVerificationRepository(tx),
     rightsCaseRepo: createPgRightsCaseRepository(tx),
+    rightsCaseTransitions: createPgRightsCaseTransitions(tx),
     enrollmentRepo: createPgEnrollmentRepository(tx),
     ledger: createPgLedgerAdapter(tx),
     outbox: createPgOutboxAdapter(tx),
