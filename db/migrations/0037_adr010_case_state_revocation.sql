@@ -218,8 +218,27 @@ BEGIN
 END
 $fn$;
 
--- Bloqueo de la fila de la Revocation del tenant de la tx (tenant sale de app.current_tenant_id(), nunca de un parametro).
-CREATE FUNCTION case_state.lock_revocation(p_revocation_ref text) RETURNS app.revocation
+-- Control optimista de secuencia del agregado (mismo criterio que ledger_append): la ultima sequence por (tenant, aggregate_id) debe ser la
+-- que el llamador leyo ANTES del lock. Va ANTES de los guards de estado: un llamador con lectura vieja (otra tx avanzo el agregado) recibe
+-- RV409, el UoW reejecuta con estado fresco y converge (idempotente), igual que cuando la fila se bloqueaba desde el dominio (FOR UPDATE).
+CREATE FUNCTION case_state.assert_sequence(p_aggregate_id text, p_expected_sequence integer) RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+AS $fn$
+DECLARE
+  v_current integer;
+BEGIN
+  SELECT COALESCE(pg_catalog.max(e.sequence), 0) INTO v_current
+    FROM integrity.audit_event e WHERE e.tenant_id = app.current_tenant_id() AND e.aggregate_id = p_aggregate_id;
+  IF p_expected_sequence IS DISTINCT FROM v_current THEN
+    RAISE EXCEPTION 'ledger sequence conflict' USING ERRCODE = 'RV409', DETAIL = pg_catalog.format('expected=%s actual=%s', p_expected_sequence, v_current);
+  END IF;
+END
+$fn$;
+
+-- Bloqueo de la fila de la Revocation del tenant de la tx (tenant sale de app.current_tenant_id(), nunca de un parametro). app_rw ya no
+-- puede bloquear filas (SELECT ... FOR UPDATE exige UPDATE): la serializacion (GRD-RV-23) es esta, bajo lock, mas assert_sequence.
+CREATE FUNCTION case_state.lock_revocation(p_revocation_ref text, p_expected_sequence integer DEFAULT NULL) RETURNS app.revocation
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
@@ -229,6 +248,7 @@ BEGIN
   SELECT r.* INTO v_rev FROM app.revocation r
    WHERE r.tenant_id = app.current_tenant_id() AND r.revocation_ref = p_revocation_ref FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'revocation no encontrada' USING ERRCODE = 'RV001'; END IF; -- ERR-CM-01 uniforme
+  IF p_expected_sequence IS NOT NULL THEN PERFORM case_state.assert_sequence(p_revocation_ref, p_expected_sequence); END IF;
   RETURN v_rev;
 END
 $fn$;
@@ -278,7 +298,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'verify_revocation_otp', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status <> 'REQUESTED' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF; -- ERR-CM-06
   UPDATE app.revocation SET status = 'VERIFIED', verified_auth_path = 'OTP', verified_recovery_method = NULL, verification_ref = p_verification_ref
    WHERE tenant_id = v_rev.tenant_id AND revocation_ref = v_rev.revocation_ref;
@@ -300,7 +320,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'confirm_revocation', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status <> 'VERIFIED' OR v_rev.verified_recovery_method IS NOT DISTINCT FROM 'HUMAN_ASSISTED' THEN
     RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002';
   END IF;
@@ -343,6 +363,7 @@ BEGIN
     IF v_rev.revoked_decision_ref IS DISTINCT FROM v_tok.revoked_decision_ref THEN
       RAISE EXCEPTION 'revocation de otro ciclo' USING ERRCODE = 'RV007';
     END IF;
+    PERFORM case_state.assert_sequence(v_rev.revocation_ref, p_expected_sequence);
     IF v_rev.status NOT IN ('REQUESTED', 'VERIFIED') THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
     v_ref := v_rev.revocation_ref;
     v_seq := p_expected_sequence;
@@ -382,7 +403,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'withdraw_revocation', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status NOT IN ('REQUESTED', 'VERIFIED', 'CONFIRMED') THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
   UPDATE app.revocation SET status = 'FAILED', reason_code = 'WITHDRAWN_BY_REQUESTER'
    WHERE tenant_id = v_rev.tenant_id AND revocation_ref = v_rev.revocation_ref;
@@ -412,7 +433,7 @@ BEGIN
   v_payload := pg_catalog.jsonb_build_object('revocationRef', p_revocation_ref, 'revokedDecisionRef', p_revoked_decision_ref, 'scope', 'ALL',
     'authPath', 'RECOVERY', 'recoveryMethod', 'HUMAN_ASSISTED', 'originPurposeRef', 'ALL', 'initiatedVia', p_initiated_via, 'caseRef', p_case_ref);
   IF p_attach THEN
-    v_rev := case_state.lock_revocation(p_revocation_ref);
+    v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
     IF v_rev.status IN ('FAILED', 'COMPLETED') THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
     SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_REQUESTED', 'HUMAN', 'UNVERIFIED_BEARER', NULL, NULL,
       v_payload, p_revocation_ref || ':r12:' || p_case_ref, p_expected_sequence);
@@ -456,7 +477,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'approve_case_verification', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref OR v_rev.proposal_ref IS DISTINCT FROM p_proposal_ref THEN
     RAISE EXCEPTION 'propuesta ajena' USING ERRCODE = 'RV001';
   END IF;
@@ -485,7 +506,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'withdraw_case_verification_proposal', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref OR v_rev.proposal_ref IS DISTINCT FROM p_proposal_ref THEN
     RAISE EXCEPTION 'propuesta ajena' USING ERRCODE = 'RV001';
   END IF;
@@ -530,7 +551,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'cosign_case_confirmation', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref THEN RAISE EXCEPTION 'caso ajeno' USING ERRCODE = 'RV001'; END IF;
   IF v_rev.status <> 'VERIFIED' OR v_rev.attested_revocation_ref IS DISTINCT FROM v_rev.revocation_ref
      OR v_rev.attested_case_ref IS DISTINCT FROM p_case_ref THEN
@@ -564,7 +585,7 @@ DECLARE
   v_payload jsonb;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'apply_revocation', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status <> 'CONFIRMED' OR v_rev.verified_auth_path IS NULL OR v_rev.revoked_decision_ref IS NULL
      OR (v_rev.verified_auth_path = 'RECOVERY' AND v_rev.verified_recovery_method IS NULL) THEN
     RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002';
@@ -610,7 +631,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'mark_downstream_emitted', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status <> 'APPLIED' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
   IF p_subscription_refs IS NULL OR pg_catalog.cardinality(p_subscription_refs) = 0 OR pg_catalog.array_position(p_subscription_refs, NULL) IS NOT NULL THEN
     RAISE EXCEPTION 'sin destinos downstream' USING ERRCODE = 'RV002';
@@ -634,7 +655,7 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'record_downstream_ack', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status <> 'DOWNSTREAM_PENDING' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
   UPDATE app.revocation SET status = 'DELIVERED' WHERE tenant_id = v_rev.tenant_id AND revocation_ref = v_rev.revocation_ref;
   SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_DELIVERED', 'SYSTEM_GUARD', NULL, NULL, NULL,
@@ -654,7 +675,7 @@ DECLARE
   v_rc record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'record_erasure_attestation', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.status <> 'DELIVERED' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
   SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'DOWNSTREAM_ERASURE_ATTESTED', 'SYSTEM_GUARD', NULL, NULL, NULL,
     pg_catalog.jsonb_build_object('revocationRef', p_revocation_ref), p_revocation_ref || ':r7:' || p_attestation_ref, p_expected_sequence);
@@ -668,7 +689,7 @@ $fn$;
 
 -- Siembra SOLO LOCAL (contrato `save` del puerto, fixtures de dev y tests). Falla fuera de LOCAL. Upsert por (tenant, revocation_ref).
 CREATE FUNCTION case_state.seed_local_revocation(
-  p_revocation_ref text, p_chain_ref text, p_case_ref text, p_status text, p_attested_revocation_ref text, p_attested_case_ref text,
+  p_tenant_id uuid, p_revocation_ref text, p_chain_ref text, p_case_ref text, p_status text, p_attested_revocation_ref text, p_attested_case_ref text,
   p_recorded_by_ref text, p_cosigned_by_ref text, p_revoked_decision_ref text, p_verified_auth_path text, p_verified_recovery_method text,
   p_reason_code text, p_proposal_ref text, p_proposed_by_ref text, p_verification_script_version text, p_second_approver_ref text,
   p_verification_ref text) RETURNS void
@@ -679,7 +700,7 @@ DECLARE
   v_tenant uuid := app.current_tenant_id();
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'seed_local_revocation', true);
-  IF v_tenant IS NULL THEN RAISE EXCEPTION 'tenant no resuelto' USING ERRCODE = 'RV001'; END IF;
+  IF v_tenant IS NULL OR p_tenant_id IS DISTINCT FROM v_tenant THEN RAISE EXCEPTION 'tenant distinto del de la tx' USING ERRCODE = '42501'; END IF;
   IF ops.catalog_environment() IS DISTINCT FROM 'LOCAL' THEN
     RAISE EXCEPTION 'seed_local_revocation solo existe en LOCAL' USING ERRCODE = '42501';
   END IF;
@@ -784,20 +805,20 @@ BEGIN
   IF NOT (v_pair = ANY (v_allowed_pairs)) THEN
     RAISE EXCEPTION 'transicion % no permitida para el efecto %', v_pair, v_effect USING ERRCODE = '42501';
   END IF;
-  IF NEW.status IS DISTINCT FROM OLD.status THEN v_changed := v_changed || 'status'; END IF;
-  IF NEW.case_ref IS DISTINCT FROM OLD.case_ref THEN v_changed := v_changed || 'case_ref'; END IF;
-  IF NEW.attested_revocation_ref IS DISTINCT FROM OLD.attested_revocation_ref THEN v_changed := v_changed || 'attested_revocation_ref'; END IF;
-  IF NEW.attested_case_ref IS DISTINCT FROM OLD.attested_case_ref THEN v_changed := v_changed || 'attested_case_ref'; END IF;
-  IF NEW.recorded_by_ref IS DISTINCT FROM OLD.recorded_by_ref THEN v_changed := v_changed || 'recorded_by_ref'; END IF;
-  IF NEW.cosigned_by_ref IS DISTINCT FROM OLD.cosigned_by_ref THEN v_changed := v_changed || 'cosigned_by_ref'; END IF;
-  IF NEW.verified_auth_path IS DISTINCT FROM OLD.verified_auth_path THEN v_changed := v_changed || 'verified_auth_path'; END IF;
-  IF NEW.verified_recovery_method IS DISTINCT FROM OLD.verified_recovery_method THEN v_changed := v_changed || 'verified_recovery_method'; END IF;
-  IF NEW.reason_code IS DISTINCT FROM OLD.reason_code THEN v_changed := v_changed || 'reason_code'; END IF;
-  IF NEW.proposal_ref IS DISTINCT FROM OLD.proposal_ref THEN v_changed := v_changed || 'proposal_ref'; END IF;
-  IF NEW.proposed_by_ref IS DISTINCT FROM OLD.proposed_by_ref THEN v_changed := v_changed || 'proposed_by_ref'; END IF;
-  IF NEW.verification_script_version IS DISTINCT FROM OLD.verification_script_version THEN v_changed := v_changed || 'verification_script_version'; END IF;
-  IF NEW.second_approver_ref IS DISTINCT FROM OLD.second_approver_ref THEN v_changed := v_changed || 'second_approver_ref'; END IF;
-  IF NEW.verification_ref IS DISTINCT FROM OLD.verification_ref THEN v_changed := v_changed || 'verification_ref'; END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status THEN v_changed := pg_catalog.array_append(v_changed, 'status'::text); END IF;
+  IF NEW.case_ref IS DISTINCT FROM OLD.case_ref THEN v_changed := pg_catalog.array_append(v_changed, 'case_ref'::text); END IF;
+  IF NEW.attested_revocation_ref IS DISTINCT FROM OLD.attested_revocation_ref THEN v_changed := pg_catalog.array_append(v_changed, 'attested_revocation_ref'::text); END IF;
+  IF NEW.attested_case_ref IS DISTINCT FROM OLD.attested_case_ref THEN v_changed := pg_catalog.array_append(v_changed, 'attested_case_ref'::text); END IF;
+  IF NEW.recorded_by_ref IS DISTINCT FROM OLD.recorded_by_ref THEN v_changed := pg_catalog.array_append(v_changed, 'recorded_by_ref'::text); END IF;
+  IF NEW.cosigned_by_ref IS DISTINCT FROM OLD.cosigned_by_ref THEN v_changed := pg_catalog.array_append(v_changed, 'cosigned_by_ref'::text); END IF;
+  IF NEW.verified_auth_path IS DISTINCT FROM OLD.verified_auth_path THEN v_changed := pg_catalog.array_append(v_changed, 'verified_auth_path'::text); END IF;
+  IF NEW.verified_recovery_method IS DISTINCT FROM OLD.verified_recovery_method THEN v_changed := pg_catalog.array_append(v_changed, 'verified_recovery_method'::text); END IF;
+  IF NEW.reason_code IS DISTINCT FROM OLD.reason_code THEN v_changed := pg_catalog.array_append(v_changed, 'reason_code'::text); END IF;
+  IF NEW.proposal_ref IS DISTINCT FROM OLD.proposal_ref THEN v_changed := pg_catalog.array_append(v_changed, 'proposal_ref'::text); END IF;
+  IF NEW.proposed_by_ref IS DISTINCT FROM OLD.proposed_by_ref THEN v_changed := pg_catalog.array_append(v_changed, 'proposed_by_ref'::text); END IF;
+  IF NEW.verification_script_version IS DISTINCT FROM OLD.verification_script_version THEN v_changed := pg_catalog.array_append(v_changed, 'verification_script_version'::text); END IF;
+  IF NEW.second_approver_ref IS DISTINCT FROM OLD.second_approver_ref THEN v_changed := pg_catalog.array_append(v_changed, 'second_approver_ref'::text); END IF;
+  IF NEW.verification_ref IS DISTINCT FROM OLD.verification_ref THEN v_changed := pg_catalog.array_append(v_changed, 'verification_ref'::text); END IF;
   IF NOT (v_changed <@ v_allowed_cols) THEN
     RAISE EXCEPTION 'el efecto % no puede modificar las columnas %', v_effect, v_changed USING ERRCODE = '42501';
   END IF;
@@ -808,7 +829,8 @@ $fn$;
 -- EXECUTE: nadie por defecto (ALTER DEFAULT PRIVILEGES); se concede uno por uno. Las auxiliares y el trigger quedan solo para su dueno.
 REVOKE ALL ON FUNCTION case_state.canonical_json(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.ledger_append(text, text, text, text, text, text, text, jsonb, text, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.lock_revocation(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.assert_sequence(text, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.lock_revocation(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.assert_decision_revocable(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.revocation_transition_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.request_revocation(text, text, text) FROM PUBLIC;
@@ -826,7 +848,7 @@ REVOKE ALL ON FUNCTION case_state.apply_revocation(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.mark_downstream_emitted(text, text[], integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.record_downstream_ack(text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.record_erasure_attestation(text, text, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.seed_local_revocation(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.seed_local_revocation(uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION case_state.request_revocation(text, text, text) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.verify_revocation_otp(text, text, integer) TO app_rw;
@@ -844,7 +866,7 @@ GRANT EXECUTE ON FUNCTION case_state.apply_revocation(text, integer) TO app_rw, 
 GRANT EXECUTE ON FUNCTION case_state.mark_downstream_emitted(text, text[], integer) TO app_rw, worker;
 GRANT EXECUTE ON FUNCTION case_state.record_downstream_ack(text, text, integer) TO app_rw, worker;
 GRANT EXECUTE ON FUNCTION case_state.record_erasure_attestation(text, text, integer) TO app_rw, worker;
-GRANT EXECUTE ON FUNCTION case_state.seed_local_revocation(text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) TO app_rw;
+GRANT EXECUTE ON FUNCTION case_state.seed_local_revocation(uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) TO app_rw;
 -- CREATE TRIGGER exige EXECUTE al creador (consent_owner, dueno de la tabla); se revoca enseguida (el disparo no lo comprueba).
 GRANT EXECUTE ON FUNCTION case_state.revocation_transition_guard() TO consent_owner;
 
@@ -877,7 +899,7 @@ DECLARE
     'record_case_confirmation', ARRAY['app_rw'], 'cosign_case_confirmation', ARRAY['app_rw'],
     'apply_revocation', ARRAY['app_rw', 'worker'], 'mark_downstream_emitted', ARRAY['app_rw', 'worker'], 'record_downstream_ack', ARRAY['app_rw', 'worker'],
     'record_erasure_attestation', ARRAY['app_rw', 'worker'], 'seed_local_revocation', ARRAY['app_rw'],
-    'canonical_json', ARRAY[]::text[], 'ledger_append', ARRAY[]::text[], 'lock_revocation', ARRAY[]::text[], 'assert_decision_revocable', ARRAY[]::text[],
+    'canonical_json', ARRAY[]::text[], 'ledger_append', ARRAY[]::text[], 'lock_revocation', ARRAY[]::text[], 'assert_sequence', ARRAY[]::text[], 'assert_decision_revocable', ARRAY[]::text[],
     'revocation_transition_guard', ARRAY[]::text[]);
 BEGIN
   -- Esquema.
@@ -896,8 +918,8 @@ BEGIN
   END IF;
 
   -- Funciones: conjunto exacto, dueno transition_owner, search_path fijo, EXECUTE exacto, sin SQL dinamico.
-  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state') <> 21 THEN
-    RAISE EXCEPTION 'case_state debe tener exactamente 21 funciones en PR-5a';
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state') <> 22 THEN
+    RAISE EXCEPTION 'case_state debe tener exactamente 22 funciones en PR-5a';
   END IF;
   FOR f IN SELECT p.oid, p.proname, p.prosecdef, p.proconfig, p.proacl, p.proowner, p.prosrc, pg_catalog.pg_get_userbyid(p.proowner) AS owner
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state' LOOP
