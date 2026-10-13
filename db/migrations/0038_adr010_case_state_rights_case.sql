@@ -15,8 +15,9 @@
 -- 2) Funciones: FN-RC-01 open_rights_case_bearer (RC1 BEARER), FN-RC-02 confirm_case_return (RC2u), FN-RC-03 (lado rights_case de RC3:
 --    se REEMPLAZA case_state.express_revocation_intent_in_case, que en 0037 solo escribia la Revocation) y FN-RC-06 close_case
 --    (RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6). Auxiliares: lock_rights_case, seed_local_rights_case (siembra SOLO LOCAL del contrato `save`).
--- 3) DDL sobre integrity.* (SET LOCAL ROLE integrity_owner; allowlist de integrity-owner-checker.ts; antes de PR-7): la policy de INSERT
---    de app_rw excluye aggregate_type Revocation/RightsCase y event_type CONSENT_REVOKED (INV-DBR-07, DECIDIDO Q-18). Cierra F-A10-01 en el
+-- 3) DDL sobre integrity.* (SET LOCAL ROLE integrity_owner; allowlist de integrity-owner-checker.ts; antes de PR-7): INV-DBR-07 como ALLOWLIST
+--    (D5, Carlos 2026-10-13): la policy de INSERT de app_rw solo admite pares (aggregate_type, event_type) explicitos y ningun aggregate_id de una fila
+--    de app.revocation/app.rights_case; CHECK enum de aggregate_type; trigger de un solo aggregate_type por aggregate_id (INV-DBR-07, DECIDIDO Q-18). Cierra F-A10-01 en el
 --    alcance que el spec define; los demas tipos de evento (ConsentDecision, Invitation, Enrollment, DecisionMakerVerification, tenant) NO
 --    tienen funcion gobernada en el spec y siguen con el INSERT de app_rw bajo RLS por tenant (hallazgo F-A10-30, decision de Carlos).
 --
@@ -59,11 +60,43 @@ CREATE POLICY rights_case_transition_update ON app.rights_case FOR UPDATE TO tra
 GRANT USAGE ON SCHEMA app TO integrity_owner;
 GRANT EXECUTE ON FUNCTION app.current_tenant_id() TO integrity_owner;
 SET LOCAL ROLE integrity_owner;
--- INV-DBR-07 (Q-18): solo transition_owner (case_state.ledger_append) escribe eventos de Revocation, RightsCase y CONSENT_REVOKED.
+-- INV-DBR-07 como ALLOWLIST (D5, Carlos 2026-10-13): app_rw solo inserta pares (aggregate_type, event_type) explicitos; los eventos de Revocation y
+-- RightsCase (y CONSENT_REVOKED) los escribe unicamente transition_owner (case_state.ledger_append). Capas:
+--  a) CHECK enum de aggregate_type;
+--  b) policy de INSERT de app_rw con la lista de pares permitidos y sin aggregate_id de una fila de app.revocation / app.rights_case del tenant;
+--  c) trigger que impide mas de un aggregate_type por (tenant, aggregate_id) (un id no se reutiliza entre agregados).
+ALTER TABLE integrity.audit_event ADD CONSTRAINT audit_event_aggregate_type_enum CHECK (aggregate_type IN (
+  'Tenant', 'SchoolParticipation', 'Enrollment', 'Invitation', 'DecisionMakerVerification', 'ConsentDecision', 'Revocation', 'RightsCase'));
 ALTER POLICY audit_event_tenant_insert ON integrity.audit_event
   WITH CHECK (tenant_id = app.current_tenant_id()
-              AND aggregate_type NOT IN ('Revocation', 'RightsCase')
-              AND event_type <> 'CONSENT_REVOKED');
+              AND (aggregate_type || ':' || event_type) = ANY (ARRAY[
+                'Tenant:TENANT_SEEDED', 'Tenant:TENANT_STATUS_CHANGED',
+                'SchoolParticipation:SCHOOL_PARTICIPATION_SEEDED', 'SchoolParticipation:SCHOOL_PARTICIPATION_STATUS_CHANGED',
+                'Enrollment:ENROLLMENT_STATUS_CHANGED',
+                'Invitation:INVITATION_CREATED', 'Invitation:INVITATION_READY', 'Invitation:INVITATION_SENT', 'Invitation:INVITATION_TOKEN_ROTATED',
+                'Invitation:INVITATION_OPENED', 'Invitation:INVITATION_VERIFIED', 'Invitation:INVITATION_COMPLETED', 'Invitation:INVITATION_DECLINED',
+                'Invitation:INVITATION_EXPIRED', 'Invitation:INVITATION_CANCELLED',
+                'DecisionMakerVerification:DECISION_MAKER_CHANNEL_VERIFIED',
+                'ConsentDecision:CONTEXT_INFORMATION_VIEWED', 'ConsentDecision:CONSENT_VERSION_VIEWED', 'ConsentDecision:DECISION_MAKER_AUTHORITY_DECLARED',
+                'ConsentDecision:SUBJECT_CONFIRMED', 'ConsentDecision:PURPOSE_DECISION_RECORDED', 'ConsentDecision:CONSENT_GRANTED',
+                'ConsentDecision:CONSENT_DECLINED', 'ConsentDecision:RECEIPT_CREATED'])
+              AND NOT EXISTS (SELECT 1 FROM app.revocation r WHERE r.tenant_id = app.current_tenant_id() AND r.revocation_ref = aggregate_id)
+              AND NOT EXISTS (SELECT 1 FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = aggregate_id));
+CREATE FUNCTION integrity.audit_event_single_aggregate_type() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  IF EXISTS (SELECT 1 FROM integrity.audit_event e
+              WHERE e.tenant_id = NEW.tenant_id AND e.aggregate_id = NEW.aggregate_id AND e.aggregate_type <> NEW.aggregate_type) THEN
+    RAISE EXCEPTION 'un aggregate_id no se reutiliza entre aggregate_type distintos' USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+CREATE TRIGGER audit_event_single_aggregate_type BEFORE INSERT ON integrity.audit_event
+  FOR EACH ROW EXECUTE FUNCTION integrity.audit_event_single_aggregate_type();
+ALTER TABLE integrity.audit_event ENABLE ALWAYS TRIGGER audit_event_single_aggregate_type;
 SET LOCAL ROLE consent_owner;
 REVOKE EXECUTE ON FUNCTION app.current_tenant_id() FROM integrity_owner;
 REVOKE USAGE ON SCHEMA app FROM integrity_owner;
@@ -256,11 +289,13 @@ BEGIN
     SELECT EXISTS (SELECT 1 FROM app.revocation r
                     WHERE r.tenant_id = v_case.tenant_id AND r.chain_ref = v_case.chain_ref AND r.revoked_decision_ref = v_case.revoked_decision_ref
                       AND (v_case.revocation_ref IS NULL OR r.revocation_ref = v_case.revocation_ref)
+                      AND r.created_at >= v_case.created_at -- D6: la Revocation que cierra el caso es posterior a su apertura (no la de un ciclo anterior)
                       AND r.status IN ('APPLIED', 'DOWNSTREAM_PENDING', 'DELIVERED', 'COMPLETED')) INTO v_ok;
   ELSE
     SELECT EXISTS (SELECT 1 FROM app.revocation r
                     WHERE r.tenant_id = v_case.tenant_id AND r.chain_ref = v_case.chain_ref AND r.revoked_decision_ref = v_case.revoked_decision_ref
                       AND (v_case.revocation_ref IS NULL OR r.revocation_ref = v_case.revocation_ref)
+                      AND r.created_at >= v_case.created_at -- D6: la Revocation que cierra el caso es posterior a su apertura (no la de un ciclo anterior)
                       AND r.status = 'FAILED' AND r.reason_code = 'WITHDRAWN_BY_REQUESTER') INTO v_ok;
   END IF;
   IF NOT v_ok THEN RAISE EXCEPTION 'precondicion de cierre no cumplida' USING ERRCODE = 'RC003'; END IF; -- ERR-RC-03
@@ -502,13 +537,26 @@ BEGIN
   END IF;
   IF NOT (SELECT c.relrowsecurity AND c.relforcerowsecurity FROM pg_catalog.pg_class c WHERE c.oid = rc) THEN RAISE EXCEPTION 'app.rights_case perdio ENABLE/FORCE ROW LEVEL SECURITY'; END IF;
 
-  -- Ledger (INV-DBR-07): la policy de INSERT de app_rw excluye Revocation/RightsCase/CONSENT_REVOKED; transition_owner conserva las suyas.
+  -- Ledger (INV-DBR-07, allowlist): UNA sola policy de INSERT alcanza a app_rw (ni ALL ni PUBLIC), con la lista de pares y sin los de Revocation/RightsCase/CONSENT_REVOKED.
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
+       WHERE p.polrelid = led AND p.polcmd IN ('a', '*')
+         AND (0::oid = ANY (p.polroles) OR (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = 'app_rw') = ANY (p.polroles))) <> 1 THEN
+    RAISE EXCEPTION 'exactamente una policy de INSERT debe alcanzar a app_rw en integrity.audit_event (INV-DBR-07)';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = led AND p.polname = 'audit_event_tenant_insert' AND p.polcmd = 'a'
-                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'Revocation') > 0
-                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'RightsCase') > 0
-                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'CONSENT_REVOKED') > 0
-                   AND (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(x), ',') FROM pg_catalog.unnest(p.polroles) AS x) = 'app_rw') THEN
-    RAISE EXCEPTION 'la policy de INSERT de app_rw sobre integrity.audit_event debe excluir Revocation, RightsCase y CONSENT_REVOKED (INV-DBR-07)';
+                   AND (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(x), ',') FROM pg_catalog.unnest(p.polroles) AS x) = 'app_rw'
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'Invitation:INVITATION_CREATED') > 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'ConsentDecision:RECEIPT_CREATED') > 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'Revocation') = 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'RightsCase') = 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'CONSENT_REVOKED') = 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'revocation_ref') > 0
+                   AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), 'case_ref') > 0) THEN
+    RAISE EXCEPTION 'la policy de INSERT de app_rw sobre integrity.audit_event debe ser la allowlist de pares sin Revocation/RightsCase/CONSENT_REVOKED (INV-DBR-07)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = led AND k.conname = 'audit_event_aggregate_type_enum' AND k.convalidated)
+     OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = led AND t.tgname = 'audit_event_single_aggregate_type' AND t.tgenabled = 'A' AND NOT t.tgisinternal) <> 1 THEN
+    RAISE EXCEPTION 'faltan el CHECK de aggregate_type o el trigger de un aggregate_type por aggregate_id en integrity.audit_event';
   END IF;
   IF (SELECT pg_catalog.string_agg(p.polname::text, ' ' ORDER BY p.polname) FROM pg_catalog.pg_policy p
        WHERE p.polrelid = led AND pg_catalog.pg_get_userbyid(p.polroles[1]) = 'transition_owner')

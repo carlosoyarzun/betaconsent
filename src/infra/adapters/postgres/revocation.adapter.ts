@@ -105,6 +105,13 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
       const row = r.rows[0];
       return row ? toRecord(row) : null;
     },
+    async listByDecision(tenantId, revokedDecisionRef) {
+      const r = await tx.query<RevocationRow>(
+        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 ORDER BY created_at, revocation_ref`,
+        [tenantId, revokedDecisionRef],
+      );
+      return r.rows.map(toRecord);
+    },
     async findOpenByDecision(tenantId, revokedDecisionRef) {
       const r = await tx.query<RevocationRow>(
         `SELECT ${COLUMNS} FROM app.revocation
