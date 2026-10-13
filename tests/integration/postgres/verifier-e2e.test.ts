@@ -22,7 +22,7 @@ const AUDIENCE = "consent-app-synthetic";
 const K_SUB = randomBytes(32);
 const SEED_REQ = fixtureUuid("e2e-seed-requester");
 const SEED_APR = fixtureUuid("e2e-seed-approver");
-const config: VerifierConfig = { issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, subHmacKey: K_SUB };
+const config: VerifierConfig = { issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, environment: "LOCAL", subHmacKey: K_SUB };
 
 pgTest("TEST-CNS-1372 pg: e2e con IdP sintetico: el verifier atesta el step-up y la accion se autoriza; sub ajeno => REJECTED; DENY confirma la evidencia y responde un error uniforme; sin secretos ni PII persistidos", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();

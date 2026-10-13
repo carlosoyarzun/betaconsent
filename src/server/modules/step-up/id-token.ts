@@ -2,7 +2,7 @@
 // Decisiones: ninguna libreria JWT (dependency-allowlist): solo node:crypto. Algoritmos permitidos por configuracion (lista cerrada EdDSA | ES256 | RS256); nunca
 // `none` ni HS* (confusion de algoritmo). La clave se elige por `kid` del JWKS fijado y su `alg`/`kty`/`crv` deben coincidir con el header. El ID token crudo vive
 // solo en memoria del llamador; de los claims solo salen los minimos (sub, auth_time, acr, amr). El claim email (u otro) se descarta sin persistir.
-// Parametros del IdP (acr/amr exigidos, auth_time maximo = P-36) son configuracion: APR-IDP / P-36 siguen PENDING; el codigo no inventa valores aprobados.
+// Parametros del IdP (acr/amr exigidos, auth_time maximo = P-36) son configuracion (acr obligatorio fuera de LOCAL; la frescura auth_time >= issued_at del nonce - skew la impone la base: record_assertion, migracion 0040): APR-IDP / P-36 siguen PENDING; el codigo no inventa valores aprobados.
 // La POLITICA se valida antes de verificar y una politica invalida LANZA VerifierConfigError (aborta; nunca se convierte en REJECTED): NaN/Infinity/negativos
 // en tolerancias harian fail-open (comparaciones con NaN son siempre falsas).
 // Cero PII: este archivo nunca registra el token ni sus claims.
@@ -52,7 +52,12 @@ export interface IdTokenPolicy {
   allowedAlgs: readonly JwtAlg[];
   /** Edad maxima de auth_time en segundos, entero 1..MAX_AUTH_AGE_CAP_SECONDS (P-36: PENDING; el llamador debe pasarla explicita). */
   maxAuthAgeSeconds: number;
-  /** Si no es vacio, el `acr` debe estar en la lista (APR-IDP: PENDING). */
+  /**
+   * Entorno del proceso ("LOCAL", "DEV", "STAGING", ...). Obligatorio y sin default (fail-closed). Decision de Carlos (2026-10-12, ADR-010 rev. 4, PR-4 #87):
+   * MFA/acr obligatorio fuera de LOCAL, o sea `requiredAcrAnyOf` NO vacio si environment !== "LOCAL". En LOCAL (IdP sintetico) la lista puede ir vacia.
+   */
+  environment: string;
+  /** Lista de `acr` aceptados: el `acr` del token debe estar en ella. Vacia solo en LOCAL; los valores dependen de APR-IDP (PENDING, el codigo no los inventa). */
   requiredAcrAnyOf?: readonly string[];
   /** Tolerancia de reloj en segundos, entero 0..120 (default 30). */
   clockSkewSeconds?: number;
@@ -75,6 +80,10 @@ export function validateIdTokenPolicy(policy: IdTokenPolicy): number {
   if (!isIntIn(policy.nowSeconds, 0, Number.MAX_SAFE_INTEGER)) throw new VerifierConfigError("nowSeconds debe ser un entero seguro no negativo");
   if (policy.requiredAcrAnyOf !== undefined && (!Array.isArray(policy.requiredAcrAnyOf) || !policy.requiredAcrAnyOf.every((a) => typeof a === "string" && a.length > 0))) {
     throw new VerifierConfigError("requiredAcrAnyOf debe ser una lista de cadenas no vacias");
+  }
+  if (typeof policy.environment !== "string" || policy.environment.length === 0) throw new VerifierConfigError("environment vacio");
+  if (policy.environment !== "LOCAL" && (policy.requiredAcrAnyOf === undefined || policy.requiredAcrAnyOf.length === 0)) {
+    throw new VerifierConfigError("requiredAcrAnyOf no puede ser vacio fuera de LOCAL (MFA/acr obligatorio, decision de Carlos 2026-10-12)");
   }
   return skew;
 }

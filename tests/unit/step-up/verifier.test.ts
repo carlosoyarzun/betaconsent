@@ -24,7 +24,7 @@ const NONCE_HASH = createHash("sha256").update(NONCE, "utf8").digest("hex");
 const K_SUB = randomBytes(32);
 const PRINCIPAL = "5b0c1d2e-3f40-4a51-8b62-73849a0b1c2d";
 const config = (over: Partial<VerifierConfig> = {}): VerifierConfig => ({
-  issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, subHmacKey: K_SUB, ...over,
+  issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, environment: "LOCAL", subHmacKey: K_SUB, ...over,
 });
 const idp = (): SyntheticIdpAdapter => new SyntheticIdpAdapter({ environment: "LOCAL", issuer: ISSUER, audience: AUDIENCE, now: () => NOW_MS });
 

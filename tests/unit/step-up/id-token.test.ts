@@ -17,7 +17,7 @@ const NOW_MS = Date.UTC(2026, 9, 11, 12, 0, 0);
 const NOW_S = Math.floor(NOW_MS / 1000);
 const NONCE = "n".repeat(64);
 const NONCE_HASH = createHash("sha256").update(NONCE, "utf8").digest("hex");
-const policy = (over: Partial<IdTokenPolicy> = {}): IdTokenPolicy => ({ issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, nowSeconds: NOW_S, ...over });
+const policy = (over: Partial<IdTokenPolicy> = {}): IdTokenPolicy => ({ issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, environment: "LOCAL", nowSeconds: NOW_S, ...over });
 const idp = (): SyntheticIdpAdapter => new SyntheticIdpAdapter({ environment: "LOCAL", issuer: ISSUER, audience: AUDIENCE, now: () => NOW_MS });
 
 async function tokenFor(p: SyntheticIdpAdapter, auth: Partial<Parameters<SyntheticIdpAdapter["simulateAuthorization"]>[0]> = {}): Promise<string> {
