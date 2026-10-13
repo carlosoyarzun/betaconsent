@@ -590,7 +590,7 @@ invariants:
 
 dbEnforcement:
   governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
-  status: "PARTIAL (ADR-010 PR-5b, db/migrations/0038): FN-RC-01, FN-RC-02, FN-RC-03 (con FN-RV-06), FN-RC-06 y TRG-RC-01 implementadas; pendientes FN-RC-04, FN-RC-05 (FN-RV-16) y FN-RC-07 porque el dominio no implementa RC0, RC2/RV0 ni R9 (F-A10-33). close_case: EXECUTE interino tambien para app_rw solo en LOCAL (F-A10-26), sin GRD-RC-10. GRD-RC-09 y RC3 solo desde CONTACTING: dominio y 0038 alineados (D1, Carlos 2026-10-13; D6: la Revocation que cierra el caso es posterior a su apertura, solo en la base). RC3a sigue sin implementar en el dominio (F-A10-33)"
+  status: "PARTIAL (ADR-010 PR-5b, db/migrations/0038 y 0039): FN-RC-01, FN-RC-02, FN-RC-03 (con FN-RV-06), FN-RC-06 y TRG-RC-01 implementadas; pendientes FN-RC-04, FN-RC-05 (FN-RV-16) y FN-RC-07 porque el dominio no implementa RC0, RC2/RV0 ni R9 (F-A10-33). close_case: EXECUTE interino tambien para app_rw solo en LOCAL (F-A10-26), sin GRD-RC-10. GRD-RC-09 y RC3 solo desde CONTACTING: dominio y 0038 alineados (D1, Carlos 2026-10-13; D6: la Revocation que cierra el caso es posterior a su apertura, solo en la base; 0039). RC3a sigue sin implementar en el dominio (F-A10-33)"
   implementedIn: "ADR-010 PR-5b (0038)"
   conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
   functions:

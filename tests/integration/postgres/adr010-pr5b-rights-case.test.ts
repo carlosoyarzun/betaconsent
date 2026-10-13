@@ -1,6 +1,6 @@
 // Gobierna: ADR-010 rev. 4 §4.2 (PR-5b), specs/state-machines/rights-case.spec.yaml `dbEnforcement` (FN-RC-01, FN-RC-02, FN-RC-03, FN-RC-06,
-// TRG-RC-01, INV-RC-07), specs/db-roles.spec.yaml (INV-DBR-07), GRD-RC-01/02/04/07/09/14, F-A10-01, db/migrations/0038_adr010_case_state_rights_case.sql.
-// SYNTHETIC ONLY.
+// TRG-RC-01, INV-RC-07), specs/db-roles.spec.yaml (INV-DBR-07), GRD-RC-01/02/04/07/09/14, F-A10-01, db/migrations/0038_adr010_case_state_rights_case.sql
+// y 0039_adr010_ledger_allowlist_close_case_d6.sql (allowlist de INV-DBR-07, D5; close_case D6). SYNTHETIC ONLY.
 // TEST-CNS-1381 (app_rw no escribe app.rights_case; trigger TRG-RC-01 por efecto; DELETE/TRUNCATE; terminales no se revierten), TEST-CNS-1382 (camino feliz
 // y codigos de error exactos de las funciones), TEST-CNS-1383 (aislamiento por tenant del camino de funciones), TEST-CNS-1384 (INV-DBR-07: app_rw no inserta
 // en el ledger eventos Revocation/RightsCase/CONSENT_REVOKED; los demas tipos siguen), TEST-CNS-1385 (siembra LOCAL sin upsert sobre terminales).
