@@ -75,8 +75,9 @@ export function inTx<T>(ports: RevocationPorts, tenantId: string, fn: (txPorts: 
 export const revocationSequence = (ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<number> =>
   lastLedgerSequence(ports.ledger, tenantId, revocationRef);
 
-/** Relee la Revocation CON lock de fila (revocation.spec R4 "una tx con lock", SEC-CNS-015 P1-1): solo
- * se usa dentro de la unidad de trabajo; la decision de transicion se toma sobre el estado bloqueado. */
+/** Lee la Revocation dentro de la unidad de trabajo (revocation.spec R4, SEC-CNS-015 P1-1). En in-memory `findByRefForUpdate` equivale a
+ * `findByRef`; en Postgres TAMBIEN: ADR-010 PR-5a retiro UPDATE de app_rw (SELECT ... FOR UPDATE lo exige), asi que NO bloquea. La serializacion
+ * la hacen las funciones `case_state.*` (FOR UPDATE de la fila + `expectedSequence` leido ANTES, RV409 si otra tx avanzo el agregado). */
 export async function requireRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
   const found = await ports.revocationRepo.findByRefForUpdate(tenantId, revocationRef);
   if (!found) {
@@ -142,6 +143,7 @@ export async function proposeCaseVerificationTx(
   input: ProposeCaseVerificationInput,
 ): Promise<RevocationRecord> {
   {
+    const base = await revocationSequence(p, tenantId, revocationRef); // GRD-RV-23: antes de leer el estado
     const found = await requireRevocation(p, tenantId, revocationRef);
     if (found.caseRef !== caseRef) throw new DomainError("ERR-CM-01");
     await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
@@ -162,6 +164,7 @@ export async function proposeCaseVerificationTx(
         proposalRef: input.proposalRef,
         proposedByRef: actor.principalRef,
         verificationScriptVersion: input.verificationScriptVersion,
+        expectedSequence: base,
       });
       return reloadRevocation(p, tenantId, revocationRef);
     }
@@ -395,6 +398,7 @@ async function recordCaseConfirmationPendingCosignTx(
   caseRef: string,
   ctx: CaseConfirmationRecordContext,
 ): Promise<RevocationRecord> {
+  const base = await revocationSequence(ports, tenantId, revocationRef); // GRD-RV-23: antes de leer el estado
   const found = await requireRevocation(ports, tenantId, revocationRef);
   if (found.caseRef !== caseRef) {
     throw new DomainError("ERR-CM-01");
@@ -414,7 +418,7 @@ async function recordCaseConfirmationPendingCosignTx(
   await assertNominalRosterMinimum(staffIdentity);
 
   if (ports.revocationTransitions) {
-    await ports.revocationTransitions.recordCaseConfirmation({ revocationRef, caseRef, recordedByRef: ctx.recordedByPrincipalRef });
+    await ports.revocationTransitions.recordCaseConfirmation({ revocationRef, caseRef, recordedByRef: ctx.recordedByPrincipalRef, expectedSequence: base });
     return reloadRevocation(ports, tenantId, revocationRef);
   }
   // Paso 1 literal (effect: none): registra recordedByRef, sin tocar `status` ni emitir evento.

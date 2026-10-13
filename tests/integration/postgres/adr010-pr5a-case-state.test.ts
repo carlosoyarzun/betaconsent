@@ -62,10 +62,22 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
     );
     await assert.rejects(
       () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.apply_revocation('r1373', 0)")),
-      (e: unknown) => codeOf(e) === "RV002" || codeOf(e) === "RV409",
+      (e: unknown) => codeOf(e) === "RV002",
     );
-    // Trigger: superusuario sin efecto, y transition_owner con el efecto de OTRA funcion, rechazados (42501); no cambia nada.
+    // B1: des-revocar (REVOKED -> GRANTED) como app_rw no cambia nada (USING de la policy excluye REVOKED): 0 filas o 42501.
+    await admin.query(
+      `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
+       VALUES ($1, 'd1373-rev', 'x', 'x', 'x', 'x', 'x', 'x', 'c1373b', 'GRANTED', '[]', true)`,
+      [T],
+    );
+    await admin.query("UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T]);
+    const unrevoke = await uow.withTenantTx(T, (tx) => tx.query("UPDATE app.consent_decision SET state = 'GRANTED' WHERE consent_id = 'd1373-rev' AND state = 'REVOKED'")).then((r) => r.rowCount, (e: unknown) => codeOf(e));
+    assert.ok(unrevoke === 0 || unrevoke === "42501", `des-revocar: ${String(unrevoke)}`);
+    assert.equal((await admin.query<{ state: string }>("SELECT state FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T])).rows[0]?.state, "REVOKED");
+    // Triggers de DELETE y TRUNCATE (42501 incluso para el superusuario) y trigger: superusuario sin efecto, y transition_owner con el efecto de OTRA funcion, rechazados (42501); no cambia nada.
     await admin.query("RESET ALL");
+    await assert.rejects(() => admin.query("DELETE FROM app.revocation WHERE revocation_ref = 'r1373'"), (e: unknown) => codeOf(e) === "42501");
+    await assert.rejects(() => admin.query("TRUNCATE app.revocation"), (e: unknown) => codeOf(e) === "42501");
     await assert.rejects(() => admin.query("UPDATE app.revocation SET status = 'VERIFIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'"), (e: unknown) => codeOf(e) === "42501");
     await admin.query("BEGIN");
     try {
@@ -99,14 +111,9 @@ pgTest("TEST-CNS-1374 pg: CHECKs nuevos GRD-RV-26 (cosigned <> recorded), GRD-RV
   await admin.query(SEED);
   const ins = (t: string, ref: string, cols: string, vals: string): Promise<unknown> =>
     admin.query(`INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, ${cols}) VALUES ($1, $2, 'c', $3, ${vals})`, [t, ref, `d-${ref}`]);
-  const fails = async (p: Promise<unknown>, constraint: string): Promise<void> => {
-    await assert.rejects(() => p, (e: unknown) => codeOf(e) === "23514" || codeOf(e) === "23505");
-    void constraint;
-  };
   const named = async (run: () => Promise<unknown>, constraint: string): Promise<void> => {
     await assert.rejects(run, (e: unknown) => constraintOf(e) === constraint, constraint);
   };
-  void fails;
   const op = fixtureUuid("op-1374");
   // GRD-RV-26
   await named(() => ins(A, "r1", "verified_auth_path, recorded_by_ref, cosigned_by_ref", `'CONFIRMED', 'OTP', '${op}', '${op}'`), "revocation_cosigned_distinct_recorded");
@@ -130,12 +137,15 @@ pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json =
     { z: [1, 2, { y: null, x: true }], a: { c: "ñandú é ☃", b: "" } },
     { quote: "he said \"hi\"", back: "a\\b", ctl: "l1\nl2\tt\r\b\f", low: "\u0001\u001f", del: "\u007f", emoji: "😀" },
     { arr: [], obj: {}, n: -12, big: 9007199254740991, f: false },
+    { "clave-ñ": 1, "ключ": "x", "鍵": { "é": [1], a: 2 }, zeta: 3, "\uE000": "bmp-alto", "\uFB01": "lig" },
     { revocationRef: fixtureUuid("v"), scope: "ALL", effectiveAt: "2026-10-12T10:00:00.123Z" },
   ];
   for (const v of vectors) {
     const r = await admin.query<{ c: string }>("SELECT case_state.canonical_json($1::jsonb) AS c", [JSON.stringify(v)]);
     assert.equal(r.rows[0]?.c, canonicalJson(v), `canonical_json: ${JSON.stringify(v)}`);
   }
+  // Divergencia documentada: claves fuera del BMP ordenan distinto en JS (UTF-16) y SQL (punto de codigo); canonical_json las RECHAZA.
+  await assert.rejects(() => admin.query("SELECT case_state.canonical_json($1::jsonb)", [JSON.stringify({ "\ud83d\ude00": 1, "\ue000": 2 })]), (e: unknown) => codeOf(e) === "22023");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
   try {
     const uow = new PgUnitOfWork(pool);
@@ -171,7 +181,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     const uow = new PgUnitOfWork(pool);
     await assert.rejects(
       () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.confirm_revocation('r1376', 0)")),
-      (e: unknown) => codeOf(e) === "RV002" || codeOf(e) === "RV409",
+      (e: unknown) => codeOf(e) === "RV002",
     );
     assert.equal((await admin.query<{ status: string }>("SELECT status FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = 'r1376'", [T])).rows[0]?.status, "VERIFIED");
   } finally {
@@ -200,4 +210,44 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     for (const role of ["app_rw", "worker", "platform_rw", "integrity_verifier"]) assert.equal(await ex(role, fn), false, `${role} ${fn}`);
   }
   for (const role of ["platform_rw", "integrity_verifier"]) assert.equal(await ex(role, "apply_revocation"), false, role);
+});
+
+pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el tenant B, withdraw/apply/revoke_with_recovery_link/propose sobre refs de A fallan (RV001/RV007) sin cambiar la fila, el token ni el ledger de A", async (ctx) => {
+  const A = fixtureUuid("t1378-a");
+  const B = fixtureUuid("t1378-b");
+  const admin = await ctx.connectAsSuperuser();
+  await admin.query(SEED);
+  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'rA', 'cA', 'dA', 'CONFIRMED', 'OTP')", [A]);
+  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref) VALUES ($1, 'rA2', 'cA2', 'dA2', 'REQUESTED', 'caseA')", [A]);
+  await admin.query(
+    `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
+     VALUES ($1, 'dA', 'x', 'x', 'x', 'x', 'x', 'x', 'cA', 'GRANTED', '[]', true)`,
+    [A],
+  );
+  await admin.query("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'recA', $2, 'cA', 'dA', now() + interval '1 day')", [A, "a".repeat(64)]);
+  const snapshot = async (): Promise<string> =>
+    JSON.stringify([
+      (await admin.query("SELECT revocation_ref, status, proposal_ref, verified_auth_path FROM app.revocation WHERE tenant_id = $1 ORDER BY 1", [A])).rows,
+      (await admin.query("SELECT state FROM app.consent_decision WHERE tenant_id = $1", [A])).rows,
+      (await admin.query("SELECT consumed_at FROM app.recovery_token WHERE tenant_id = $1", [A])).rows,
+      (await admin.query("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [A])).rows,
+      (await admin.query("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1", [A])).rows,
+    ]);
+  const before = await snapshot();
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  try {
+    const uow = new PgUnitOfWork(pool);
+    for (const [sql, state] of [
+      ["SELECT case_state.withdraw_revocation('rA', 0)", "RV001"],
+      ["SELECT case_state.apply_revocation('rA', 0)", "RV001"],
+      ["SELECT case_state.confirm_revocation('rA', 0)", "RV001"],
+      ["SELECT case_state.propose_case_verification('rA2', 'caseA', 'p', 'op', 'g', 0)", "RV001"],
+      ["SELECT case_state.revoke_with_recovery_link('recA', 'nueva', 0)", "RV007"],
+    ] as const) {
+      await assert.rejects(() => uow.withTenantTx(B, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === state, sql);
+    }
+  } finally {
+    await pool.end();
+  }
+  assert.equal(await snapshot(), before, "la fila, el token, la decision, el ledger y el outbox de A quedan intactos");
 });

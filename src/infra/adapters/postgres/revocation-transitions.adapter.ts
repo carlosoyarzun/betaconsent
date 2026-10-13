@@ -78,12 +78,13 @@ export function createPgRevocationTransitions(tx: TenantTx): RevocationTransitio
       );
     },
     async proposeCaseVerification(i) {
-      await run<unknown>("SELECT case_state.propose_case_verification($1::text, $2::text, $3::text, $4::text, $5::text) AS r", [
+      await run<unknown>("SELECT case_state.propose_case_verification($1::text, $2::text, $3::text, $4::text, $5::text, $6::integer) AS r", [
         i.revocationRef,
         i.caseRef,
         i.proposalRef,
         i.proposedByRef,
         i.verificationScriptVersion,
+        i.expectedSequence,
       ]);
     },
     async approveCaseVerification(i) {
@@ -109,7 +110,7 @@ export function createPgRevocationTransitions(tx: TenantTx): RevocationTransitio
       );
     },
     async recordCaseConfirmation(i) {
-      await run<unknown>("SELECT case_state.record_case_confirmation($1::text, $2::text, $3::text) AS r", [i.revocationRef, i.caseRef, i.recordedByRef]);
+      await run<unknown>("SELECT case_state.record_case_confirmation($1::text, $2::text, $3::text, $4::integer) AS r", [i.revocationRef, i.caseRef, i.recordedByRef, i.expectedSequence]);
     },
     async cosignCaseConfirmation(i) {
       return seq(

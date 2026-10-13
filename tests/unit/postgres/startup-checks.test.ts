@@ -37,6 +37,8 @@ interface Scenario {
   platformExposure?: Array<{ kind: string; name: string }> | "error";
   // ADR-010 PR-3 (P2-7): GUC app.* en pg_db_role_setting para los roles de runtime.
   appGucDefaults?: Array<{ scope: string; setting: string }> | "error";
+  // ADR-010 PR-5a (F-A10-26): funciones case_state de operador/SYSTEM/siembra con EXECUTE para el rol de conexion.
+  transitionExecute?: string[] | "error";
 }
 
 function db(s: Scenario = {}): FakeClient {
@@ -48,6 +50,10 @@ function db(s: Scenario = {}): FakeClient {
     if (text.includes("FROM pg_catalog.pg_auth_members")) {
       if (s.rosterRolesError) return new Error("boom");
       return { rows: s.readerMembership ?? [{ inherit_option: false, set_option: true }] };
+    }
+    if (text.includes("n.nspname = 'case_state'")) {
+      if (s.transitionExecute === "error") return new Error("boom");
+      return { rows: (s.transitionExecute ?? []).map((name) => ({ name })) };
     }
     if (text.includes("pg_db_role_setting")) {
       if (s.appGucDefaults === "error") return new Error("boom");
@@ -282,4 +288,17 @@ test("TEST-CNS-1361 ADR-010 PR-3 P2-7: no arranca si pg_db_role_setting fija una
     assert.equal(result.ok, false);
     assert.ok(result.failures.some((f) => pattern.test(f)), `${JSON.stringify(scenario)} -> ${result.failures.join("; ")}`);
   }
+});
+
+test("TEST-CNS-1377 F-A10-26: fuera de LOCAL no arranca si el rol puede ejecutar funciones case_state de operador/SYSTEM/siembra; en LOCAL (CI) arranca; fail-closed si no se puede verificar", async () => {
+  const exec = { transitionExecute: ["apply_revocation", "cosign_case_confirmation"] };
+  const stag = { data_class: "SYNTHETIC", environment: "STAGING" };
+  const bad = await runStartupChecks(db({ ...exec, catalog: [stag] }), { expectedEnvironment: "STAGING" });
+  assert.equal(bad.ok, false);
+  assert.match(bad.failures.join("\n"), /case_state\.apply_revocation fuera de LOCAL/);
+  assert.match(bad.failures.join("\n"), /case_state\.cosign_case_confirmation fuera de LOCAL/);
+  assert.doesNotMatch((await runStartupChecks(db({ catalog: [stag] }), { expectedEnvironment: "STAGING" })).failures.join("\n"), /case_state/, "sin EXECUTE interino: no hay falla de case_state");
+  assert.equal((await runStartupChecks(db(exec), { expectedEnvironment: "LOCAL" })).ok, true, "LOCAL/CI: el interino es admisible");
+  const unknown = await runStartupChecks(db({ transitionExecute: "error", catalog: [stag] }), { expectedEnvironment: "STAGING" });
+  assert.match(unknown.failures.join("\n"), /no se pudo verificar el EXECUTE de las funciones case_state/);
 });

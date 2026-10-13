@@ -110,8 +110,9 @@ CREATE POLICY revocation_transition_update ON app.revocation FOR UPDATE TO trans
 -- case_state.apply_revocation (transition_owner: GRANTED -> REVOKED, nunca otro valor).
 ALTER POLICY consent_decision_tenant_insert ON app.consent_decision
   WITH CHECK (tenant_id = app.current_tenant_id() AND state <> 'REVOKED');
+-- USING tambien excluye REVOKED: sin esto app_rw podria des-revocar (REVOKED -> GRANTED) con un UPDATE.
 ALTER POLICY consent_decision_tenant_update ON app.consent_decision
-  USING (tenant_id = app.current_tenant_id())
+  USING (tenant_id = app.current_tenant_id() AND state <> 'REVOKED')
   WITH CHECK (tenant_id = app.current_tenant_id() AND state <> 'REVOKED');
 CREATE POLICY consent_decision_transition_select ON app.consent_decision FOR SELECT TO transition_owner
   USING (tenant_id = app.current_tenant_id());
@@ -144,6 +145,11 @@ DECLARE
   t text := pg_catalog.jsonb_typeof(p_value);
 BEGIN
   IF t = 'object' THEN
+    -- Divergencia documentada TS<->SQL: JS ordena las claves por unidad UTF-16 y COLLATE "C" por punto de codigo; difieren para claves con
+    -- caracteres fuera del BMP (U+10000..). Esas claves se PROHIBEN (el contrato de payloads solo usa claves ASCII).
+    IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(p_value) k WHERE k ~ '[\U00010000-\U0010FFFF]') THEN
+      RAISE EXCEPTION 'canonical_json: claves fuera del BMP no admitidas (orden TS<->SQL divergente)' USING ERRCODE = '22023';
+    END IF;
     RETURN '{' || COALESCE((SELECT pg_catalog.string_agg(pg_catalog.to_jsonb(e.key)::text || ':' || case_state.canonical_json(e.value), ',' ORDER BY e.key COLLATE "C")
                               FROM pg_catalog.jsonb_each(p_value) e), '') || '}';
   ELSIF t = 'array' THEN
@@ -175,16 +181,25 @@ DECLARE
   v_payload_hash text;
   v_event_hash text;
   v_now timestamptz := pg_catalog.now();
+  v_dup_type text;
+  v_dup_agg text;
 BEGIN
   IF v_tenant IS NULL THEN RAISE EXCEPTION 'tenant no resuelto' USING ERRCODE = 'RV001'; END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('ledger-chain:' || v_tenant::text, 0));
 
   IF p_idempotency_key IS NOT NULL THEN
     v_key_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_idempotency_key, 'UTF8')), 'hex');
-    SELECT e.sequence, e.payload INTO o_sequence, o_payload
+    SELECT e.sequence, e.payload, e.event_type, e.aggregate_type INTO o_sequence, o_payload, v_dup_type, v_dup_agg
       FROM integrity.audit_event e
      WHERE e.tenant_id = v_tenant AND e.aggregate_id = p_aggregate_id AND e.idempotency_key_hash = v_key_hash;
-    IF FOUND THEN o_deduped := true; RETURN; END IF;
+    IF FOUND THEN
+      -- Una clave de idempotencia reutilizada para OTRO tipo de evento o agregado no es un reintento: no devolver el evento ajeno.
+      IF v_dup_type IS DISTINCT FROM p_event_type OR v_dup_agg IS DISTINCT FROM p_aggregate_type THEN
+        RAISE EXCEPTION 'clave de idempotencia reutilizada con otro event_type o aggregate_type' USING ERRCODE = 'RV002';
+      END IF;
+      o_deduped := true;
+      RETURN;
+    END IF;
   END IF;
 
   SELECT COALESCE(pg_catalog.max(e.sequence), 0) INTO v_current
@@ -435,6 +450,9 @@ BEGIN
   IF p_attach THEN
     v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
     IF v_rev.status IN ('FAILED', 'COMPLETED') THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
+    IF v_rev.chain_ref IS DISTINCT FROM p_chain_ref OR v_rev.revoked_decision_ref IS DISTINCT FROM p_revoked_decision_ref THEN
+      RAISE EXCEPTION 'la Revocation no es de esa cadena/decision' USING ERRCODE = 'RV002';
+    END IF;
     SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_REQUESTED', 'HUMAN', 'UNVERIFIED_BEARER', NULL, NULL,
       v_payload, p_revocation_ref || ':r12:' || p_case_ref, p_expected_sequence);
   ELSE
@@ -450,7 +468,7 @@ $fn$;
 
 -- FN-RV-07 RH2 paso 1 (propose): registra la propuesta; sin transicion ni evento.
 CREATE FUNCTION case_state.propose_case_verification(
-  p_revocation_ref text, p_case_ref text, p_proposal_ref text, p_proposed_by_ref text, p_verification_script_version text) RETURNS void
+  p_revocation_ref text, p_case_ref text, p_proposal_ref text, p_proposed_by_ref text, p_verification_script_version text, p_expected_sequence integer) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
@@ -458,7 +476,7 @@ DECLARE
   v_rev app.revocation;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'propose_case_verification', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref THEN RAISE EXCEPTION 'caso ajeno' USING ERRCODE = 'RV001'; END IF;
   IF v_rev.status <> 'REQUESTED' OR v_rev.proposal_ref IS NOT NULL THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
   UPDATE app.revocation SET proposal_ref = p_proposal_ref, proposed_by_ref = p_proposed_by_ref, verification_script_version = p_verification_script_version
@@ -523,7 +541,7 @@ END
 $fn$;
 
 -- FN-RV-10 RH3 paso 1 (record): GRD-RV-10 (par atestado = (revocation, case)); registra recorded_by_ref sin transicion ni evento.
-CREATE FUNCTION case_state.record_case_confirmation(p_revocation_ref text, p_case_ref text, p_recorded_by_ref text) RETURNS void
+CREATE FUNCTION case_state.record_case_confirmation(p_revocation_ref text, p_case_ref text, p_recorded_by_ref text, p_expected_sequence integer) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
@@ -531,7 +549,7 @@ DECLARE
   v_rev app.revocation;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'record_case_confirmation', true);
-  v_rev := case_state.lock_revocation(p_revocation_ref);
+  v_rev := case_state.lock_revocation(p_revocation_ref, p_expected_sequence);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref THEN RAISE EXCEPTION 'caso ajeno' USING ERRCODE = 'RV001'; END IF;
   IF v_rev.status <> 'VERIFIED' OR v_rev.attested_revocation_ref IS DISTINCT FROM v_rev.revocation_ref
      OR v_rev.attested_case_ref IS DISTINCT FROM p_case_ref THEN
@@ -748,6 +766,10 @@ DECLARE
   v_allowed_cols text[];
   v_changed text[] := ARRAY[]::text[];
 BEGIN
+  -- app.revocation nunca se borra ni se trunca (igual que el ledger, 0002:56-64); tampoco el superusuario sin desactivar el trigger.
+  IF TG_OP IN ('DELETE', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'app.revocation no admite DELETE ni TRUNCATE (INV-RV-12)' USING ERRCODE = '42501';
+  END IF;
   -- Siembra de fixtures LOCAL como superusuario (admin de los tests): un superusuario ya podria deshabilitar el trigger; no es rol de runtime.
   IF v_effect = 'seed_local_revocation' AND current_user <> 'transition_owner' AND ops.catalog_environment() = 'LOCAL'
      AND (SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) THEN
@@ -859,10 +881,10 @@ REVOKE ALL ON FUNCTION case_state.confirm_revocation(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.revoke_with_recovery_link(text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.withdraw_revocation(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.express_revocation_intent_in_case(text, text, text, text, text, boolean, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.propose_case_verification(text, text, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.propose_case_verification(text, text, text, text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.approve_case_verification(text, text, text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.withdraw_case_verification_proposal(text, text, text, text, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.record_case_confirmation(text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.record_case_confirmation(text, text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.cosign_case_confirmation(text, text, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.apply_revocation(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.mark_downstream_emitted(text, text[], integer) FROM PUBLIC;
@@ -878,10 +900,10 @@ GRANT EXECUTE ON FUNCTION case_state.revoke_with_recovery_link(text, text, integ
 GRANT EXECUTE ON FUNCTION case_state.withdraw_revocation(text, integer) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.express_revocation_intent_in_case(text, text, text, text, text, boolean, integer) TO app_rw;
 -- Interino IT0 (ver cabecera): operador y SYSTEM corren en el proceso web hasta PR-6.
-GRANT EXECUTE ON FUNCTION case_state.propose_case_verification(text, text, text, text, text) TO app_rw;
+GRANT EXECUTE ON FUNCTION case_state.propose_case_verification(text, text, text, text, text, integer) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.approve_case_verification(text, text, text, text, integer) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.withdraw_case_verification_proposal(text, text, text, text, integer) TO app_rw;
-GRANT EXECUTE ON FUNCTION case_state.record_case_confirmation(text, text, text) TO app_rw;
+GRANT EXECUTE ON FUNCTION case_state.record_case_confirmation(text, text, text, integer) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.cosign_case_confirmation(text, text, text, integer) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.apply_revocation(text, integer) TO app_rw, worker;
 GRANT EXECUTE ON FUNCTION case_state.mark_downstream_emitted(text, text[], integer) TO app_rw, worker;
@@ -900,6 +922,12 @@ SET LOCAL ROLE consent_owner;
 CREATE TRIGGER revocation_transition_guard BEFORE INSERT OR UPDATE ON app.revocation
   FOR EACH ROW EXECUTE FUNCTION case_state.revocation_transition_guard();
 ALTER TABLE app.revocation ENABLE ALWAYS TRIGGER revocation_transition_guard;
+CREATE TRIGGER revocation_no_delete BEFORE DELETE ON app.revocation
+  FOR EACH ROW EXECUTE FUNCTION case_state.revocation_transition_guard();
+CREATE TRIGGER revocation_no_truncate BEFORE TRUNCATE ON app.revocation
+  FOR EACH STATEMENT EXECUTE FUNCTION case_state.revocation_transition_guard();
+ALTER TABLE app.revocation ENABLE ALWAYS TRIGGER revocation_no_delete;
+ALTER TABLE app.revocation ENABLE ALWAYS TRIGGER revocation_no_truncate;
 
 SET LOCAL ROLE transition_owner;
 REVOKE EXECUTE ON FUNCTION case_state.revocation_transition_guard() FROM consent_owner;
@@ -958,6 +986,17 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- Mitigacion F-A10-26: el EXECUTE interino de app_rw sobre las funciones de operador (FN-RV-07..11), SYSTEM (FN-RV-12..15) y de siembra solo es
+  -- admisible en LOCAL/CI (catalogo LOCAL). En DEV/STAGING la migracion aborta (fail-closed) hasta PR-6/PR-5b (mover EXECUTE a worker/platform_rw).
+  IF ops.catalog_environment() IS DISTINCT FROM 'LOCAL' AND EXISTS (
+       SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'case_state' AND pg_catalog.has_function_privilege('app_rw', p.oid, 'EXECUTE')
+          AND p.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation',
+                            'cosign_case_confirmation', 'apply_revocation', 'mark_downstream_emitted', 'record_downstream_ack', 'record_erasure_attestation',
+                            'seed_local_revocation', 'seed_local_revoke_decision')) THEN
+    RAISE EXCEPTION 'F-A10-26: app_rw tiene EXECUTE de funciones de operador/SYSTEM fuera de LOCAL (interino IT0 solo LOCAL/CI)';
+  END IF;
+
   -- app.revocation: sin INSERT/UPDATE para runtime, trigger ENABLE ALWAYS, policies exactas.
   SELECT c.oid INTO rv FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'app' AND c.relname = 'revocation';
   -- consent_owner no tiene USAGE en integrity (0027): el ledger se consulta por oid de catalogo, nunca por nombre regclass.
@@ -968,8 +1007,10 @@ BEGIN
     END IF;
   END LOOP;
   IF NOT pg_catalog.has_table_privilege('app_rw', rv, 'SELECT') THEN RAISE EXCEPTION 'app_rw perdio SELECT sobre app.revocation'; END IF;
-  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = rv AND t.tgname = 'revocation_transition_guard' AND t.tgenabled = 'A' AND NOT t.tgisinternal) <> 1 THEN
-    RAISE EXCEPTION 'revocation_transition_guard debe existir y estar ENABLE ALWAYS';
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = rv AND t.tgname IN ('revocation_transition_guard', 'revocation_no_delete', 'revocation_no_truncate')
+        AND t.tgenabled = 'A' AND NOT t.tgisinternal) <> 3
+     OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger t WHERE t.tgrelid = rv AND NOT t.tgisinternal) <> 3 THEN
+    RAISE EXCEPTION 'app.revocation debe tener exactamente los triggers revocation_transition_guard/no_delete/no_truncate, ENABLE ALWAYS';
   END IF;
   IF (SELECT pg_catalog.string_agg(p.polname::text || ':' || p.polcmd::text || ':' || (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(x), ',' ORDER BY pg_catalog.pg_get_userbyid(x)) FROM pg_catalog.unnest(p.polroles) AS x), ' ' ORDER BY p.polname)
         FROM pg_catalog.pg_policy p WHERE p.polrelid = rv)
@@ -980,10 +1021,10 @@ BEGIN
 
   -- consent_decision: app_rw no puede dejar REVOKED (policies INSERT/UPDATE) y transition_owner solo GRANTED -> REVOKED.
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'app.consent_decision'::pg_catalog.regclass AND p.polname = 'consent_decision_tenant_update'
-                   AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%REVOKED%')
+                   AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%REVOKED%' AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) LIKE '%REVOKED%')
      OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'app.consent_decision'::pg_catalog.regclass AND p.polname = 'consent_decision_tenant_insert'
                       AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%REVOKED%') THEN
-    RAISE EXCEPTION 'las policies INSERT/UPDATE de app_rw sobre app.consent_decision deben excluir state = REVOKED';
+    RAISE EXCEPTION 'las policies INSERT/UPDATE de app_rw sobre app.consent_decision deben excluir state = REVOKED (USING y WITH CHECK del UPDATE: sin des-revocar)';
   END IF;
 
   -- Ledger: transition_owner con policies de tenant; app_rw conserva su INSERT en PR-5a.
