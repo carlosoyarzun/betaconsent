@@ -63,6 +63,12 @@ export function emitRevocationDownstream(ports: RevocationPorts, tenantId: strin
     if (found.status !== "APPLIED") throw new DomainError("ERR-CM-06");
     const subscriptionRefs = [...(await stubOf(p).currentSubscriptionRefs(tenantId))].sort();
     if (subscriptionRefs.length === 0) throw new DomainError("ERR-CM-12");
+    if (p.revocationTransitions) {
+      await p.revocationTransitions.markDownstreamEmitted({ revocationRef, subscriptionRefs, expectedSequence: base });
+      const emitted = await p.revocationRepo.findByRef(tenantId, revocationRef);
+      if (!emitted) throw new DomainError("ERR-CM-01");
+      return emitted;
+    }
     await sequencedAppender(p.ledger, base).append({
       eventType: "REVOCATION_DOWNSTREAM_EMITTED",
       tenantId,
@@ -94,6 +100,12 @@ export function recordDownstreamAck(
     const frozen = await frozenSubscriptionRefs(p, tenantId, revocationRef);
     const verified = await assertEvidenceCoversFrozen(p, tenantId, "ACK", revocationRef, frozen, acks);
     const ackRef = verified[0]!.evidenceRef;
+    if (p.revocationTransitions) {
+      await p.revocationTransitions.recordDownstreamAck({ revocationRef, ackRef, expectedSequence: base });
+      const delivered = await p.revocationRepo.findByRef(tenantId, revocationRef);
+      if (!delivered) throw new DomainError("ERR-CM-01");
+      return delivered;
+    }
     await sequencedAppender(p.ledger, base).append({
       eventType: "REVOCATION_DELIVERED",
       tenantId,
@@ -126,6 +138,12 @@ export function attestDownstreamErasure(
     const frozen = await frozenSubscriptionRefs(p, tenantId, revocationRef);
     const verified = await assertEvidenceCoversFrozen(p, tenantId, "ERASURE_CONFIRMED", revocationRef, frozen, attestations);
     const attestationRef = verified[0]!.evidenceRef;
+    if (p.revocationTransitions) {
+      await p.revocationTransitions.recordErasureAttestation({ revocationRef, attestationRef, expectedSequence: base });
+      const completed = await p.revocationRepo.findByRef(tenantId, revocationRef);
+      if (!completed) throw new DomainError("ERR-CM-01");
+      return completed;
+    }
     const appender = sequencedAppender(p.ledger, base);
     await appender.append({
       eventType: "DOWNSTREAM_ERASURE_ATTESTED",

@@ -32,6 +32,7 @@ import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
 import { createPgRecoveryTokenRepository } from "./recovery-token.adapter.ts";
 import { createPgRevocationRepository, OPEN_REVOCATION_UNIQUE } from "./revocation.adapter.ts";
+import { createPgRevocationTransitions } from "./revocation-transitions.adapter.ts";
 import { createPgRightsCaseRepository, RIGHTS_CASE_SINGLE_OPEN_UNIQUE } from "./rights-case.adapter.ts";
 import { DomainError } from "../../../server/modules/common/errors.ts";
 import type { DomainErrorCode } from "../../../server/modules/common/errors.ts";
@@ -108,6 +109,7 @@ function sqlState(error: unknown): string | undefined {
 export function createPgTenantTxPorts(tx: TenantTx, idempotencyPolicy?: IdempotencyPolicy): TenantTxPorts {
   return {
     revocationRepo: createPgRevocationRepository(tx),
+    revocationTransitions: createPgRevocationTransitions(tx),
     consentDecisionRepo: createPgConsentDecisionRepository(tx),
     recoveryTokenRepo: createPgRecoveryTokenRepository(tx),
     invitationRepo: createPgInvitationRepository(tx),

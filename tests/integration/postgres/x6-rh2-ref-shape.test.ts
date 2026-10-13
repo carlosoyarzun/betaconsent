@@ -11,6 +11,7 @@ const constraintOf = (error: unknown): string | undefined => (error as { constra
 
 pgTest("TEST-CNS-1009 pg: proposal_ref/proposed_by_ref/second_approver_ref rechazan email y RUT; aceptan UUIDv4 y staff-synthetic-NN", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
+  await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   const t = fixtureUuid("t1009");
   const insert = (n: string, cols: string): string =>
     `INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, ${cols}) VALUES ('dec-${n}', $1, 'r-${n}', 'ch', 'REQUESTED', ${cols === "proposal_ref, proposed_by_ref, verification_script_version" ? "$2, $3, 'guion-1'" : "$2, $3, 'guion-1', $4"})`;

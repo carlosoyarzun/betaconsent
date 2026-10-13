@@ -91,7 +91,7 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
     const failed = revocation(t, fixtureUuid("r800-f"), { chainRef: chain, status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" });
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(failed));
     assert.equal(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByChain(t, chain)), null);
-    const applied = revocation(t, fixtureUuid("r800-a"), { chainRef: chain, status: "APPLIED" });
+    const applied = revocation(t, fixtureUuid("r800-a"), { chainRef: chain, status: "APPLIED", verifiedAuthPath: "OTP" }); // GRD-RV-29: CHECK desde VERIFIED (0037)
     await h.uow.inTenant(t, (tx) => tx.revocationRepo.save(applied));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByChain(t, chain)), applied);
   });

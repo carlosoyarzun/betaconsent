@@ -42,6 +42,19 @@ function flakyUow(real: UnitOfWorkPort, fail: { on: boolean }): UnitOfWorkPort {
               return tx.revocationRepo.save(record);
             },
           },
+          // ADR-010 PR-5a: en Postgres R4 la escribe case_state.apply_revocation; el fallo se inyecta tras la funcion (misma tx: todo revierte).
+          ...(tx.revocationTransitions
+            ? {
+                revocationTransitions: {
+                  ...tx.revocationTransitions,
+                  async apply(input: { readonly revocationRef: string; readonly expectedSequence: number }) {
+                    const applied = await tx.revocationTransitions!.apply(input);
+                    if (fail.on) throw new Error("R4 falló (simulado)");
+                    return applied;
+                  },
+                },
+              }
+            : {}),
         }),
       ),
   };

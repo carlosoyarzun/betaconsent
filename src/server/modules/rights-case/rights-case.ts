@@ -17,6 +17,7 @@ import { UNVERIFIED_BEARER_ACTOR } from "../common/types.ts";
 import type { TenantHandlePort } from "../../ports/tenant-handle.port.ts";
 import type { RightsCaseRecord, RightsCaseRepositoryPort } from "../../ports/rights-case-repository.port.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
+import type { RevocationTransitionsPort } from "../../ports/revocation-transitions.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import { lastLedgerSequence } from "../common/ledger-append.ts";
@@ -25,19 +26,21 @@ export interface RightsCasePorts {
   readonly tenantHandle: TenantHandlePort;
   readonly rightsCaseRepo: RightsCaseRepositoryPort;
   readonly revocationRepo: RevocationRepositoryPort;
+  /** ADR-010 PR-5a: lado Revocation de RC3/R12 por la función de la base (Postgres); sin él, ruta legacy. Lo aporta la tx del uow. */
+  readonly revocationTransitions?: RevocationTransitionsPort;
   readonly ledger: LedgerPort;
   /** CA-124 (diseño §5, SEC-CNS-015 P2-E): RC2u/RC3/RC4-6 y la apertura del caso corren en UNA unidad de
    * trabajo del tenant (caso + Revocation + ledger). Su tenancy comparte `rightsCaseRepo` y `revocationRepo`. */
   readonly uow: UnitOfWorkPort;
 }
 
-type RightsCaseTxBag = Pick<RightsCasePorts, "rightsCaseRepo" | "ledger" | "uow"> & Partial<Pick<RightsCasePorts, "revocationRepo" | "tenantHandle">>;
+type RightsCaseTxBag = Pick<RightsCasePorts, "rightsCaseRepo" | "ledger" | "uow"> & Partial<Pick<RightsCasePorts, "revocationRepo" | "tenantHandle" | "revocationTransitions">>;
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, repos y ledger son los de la tx
  * (SEC-CNS-015 P2-E). No se anida `inTenant`; `fn` puede reejecutarse si la unidad se reintenta. */
 function inTx<P extends RightsCaseTxBag, T>(ports: P, tenantId: string, fn: (txPorts: P) => Promise<T>): Promise<T> {
   return ports.uow.inTenant(tenantId, (tx) =>
-    fn({ ...ports, rightsCaseRepo: tx.rightsCaseRepo, ledger: tx.ledger, ...(ports.revocationRepo ? { revocationRepo: tx.revocationRepo } : {}) }),
+    fn({ ...ports, rightsCaseRepo: tx.rightsCaseRepo, ledger: tx.ledger, ...(ports.revocationRepo ? { revocationRepo: tx.revocationRepo } : {}), ...(tx.revocationTransitions ? { revocationTransitions: tx.revocationTransitions } : {}) }),
   );
 }
 
@@ -122,6 +125,24 @@ export async function expressRevocationIntentInCase(
         revokedDecisionRef: rightsCase.revokedDecisionRef, // fuente de CONSENT_REVOKED.revokedDecisionRef en R4
         status: "REQUESTED",
       };
+      if (p.revocationTransitions) {
+        // ADR-010 PR-5a: fila + REVOCATION_REQUESTED (actor UNVERIFIED_BEARER) los escribe case_state.express_revocation_intent_in_case; el caso
+        // (rights_case) lo sigue escribiendo este módulo hasta PR-5b.
+        await p.revocationTransitions.expressRevocationIntentInCase({
+          caseRef: rightsCase.caseRef,
+          chainRef: rightsCase.chainRef,
+          revokedDecisionRef: rightsCase.revokedDecisionRef,
+          initiatedVia: rightsCase.origin === "SCHOOL_REPORTED" ? "SCHOOL_REPORT" : "DECISION_MAKER",
+          revocationRef,
+          attach: false,
+          expectedSequence: 0,
+        });
+        const updatedByFn: RightsCaseRecord = { ...rightsCase, revocationRef, status: "IN_VERIFICATION" };
+        await p.rightsCaseRepo.save(updatedByFn);
+        const created = await p.revocationRepo.findByRef(rightsCase.tenantId, revocationRef);
+        if (!created) throw new DomainError("ERR-CM-01");
+        return { rightsCase: updatedByFn, revocation: created };
+      }
       await p.revocationRepo.save(revocation);
       const updatedCase: RightsCaseRecord = {
         ...rightsCase,
@@ -162,6 +183,18 @@ export async function expressRevocationIntentInCase(
     const existing = await p.revocationRepo.findByRefForUpdate(rightsCase.tenantId, rightsCase.revocationRef);
     if (!existing) {
       throw new DomainError("ERR-CM-01");
+    }
+    if (p.revocationTransitions) {
+      await p.revocationTransitions.expressRevocationIntentInCase({
+        caseRef: rightsCase.caseRef,
+        chainRef: rightsCase.chainRef,
+        revokedDecisionRef: rightsCase.revokedDecisionRef,
+        initiatedVia: rightsCase.origin === "SCHOOL_REPORTED" ? "SCHOOL_REPORT" : "DECISION_MAKER",
+        revocationRef: existing.revocationRef,
+        attach: true,
+        expectedSequence: base,
+      });
+      return { rightsCase, revocation: existing };
     }
     await p.ledger.append({
       expectedSequence: base,

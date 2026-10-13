@@ -40,6 +40,7 @@ function forbidden<T extends object>(name: string): T {
 export function createForbiddenOutsideTxPorts(): TenantTxPorts {
   return {
     revocationRepo: forbidden("revocationRepo"),
+    revocationTransitions: forbidden("revocationTransitions"),
     consentDecisionRepo: forbidden("consentDecisionRepo"),
     recoveryTokenRepo: forbidden("recoveryTokenRepo"),
     invitationRepo: forbidden("invitationRepo"),

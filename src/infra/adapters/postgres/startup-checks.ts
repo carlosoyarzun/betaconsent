@@ -159,6 +159,7 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
       if (options.expectedEnvironment !== undefined && options.expectedEnvironment !== row.environment) {
         failures.push("el environment configurado difiere del catálogo de la base");
       }
+      await checkTransitionExecuteIsolation(db, row.environment, failures);
     }
   } catch {
     failures.push("no se pudo leer ops.db_catalog");
@@ -169,6 +170,40 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 
   return { ok: failures.length === 0, failures };
 }
+
+/**
+ * ADR-010 PR-5a (F-A10-26, mitigacion): en IT0 el EXECUTE de las funciones de operador (FN-RV-07..11), SYSTEM (FN-RV-12..15) y de siembra de
+ * `case_state` se concede tambien a app_rw porque el codigo corre en el proceso web (entrypoints worker/platform: PR-6). Ese interino solo es
+ * admisible en LOCAL/CI: fuera de LOCAL el proceso NO arranca si su rol puede ejecutarlas (salvo `worker` y sus funciones SYSTEM). Fail-closed.
+ */
+async function checkTransitionExecuteIsolation(db: Queryable, environment: string, failures: string[]): Promise<void> {
+  if (environment === "LOCAL") return;
+  try {
+    const r = await db.query<{ name: string }>(
+      `SELECT p.proname::pg_catalog.text AS name
+         FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'case_state' AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')
+          AND p.proname = ANY($1::text[])
+          AND NOT (current_user = 'worker' AND p.proname = ANY($2::text[]))`,
+      [INTERIM_EXECUTE_FUNCTIONS, SYSTEM_TRANSITION_FUNCTIONS],
+    );
+    for (const row of r.rows) failures.push(`el rol de la conexión puede ejecutar case_state.${row.name} fuera de LOCAL (F-A10-26: EXECUTE interino de IT0 solo LOCAL/CI)`);
+  } catch {
+    failures.push("no se pudo verificar el EXECUTE de las funciones case_state (F-A10-26)");
+  }
+}
+
+const SYSTEM_TRANSITION_FUNCTIONS: readonly string[] = ["apply_revocation", "mark_downstream_emitted", "record_downstream_ack", "record_erasure_attestation"];
+const INTERIM_EXECUTE_FUNCTIONS: readonly string[] = [
+  ...SYSTEM_TRANSITION_FUNCTIONS,
+  "propose_case_verification",
+  "approve_case_verification",
+  "withdraw_case_verification_proposal",
+  "record_case_confirmation",
+  "cosign_case_confirmation",
+  "seed_local_revocation",
+  "seed_local_revoke_decision",
+];
 
 /**
  * ADR-010 PR-3 (P2-7): el principal y el tenant los fija el adapter con set_config(..., true) por transaccion. Ningun default de rol o de base
