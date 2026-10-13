@@ -358,6 +358,8 @@ export function closeCase(
   tenantId: string,
   caseRef: string,
   outcome: CaseCloseOutcome,
+  /** ADR-010 PR-5b: ref del operador (recorded_by_ref del evento). Obligatoria con la ruta de funciones (Postgres): sin ella, ERR-CM-10. */
+  operatorRef?: string,
 ): Promise<RightsCaseRecord> {
   return inTx(ports, tenantId, async (p) => {
     const base = await lastLedgerSequence(p.ledger, tenantId, caseRef);
@@ -367,9 +369,10 @@ export function closeCase(
     }
     const closed: RightsCaseRecord = { ...found, status: outcome };
     if (p.rightsCaseTransitions) {
+      if (operatorRef === undefined) throw new DomainError("ERR-CM-10"); // sin sesion CASE no se atribuye el cierre a un operador anonimo
       // ADR-010 PR-5b: cierre + RIGHTS_CASE_CLOSED (actor HUMAN RIGHTS_OPERATOR) los escribe case_state.close_case (FN-RC-06); la base impone
       // GRD-RC-09 (R4 APPLIED o R8 de la Revocation del caso): sin ella, ERR-RC-03.
-      await p.rightsCaseTransitions.close({ caseRef, outcome, expectedSequence: base });
+      await p.rightsCaseTransitions.close({ caseRef, outcome, operatorRef, expectedSequence: base });
       return closed;
     }
     await p.rightsCaseRepo.save(closed);

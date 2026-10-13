@@ -167,9 +167,14 @@ export function runTenantReposPrDContract(adapterName: string, register: Registe
     const contacting: RightsCaseRecord = { ...minimal, status: "CONTACTING", origin: "CHANNEL_UNREACHABLE", revocationRef: fixtureUuid("rev832") };
     await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.save(contacting));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.findByRef(t, minimal.caseRef)), contacting);
+    // ADR-010 PR-5b: un caso terminal es inmutable en la base (no se resiembra); cada terminal se prueba sobre un caso propio, y se comprueba su status.
     for (const status of ["RESOLVED", "WITHDRAWN"] as const) {
-      await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.save({ ...contacting, status }));
-      assert.equal(await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.findOpenByChain(t, minimal.chainRef, minimal.revokedDecisionRef)), null, status);
+      const own: RightsCaseRecord = { ...contacting, caseRef: fixtureUuid(`case832-${status}`), chainRef: fixtureUuid(`chain832-${status}`), revokedDecisionRef: fixtureUuid(`dec832-${status}`) };
+      await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.save(own));
+      assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.findOpenByChain(t, own.chainRef, own.revokedDecisionRef)), own, `${status}: no terminal aun`);
+      await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.save({ ...own, status }));
+      assert.equal((await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.findByRef(t, own.caseRef)))?.status, status);
+      assert.equal(await h.uow.inTenant(t, (tx) => tx.rightsCaseRepo.findOpenByChain(t, own.chainRef, own.revokedDecisionRef)), null, status);
     }
   });
 

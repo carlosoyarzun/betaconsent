@@ -26,6 +26,7 @@ const GUARD_SQLSTATES: ReadonlyMap<string, DomainErrorCode> = new Map([
   ["RC002", "ERR-RC-02"],
   ["RC003", "ERR-RC-03"],
   ["RC009", "ERR-RC-09"],
+  ["RC010", "ERR-CM-10"],
 ]);
 
 export function mapTransitionError(error: unknown): unknown {

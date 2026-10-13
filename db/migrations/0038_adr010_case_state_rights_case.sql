@@ -24,8 +24,9 @@
 --   * No implementadas en PR-5b: FN-RC-04 start_case_contact (RC2 + RV0), FN-RC-05/FN-RV-16 escalate_expired_revocation (R9 + RC1 SYSTEM) y
 --     FN-RC-07 report_school_revocation_intent (RC0). El dominio TS no implementa RC0, RC2 ni R9 (no hay llamador ni test): el trigger
 --     rechaza cualquier efecto no declarado (fail-closed), asi que esas transiciones siguen cerradas hasta su PR.
---   * close_case: EXECUTE concedido a app_rw ademas de platform_rw+rights_operator (interino, F-A10-26): en IT0 el codigo corre en el proceso
---     web y no existen los entrypoints platform (PR-6). No valida sesion CASE ni grant (GRD-RC-10): llega con PR-6. La migracion aborta si el
+--   * close_case: el spec lo asigna a platform_rw + rights_operator, pero platform_rw NO tiene EXECUTE (aun no es miembro de rights_operator y no
+--     existen los entrypoints platform, PR-6); EXECUTE solo para app_rw, interino (F-A10-26): en IT0 el codigo corre en el proceso web. Exige la
+--     ref del operador (p_operator_ref -> recorded_by_ref del evento): sin sesion CASE no se atribuye el cierre a un operador anonimo. No valida sesion CASE ni grant (GRD-RC-10): llega con PR-6. La migracion aborta si el
 --     catalogo no es LOCAL y app_rw puede ejecutarla; startup-checks.ts tambien.
 --   * app.case_session y los CASE_* de ops.security_event NO se tocan: el spec los asigna a PR-5 pero dependen de platform.open_case_session /
 --     platform_rw (entrypoint platform, PR-6); retirarlos hoy rompe la consola CASE del proceso web (hallazgo F-A10-31).
@@ -85,7 +86,12 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'caso no encontrado' USING ERRCODE = 'RV001'; END IF; -- ERR-CM-01 uniforme
   IF v_case.status NOT IN ('RESOLVED', 'WITHDRAWN') THEN
     SELECT c.* INTO v_case FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref FOR UPDATE;
-    IF NOT FOUND THEN RAISE EXCEPTION 'caso no encontrado' USING ERRCODE = 'RV001'; END IF;
+    IF NOT FOUND THEN
+      -- La fila paso a terminal durante la espera (la policy de UPDATE oculta los terminales al FOR UPDATE): se relee sin bloquear y el
+      -- llamador rechaza la transicion con RV002; si sigue sin verse, no existe para este tenant (RV001).
+      SELECT c.* INTO v_case FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
+      IF NOT FOUND OR v_case.status NOT IN ('RESOLVED', 'WITHDRAWN') THEN RAISE EXCEPTION 'caso no encontrado' USING ERRCODE = 'RV001'; END IF;
+    END IF;
   END IF;
   IF p_expected_sequence IS NOT NULL THEN PERFORM case_state.assert_sequence(p_case_ref, p_expected_sequence); END IF;
   RETURN v_case;
@@ -143,9 +149,17 @@ BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'confirm_case_return', true);
   -- Idempotente ANTES del control de secuencia: un RC2u concurrente que esperaba el lock y ve CONTACTING converge sin conflicto (TEST-CNS-847).
   v_case := case_state.lock_rights_case(p_case_ref);
+  -- El atajo solo vale para un caso que RC2u ya movio: origin CHANNEL_UNREACHABLE (si no, RC001) y evento con la clave caseRef:contacting.
   IF v_case.status = 'CONTACTING' THEN
-    RETURN pg_catalog.jsonb_build_object('sequence', COALESCE((SELECT pg_catalog.max(e.sequence) FROM integrity.audit_event e
-                                                                WHERE e.tenant_id = v_case.tenant_id AND e.aggregate_id = p_case_ref), 0), 'changed', false);
+    IF v_case.origin IS DISTINCT FROM 'CHANNEL_UNREACHABLE' THEN
+      RAISE EXCEPTION 'RC2u solo con origin CHANNEL_UNREACHABLE' USING ERRCODE = 'RC001'; -- ERR-RC-01 uniforme (GRD-RC-07)
+    END IF;
+    IF EXISTS (SELECT 1 FROM integrity.audit_event e
+                WHERE e.tenant_id = v_case.tenant_id AND e.aggregate_id = p_case_ref AND e.event_type = 'RIGHTS_CASE_CONTACTING'
+                  AND e.idempotency_key_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_case_ref || ':contacting', 'UTF8')), 'hex')) THEN
+      RETURN pg_catalog.jsonb_build_object('sequence', (SELECT pg_catalog.max(e.sequence) FROM integrity.audit_event e
+                                                         WHERE e.tenant_id = v_case.tenant_id AND e.aggregate_id = p_case_ref), 'changed', false);
+    END IF;
   END IF;
   PERFORM case_state.assert_sequence(p_case_ref, p_expected_sequence);
   IF v_case.status <> 'OPEN' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF; -- ERR-CM-06
@@ -181,7 +195,7 @@ BEGIN
   IF v_tenant IS NULL THEN RAISE EXCEPTION 'tenant no resuelto' USING ERRCODE = 'RV001'; END IF;
   IF p_initiated_via NOT IN ('DECISION_MAKER', 'SCHOOL_REPORT') THEN RAISE EXCEPTION 'initiatedVia invalido' USING ERRCODE = 'RV002'; END IF;
   v_case := case_state.lock_rights_case(p_case_ref);
-  IF v_case.chain_ref <> p_chain_ref OR v_case.revoked_decision_ref <> p_revoked_decision_ref THEN
+  IF v_case.chain_ref IS DISTINCT FROM p_chain_ref OR v_case.revoked_decision_ref IS DISTINCT FROM p_revoked_decision_ref THEN
     RAISE EXCEPTION 'el caso no es de esa cadena/decision' USING ERRCODE = 'RC009'; -- ERR-RC-09 (GRD-RC-14)
   END IF;
   v_payload := pg_catalog.jsonb_build_object('revocationRef', p_revocation_ref, 'revokedDecisionRef', p_revoked_decision_ref, 'scope', 'ALL',
@@ -198,6 +212,12 @@ BEGIN
     SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_REQUESTED', 'HUMAN', 'UNVERIFIED_BEARER', NULL, NULL,
       v_payload, p_revocation_ref || ':r12:' || p_case_ref, p_expected_sequence);
   ELSE
+    IF v_case.status = 'IN_VERIFICATION' AND v_case.revocation_ref IS NOT NULL THEN
+      -- Otro RC3 concurrente ya ligo la Revocation mientras esta unidad esperaba el lock: conflicto de secuencia para que el UoW reejecute y converja por R12 (attach).
+      RAISE EXCEPTION 'ledger sequence conflict' USING ERRCODE = 'RV409',
+        DETAIL = pg_catalog.format('expected=%s actual=%s', p_expected_sequence, (SELECT COALESCE(pg_catalog.max(e.sequence), 0) FROM integrity.audit_event e
+                                                                                  WHERE e.tenant_id = v_tenant AND e.aggregate_id = v_case.revocation_ref));
+    END IF;
     IF v_case.status <> 'CONTACTING' OR v_case.revocation_ref IS NOT NULL THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
     PERFORM case_state.assert_decision_revocable(p_revoked_decision_ref, p_chain_ref);
     INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, case_ref, status, revoked_decision_ref)
@@ -215,7 +235,7 @@ $fn$;
 -- Revocation del caso (la adjunta o la del ciclo: misma cadena y revoked_decision_ref) esta en APPLIED o posterior; WITHDRAWN solo si esa
 -- Revocation termino FAILED con WITHDRAWN_BY_REQUESTER; si no, ERR-RC-03 y el caso sigue abierto. Ningun timer cierra un caso (INV-RC-01).
 -- GRD-RC-10 (sesion CASE + grant atestado) NO se comprueba aqui: llega con PR-6 (F-A10-26).
-CREATE FUNCTION case_state.close_case(p_case_ref text, p_outcome text, p_expected_sequence integer) RETURNS jsonb
+CREATE FUNCTION case_state.close_case(p_case_ref text, p_outcome text, p_expected_sequence integer, p_operator_ref text) RETURNS jsonb
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
@@ -225,6 +245,10 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'close_case', true);
+  -- Interino F-A10-26: sin sesion CASE ni grant (PR-6) la funcion solo existe en LOCAL; fuera de LOCAL falla cerrado aunque alguien la ejecute.
+  IF ops.catalog_environment() IS DISTINCT FROM 'LOCAL' THEN RAISE EXCEPTION 'close_case sin sesion CASE solo existe en LOCAL' USING ERRCODE = '42501'; END IF;
+  -- El ledger no atribuye el cierre a un operador anonimo: la ref del operador es obligatoria (recorded_by_ref del evento).
+  IF p_operator_ref IS NULL OR pg_catalog.length(p_operator_ref) NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'operador no identificado' USING ERRCODE = 'RC010'; END IF; -- ERR-CM-10
   IF p_outcome IS NULL OR p_outcome NOT IN ('RESOLVED', 'WITHDRAWN') THEN RAISE EXCEPTION 'outcome invalido' USING ERRCODE = 'RV002'; END IF;
   v_case := case_state.lock_rights_case(p_case_ref, p_expected_sequence);
   IF v_case.status NOT IN ('CONTACTING', 'IN_VERIFICATION') THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF; -- ERR-CM-06
@@ -241,13 +265,13 @@ BEGIN
   END IF;
   IF NOT v_ok THEN RAISE EXCEPTION 'precondicion de cierre no cumplida' USING ERRCODE = 'RC003'; END IF; -- ERR-RC-03
   UPDATE app.rights_case SET status = p_outcome WHERE tenant_id = v_case.tenant_id AND case_ref = v_case.case_ref;
-  SELECT * INTO v_ev FROM case_state.ledger_append('RightsCase', p_case_ref, 'RIGHTS_CASE_CLOSED', 'HUMAN', 'RIGHTS_OPERATOR', NULL, NULL,
+  SELECT * INTO v_ev FROM case_state.ledger_append('RightsCase', p_case_ref, 'RIGHTS_CASE_CLOSED', 'HUMAN', 'RIGHTS_OPERATOR', p_operator_ref, NULL,
     pg_catalog.jsonb_build_object('caseRef', p_case_ref, 'outcome', p_outcome), p_case_ref || ':closed', p_expected_sequence);
   RETURN pg_catalog.jsonb_build_object('sequence', v_ev.o_sequence);
 END
 $fn$;
 
--- Siembra SOLO LOCAL (contrato `save` del puerto, fixtures de dev y tests). Falla fuera de LOCAL. Upsert por (tenant, case_ref), salvo terminales.
+-- Siembra SOLO LOCAL (contrato `save` del puerto, fixtures de dev y tests). Falla fuera de LOCAL. Upsert por (tenant, case_ref); sobre un terminal falla.
 CREATE FUNCTION case_state.seed_local_rights_case(
   p_tenant_id uuid, p_case_ref text, p_chain_ref text, p_revoked_decision_ref text, p_status text, p_revocation_ref text, p_origin text) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER
@@ -261,9 +285,9 @@ BEGIN
   IF ops.catalog_environment() IS DISTINCT FROM 'LOCAL' THEN
     RAISE EXCEPTION 'seed_local_rights_case solo existe en LOCAL' USING ERRCODE = '42501';
   END IF;
-  -- Un caso terminal es inmutable (policy de UPDATE y trigger): la siembra sobre uno existente no hace nada (sin upsert sobre terminales).
+  -- Un caso terminal es inmutable (policy de UPDATE y trigger): sembrar sobre uno existente es un error (sin upsert sobre terminales).
   IF EXISTS (SELECT 1 FROM app.rights_case c WHERE c.tenant_id = v_tenant AND c.case_ref = p_case_ref AND c.status IN ('RESOLVED', 'WITHDRAWN')) THEN
-    RETURN;
+    RAISE EXCEPTION 'un caso terminal no se siembra de nuevo' USING ERRCODE = '42501';
   END IF;
   INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, revocation_ref, origin)
   VALUES (v_tenant, p_case_ref, p_chain_ref, p_revoked_decision_ref, p_status, p_revocation_ref, p_origin)
@@ -353,13 +377,13 @@ REVOKE ALL ON FUNCTION case_state.lock_rights_case(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.rights_case_transition_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.open_rights_case_bearer(text, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.confirm_case_return(text, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.close_case(text, text, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.close_case(text, text, integer, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION case_state.open_rights_case_bearer(text, text, text, text) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.confirm_case_return(text, integer) TO app_rw;
 -- Interino IT0 (ver cabecera, F-A10-26): el cierre del caso corre en el proceso web hasta PR-6; solo LOCAL/CI.
-GRANT EXECUTE ON FUNCTION case_state.close_case(text, text, integer) TO app_rw;
+GRANT EXECUTE ON FUNCTION case_state.close_case(text, text, integer, text) TO app_rw;
 GRANT EXECUTE ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) TO app_rw;
 -- CREATE TRIGGER exige EXECUTE al creador (consent_owner, dueno de la tabla); se revoca enseguida (el disparo no lo comprueba).
 GRANT EXECUTE ON FUNCTION case_state.rights_case_transition_guard() TO consent_owner;
@@ -471,6 +495,10 @@ BEGIN
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polqual, p.polrelid), 'RESOLVED') > 0
                    AND pg_catalog.strpos(pg_catalog.pg_get_expr(p.polqual, p.polrelid), 'WITHDRAWN') > 0) THEN
     RAISE EXCEPTION 'la policy de UPDATE de transition_owner sobre app.rights_case debe excluir los terminales en USING';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = rc AND p.polname LIKE 'rights\_case\_transition\_%'
+               AND NOT (pg_catalog.strpos(COALESCE(pg_catalog.pg_get_expr(p.polqual, p.polrelid), '') || COALESCE(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), ''), 'current_tenant_id()') > 0)) THEN
+    RAISE EXCEPTION 'las policies rights_case_transition_* deben filtrar por app.current_tenant_id()';
   END IF;
   IF NOT (SELECT c.relrowsecurity AND c.relforcerowsecurity FROM pg_catalog.pg_class c WHERE c.oid = rc) THEN RAISE EXCEPTION 'app.rights_case perdio ENABLE/FORCE ROW LEVEL SECURITY'; END IF;
 

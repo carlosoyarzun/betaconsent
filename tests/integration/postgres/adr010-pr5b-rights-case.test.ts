@@ -82,14 +82,17 @@ pgTest("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-RC-0
     for (const effect of ["close_case", "confirm_case_return", "express_revocation_intent_in_case"]) {
       await admin.query("SAVEPOINT s");
       await admin.query("SELECT set_config('case_state.effect', $1, true)", [effect]);
-      const r = await admin.query("UPDATE app.rights_case SET status = 'OPEN' WHERE case_ref = 'c-done'").then((x) => x.rowCount, (e: unknown) => codeOf(e));
-      assert.ok(r === 0 || r === "42501", `terminal ${effect}: ${String(r)}`);
+      // La policy de UPDATE (USING excluye terminales) oculta la fila: 0 filas afectadas, exacto (el trigger ni se alcanza).
+      const r = await admin.query("UPDATE app.rights_case SET status = 'OPEN' WHERE case_ref = 'c-done'");
+      assert.equal(r.rowCount, 0, `terminal ${effect}`);
       await admin.query("ROLLBACK TO s");
     }
+    // Verificacion DENTRO de la tx (antes del ROLLBACK): los estados siguen siendo los sembrados.
+    assert.deepEqual((await admin.query<{ s: string }>("SELECT status AS s FROM app.rights_case WHERE tenant_id = $1 ORDER BY case_ref", [T])).rows.map((r) => r.s), ["RESOLVED", "OPEN"]);
   } finally {
     await admin.query("ROLLBACK");
   }
-  assert.deepEqual((await admin.query<{ s: string }>("SELECT status AS s FROM app.rights_case WHERE tenant_id = $1 ORDER BY case_ref", [T])).rows.map((r) => r.s), ["RESOLVED", "OPEN"]);
+
 });
 
 pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED con ledger encadenado y codigos de error exactos (RC001/RC002/RC003/RC009/RV001/RV002/RV409)", async (ctx) => {
@@ -131,7 +134,7 @@ pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED c
     const REV = fixtureUuid("rev1382");
     await fails(EXPR, [C, chain, D, REV], "RV002");
     await fails("SELECT case_state.confirm_case_return($1::text, 0::integer) AS r", [C], "RV409");
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 1::integer) AS r", [C], "RV002"); // OPEN no cierra
+    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 1::integer, 'op') AS r", [C], "RV002"); // OPEN no cierra
     await fails("SELECT case_state.confirm_case_return($1::text, 1::integer) AS r", [fixtureUuid("case-nope")], "RV001");
     // RC2u ok e idempotente.
     assert.equal((await run("SELECT case_state.confirm_case_return($1::text, 1::integer) AS r", [C])).rows[0]?.r?.changed, true);
@@ -149,22 +152,22 @@ pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED c
     await run(EXPR, [C, chain, D, REV]);
     assert.equal((await admin.query<{ status: string; revocation_ref: string }>("SELECT status, revocation_ref FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T, C])).rows[0]?.status, "IN_VERIFICATION");
     assert.deepEqual(await events(REV), ["REVOCATION_REQUESTED"]);
-    await fails(EXPR, [C, chain, D, fixtureUuid("rev1382-b")], "RV002"); // RC3 solo desde CONTACTING sin Revocation
+    await fails(EXPR, [C, chain, D, fixtureUuid("rev1382-b")], "RV409"); // segundo RC3 con el caso ya IN_VERIFICATION: conflicto para que el UoW reejecute y converja por R12
     // R12 (attach) sobre la Revocation ligada: ok; sobre otra: RV002.
     await run("SELECT case_state.express_revocation_intent_in_case($1::text, $2::text, $3::text, 'DECISION_MAKER', $4::text, true, 1) AS r", [C, chain, D, REV]);
     await fails("SELECT case_state.express_revocation_intent_in_case($1::text, $2::text, $3::text, 'DECISION_MAKER', $4::text, true, 2) AS r", [C, chain, D, fixtureUuid("otra")], "RV002");
     // GRD-RC-09 (codigos exactos): sin R4 APPLIED, RESOLVED -> RC003; WITHDRAWN sin R8 -> RC003; outcome invalido -> RV002; secuencia vieja -> RV409.
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 2::integer) AS r", [C], "RC003");
-    await fails("SELECT case_state.close_case($1::text, 'WITHDRAWN', 2::integer) AS r", [C], "RC003");
-    await fails("SELECT case_state.close_case($1::text, 'OTRO', 2::integer) AS r", [C], "RV002");
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 0::integer) AS r", [C], "RV409");
+    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 2::integer, 'op1382') AS r", [C], "RC003");
+    await fails("SELECT case_state.close_case($1::text, 'WITHDRAWN', 2::integer, 'op1382') AS r", [C], "RC003");
+    await fails("SELECT case_state.close_case($1::text, 'OTRO', 2::integer, 'op1382') AS r", [C], "RV002");
+    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 0::integer, 'op1382') AS r", [C], "RV409");
     await admin.query(SEED_RV);
     await admin.query("UPDATE app.revocation SET status = 'APPLIED', verified_auth_path = 'OTP' WHERE tenant_id = $1 AND revocation_ref = $2", [T, REV]);
     await admin.query("RESET ALL");
-    await run("SELECT case_state.close_case($1::text, 'RESOLVED', 2::integer) AS r", [C]);
+    await run("SELECT case_state.close_case($1::text, 'RESOLVED', 2::integer, 'op1382') AS r", [C]);
     assert.deepEqual(await events(C), ["RIGHTS_CASE_OPENED", "RIGHTS_CASE_CONTACTING", "RIGHTS_CASE_CLOSED"]);
     // Terminal: ninguna funcion lo mueve (RV002), ni siquiera RC2u idempotente.
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 3::integer) AS r", [C], "RV002");
+    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 3::integer, 'op1382') AS r", [C], "RV002");
     await fails("SELECT case_state.confirm_case_return($1::text, 3::integer) AS r", [C], "RV002");
     assert.equal((await admin.query<{ status: string }>("SELECT status FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T, C])).rows[0]?.status, "RESOLVED");
   } finally {
@@ -194,7 +197,7 @@ pgTest("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de Righ
     const uow = new PgUnitOfWork(pool);
     for (const [sql, code] of [
       ["SELECT case_state.confirm_case_return('cA-open', 0)", "RV001"],
-      ["SELECT case_state.close_case('cA-contacting', 'RESOLVED', 0)", "RV001"],
+      ["SELECT case_state.close_case('cA-contacting', 'RESOLVED', 0, 'op1383')", "RV001"],
       ["SELECT case_state.express_revocation_intent_in_case('cA-contacting', 'cA2', 'dA2', 'DECISION_MAKER', 'rB', false, 0)", "RV001"],
       ["SELECT case_state.open_rights_case_bearer('cB', 'cA', '" + D + "', 'CHANNEL_UNREACHABLE')", "RC001"], // la decision y la cadena de A no existen en B
     ] as const) {
@@ -242,7 +245,7 @@ pgTest("TEST-CNS-1384 pg: INV-DBR-07: app_rw no inserta en el ledger eventos de 
   }
 });
 
-pgTest("TEST-CNS-1385 pg: seed_local_rights_case no hace upsert sobre un caso terminal (sin cambio ni error) y actualiza uno no terminal", async (ctx) => {
+pgTest("TEST-CNS-1385 pg: seed_local_rights_case falla (42501) sobre un caso terminal sin cambiarlo y actualiza uno no terminal", async (ctx) => {
   const T = fixtureUuid("t1385");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   try {
@@ -254,9 +257,47 @@ pgTest("TEST-CNS-1385 pg: seed_local_rights_case no hace upsert sobre un caso te
     assert.equal(await status(), "CONTACTING");
     await seed("RESOLVED");
     assert.equal(await status(), "RESOLVED");
-    await seed("WITHDRAWN");
-    await seed("OPEN");
+    for (const again of ["WITHDRAWN", "OPEN", "CONTACTING"]) {
+      await assert.rejects(() => seed(again), (e: unknown) => codeOf(e) === "42501", again);
+    }
     assert.equal(await status(), "RESOLVED", "un terminal no se modifica ni se revierte");
+  } finally {
+    await pool.end();
+  }
+});
+
+pgTest("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREACHABLE y el evento caseRef:contacting; secuencia vieja y otro origin dan codigos exactos; close_case exige la ref del operador; RC3 con el caso ya IN_VERIFICATION da RV409 (converge por R12)", async (ctx) => {
+  const T = fixtureUuid("t1386");
+  const admin = await ctx.connectAsSuperuser();
+  const D = fixtureUuid("d1386");
+  await seedDecision(admin, T, D, "ch1386");
+  const D2 = fixtureUuid("d1386-real");
+  await seedDecision(admin, T, D2, "ch1386-real");
+  await admin.query(SEED_RC);
+  // CONTACTING sembrado sin evento: con origin CU el atajo no vale (RV002 tras el control de secuencia); con otro origin: RC001.
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-cu-noevent', 'ch1386', $2, 'CONTACTING', 'CHANNEL_UNREACHABLE')", [T, D]);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-lr', 'chx', 'dx', 'CONTACTING', 'LIMIT_REACHED')", [T]);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin, revocation_ref) VALUES ($1, 'c-iv', 'ch1386', 'dy', 'IN_VERIFICATION', 'CHANNEL_UNREACHABLE', 'rv-iv')", [T]);
+  await admin.query("RESET ALL");
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  const uow = new PgUnitOfWork(pool);
+  const fails = async (sql: string, code: string): Promise<void> => {
+    await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === code, `${sql} -> ${code}`);
+  };
+  try {
+    await fails("SELECT case_state.confirm_case_return('c-cu-noevent', 0)", "RV002");
+    await fails("SELECT case_state.confirm_case_return('c-lr', 0)", "RC001");
+    // Camino real: OPEN -> CONTACTING con evento; reintento con la secuencia vigente es no-op; con secuencia vieja y el evento presente tambien converge.
+    await uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.open_rights_case_bearer('c-real', 'ch1386-real', $1, 'CHANNEL_UNREACHABLE')", [D2]));
+    await fails("SELECT case_state.confirm_case_return('c-real', 0)", "RV409"); // secuencia vieja con el caso aun OPEN
+    await uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.confirm_case_return('c-real', 1)"));
+    const again = await uow.withTenantTx(T, (tx) => tx.query<{ r: { changed: boolean; sequence: number } }>("SELECT case_state.confirm_case_return('c-real', 1) AS r"));
+    assert.deepEqual(again.rows[0]?.r, { changed: false, sequence: 2 });
+    // close_case: ref del operador obligatoria (RC010), sin atribuir a un operador anonimo.
+    await fails("SELECT case_state.close_case('c-iv', 'RESOLVED', 0, NULL)", "RC010");
+    await fails("SELECT case_state.close_case('c-iv', 'RESOLVED', 0, '')", "RC010");
+    // RC3 sobre un caso ya IN_VERIFICATION con Revocation: RV409 (el UoW reejecuta y la segunda unidad converge por R12), no RV002.
+    await fails("SELECT case_state.express_revocation_intent_in_case('c-iv', 'ch1386', 'dy', 'DECISION_MAKER', 'rv-nueva', false, 0)", "RV409");
   } finally {
     await pool.end();
   }
