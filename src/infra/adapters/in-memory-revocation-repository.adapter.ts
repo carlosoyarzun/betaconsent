@@ -39,6 +39,9 @@ export function createInMemoryRevocationRepository(): InMemoryRevocationReposito
       }
       return null;
     },
+    async listByDecision(tenantId, revokedDecisionRef) {
+      return [...byKey.values()].filter((record) => record.tenantId === tenantId && record.revokedDecisionRef === revokedDecisionRef);
+    },
     async findOpenByDecision(tenantId, revokedDecisionRef) {
       for (const record of byKey.values()) {
         if (

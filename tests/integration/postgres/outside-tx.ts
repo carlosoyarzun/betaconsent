@@ -14,6 +14,7 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       findByCase: (t, caseRef) => uow.inTenant(t, (tx) => tx.revocationRepo.findByCase(t, caseRef)),
       findOpenByChain: (t, chainRef) => uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByChain(t, chainRef)),
       findOpenByDecision: (t, d) => uow.inTenant(t, (tx) => tx.revocationRepo.findOpenByDecision(t, d)),
+      listByDecision: (t, d) => uow.inTenant(t, (tx) => tx.revocationRepo.listByDecision(t, d)),
       save: (record) => uow.inTenant(record.tenantId, (tx) => tx.revocationRepo.save(record)),
     },
     consentDecisionRepo: {
