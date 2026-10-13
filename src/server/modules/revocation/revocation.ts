@@ -567,7 +567,9 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
 
   // GRD-RV-02 (chain_granted, ERR-RV-02): la cadena debe tener aún la GRANTED vigente que se
   // revoca; una decisión ya REVOKED por C6 no es elegible. Sin escrituras ni eventos.
-  if (await isAlreadyRevoked(ports, tenantId, input.revokedDecisionRef)) {
+  // Alineacion dominio<->spec (Carlos 2026-10-13, F-A10-29; no decide LD-03): la decision debe existir, estar GRANTED y ser de la misma cadena.
+  const decision = await ports.consentDecisionRepo.findByConsentId(tenantId, input.revokedDecisionRef);
+  if (!decision || decision.state !== "GRANTED" || decision.chainRef !== input.chainRef) {
     throw new DomainError("ERR-RV-02");
   }
 
@@ -677,6 +679,10 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
   if (found.status !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
+  // Una verificacion HUMAN_ASSISTED solo se confirma por RH3 (cuatro ojos, GRD-RV-26): R3/R3r no aplican (Carlos 2026-10-13; no decide LD-03).
+  if (found.verifiedRecoveryMethod === "HUMAN_ASSISTED") {
+    throw new DomainError("ERR-CM-06");
+  }
   if (ports.revocationTransitions) {
     const confirmedByFn = await ports.revocationTransitions.confirm({ revocationRef, expectedSequence: base });
     return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, confirmedByFn.sequence));
@@ -715,8 +721,8 @@ async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, re
   if (found.status === "FAILED") {
     return found;
   }
-  if (found.status === "APPLIED") {
-    // GRD-RV-15 (serialización con R4): R4 ya ganó la carrera; R8 no tiene efecto.
+  if (found.status !== "REQUESTED" && found.status !== "VERIFIED" && found.status !== "CONFIRMED") {
+    // Grafo del spec (R8: {REQUESTED, VERIFIED, CONFIRMED} -> FAILED) y GRD-RV-15 (R4 ya ganó la carrera): sin efecto (Carlos 2026-10-13).
     throw new DomainError("ERR-CM-06");
   }
   if (ports.revocationTransitions) {

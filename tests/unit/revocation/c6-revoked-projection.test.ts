@@ -18,7 +18,7 @@ import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adap
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import type { ConsentDecisionRecord, ConsentDecisionRepositoryPort } from "../../../src/server/ports/consent-decision-repository.port.ts";
-import { syntheticDecision } from "../../contract/synthetic-decision.ts";
+import { syntheticDecision, requestRevocationSeeded } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
@@ -63,7 +63,7 @@ test("TEST-CNS-698: R4 deja la decisión en REVOKED en las tres vías (autoservi
   const REV1 = fixtureUuid("rev-698a");
   const p1 = await makePorts(syntheticDecision(T, D1));
   assert.equal(await stateOf(p1, D1), "GRANTED");
-  await requestRevocation(p1, T, { revocationRef: REV1, chainRef: fixtureUuid("chain-698a"), revokedDecisionRef: D1 });
+  await requestRevocationSeeded(p1, T, { revocationRef: REV1, chainRef: fixtureUuid("chain-698a"), revokedDecisionRef: D1 });
   await verifyRevocationOtp(p1, T, REV1, fixtureUuid("ver-698a"));
   assert.equal(await stateOf(p1, D1), "GRANTED", "antes de R3/R4 sigue GRANTED");
   await confirmRevocation(p1, T, REV1);
@@ -172,7 +172,7 @@ test("TEST-CNS-701: sobre una cadena ya REVOKED, R1 (ERR-RV-02) y RV0 no crean r
 
   const NEW = fixtureUuid("rev-701-new");
   await assert.rejects(
-    () => requestRevocation(ports, T, { revocationRef: NEW, chainRef: fixtureUuid("chain-701"), revokedDecisionRef: D }),
+    () => requestRevocationSeeded(ports, T, { revocationRef: NEW, chainRef: fixtureUuid("chain-701"), revokedDecisionRef: D }),
     (e: unknown) => e instanceof DomainError && e.code === "ERR-RV-02",
   );
   assert.equal(await ports.revocationRepo.findByRef(T, NEW), null);

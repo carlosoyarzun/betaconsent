@@ -16,7 +16,7 @@ import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
-import { withSyntheticFallback } from "../../contract/synthetic-decision.ts";
+import { withSyntheticFallback, requestRevocationSeeded } from "../../contract/synthetic-decision.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -50,7 +50,7 @@ const staff = createInMemoryStaffIdentityAdapter([
 
 async function selfService(ref: string) {
   const ports = makePorts();
-  await requestRevocation(ports, T, { revocationRef: ref, chainRef: `chain-${ref}`, revokedDecisionRef: D1 });
+  await requestRevocationSeeded(ports, T, { revocationRef: ref, chainRef: `chain-${ref}`, revokedDecisionRef: D1 });
   await verifyRevocationOtp(ports, T, ref, fixtureUuid("ver-680"));
   return ports;
 }

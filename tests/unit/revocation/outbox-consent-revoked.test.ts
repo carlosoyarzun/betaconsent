@@ -20,7 +20,7 @@ import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/
 import type { RevocationRepositoryPort } from "../../../src/server/ports/revocation-repository.port.ts";
 import { assertConsentRevokedOutbox, OUTBOX_FORBIDDEN_KEYS } from "../../contract/outbox-evidence.ts";
 import { validateOutboxEvent } from "../../contract/schema-lite.ts";
-import { syntheticDecision } from "../../contract/synthetic-decision.ts";
+import { syntheticDecision, requestRevocationSeeded } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { withInMemoryTenancy } from "../../../src/infra/adapters/in-memory-tenancy.ts";
 
@@ -64,7 +64,7 @@ test("TEST-CNS-688: R4 por OTP (autoservicio) encola exactamente un consent.revo
   const D = fixtureUuid("decision-688");
   const REV = fixtureUuid("rev-688");
   const ports = await makePorts({ seedDecisionId: D });
-  await requestRevocation(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-688"), revokedDecisionRef: D });
+  await requestRevocationSeeded(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-688"), revokedDecisionRef: D });
   await verifyRevocationOtp(ports, T, REV, fixtureUuid("ver-688"));
   await confirmRevocation(ports, T, REV);
   assert.equal(ports.outbox.enqueued.length, 1);
@@ -182,7 +182,7 @@ test("TEST-CNS-693: sin outbox en R8 (FAILED) ni en R4 sobre un estado distinto 
   const D = fixtureUuid("decision-693");
   const REV = fixtureUuid("rev-693");
   const ports = await makePorts({ seedDecisionId: D });
-  await requestRevocation(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-693"), revokedDecisionRef: D });
+  await requestRevocationSeeded(ports, T, { revocationRef: REV, chainRef: fixtureUuid("chain-693"), revokedDecisionRef: D });
   await assert.rejects(() => applyRevocation(ports, T, REV), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06"); // REQUESTED
   await verifyRevocationOtp(ports, T, REV, fixtureUuid("ver-693"));
   await assert.rejects(() => applyRevocation(ports, T, REV), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-06"); // VERIFIED

@@ -4,6 +4,8 @@
 
 import { fixtureUuid } from "./uuid-fixture.ts";
 import type { ConsentDecisionRecord, ConsentDecisionRepositoryPort } from "../../src/server/ports/consent-decision-repository.port.ts";
+import type { RevocationRecord } from "../../src/server/ports/revocation-repository.port.ts";
+import { requestRevocation, type RevocationPorts } from "../../src/server/modules/revocation/revocation.ts";
 
 export const SYNTHETIC_CONTEXT_REF = "BETA_2026_01";
 
@@ -34,4 +36,20 @@ export function withSyntheticFallback(repo: ConsentDecisionRepositoryPort): Cons
     findByConsentId: async (tenantId, consentId) => await repo.findByConsentId(tenantId, consentId) ?? syntheticDecision(tenantId, consentId),
     findByConsentIdForUpdate: async (tenantId, consentId) => await repo.findByConsentIdForUpdate(tenantId, consentId) ?? syntheticDecision(tenantId, consentId),
   };
+}
+
+/**
+ * GRD-RV-02 alineado con el spec (Carlos 2026-10-13, F-A10-29): R1 exige una decision GRANTED de la MISMA cadena. Los tests de R1..R4 que no
+ * ejercitan ese guard la siembran aqui (si la decision ya es REVOKED/DECLINED, no se toca: la deja el test).
+ */
+export async function requestRevocationSeeded(
+  ports: RevocationPorts,
+  tenantId: string,
+  input: Parameters<typeof requestRevocation>[2],
+): Promise<RevocationRecord> {
+  const current = await ports.consentDecisionRepo.findByConsentId(tenantId, input.revokedDecisionRef);
+  if (!current || (current.state === "GRANTED" && current.chainRef !== input.chainRef)) {
+    await ports.consentDecisionRepo.save({ ...syntheticDecision(tenantId, input.revokedDecisionRef), chainRef: input.chainRef });
+  }
+  return requestRevocation(ports, tenantId, input);
 }

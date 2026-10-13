@@ -268,14 +268,15 @@ BEGIN
 END
 $fn$;
 
--- GRD-RV-02 (paridad con el dominio): una decision que existe y no esta GRANTED no se revoca (ERR-RV-02). Ausente: el dominio la admite en R1.
-CREATE FUNCTION case_state.assert_decision_revocable(p_revoked_decision_ref text) RETURNS void
+-- GRD-RV-02 (alineacion dominio<->spec, confirmada por Carlos 2026-10-13, F-A10-29): la decision debe EXISTIR, estar GRANTED y ser de la misma
+-- cadena (ERR-RV-02). No decide LD-03.
+CREATE FUNCTION case_state.assert_decision_revocable(p_revoked_decision_ref text, p_chain_ref text) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
 BEGIN
-  IF EXISTS (SELECT 1 FROM app.consent_decision d
-              WHERE d.tenant_id = app.current_tenant_id() AND d.consent_id = p_revoked_decision_ref AND d.state <> 'GRANTED') THEN
+  IF NOT EXISTS (SELECT 1 FROM app.consent_decision d
+                  WHERE d.tenant_id = app.current_tenant_id() AND d.consent_id = p_revoked_decision_ref AND d.state = 'GRANTED' AND d.chain_ref = p_chain_ref) THEN
     RAISE EXCEPTION 'cadena sin GRANTED vigente' USING ERRCODE = 'RV003'; -- ERR-RV-02
   END IF;
 END
@@ -292,7 +293,7 @@ DECLARE
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'request_revocation', true);
   IF v_tenant IS NULL THEN RAISE EXCEPTION 'tenant no resuelto' USING ERRCODE = 'RV001'; END IF;
-  PERFORM case_state.assert_decision_revocable(p_revoked_decision_ref);
+  PERFORM case_state.assert_decision_revocable(p_revoked_decision_ref, p_chain_ref);
   INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status, revoked_decision_ref)
   VALUES (v_tenant, p_revocation_ref, p_chain_ref, 'REQUESTED', p_revoked_decision_ref);
   SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_REQUESTED', 'HUMAN', 'DECISION_MAKER', NULL, NULL,
@@ -456,7 +457,7 @@ BEGIN
     SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_REQUESTED', 'HUMAN', 'UNVERIFIED_BEARER', NULL, NULL,
       v_payload, p_revocation_ref || ':r12:' || p_case_ref, p_expected_sequence);
   ELSE
-    PERFORM case_state.assert_decision_revocable(p_revoked_decision_ref);
+    PERFORM case_state.assert_decision_revocable(p_revoked_decision_ref, p_chain_ref);
     INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, case_ref, status, revoked_decision_ref)
     VALUES (v_tenant, p_revocation_ref, p_chain_ref, p_case_ref, 'REQUESTED', p_revoked_decision_ref);
     SELECT * INTO v_ev FROM case_state.ledger_append('Revocation', p_revocation_ref, 'REVOCATION_REQUESTED', 'HUMAN', 'UNVERIFIED_BEARER', NULL, NULL,
@@ -873,7 +874,7 @@ REVOKE ALL ON FUNCTION case_state.canonical_json(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.ledger_append(text, text, text, text, text, text, text, jsonb, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.assert_sequence(text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.lock_revocation(text, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.assert_decision_revocable(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.assert_decision_revocable(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.revocation_transition_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.request_revocation(text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.verify_revocation_otp(text, text, integer) FROM PUBLIC;

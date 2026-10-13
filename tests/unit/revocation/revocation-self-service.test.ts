@@ -23,7 +23,7 @@ import { createInMemoryRevocationRepository } from "../../../src/infra/adapters/
 import { createInMemoryLedgerAdapter } from "../../../src/infra/adapters/in-memory-ledger.adapter.ts";
 import { createInMemoryRecoveryTokenRepository } from "../../../src/infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryOutboxAdapter } from "../../../src/infra/adapters/in-memory-outbox.adapter.ts";
-import { withSyntheticFallback } from "../../contract/synthetic-decision.ts";
+import { withSyntheticFallback, requestRevocationSeeded } from "../../contract/synthetic-decision.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
 import { createInMemoryConsentDecisionRepository } from "../../../src/infra/adapters/in-memory-consent-decision-repository.adapter.ts";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
@@ -77,7 +77,7 @@ test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED ->
   const ports = makePorts();
   const REV = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f75";
   const DECISION = "5a1b3c52-8d4e-4a7b-9c21-0e5a7d3b9f76";
-  const requested = await requestRevocation(ports, "tenant-1", {
+  const requested = await requestRevocationSeeded(ports, "tenant-1", {
     revocationRef: REV,
     chainRef: fixtureUuid("chain-575"),
     revokedDecisionRef: DECISION,
@@ -102,15 +102,15 @@ test("TEST-CNS-575: R1 -> R2 -> R3 recorre REQUESTED -> VERIFIED -> CONFIRMED ->
 test("TEST-CNS-576: R1 es idempotente por revocationRef (una sola solicitud abierta, sin duplicar el evento)", async () => {
   const ports = makePorts();
   const input = { revocationRef: fixtureUuid("rv-576"), chainRef: fixtureUuid("chain-576"), revokedDecisionRef: fixtureUuid("consent-576") };
-  await requestRevocation(ports, "tenant-1", input);
-  await requestRevocation(ports, "tenant-1", input);
+  await requestRevocationSeeded(ports, "tenant-1", input);
+  await requestRevocationSeeded(ports, "tenant-1", input);
   const events = await ports.ledger.listByAggregate("tenant-1", "Revocation", fixtureUuid("rv-576"));
   assert.equal(events.filter((e) => e.eventType === "REVOCATION_REQUESTED").length, 1);
 });
 
 test("TEST-CNS-577: R8 desde REQUESTED, VERIFIED o CONFIRMED retira la solicitud (FAILED, WITHDRAWN_BY_REQUESTER)", async () => {
   const ports = makePorts();
-  await requestRevocation(ports, "tenant-1", { revocationRef: fixtureUuid("rv-577"), chainRef: fixtureUuid("chain-577"), revokedDecisionRef: fixtureUuid("consent-577") });
+  await requestRevocationSeeded(ports, "tenant-1", { revocationRef: fixtureUuid("rv-577"), chainRef: fixtureUuid("chain-577"), revokedDecisionRef: fixtureUuid("consent-577") });
   const withdrawn = await withdrawRevocation(ports, "tenant-1", fixtureUuid("rv-577"));
   assert.equal(withdrawn.status, "FAILED");
   assert.equal(withdrawn.reasonCode, "WITHDRAWN_BY_REQUESTER");
@@ -118,7 +118,7 @@ test("TEST-CNS-577: R8 desde REQUESTED, VERIFIED o CONFIRMED retira la solicitud
 
 test("TEST-CNS-578: R8 sobre una Revocation ya APPLIED no tiene efecto (GRD-RV-15, R4 ya ganó la carrera)", async () => {
   const ports = makePorts();
-  await requestRevocation(ports, "tenant-1", { revocationRef: fixtureUuid("rv-578"), chainRef: fixtureUuid("chain-578"), revokedDecisionRef: fixtureUuid("consent-578") });
+  await requestRevocationSeeded(ports, "tenant-1", { revocationRef: fixtureUuid("rv-578"), chainRef: fixtureUuid("chain-578"), revokedDecisionRef: fixtureUuid("consent-578") });
   await verifyRevocationOtp(ports, "tenant-1", fixtureUuid("rv-578"), fixtureUuid("ver-578"));
   await confirmRevocation(ports, "tenant-1", fixtureUuid("rv-578"));
   await assert.rejects(

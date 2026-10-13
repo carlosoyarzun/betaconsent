@@ -17,6 +17,7 @@ import { canonicalJson, verifyLedgerChain } from "../../../src/server/modules/co
 import type { RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { completeDownstream, revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
+import { runFA1029Scenarios } from "../../contract/f-a10-29-scenarios.ts";
 import { pgTest } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
@@ -250,4 +251,30 @@ pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el
     await pool.end();
   }
   assert.equal(await snapshot(), before, "la fila, el token, la decision, el ledger y el outbox de A quedan intactos");
+});
+
+pgTest("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no confirma HUMAN_ASSISTED y R1 exige decision GRANTED de la misma cadena (F-A10-29), igual que in-memory; la base tambien lo impone", async (ctx) => {
+  const T = fixtureUuid("t1380");
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
+  try {
+    const uow = new PgUnitOfWork(pool);
+    const outside = pgOutsideTxPorts(uow);
+    const ports: RevocationPorts = {
+      ...outside,
+      recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
+      recoveryTokenPolicy: { ttlMs: 60_000 },
+      uow,
+      tenantResolver: createPgTenantResolver(pool),
+      downstreamStub: createInMemoryDownstreamStub(),
+    };
+    await runFA1029Scenarios({ ports, seedDecision: (d) => uow.inTenant(T, (tx) => tx.consentDecisionRepo.save(d)) }, T, "pg");
+    // La base lo impone aunque el dominio se saltara: request_revocation con decision ausente o de otra cadena (RV003).
+    await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.request_revocation('x1380', 'c1380', 'no-existe')")), (e: unknown) => codeOf(e) === "RV003");
+    await assert.rejects(
+      () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.request_revocation('x1380', 'otra-cadena', $1)", [fixtureUuid("d-r1-pg-ok")])),
+      (e: unknown) => codeOf(e) === "RV003",
+    );
+  } finally {
+    await pool.end();
+  }
 });
