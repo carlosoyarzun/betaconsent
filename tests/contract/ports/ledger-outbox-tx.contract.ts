@@ -87,8 +87,8 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       assert.equal((await ledger.append(event(ta, agg1))).sequence, 1);
       assert.equal((await ledger.append(event(ta, agg1, { expectedSequence: 1 }))).sequence, 2);
       assert.equal((await ledger.append(event(ta, agg2))).sequence, 1);
-      // Mismo aggregateId con otro aggregateType comparte numeracion (UNIQUE tenant_id, aggregate_id, sequence).
-      assert.equal((await ledger.append(event(ta, agg1, { aggregateType: "Other", expectedSequence: 2 }))).sequence, 3);
+      // ADR-010 PR-5b (D5): un aggregateId no se reutiliza entre aggregateType distintos (trigger de la base; TEST-CNS-1387): sigue el mismo agregado.
+      assert.equal((await ledger.append(event(ta, agg1, { expectedSequence: 2 }))).sequence, 3);
       // SEC-CNS-015 P2-C: currentSequence usa el mismo criterio que el UNIQUE y expectedSequence (por aggregateId).
       assert.equal(await ledger.currentSequence(ta, agg1), 3);
       assert.equal(await ledger.currentSequence(ta, agg2), 1);

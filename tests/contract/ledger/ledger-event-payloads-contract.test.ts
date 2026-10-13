@@ -306,6 +306,8 @@ test("TEST-CNS-531: RIGHTS_CASE_CLOSED valida contra el schema (caseRef, antes a
     status: "CONTACTING",
     origin: "CHANNEL_UNREACHABLE",
   });
+  // ADR-010 PR-5b (D1, GRD-RC-09): el cierre exige la Revocation del ciclo en APPLIED o posterior (siembra de fixture).
+  await ports.revocationRepo.save({ revocationRef: randomUUID(), tenantId: TENANT_ID, chainRef: fixtureUuid("chain-531"), revokedDecisionRef: fixtureUuid("decision-531"), status: "APPLIED" });
   await closeCase(ports, TENANT_ID, caseRef, "RESOLVED");
   const event = (await ports.ledger.listByAggregate(TENANT_ID, "RightsCase", caseRef)).find((e) => e.eventType === "RIGHTS_CASE_CLOSED");
   assert.ok(event);

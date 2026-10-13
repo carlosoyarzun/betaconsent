@@ -12,7 +12,10 @@ import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
+import { closeCase } from "../../../src/server/modules/rights-case/rights-case.ts";
+import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { pgTest } from "./harness.ts";
+import { pgOutsideTxPorts } from "./outside-tx.ts";
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
 const SEED_RC = "SELECT set_config('case_state.effect', 'seed_local_rights_case', false)";
@@ -298,6 +301,116 @@ pgTest("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREAC
     await fails("SELECT case_state.close_case('c-iv', 'RESOLVED', 0, '')", "RC010");
     // RC3 sobre un caso ya IN_VERIFICATION con Revocation: RV409 (el UoW reejecuta y la segunda unidad converge por R12), no RV002.
     await fails("SELECT case_state.express_revocation_intent_in_case('c-iv', 'ch1386', 'dy', 'DECISION_MAKER', 'rv-nueva', false, 0)", "RV409");
+  } finally {
+    await pool.end();
+  }
+});
+
+pgTest("TEST-CNS-1387 pg: INV-DBR-07 como allowlist (D5): pares (aggregate_type, event_type) explicitos, CHECK enum de aggregate_type, un solo aggregate_type por aggregate_id y sin eventos para aggregate_id de filas de revocation/rights_case; una sola policy de INSERT alcanza a app_rw", async (ctx) => {
+  const T = fixtureUuid("t1387");
+  const admin = await ctx.connectAsSuperuser();
+  const H = "a".repeat(64);
+  const row = (agg: string, id: string, type: string, chainSeq: number, tenant = "current_setting('app.tenant_id')::uuid", seq = 1): string =>
+    `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, chain_seq, payload_hash, previous_event_hash, event_hash)
+     VALUES (${tenant}, '${agg}', '${id}', ${seq}, '${type}', 'HUMAN', '${JSON.stringify(invitationRefPayload("1387"))}'::jsonb, ${chainSeq}, '${H}', '${String(chainSeq).padStart(64, "d")}', '${String(chainSeq).padStart(64, "c")}')`;
+  // Una sola policy de INSERT alcanza a app_rw (ni ALL ni PUBLIC).
+  const reach = await admin.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM pg_policy p WHERE p.polrelid = 'integrity.audit_event'::regclass AND p.polcmd IN ('a', '*')
+        AND (0::oid = ANY (p.polroles) OR (SELECT oid FROM pg_roles WHERE rolname = 'app_rw') = ANY (p.polroles))`);
+  assert.equal(reach.rows[0]?.n, 1);
+  // Filas de revocation / rights_case del tenant (siembra LOCAL): sus aggregate_id no se pueden usar para eventos de app_rw.
+  await admin.query(SEED_RV);
+  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'rv-1387', 'c', 'd', 'REQUESTED')", [T]);
+  await admin.query(SEED_RC);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'cs-1387', 'c2', 'd2', 'OPEN', 'LIMIT_REACHED')", [T]);
+  await admin.query("RESET ALL");
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  try {
+    const uow = new PgUnitOfWork(pool);
+    const denied = async (sql: string, label: string): Promise<void> => {
+      await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === "42501", label);
+    };
+    // Pares fuera de la allowlist: otro tipo para el agregado, tipos de Revocation/RightsCase/CONSENT_REVOKED y agregados desconocidos (42501 exacto).
+    await denied(row("Invitation", "i1", "CONSENT_GRANTED", 1), "Invitation:CONSENT_GRANTED");
+    await denied(row("ConsentDecision", "d1", "INVITATION_OPENED", 2), "ConsentDecision:INVITATION_OPENED");
+    await denied(row("Tenant", "t1", "REVOCATION_REQUESTED", 3), "Tenant:REVOCATION_REQUESTED");
+    await denied(row("Invitation", "i2", "RIGHTS_CASE_CLOSED", 4), "Invitation:RIGHTS_CASE_CLOSED");
+    await denied(row("Invitation", "i3", "CONSENT_REVOKED", 5), "Invitation:CONSENT_REVOKED");
+    await denied(row("Revocation", "r9", "REVOCATION_REQUESTED", 6), "Revocation:REVOCATION_REQUESTED");
+    await denied(row("RightsCase", "c9", "RIGHTS_CASE_OPENED", 7), "RightsCase:RIGHTS_CASE_OPENED");
+    await denied(row("Foo", "f1", "INVITATION_OPENED", 8), "agregado desconocido");
+    // NOT EXISTS: un par permitido, pero con el aggregate_id de una fila de revocation o rights_case del tenant.
+    await denied(row("Invitation", "rv-1387", "INVITATION_OPENED", 9), "aggregate_id de una Revocation");
+    await denied(row("Invitation", "cs-1387", "INVITATION_OPENED", 10), "aggregate_id de un RightsCase");
+    // Otro tenant: RLS.
+    await assert.rejects(
+      () => uow.withTenantTx(fixtureUuid("t1387-b"), (tx) => tx.query(row("Invitation", "i4", "INVITATION_OPENED", 11, `'${T}'::uuid`))),
+      (e: unknown) => codeOf(e) === "42501",
+    );
+    // Control positivo: pares permitidos.
+    await uow.withTenantTx(T, (tx) => tx.query(row("Invitation", "ok-i", "INVITATION_OPENED", 12)));
+    await uow.withTenantTx(T, (tx) => tx.query(row("ConsentDecision", "ok-c", "CONSENT_GRANTED", 13)));
+  } finally {
+    await pool.end();
+  }
+  // CHECK enum de aggregate_type (superusuario salta RLS: exacto 23514 y nombre de la restriccion).
+  await assert.rejects(
+    () => admin.query(row("Foo", "f2", "INVITATION_OPENED", 14, `'${T}'::uuid`)),
+    (e: unknown) => codeOf(e) === "23514" && (e as { constraint?: string }).constraint === "audit_event_aggregate_type_enum",
+  );
+  // Trigger: un aggregate_id ya usado por 'Invitation' no se reutiliza con otro aggregate_type (23000 exacto), tampoco para el superusuario.
+  await assert.rejects(
+    () => admin.query(row("ConsentDecision", "ok-i", "CONSENT_GRANTED", 15, `'${T}'::uuid`, 2)),
+    (e: unknown) => codeOf(e) === "23000",
+  );
+  // Mismo aggregate_type y mismo aggregate_id: sigue permitido (misma secuencia de un agregado).
+  await admin.query(row("Invitation", "ok-i", "INVITATION_OPENED", 16, `'${T}'::uuid`, 2));
+});
+
+pgTest("TEST-CNS-1388 pg: D6: close_case solo acepta como cierre una Revocation creada en o despues de la apertura del caso (no la de un ciclo anterior)", async (ctx) => {
+  const T = fixtureUuid("t1388");
+  const admin = await ctx.connectAsSuperuser();
+  // Caso 1: la Revocation APPLIED es ANTERIOR al caso (mismo chain/decision, ciclo previo) -> RC003.
+  await admin.query(SEED_RV);
+  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r-old', 'ch-old', 'd-old', 'APPLIED', 'OTP')", [T]);
+  await admin.query(SEED_RC);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-new', 'ch-old', 'd-old', 'CONTACTING', 'LIMIT_REACHED')", [T]);
+  // Caso 2: el caso existe y la Revocation APPLIED se crea DESPUES -> cierra.
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-ok', 'ch-ok', 'd-ok', 'CONTACTING', 'LIMIT_REACHED')", [T]);
+  await admin.query(SEED_RV);
+  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r-ok', 'ch-ok', 'd-ok', 'APPLIED', 'OTP')", [T]);
+  await admin.query("RESET ALL");
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  try {
+    const uow = new PgUnitOfWork(pool);
+    await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.close_case('c-new', 'RESOLVED', 0, 'op1388')")), (e: unknown) => codeOf(e) === "RC003");
+    await uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.close_case('c-ok', 'RESOLVED', 0, 'op1388')"));
+    assert.deepEqual((await admin.query<{ case_ref: string; status: string }>("SELECT case_ref, status FROM app.rights_case WHERE tenant_id = $1 ORDER BY 1", [T])).rows, [
+      { case_ref: "c-new", status: "CONTACTING" }, { case_ref: "c-ok", status: "RESOLVED" },
+    ]);
+  } finally {
+    await pool.end();
+  }
+});
+
+pgTest("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation del ciclo da ERR-RC-03, sin ref de operador ERR-CM-10, y con la Revocation APPLIED cierra y escribe RIGHTS_CASE_CLOSED con recorded_by_ref (D1)", async (ctx) => {
+  const T = fixtureUuid("t1390");
+  const admin = await ctx.connectAsSuperuser();
+  await admin.query(SEED_RC);
+  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-1390', 'ch1390', 'd1390', 'CONTACTING', 'LIMIT_REACHED')", [T]);
+  await admin.query("RESET ALL");
+  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
+  try {
+    const uow = new PgUnitOfWork(pool);
+    const ports = { ...pgOutsideTxPorts(uow), uow };
+    await assert.rejects(() => closeCase(ports, T, "c-1390", "RESOLVED", "op-1390"), (e: unknown) => e instanceof DomainError && e.code === "ERR-RC-03");
+    await admin.query(SEED_RV);
+    await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r-1390', 'ch1390', 'd1390', 'APPLIED', 'OTP')", [T]);
+    await admin.query("RESET ALL");
+    await assert.rejects(() => closeCase(ports, T, "c-1390", "RESOLVED"), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-10");
+    assert.equal((await closeCase(ports, T, "c-1390", "RESOLVED", "op-1390")).status, "RESOLVED");
+    const ev = await admin.query<{ recorded_by_ref: string; actor_role: string }>("SELECT recorded_by_ref, actor_role FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = 'c-1390'", [T]);
+    assert.deepEqual(ev.rows, [{ recorded_by_ref: "op-1390", actor_role: "RIGHTS_OPERATOR" }]);
   } finally {
     await pool.end();
   }
