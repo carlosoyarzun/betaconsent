@@ -20,6 +20,7 @@ import type { OutboxPort } from "./outbox.port.ts";
 import type { RecoveryTokenRepositoryPort } from "./recovery-token.port.ts";
 import type { SecurityEventPort } from "./security-event.port.ts";
 import type { RevocationRepositoryPort } from "./revocation-repository.port.ts";
+import type { RevocationTransitionsPort } from "./revocation-transitions.port.ts";
 import type { RightsCaseRepositoryPort } from "./rights-case-repository.port.ts";
 import type { TenantCatalogPort } from "./tenant-catalog.port.ts";
 
@@ -30,6 +31,9 @@ import type { TenantCatalogPort } from "./tenant-catalog.port.ts";
  */
 export interface TenantTxPorts {
   readonly revocationRepo: RevocationRepositoryPort;
+  /** ADR-010 PR-5a: escritura de las transiciones de la Revocation por funciones de la base (Postgres). Ausente en in-memory: el dominio usa
+   * la ruta legacy `revocationRepo.save` + `ledger.append` (mismos eventos y estados). */
+  readonly revocationTransitions?: RevocationTransitionsPort;
   readonly consentDecisionRepo: ConsentDecisionRepositoryPort;
   readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
   readonly invitationRepo: InvitationRepositoryPort;

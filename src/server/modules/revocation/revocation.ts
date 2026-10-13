@@ -18,6 +18,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
 import type { RevocationRecord, RevocationRepositoryPort } from "../../ports/revocation-repository.port.ts";
+import type { RevocationTransitionsPort } from "../../ports/revocation-transitions.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { OutboxPort } from "../../ports/outbox.port.ts";
 import type { RecoveryTokenRecord, RecoveryTokenRepositoryPort } from "../../ports/recovery-token.port.ts";
@@ -38,6 +39,9 @@ export const ASSURANCE_LEVEL_PLACEHOLDER_LD02 = "LD-02-PLACEHOLDER-V1";
 
 export interface RevocationPorts {
   readonly revocationRepo: RevocationRepositoryPort;
+  /** ADR-010 PR-5a (INV-RV-12): con adaptador Postgres, las escrituras de cada transición las hace la función `case_state.*` de la base
+   * (fila + ledger + outbox + C6 en la misma tx); este módulo solo decide y llama. Sin él (in-memory), rutas legacy `save` + `append`. */
+  readonly revocationTransitions?: RevocationTransitionsPort;
   readonly ledger: LedgerPort;
   /** CA-127: outbox transaccional; R4 encola consent.revoked (revocation.spec R4 emits, GRD-RV-11). */
   readonly outbox: OutboxPort;
@@ -79,6 +83,13 @@ export async function requireRevocation(ports: RevocationPorts, tenantId: string
     // GRD-CM-01/06: revocationRef de otro tenant (o inexistente) -> 404 uniforme (TEST-CNS-464).
     throw new DomainError("ERR-CM-01");
   }
+  return found;
+}
+
+/** Relee la Revocation tras una transición hecha por una función de la base (ADR-010 PR-5a): la fila es la que dejó la función. */
+async function reloadRevocation(ports: Pick<RevocationPorts, "revocationRepo">, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
+  const found = await ports.revocationRepo.findByRef(tenantId, revocationRef);
+  if (!found) throw new DomainError("ERR-CM-01");
   return found;
 }
 
@@ -144,6 +155,16 @@ export async function proposeCaseVerificationTx(
     if (history.some((e) => e.eventType === "REVOCATION_PROPOSAL_WITHDRAWN" && (e.payload as Record<string, unknown>).proposalRef === input.proposalRef)) {
       throw new DomainError("ERR-CM-06");
     }
+    if (p.revocationTransitions) {
+      await p.revocationTransitions.proposeCaseVerification({
+        revocationRef,
+        caseRef,
+        proposalRef: input.proposalRef,
+        proposedByRef: actor.principalRef,
+        verificationScriptVersion: input.verificationScriptVersion,
+      });
+      return reloadRevocation(p, tenantId, revocationRef);
+    }
     const proposed: RevocationRecord = {
       ...found,
       proposal: { proposalRef: input.proposalRef, proposedByRef: actor.principalRef, verificationScriptVersion: input.verificationScriptVersion },
@@ -205,6 +226,10 @@ export async function approveCaseVerificationTx(
     const verifiedByRef = found.proposal.proposedByRef;
     const secondApproverRef = actor.principalRef;
     if (!verifiedByRef || !secondApproverRef) throw new DomainError("ERR-RV-13"); // HUMAN_ASSISTED exige ambos refs
+    if (p.revocationTransitions) {
+      await p.revocationTransitions.approveCaseVerification({ revocationRef, caseRef, proposalRef, approverRef: secondApproverRef, expectedSequence: base });
+      return { record: await reloadRevocation(p, tenantId, revocationRef), attestation: "ATTESTED" };
+    }
     const verified: RevocationRecord = {
       ...found,
       status: "VERIFIED",
@@ -284,6 +309,10 @@ export async function withdrawCaseVerificationProposalTx(
   await requireRosterRole(staffIdentity, actor.principalRef, "RIGHTS_OPERATOR");
   if (actor.principalRef !== found.proposal.proposedByRef) throw new DomainError("ERR-RV-07"); // solo el proponente retira
   if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // propuesta ya no PENDING (aprobada/Revocation avanzada)
+  if (p.revocationTransitions) {
+    await p.revocationTransitions.withdrawCaseVerificationProposal({ revocationRef, caseRef, proposalRef, actorRef: actor.principalRef, expectedSequence: base });
+    return reloadRevocation(p, tenantId, revocationRef);
+  }
   const { proposal: _withdrawn, ...rest } = found;
   const withdrawn: RevocationRecord = rest;
   await p.revocationRepo.save(withdrawn);
@@ -384,6 +413,10 @@ async function recordCaseConfirmationPendingCosignTx(
 
   await assertNominalRosterMinimum(staffIdentity);
 
+  if (ports.revocationTransitions) {
+    await ports.revocationTransitions.recordCaseConfirmation({ revocationRef, caseRef, recordedByRef: ctx.recordedByPrincipalRef });
+    return reloadRevocation(ports, tenantId, revocationRef);
+  }
   // Paso 1 literal (effect: none): registra recordedByRef, sin tocar `status` ni emitir evento.
   const recorded: RevocationRecord = {
     ...found,
@@ -460,6 +493,10 @@ async function cosignCaseConfirmationTx(
     throw new DomainError("ERR-RV-18");
   }
 
+  if (ports.revocationTransitions) {
+    const cosigned = await ports.revocationTransitions.cosignCaseConfirmation({ revocationRef, caseRef, cosignedByRef: ctx.cosignedByPrincipalRef, expectedSequence: base });
+    return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, cosigned.sequence));
+  }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
   await ports.revocationRepo.save(confirmed);
   const confirmedEvent = await ports.ledger.append({
@@ -537,6 +574,10 @@ async function requestRevocationTx(ports: RevocationPorts, tenantId: string, inp
   const open = await ports.revocationRepo.findOpenByDecision(tenantId, input.revokedDecisionRef);
   if (open) return open;
 
+  if (ports.revocationTransitions) {
+    await ports.revocationTransitions.request({ revocationRef: input.revocationRef, chainRef: input.chainRef, revokedDecisionRef: input.revokedDecisionRef });
+    return reloadRevocation(ports, tenantId, input.revocationRef);
+  }
   const record: RevocationRecord = {
     revocationRef: input.revocationRef,
     tenantId,
@@ -595,6 +636,10 @@ async function verifyRevocationOtpTx(
   if (found.status !== "REQUESTED") {
     throw new DomainError("ERR-CM-06");
   }
+  if (ports.revocationTransitions) {
+    await ports.revocationTransitions.verifyOtp({ revocationRef, verificationRef, expectedSequence: base });
+    return reloadRevocation(ports, tenantId, revocationRef);
+  }
   const verified: RevocationRecord = { ...found, status: "VERIFIED", verifiedAuthPath: "OTP", verifiedRecoveryMethod: undefined };
   await ports.revocationRepo.save(verified);
   await ports.ledger.append({
@@ -627,6 +672,10 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
   }
   if (found.status !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
+  }
+  if (ports.revocationTransitions) {
+    const confirmedByFn = await ports.revocationTransitions.confirm({ revocationRef, expectedSequence: base });
+    return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, confirmedByFn.sequence));
   }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED" };
   await ports.revocationRepo.save(confirmed);
@@ -665,6 +714,10 @@ async function withdrawRevocationTx(ports: RevocationPorts, tenantId: string, re
   if (found.status === "APPLIED") {
     // GRD-RV-15 (serialización con R4): R4 ya ganó la carrera; R8 no tiene efecto.
     throw new DomainError("ERR-CM-06");
+  }
+  if (ports.revocationTransitions) {
+    await ports.revocationTransitions.withdraw({ revocationRef, expectedSequence: base });
+    return reloadRevocation(ports, tenantId, revocationRef);
   }
   const failed: RevocationRecord = { ...found, status: "FAILED", reasonCode: "WITHDRAWN_BY_REQUESTER" };
   await ports.revocationRepo.save(failed);
@@ -717,6 +770,11 @@ async function applyRevocationTx(
   // C6 (GRD-CD-09): solo una decisión GRANTED se revoca; REVOKED = reintento de R4 (converge).
   if (!decision || (decision.state !== "GRANTED" && decision.state !== "REVOKED")) {
     throw new DomainError("ERR-CM-06");
+  }
+  if (ports.revocationTransitions) {
+    // ADR-010 PR-5a: CONSENT_REVOKED + RECEIPT_CREATED + outbox + C6 + APPLIED los escribe case_state.apply_revocation en la misma tx.
+    await ports.revocationTransitions.apply({ revocationRef, expectedSequence: lastSequence });
+    return reloadRevocation(ports, tenantId, revocationRef);
   }
   // SEC-CNS-013 P2-3 / SEC-CNS-015 P1-1: `lastSequence` se capturo ANTES del lock y de la decision de
   // estado; si el agregado avanzo desde entonces el append falla con LedgerSequenceConflictError.
@@ -1139,6 +1197,20 @@ async function revokeWithRecoveryLinkTx(
     // GRD-RV-27: más allá de APPLIED, respuesta uniforme; el caso (si existe) cierra por
     // RC4/RC5, fuera de alcance de este slice self-service.
     return { kind: "UNIFORM" };
+  }
+
+  if (ports.revocationTransitions) {
+    // ADR-010 PR-5a: consumo del token + R1r/R2r|R10 los hace case_state.revoke_with_recovery_link (GRD-RV-06 revalidado bajo lock); R3r + R4 siguen.
+    const base = existing ? await revocationSequence(ports, tenantId, existing.revocationRef) : 0;
+    let linked;
+    try {
+      linked = await ports.revocationTransitions.revokeWithRecoveryLink({ recoveryRef: tokenRecord.recoveryRef, newRevocationRef: randomUUID(), expectedSequence: base });
+    } catch (error) {
+      if (error instanceof DomainError && error.code === "ERR-RV-05") return { kind: "UNIFORM" }; // token usado o vencido entre la lectura y el lock
+      throw error;
+    }
+    const confirmedByLink = await confirmRevocationTx(ports, tenantId, linked.revocationRef);
+    return { kind: "CONFIRMED", revocationRef: confirmedByLink.revocationRef };
   }
 
   // A partir de aquí el token siempre se consume: GRD-RV-23 nunca lo deja sin efecto. El consumo es

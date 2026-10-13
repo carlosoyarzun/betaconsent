@@ -34,6 +34,9 @@ export interface RevocationRecord {
   proposal?: { readonly proposalRef: string; readonly proposedByRef: string; readonly verificationScriptVersion: string };
   /** RH2 paso 2 (approve_case_verification, API-CNS-137): secondApproverRef (distinto de proposedByRef, GRD-RV-09). */
   secondApproverRef?: string;
+  /** GRD-RV-05 (R2): verificationRef del OTP scope REVOCATION que verifico esta Revocation; UNIQUE por tenant en la base (0037). Solo
+   * lo escribe case_state.verify_revocation_otp; el dominio in-memory no lo proyecta (el evento REVOCATION_VERIFIED lo lleva en el payload). */
+  verificationRef?: string;
   /** R8 (WithdrawRevocationRequest): único reasonCode del vocabulario IT0 (DEC-BR-017 §6). */
   reasonCode?: "WITHDRAWN_BY_REQUESTER";
 }

@@ -35,11 +35,12 @@ interface RevocationRow {
   proposed_by_ref: string | null;
   verification_script_version: string | null;
   second_approver_ref: string | null;
+  verification_ref: string | null;
 }
 
 const COLUMNS =
   "tenant_id, revocation_ref, chain_ref, case_ref, status, attested_revocation_ref, attested_case_ref, " +
-  "recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref";
+  "recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref, verification_ref";
 
 function toRecord(row: RevocationRow): RevocationRecord {
   return {
@@ -61,6 +62,7 @@ function toRecord(row: RevocationRow): RevocationRecord {
       ? { proposal: { proposalRef: row.proposal_ref, proposedByRef: row.proposed_by_ref, verificationScriptVersion: row.verification_script_version } }
       : {}),
     ...(row.second_approver_ref !== null ? { secondApproverRef: row.second_approver_ref } : {}),
+    ...(row.verification_ref !== null ? { verificationRef: row.verification_ref } : {}),
   };
 }
 
@@ -75,10 +77,11 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
       return row ? toRecord(row) : null;
     },
     async findByRefForUpdate(tenantId, revocationRef) {
-      // Lock de fila hasta COMMIT/ROLLBACK: serializa R2/R3/R4/R8/RH* y relee el estado vigente
-      // tras esperar a la unidad ganadora (READ COMMITTED re-evalua la fila bloqueada).
+      // ADR-010 PR-5a: app_rw ya no tiene UPDATE sobre app.revocation (0037) y SELECT ... FOR UPDATE lo exige: la lectura NO bloquea. La
+      // serializacion (GRD-RV-23) la hace cada funcion case_state.* (FOR UPDATE de la fila + control de la secuencia esperada ANTES de los
+      // guards de estado: una lectura vieja da RV409 y el UoW reejecuta con estado fresco, igual que el antiguo lock de fila).
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 FOR UPDATE`,
+        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2`,
         [tenantId, revocationRef],
       );
       const row = r.rows[0];
@@ -113,28 +116,13 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
       return row ? toRecord(row) : null;
     },
     async save(record) {
-      // Upsert. chain_ref y revoked_decision_ref se fijan al crear (R1/R1r) y no son actualizables
-      // (sin grant de columna): un save posterior no puede revincular la revocacion a otra cadena.
+      // ADR-010 PR-5a (INV-RV-12): app_rw ya NO tiene INSERT/UPDATE sobre app.revocation (0037). `save` es el contrato de siembra del puerto y
+      // solo existe en LOCAL: llama case_state.seed_local_revocation (SECURITY DEFINER de transition_owner, falla fuera de LOCAL). Las
+      // transiciones reales del dominio NO pasan por aqui: usan RevocationTransitionsPort (revocation-transitions.adapter.ts). chain_ref y
+      // revoked_decision_ref se fijan al crear y no son actualizables.
       await tx.query(
-        `INSERT INTO app.revocation
-           (tenant_id, revocation_ref, chain_ref, case_ref, status, attested_revocation_ref, attested_case_ref,
-            recorded_by_ref, cosigned_by_ref, revoked_decision_ref, verified_auth_path, verified_recovery_method, reason_code,
-            proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-         ON CONFLICT (tenant_id, revocation_ref) DO UPDATE SET
-           case_ref = EXCLUDED.case_ref,
-           status = EXCLUDED.status,
-           attested_revocation_ref = EXCLUDED.attested_revocation_ref,
-           attested_case_ref = EXCLUDED.attested_case_ref,
-           recorded_by_ref = EXCLUDED.recorded_by_ref,
-           cosigned_by_ref = EXCLUDED.cosigned_by_ref,
-           verified_auth_path = EXCLUDED.verified_auth_path,
-           verified_recovery_method = EXCLUDED.verified_recovery_method,
-           reason_code = EXCLUDED.reason_code,
-           proposal_ref = EXCLUDED.proposal_ref,
-           proposed_by_ref = EXCLUDED.proposed_by_ref,
-           verification_script_version = EXCLUDED.verification_script_version,
-           second_approver_ref = EXCLUDED.second_approver_ref`,
+        `SELECT case_state.seed_local_revocation($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text, $9::text, $10::text,
+                $11::text, $12::text, $13::text, $14::text, $15::text, $16::text, $17::text, $18::text)`,
         [
           record.tenantId,
           record.revocationRef,
@@ -153,6 +141,7 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
           record.proposal?.proposedByRef ?? null,
           record.proposal?.verificationScriptVersion ?? null,
           record.secondApproverRef ?? null,
+          record.verificationRef ?? null,
         ],
       );
     },
