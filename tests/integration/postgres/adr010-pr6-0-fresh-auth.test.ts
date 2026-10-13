@@ -17,7 +17,7 @@ const sha = (s: string): string => createHash("sha256").update(s, "utf8").digest
 const SEED_REQ = P("seed-requester");
 const SEED_APR = P("seed-approver");
 const PKCE = "A".repeat(43);
-const SKEW_MS = 120_000; // c_skew de record_assertion (0040)
+const SKEW_S = 120; // c_skew de record_assertion (0040); SIN aprobar (F-PR6-07)
 
 async function call<T = Record<string, unknown>>(client: Client, principal: string | null, sql: string, params: unknown[] = []): Promise<T[]> {
   await client.query("BEGIN");
@@ -51,7 +51,7 @@ async function claimOwn(verifier: Client, principal: string): Promise<string[]> 
   return own;
 }
 
-interface Flow { exchangeRef: string; nonceHash: string; issuedAt: Date; subHmac: string; principal: string }
+interface Flow { exchangeRef: string; nonce: string; nonceHash: string; subHmac: string; principal: string }
 
 async function startFlow(admin: Client, platform: Client, verifier: Client, label: string): Promise<Flow> {
   const principal = P(label);
@@ -61,20 +61,23 @@ async function startFlow(admin: Client, platform: Client, verifier: Client, labe
   const exchangeRef = (await call<{ r: string | null }>(platform, principal, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, 60) AS r", [sha(nonce), `code-${randomUUID()}`, PKCE]))[0]?.r;
   assert.ok(typeof exchangeRef === "string", "solicitud encolada");
   assert.ok((await claimOwn(verifier, principal)).includes(exchangeRef!), "el verifier toma la solicitud");
-  const issuedAt = (await admin.query<{ issued_at: Date }>("SELECT issued_at FROM platform.action_nonce WHERE nonce_hash = $1", [sha(nonce)])).rows[0]?.issued_at;
-  assert.ok(issuedAt instanceof Date);
-  return { exchangeRef: exchangeRef!, nonceHash: sha(nonce), issuedAt, subHmac, principal };
+  return { exchangeRef: exchangeRef!, nonce, nonceHash: sha(nonce), subHmac, principal };
 }
 
-const record = async (verifier: Client, f: Flow, authTime: Date): Promise<boolean | undefined> =>
+/** issued_at exacto del nonce (microsegundos, tal como lo guarda la base) desplazado en segundos; devuelto como texto para no perder precision en JS. */
+async function shifted(admin: Client, f: Flow, seconds: number): Promise<string> {
+  return (await admin.query<{ t: string }>("SELECT (issued_at + make_interval(secs => $2))::text AS t FROM platform.action_nonce WHERE nonce_hash = $1", [f.nonceHash, seconds])).rows[0]!.t;
+}
+
+const record = async (verifier: Client, f: Flow, authTime: Date | string): Promise<boolean | undefined> =>
   (await call<{ ok: boolean }>(verifier, null, "SELECT platform.record_assertion($1::uuid, 'ATTESTED', NULL, $2, $3, $4::timestamptz, $5, $6::text[]) AS ok", [
-    f.exchangeRef, f.subHmac, sha(`token-${f.exchangeRef}`), authTime.toISOString(), "urn:synthetic:test-mfa", ["pwd"],
+    f.exchangeRef, f.subHmac, sha(`token-${f.exchangeRef}`), typeof authTime === "string" ? authTime : authTime.toISOString(), "urn:synthetic:test-mfa", ["pwd"],
   ]))[0]?.ok;
 
 async function assertRejected(admin: Client, f: Flow, label: string): Promise<void> {
   const ga = (await admin.query<{ decision: string; reason_code: string | null }>("SELECT decision, reason_code FROM platform.grant_assertion WHERE exchange_ref = $1", [f.exchangeRef])).rows;
   assert.deepEqual(ga, [{ decision: "REJECTED", reason_code: "INVALID_CLAIMS" }], `${label}: aserciones`);
-  assert.equal((await admin.query<{ attested_at: Date | null }>("SELECT attested_at FROM platform.action_nonce WHERE nonce_hash = $1", [f.nonceHash])).rows[0]?.attested_at, null, `${label}: el nonce no se atesta`);
+  assert.deepEqual((await admin.query("SELECT attested_at, consumed_at FROM platform.action_nonce WHERE nonce_hash = $1", [f.nonceHash])).rows, [{ attested_at: null, consumed_at: null }], `${label}: el nonce no se atesta ni se consume`);
   const ex = (await admin.query<{ status: string; code: string | null }>("SELECT status, code FROM platform.oidc_exchange WHERE exchange_ref = $1", [f.exchangeRef])).rows[0];
   assert.deepEqual(ex, { status: "REJECTED", code: null }, `${label}: solicitud cerrada sin secretos`);
   const chk = (await admin.query<{ decision: string; reason_code: string }>("SELECT decision, reason_code FROM platform.authorization_check WHERE principal_ref = $1 AND check_kind = 'RECORD_ASSERTION'", [f.principal])).rows;
@@ -100,27 +103,27 @@ pgTest("TEST-CNS-1394 pg: record_assertion exige reautenticacion fresca (auth_ti
 
   // (a) auth_time anterior al nonce (mas alla del skew): rechazado.
   const a = await startFlow(admin, platform, verifier, "a-old");
-  assert.equal(await record(verifier, a, new Date(a.issuedAt.getTime() - SKEW_MS - 1_000)), false);
+  assert.equal(await record(verifier, a, await shifted(admin, a, -SKEW_S - 1)), false);
   await assertRejected(admin, a, "anterior al nonce - skew");
 
   // (b) auth_time muy anterior (sesion vieja del IdP reutilizada): rechazado.
   const b = await startFlow(admin, platform, verifier, "b-stale");
-  assert.equal(await record(verifier, b, new Date(b.issuedAt.getTime() - 3_600_000)), false);
+  assert.equal(await record(verifier, b, await shifted(admin, b, -3600)), false);
   await assertRejected(admin, b, "una hora antes");
 
   // (c) igual a la emision del nonce: aceptado.
   const c = await startFlow(admin, platform, verifier, "c-equal");
-  assert.equal(await record(verifier, c, c.issuedAt), true);
+  assert.equal(await record(verifier, c, await shifted(admin, c, 0)), true);
   await assertAttested(admin, c, "igual");
 
   // (d) posterior a la emision: aceptado.
   const d = await startFlow(admin, platform, verifier, "d-later");
-  assert.equal(await record(verifier, d, new Date(d.issuedAt.getTime() + 5_000)), true);
+  assert.equal(await record(verifier, d, await shifted(admin, d, 5)), true);
   await assertAttested(admin, d, "posterior");
 
   // (e) dentro del skew (apenas anterior): aceptado; la tolerancia es la constante de la funcion.
   const e = await startFlow(admin, platform, verifier, "e-skew");
-  assert.equal(await record(verifier, e, new Date(e.issuedAt.getTime() - SKEW_MS + 5_000)), true);
+  assert.equal(await record(verifier, e, await shifted(admin, e, -SKEW_S + 5)), true);
   await assertAttested(admin, e, "dentro del skew");
 
   // (f) se mantiene el rechazo de auth_time futuro (mas alla del skew).
@@ -129,6 +132,13 @@ pgTest("TEST-CNS-1394 pg: record_assertion exige reautenticacion fresca (auth_ti
   await assertRejected(admin, f, "futuro");
 
   // (g) el rechazo es definitivo: la misma solicitud no se reabre con un auth_time valido (sin replay).
-  assert.equal(await record(verifier, a, new Date(a.issuedAt.getTime() + 1_000)), false);
+  assert.equal(await record(verifier, a, await shifted(admin, a, 1)), false);
   assert.equal((await admin.query("SELECT 1 FROM platform.grant_assertion WHERE exchange_ref = $1", [a.exchangeRef])).rowCount, 1);
+
+  // (h) reintento: tras el rechazo el nonce sigue vigente; un exchange NUEVO sobre el mismo nonce con auth_time fresco lo atesta.
+  const retryRef = (await call<{ r: string | null }>(platform, a.principal, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, 60) AS r", [a.nonceHash, `code-${randomUUID()}`, PKCE]))[0]?.r;
+  assert.ok(typeof retryRef === "string" && retryRef !== a.exchangeRef, "nuevo exchange para el mismo nonce");
+  assert.ok((await claimOwn(verifier, a.principal)).includes(retryRef!), "el verifier toma el reintento");
+  assert.equal(await record(verifier, { ...a, exchangeRef: retryRef! }, await shifted(admin, a, 1)), true);
+  await assertAttested(admin, { ...a, exchangeRef: retryRef! }, "reintento fresco");
 });

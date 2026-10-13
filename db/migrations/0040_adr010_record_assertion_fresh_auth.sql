@@ -31,6 +31,7 @@ DECLARE
   c_hex      constant text := '^[0-9a-f]{64}$';
   -- Tolerancia de reloj: la misma que ya usaba esta funcion para auth_time futuro (2 min = MAX_CLOCK_SKEW_SECONDS de id-token.ts). Valor no aprobado por Carlos: ver cabecera.
   c_skew     constant interval := interval '2 minutes';
+  -- c_skew debe ser <= skew del verifier TS (DEFAULT_CLOCK_SKEW_SECONDS = 30 s): hoy es MAS laxo (F-PR6-07); cerrar antes de cualquier entorno no LOCAL.
   v_ex       platform.oidc_exchange%ROWTYPE;
   v_found    boolean := false;
   v_reason   text := NULL;
