@@ -21,6 +21,12 @@ const GUARD_SQLSTATES: ReadonlyMap<string, DomainErrorCode> = new Map([
   ["RV005", "ERR-RV-18"],
   ["RV006", "ERR-RV-20"],
   ["RV007", "ERR-RV-05"],
+  // ADR-010 PR-5b (0038): guards de RightsCase.
+  ["RC001", "ERR-RC-01"],
+  ["RC002", "ERR-RC-02"],
+  ["RC003", "ERR-RC-03"],
+  ["RC009", "ERR-RC-09"],
+  ["RC010", "ERR-CM-10"],
 ]);
 
 export function mapTransitionError(error: unknown): unknown {

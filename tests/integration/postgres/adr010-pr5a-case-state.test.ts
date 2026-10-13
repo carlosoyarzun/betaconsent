@@ -192,13 +192,14 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     "SELECT p.proname AS n, pg_get_userbyid(p.proowner) AS o, p.prosecdef AS d FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' ORDER BY 1",
   )).rows;
   assert.deepEqual(fns.map((f) => f.n), [
-    "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "canonical_json", "confirm_revocation", "cosign_case_confirmation",
-    "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "mark_downstream_emitted", "propose_case_verification", "record_case_confirmation",
-    "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard", "revoke_with_recovery_link", "seed_local_revocation",
-    "seed_local_revoke_decision", "verify_revocation_otp", "withdraw_case_verification_proposal", "withdraw_revocation",
-  ]);
+    "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
+    "cosign_case_confirmation", "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
+    "propose_case_verification", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
+    "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_revoke_decision", "seed_local_rights_case", "verify_revocation_otp",
+    "withdraw_case_verification_proposal", "withdraw_revocation",
+  ]); // ADR-010 PR-5b (0038) agrega las funciones de RightsCase
   assert.ok(fns.every((f) => f.o === "transition_owner"));
-  assert.deepEqual(fns.filter((f) => !f.d).map((f) => f.n), ["canonical_json", "revocation_transition_guard"]);
+  assert.deepEqual(fns.filter((f) => !f.d).map((f) => f.n), ["canonical_json", "revocation_transition_guard", "rights_case_transition_guard"]);
   // GRD-CM-15 / PR-5a: EXECUTE exacto de las funciones de transicion para runtime (app_rw interino; worker solo SYSTEM); platform_rw e integrity_verifier ninguna.
   const ex = async (role: string, fn: string): Promise<boolean> =>
     (await admin.query<{ x: boolean }>("SELECT has_function_privilege($1, p.oid, 'EXECUTE') AS x FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = $2", [role, fn])).rows[0]?.x ?? false;
@@ -207,7 +208,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     assert.equal(await ex("worker", fn), false, `worker ${fn}`);
     assert.equal(await ex("app_rw", fn), true, `app_rw ${fn}`);
   }
-  for (const fn of ["ledger_append", "canonical_json", "lock_revocation", "revocation_transition_guard"]) {
+  for (const fn of ["ledger_append", "canonical_json", "lock_revocation", "revocation_transition_guard", "lock_rights_case", "rights_case_transition_guard"]) {
     for (const role of ["app_rw", "worker", "platform_rw", "integrity_verifier"]) assert.equal(await ex(role, fn), false, `${role} ${fn}`);
   }
   for (const role of ["platform_rw", "integrity_verifier"]) assert.equal(await ex(role, "apply_revocation"), false, role);

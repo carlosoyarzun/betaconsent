@@ -91,6 +91,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     "outbox.outbox_transition_insert:INSERT", "outbox.outbox_transition_select:SELECT",
     "recovery_token.recovery_token_transition_select:SELECT", "recovery_token.recovery_token_transition_update:UPDATE",
     "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
+    "rights_case.rights_case_transition_insert:INSERT", "rights_case.rights_case_transition_select:SELECT", "rights_case.rights_case_transition_update:UPDATE", // 0038 (PR-5b)
   ]);
   assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["prior_steps_complete", "purposes", "receipt_ref", "state", "steps_recorded"]);
   // ADR-010 PR-5a (INV-RV-12, F-A10-01): app_rw ya no escribe app.revocation (ni INSERT ni UPDATE); solo transition_owner via case_state.*.

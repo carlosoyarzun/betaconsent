@@ -25,6 +25,14 @@ export const rightsCaseOpenedPayload = (label: string): Record<string, unknown> 
   initiatedVia: "DECISION_MAKER",
 });
 
+/**
+ * ADR-010 PR-5b (INV-DBR-07): app_rw ya no escribe en el ledger eventos de Revocation/RightsCase ni CONSENT_REVOKED (los escribe
+ * case_state.ledger_append). Los tests de MECANICA genérica del ledger (cadena, secuencia, dedupe, aislamiento) usan el agregado `Invitation`
+ * (tipos sin restriccion de escritura); estos son sus payloads mínimos válidos.
+ */
+export const invitationRefPayload = (label: string): Record<string, unknown> => ({ invitationRef: fixtureUuid(`inv:${label}`) });
+export const invitationCancelledPayload = (label: string): Record<string, unknown> => ({ ...invitationRefPayload(label), reasonCode: "INVITER_WITHDRAWN" });
+
 /** Payload válido para el eventType de revocación dado (tests de mecánica del ledger: cadena, secuencia, dedupe). */
 export function payloadFor(eventType: string, label = "default"): Record<string, unknown> {
   switch (eventType) {
@@ -34,6 +42,11 @@ export function payloadFor(eventType: string, label = "default"): Record<string,
       return revocationVerifiedPayload(label);
     case "REVOCATION_CONFIRMED":
       return { revocationRef: fixtureUuid(`rev:${label}`) };
+    case "INVITATION_OPENED":
+    case "INVITATION_EXPIRED":
+      return invitationRefPayload(label);
+    case "INVITATION_CANCELLED":
+      return invitationCancelledPayload(label);
     default:
       return {}; // tipo sin fixture (p. ej. fuera de la lista blanca: el append falla por vocabulario antes de validar payload)
   }

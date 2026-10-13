@@ -2,7 +2,7 @@
 // por tenant, recomputacion y lista blanca), common.spec.yaml ledgerEnvelope. Suite de contrato
 // compartida memoria/Postgres sobre LedgerPort. TEST-CNS-910 y TEST-CNS-911. Solo datos sinteticos.
 
-import { payloadFor, revocationRequestedPayload } from "../ledger-payload-fixtures.ts";
+import { payloadFor, invitationRefPayload } from "../ledger-payload-fixtures.ts";
 import assert from "node:assert/strict";
 
 import {
@@ -18,14 +18,14 @@ import type { RegisterContractTest } from "./ledger-outbox-tx.contract.ts";
 
 function event(tenantId: string, aggregateId: string, extra: Partial<LedgerEventInput> = {}): LedgerEventInput {
   return {
-    eventType: "REVOCATION_REQUESTED",
+    eventType: "INVITATION_OPENED",
     tenantId,
-    aggregateType: "Revocation",
+    aggregateType: "Invitation",
     aggregateId,
     actorType: "HUMAN",
     expectedSequence: 0,
     ...extra,
-    payload: extra.payload ?? payloadFor(extra.eventType ?? "REVOCATION_REQUESTED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
+    payload: extra.payload ?? payloadFor(extra.eventType ?? "INVITATION_OPENED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
   };
 }
 
@@ -41,11 +41,11 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
       const agg2 = fixtureUuid("agg910-2");
       const idemKey = "idem-910";
 
-      const canonPayload = revocationRequestedPayload("910-canon");
+      const canonPayload = invitationRefPayload("910-canon");
       const records = await h.inTenant(ta, async ({ ledger }) => {
         const a = await ledger.append(event(ta, agg1, { payload: canonPayload, idempotencyKey: idemKey }));
         const b = await ledger.append(event(ta, agg2, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec910") }));
-        const c = await ledger.append(event(ta, agg1, { eventType: "REVOCATION_CONFIRMED", expectedSequence: 1 }));
+        const c = await ledger.append(event(ta, agg1, { eventType: "INVITATION_EXPIRED", expectedSequence: 1 }));
         const dup = await ledger.append(event(ta, agg1, { payload: canonPayload, idempotencyKey: idemKey }));
         return { a, b, c, dup };
       });
@@ -73,10 +73,10 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
         computeEventHash({
           tenantId: ta,
           chainSeq: 1,
-          aggregateType: "Revocation",
+          aggregateType: "Invitation",
           aggregateId: agg1,
           sequence: 1,
-          eventType: "REVOCATION_REQUESTED",
+          eventType: "INVITATION_OPENED",
           actorType: "HUMAN",
           actorRole: null,
           recordedByRef: null,
@@ -104,7 +104,7 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
       const agg = fixtureUuid("agg911");
       await h.inTenant(t, async ({ ledger }) => {
         await ledger.append(event(t, agg));
-        for (const bad of ["consent.revoked", "revocation_requested", "FOREIGN_UNIT_EVENT", "", "REVOCATION_REQUESTED "]) {
+        for (const bad of ["consent.revoked", "revocation_requested", "FOREIGN_UNIT_EVENT", "", "INVITATION_OPENED "]) {
           await assert.rejects(
             () => ledger.append(event(t, agg, { eventType: bad, expectedSequence: 1 })),
             (e: unknown) => e instanceof LedgerVocabularyViolationError,
@@ -112,7 +112,7 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
           );
         }
         assert.equal(await ledger.currentSequence(t, agg), 1, "nada escrito por los rechazos");
-        const next = await ledger.append(event(t, agg, { eventType: "REVOCATION_VERIFIED", expectedSequence: 1 }));
+        const next = await ledger.append(event(t, agg, { eventType: "INVITATION_CANCELLED", expectedSequence: 1 }));
         assert.equal(next.chainSeq, 2, "la cadena no avanzo con los rechazos");
         assert.deepEqual(await verifyLedgerChain(ledger, t), { ok: true, verified: 2 });
       });

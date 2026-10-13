@@ -23,6 +23,8 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0030_ledger_drop_transitional_security_events.sql": ["set-role"],
   // 0037 (ADR-010 PR-5a): GRANT de SELECT/INSERT y policies por tenant sobre integrity.audit_event para transition_owner (DDL sobre integrity.*, antes de PR-7).
   "db/migrations/0037_adr010_case_state_revocation.sql": ["set-role"],
+  // 0038 (ADR-010 PR-5b): ALTER POLICY de INSERT de app_rw sobre integrity.audit_event (excluye Revocation/RightsCase/CONSENT_REVOKED, INV-DBR-07; DDL sobre integrity.*, antes de PR-7).
+  "db/migrations/0038_adr010_case_state_rights_case.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };
@@ -55,8 +57,11 @@ const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
 const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
 const M0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
 const M0037 = "db/migrations/0037_adr010_case_state_revocation.sql";
+const M0038 = "db/migrations/0038_adr010_case_state_rights_case.sql";
 /** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
 const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
+/** ADR-010 PR-5b: TEST-CNS-1381 asume transition_owner (SET LOCAL ROLE) para probar el trigger TRG-RC-01 por efecto y la policy que protege los terminales. */
+const T5B = "tests/integration/postgres/adr010-pr5b-rights-case.test.ts";
 /** ADR-010 PR-4: fixture LOCAL sintetico del bootstrap del primer PLATFORM (membership_owner), patron TEST-CNS-879. Solo LOCAL; STAFF/datos reales: ceremonia PR-7. */
 const FIX_PLATFORM = "db/fixtures/local/0002_platform_bootstrap.sql";
 export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Record<string, readonly UsageKind[]>>>> = {
@@ -68,8 +73,9 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"] },
   // 0037 (PR-5a): case_state_owner crea el esquema case_state y le da USAGE/CREATE temporal a transition_owner; transition_owner crea las funciones
   // de transicion (SET LOCAL ROLE). Sin otros caminos: PR-5b y PR-7 amplian esta allowlist con revision (CODEOWNERS).
-  case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"] },
-  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [T5A]: ["set-role"] },
+  // 0038 (PR-5b): mismo patron (CREATE temporal de transition_owner sobre case_state; funciones de RightsCase como transition_owner).
+  case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"] },
+  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

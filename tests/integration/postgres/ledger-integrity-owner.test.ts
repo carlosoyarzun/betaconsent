@@ -77,7 +77,7 @@ pgTest("TEST-CNS-1231 pg: el ledger pertenece a integrity_owner, sin CREATE temp
   await app.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
   const insert = `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, idempotency_key_hash,
                                                        chain_seq, payload_hash, previous_event_hash, event_hash)
-                  VALUES ($1, 'Revocation', 'agg-1', $2::int, 'REVOCATION_REQUESTED', 'HUMAN', '{}'::jsonb, $3, $2::int::bigint,
+                  VALUES ($1, 'Invitation', 'agg-1', $2::int, 'INVITATION_OPENED', 'HUMAN', '{}'::jsonb, $3, $2::int::bigint,
                           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $4, $5)`;
   const zero = "0".repeat(64);
   await app.query(insert, [tenant, 1, "b".repeat(64), zero, "c".repeat(64)]);

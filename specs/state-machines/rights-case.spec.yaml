@@ -590,8 +590,8 @@ invariants:
 
 dbEnforcement:
   governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
-  status: PROPOSED
-  implementedIn: "ADR-010 PR-5"
+  status: "PARTIAL (ADR-010 PR-5b, db/migrations/0038): FN-RC-01, FN-RC-02, FN-RC-03 (con FN-RV-06), FN-RC-06 y TRG-RC-01 implementadas; pendientes FN-RC-04, FN-RC-05 (FN-RV-16) y FN-RC-07 porque el dominio no implementa RC0, RC2/RV0 ni R9 (F-A10-33). close_case: EXECUTE interino tambien para app_rw solo en LOCAL (F-A10-26), sin GRD-RC-10. GRD-RC-09, RC3 solo desde CONTACTING y RC3a: divergencias dominio-spec PENDIENTE de Carlos"
+  implementedIn: "ADR-010 PR-5b (0038)"
   conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
   functions:
     - {id: FN-RC-01, name: case_state.open_rights_case_bearer, transitions: [RC1], source: BEARER, executedBy: app_rw, owner: transition_owner}
@@ -606,7 +606,7 @@ dbEnforcement:
   trigger: {id: TRG-RC-01, name: case_state.rights_case_transition_guard, enable: ALWAYS, rules: ["grafo de transiciones del spec", "toda escritura exige current_user = transition_owner", "ningún timer cierra un caso (INV-RC-01)"]}
   revokedFromAppRw: ["INSERT app.rights_case (0010:164-165)", "UPDATE app.rights_case (0010:166)", "INSERT directo al ledger de eventos RightsCase (policy, INV-DBR-07)"]
   invariants:
-    - {id: INV-RC-07, statement: "Ningún rol de runtime escribe app.rights_case fuera de las funciones FN-RC-* (dueño transition_owner).", testIds: []}  # UNCOVERED en traceability hasta PR-5
+    - {id: INV-RC-07, statement: "Ningún rol de runtime escribe app.rights_case fuera de las funciones FN-RC-* (dueño transition_owner).", testIds: [TEST-CNS-1381, TEST-CNS-1382, TEST-CNS-1383, TEST-CNS-1385]}
 
 failClosed: >
   Ante cualquier fallo de guard del operador (sesión, grant, atestación, separación de funciones,

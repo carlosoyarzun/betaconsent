@@ -40,14 +40,15 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
     assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$'",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_'",
       [table],
     )).rows;
     // 0031 (SEC-CNS-021 PR-3): app.otp_verification suma SELECT y DELETE acotados por vencimiento TO security_event_owner; app_rw queda exactamente INSERT/SELECT/UPDATE.
     const ownerPolicies = policies.filter((p) => p.roles.includes("security_event_owner"));
     assert.deepEqual(ownerPolicies.map((p) => `${p.cmd}:${p.roles.join(",")}`).sort(), table === "otp_verification" ? ["DELETE:security_event_owner", "SELECT:security_event_owner"] : [], `${qname}: policies del dueno de la purga`);
     policies.splice(0, policies.length, ...policies.filter((p) => !p.roles.includes("security_event_owner")));
-    assert.deepEqual(policies.map((p) => p.cmd).sort(), ["INSERT", "SELECT", "UPDATE"], `${qname}: policies`);
+    // ADR-010 PR-5b: app_rw solo lee app.rights_case (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_*).
+    assert.deepEqual(policies.map((p) => p.cmd).sort(), table === "rights_case" ? ["SELECT"] : ["INSERT", "SELECT", "UPDATE"], `${qname}: policies`);
     for (const p of policies) {
       assert.deepEqual(p.roles, ["app_rw"], `${qname}: policy solo TO app_rw`);
       assert.match(`${p.qual ?? ""}${p.with_check ?? ""}`, /app\.current_tenant_id\(\)/);
@@ -89,7 +90,7 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
     "attempts", "channel_ref", "code_hash", "consumed_at", "expires_at", "last_sent_at", "parent_ref", "resend_count", "scope", "sends_in_window",
     "sends_window_start", "state", "tenant_id", "verification_ref",
   ]); // 0032: marcas de envio P-06 insertables; data_class y created_at los fija la base
-  assert.deepEqual(await columnsWith(admin, "app.rights_case", "app_rw", "UPDATE"), ["origin", "revocation_ref", "status"]);
+  assert.deepEqual(await columnsWith(admin, "app.rights_case", "app_rw", "UPDATE"), []); // ADR-010 PR-5b: app_rw solo lee app.rights_case
   assert.deepEqual(await columnsWith(admin, "app.enrollment", "app_rw", "UPDATE"), ["state"]);
   assert.deepEqual(await columnsWith(admin, "app.invitation", "app_rw", "INSERT"), [
     "bound_decision_maker_ref", "consent_version", "context_ref", "enrollment_ref", "expires_at", "invitation_ref", "participation_ref",
@@ -102,6 +103,7 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
 pgTest("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, enums, formas, longitudes) y SEC-CNS-015 P2-B: toda columna de contacto o destino solo admite email de dominio reservado", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const t = fixtureUuid("t839");
+  await admin.query("SELECT set_config('case_state.effect', 'seed_local_rights_case', false)"); // ADR-010 PR-5b: siembra LOCAL como superusuario (0038)
   const expectFail = async (sql: string, values: unknown[], constraint: string): Promise<void> => {
     await admin.query("SAVEPOINT s");
     await assert.rejects(
@@ -305,13 +307,13 @@ pgTest("TEST-CNS-841 pg: unicos parciales GRD-IV-01, GRD-OT-08, GRD-RC-02 y GRD-
 
     // GRD-RC-02: un caso no terminal por (cadena, decision).
     const caseSql = (ref: string, status: string): string =>
-      `INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, '${ref}', 'chain-841', 'dec-841', '${status}')`;
+      `SELECT case_state.seed_local_rights_case($1::uuid, '${ref}', 'chain-841', 'dec-841', '${status}', NULL, NULL)`; // ADR-010 PR-5b: siembra LOCAL
     await uow.withTenantTx(t, (tx) => tx.query(caseSql("c841-a", "OPEN"), [t]));
     await assert.rejects(
       () => uow.withTenantTx(t, (tx) => tx.query(caseSql("c841-b", "CONTACTING"), [t])),
       (e: unknown) => codeOf(e) === "23505" && constraintOf(e) === "rights_case_single_open_uq",
     );
-    await uow.withTenantTx(t, (tx) => tx.query("UPDATE app.rights_case SET status = 'RESOLVED' WHERE case_ref = 'c841-a'"));
+    await uow.withTenantTx(t, (tx) => tx.query(caseSql("c841-a", "RESOLVED"), [t]));
     await uow.withTenantTx(t, (tx) => tx.query(caseSql("c841-b", "OPEN"), [t]));
 
     // GRD-TC-03: un Enrollment ACTIVE por (sujeto, participacion).

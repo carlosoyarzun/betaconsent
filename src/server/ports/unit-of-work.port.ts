@@ -22,6 +22,7 @@ import type { SecurityEventPort } from "./security-event.port.ts";
 import type { RevocationRepositoryPort } from "./revocation-repository.port.ts";
 import type { RevocationTransitionsPort } from "./revocation-transitions.port.ts";
 import type { RightsCaseRepositoryPort } from "./rights-case-repository.port.ts";
+import type { RightsCaseTransitionsPort } from "./rights-case-transitions.port.ts";
 import type { TenantCatalogPort } from "./tenant-catalog.port.ts";
 
 /**
@@ -39,6 +40,9 @@ export interface TenantTxPorts {
   readonly invitationRepo: InvitationRepositoryPort;
   readonly otpRepo: OtpVerificationRepositoryPort;
   readonly rightsCaseRepo: RightsCaseRepositoryPort;
+  /** ADR-010 PR-5b: escritura de las transiciones del RightsCase por funciones de la base (Postgres). Ausente en in-memory: el dominio usa la
+   * ruta legacy `rightsCaseRepo.save` + `ledger.append` (mismos eventos y estados). */
+  readonly rightsCaseTransitions?: RightsCaseTransitionsPort;
   readonly enrollmentRepo: EnrollmentRepositoryPort;
   readonly ledger: LedgerPort;
   readonly outbox: OutboxPort;

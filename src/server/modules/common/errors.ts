@@ -14,6 +14,8 @@ export type DomainErrorCode =
   | "ERR-CM-12" // GUARD_EVALUATOR_UNAVAILABLE (política/parámetro requerido sin valor: fail-closed)
   | "ERR-TC-03" // ENROLLMENT_ALREADY_ACTIVE (GRD-TC-03)
   | "ERR-RC-01" // GRD-RC-07 onFail (origin != CHANNEL_UNREACHABLE) — respuesta uniforme sin evento
+  | "ERR-RC-02" // CASE_INPUT_REJECTED (GRD-RC-04 onFail: origen no admitido para la fuente BEARER) — respuesta uniforme, nada persistido
+  | "ERR-RC-03" // CASE_CLOSE_PRECONDITION_FAILED (GRD-RC-09 onFail) — rechazo; el caso sigue abierto
   | "ERR-RC-09" // CASE_NOT_BOUND_TO_HANDLE — respuesta uniforme sin efecto
   | "ERR-RC-10" // GRD-RC-15 onFail (ROSTER_INSUFFICIENT) — dotación <4 personas o reutilización de rol
   | "ERR-RV-02" // CHAIN_NOT_GRANTED (GRD-RV-02 onFail) — respuesta uniforme, sin evento

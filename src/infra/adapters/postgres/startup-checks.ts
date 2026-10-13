@@ -172,7 +172,7 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 }
 
 /**
- * ADR-010 PR-5a (F-A10-26, mitigacion): en IT0 el EXECUTE de las funciones de operador (FN-RV-07..11), SYSTEM (FN-RV-12..15) y de siembra de
+ * ADR-010 PR-5a (F-A10-26, mitigacion): en IT0 el EXECUTE de las funciones de operador (FN-RV-07..11, FN-RC-06 close_case), SYSTEM (FN-RV-12..15) y de siembra de
  * `case_state` se concede tambien a app_rw porque el codigo corre en el proceso web (entrypoints worker/platform: PR-6). Ese interino solo es
  * admisible en LOCAL/CI: fuera de LOCAL el proceso NO arranca si su rol puede ejecutarlas (salvo `worker` y sus funciones SYSTEM). Fail-closed.
  */
@@ -203,6 +203,9 @@ const INTERIM_EXECUTE_FUNCTIONS: readonly string[] = [
   "cosign_case_confirmation",
   "seed_local_revocation",
   "seed_local_revoke_decision",
+  // ADR-010 PR-5b (0038): cierre del caso (FN-RC-06, operador) y siembra LOCAL del contrato `save` de rights_case.
+  "close_case",
+  "seed_local_rights_case",
 ];
 
 /**
