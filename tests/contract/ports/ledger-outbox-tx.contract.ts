@@ -3,7 +3,7 @@
 // INV-CM-01, INV-CM-02/INV-3. Suite de contrato compartida memoria/Postgres para Ledger y Outbox
 // dentro de una unidad de trabajo de tenant. TEST-CNS-780..786. Solo datos sinteticos.
 
-import { payloadFor, revocationRequestedPayload } from "../ledger-payload-fixtures.ts";
+import { payloadFor, invitationRefPayload } from "../ledger-payload-fixtures.ts";
 import assert from "node:assert/strict";
 
 import { LedgerSequenceConflictError } from "../../../src/server/ports/ledger.port.ts";
@@ -27,14 +27,14 @@ export type RegisterContractTest = (name: string, body: (h: LedgerOutboxHarness)
 
 function event(tenantId: string, aggregateId: string, extra: Partial<LedgerEventInput> = {}): LedgerEventInput {
   return {
-    eventType: "REVOCATION_REQUESTED",
+    eventType: "INVITATION_OPENED",
     tenantId,
-    aggregateType: "Revocation",
+    aggregateType: "Invitation",
     aggregateId,
     actorType: "HUMAN",
     expectedSequence: 0,
     ...extra,
-    payload: extra.payload ?? payloadFor(extra.eventType ?? "REVOCATION_REQUESTED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
+    payload: extra.payload ?? payloadFor(extra.eventType ?? "INVITATION_OPENED", `${aggregateId}:${extra.expectedSequence ?? 0}`),
   };
 }
 
@@ -58,9 +58,9 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     const agg = fixtureUuid("agg780");
     const records = await h.inTenant(t, async ({ ledger }) => {
       const a = await ledger.append(
-        event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: revocationRequestedPayload("780") }),
+        event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: invitationRefPayload("780") }),
       );
-      const b = await ledger.append(event(t, agg, { eventType: "REVOCATION_CONFIRMED", expectedSequence: 1 }));
+      const b = await ledger.append(event(t, agg, { eventType: "INVITATION_EXPIRED", expectedSequence: 1 }));
       return [a, b];
     });
     assert.deepEqual(records.map((r) => r.sequence), [1, 2]);
@@ -70,11 +70,11 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     assert.equal(first?.environment, "LOCAL");
     assert.ok(first?.occurredAt instanceof Date);
 
-    const listed = await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Revocation", agg));
-    assert.deepEqual(listed.map((r) => [r.sequence, r.eventType]), [[1, "REVOCATION_REQUESTED"], [2, "REVOCATION_CONFIRMED"]]);
+    const listed = await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Invitation", agg));
+    assert.deepEqual(listed.map((r) => [r.sequence, r.eventType]), [[1, "INVITATION_OPENED"], [2, "INVITATION_EXPIRED"]]);
     assert.equal(listed[0]?.actorRole, "UNVERIFIED_BEARER");
     assert.equal(listed[0]?.recordedByRef, fixtureUuid("rec780"));
-    assert.deepEqual(listed[0]?.payload, revocationRequestedPayload("780"));
+    assert.deepEqual(listed[0]?.payload, invitationRefPayload("780"));
     assert.equal("cosignedByRef" in (listed[1] ?? {}), false, "los opcionales ausentes no aparecen");
   });
 
@@ -117,7 +117,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
         () => ledger.append(event(t, agg, { expectedSequence: 5 })),
         (e: unknown) => e instanceof LedgerSequenceConflictError && e.expectedSequence === 5 && e.actualSequence === 2,
       );
-      assert.equal((await ledger.listByAggregate(t, "Revocation", agg)).length, 2, "ni el conflicto ni el replay escribieron");
+      assert.equal((await ledger.listByAggregate(t, "Invitation", agg)).length, 2, "ni el conflicto ni el replay escribieron");
     });
   });
 
@@ -125,7 +125,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     const t = fixtureUuid("t783");
     const agg = fixtureUuid("agg783");
     const run = (label: string) =>
-      h.inTenant(t, async ({ ledger }) => ledger.append(event(t, agg, { expectedSequence: 0, payload: revocationRequestedPayload(label) }))).then(
+      h.inTenant(t, async ({ ledger }) => ledger.append(event(t, agg, { expectedSequence: 0, payload: invitationRefPayload(label) }))).then(
         (r) => ({ ok: true as const, sequence: r.sequence }),
         (e: unknown) => ({ ok: false as const, error: e }),
       );
@@ -133,7 +133,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     assert.equal(results.filter((r) => r.ok).length, 1);
     const loser = results.find((r) => !r.ok);
     assert.ok(loser && !loser.ok && loser.error instanceof LedgerSequenceConflictError);
-    const listed = await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Revocation", agg));
+    const listed = await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Invitation", agg));
     assert.deepEqual(listed.map((r) => r.sequence), [1]);
   });
 
@@ -169,13 +169,13 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       await outbox.enqueue(outboxInput(ta, r));
     });
     await h.inTenant(tb, async ({ ledger }) => {
-      assert.equal((await ledger.listByAggregate(ta, "Revocation", agg)).length, 0, "ni pidiendo el tenant de A");
-      assert.equal((await ledger.listByAggregate(tb, "Revocation", agg)).length, 0);
+      assert.equal((await ledger.listByAggregate(ta, "Invitation", agg)).length, 0, "ni pidiendo el tenant de A");
+      assert.equal((await ledger.listByAggregate(tb, "Invitation", agg)).length, 0);
     });
     // Cada rechazo en su propia unidad (en Postgres el error aborta la transaccion).
     await assert.rejects(() => h.inTenant(tb, ({ ledger }) => ledger.append(event(ta, agg))));
     await assert.rejects(() => h.inTenant(tb, ({ outbox }) => outbox.enqueue(outboxInput(ta, fixtureUuid("rev785-x")))));
-    assert.equal((await h.inTenant(ta, ({ ledger }) => ledger.listByAggregate(ta, "Revocation", agg))).length, 1);
+    assert.equal((await h.inTenant(ta, ({ ledger }) => ledger.listByAggregate(ta, "Invitation", agg))).length, 1);
     // El rechazo de B no dejo un evento 'rev785-x' en A: encolar esa key en A crea un registro nuevo (no dedupe).
     const fresh = await h.inTenant(ta, ({ outbox }) => outbox.enqueue(outboxInput(ta, fixtureUuid("rev785-x"))));
     assert.equal(fresh.status, "PENDING");
@@ -195,7 +195,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
         }),
       (e: unknown) => e === boom,
     );
-    assert.equal((await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Revocation", agg))).length, 0);
+    assert.equal((await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Invitation", agg))).length, 0);
     const ok = await h.inTenant(t, async ({ ledger, outbox }) => {
       const rec = await ledger.append(event(t, agg));
       const enq = await outbox.enqueue(outboxInput(t, r));
