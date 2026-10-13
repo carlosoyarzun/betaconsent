@@ -141,10 +141,13 @@ DECLARE
   v_ev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'confirm_case_return', true);
-  v_case := case_state.lock_rights_case(p_case_ref, p_expected_sequence);
+  -- Idempotente ANTES del control de secuencia: un RC2u concurrente que esperaba el lock y ve CONTACTING converge sin conflicto (TEST-CNS-847).
+  v_case := case_state.lock_rights_case(p_case_ref);
   IF v_case.status = 'CONTACTING' THEN
-    RETURN pg_catalog.jsonb_build_object('sequence', p_expected_sequence, 'changed', false);
+    RETURN pg_catalog.jsonb_build_object('sequence', COALESCE((SELECT pg_catalog.max(e.sequence) FROM integrity.audit_event e
+                                                                WHERE e.tenant_id = v_case.tenant_id AND e.aggregate_id = p_case_ref), 0), 'changed', false);
   END IF;
+  PERFORM case_state.assert_sequence(p_case_ref, p_expected_sequence);
   IF v_case.status <> 'OPEN' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF; -- ERR-CM-06
   IF v_case.origin IS DISTINCT FROM 'CHANNEL_UNREACHABLE' THEN
     RAISE EXCEPTION 'RC2u solo con origin CHANNEL_UNREACHABLE' USING ERRCODE = 'RC001'; -- ERR-RC-01 uniforme (GRD-RC-07)
@@ -244,7 +247,7 @@ BEGIN
 END
 $fn$;
 
--- Siembra SOLO LOCAL (contrato `save` del puerto, fixtures de dev y tests). Falla fuera de LOCAL. Upsert por (tenant, case_ref).
+-- Siembra SOLO LOCAL (contrato `save` del puerto, fixtures de dev y tests). Falla fuera de LOCAL. Upsert por (tenant, case_ref), salvo terminales.
 CREATE FUNCTION case_state.seed_local_rights_case(
   p_tenant_id uuid, p_case_ref text, p_chain_ref text, p_revoked_decision_ref text, p_status text, p_revocation_ref text, p_origin text) RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER
@@ -257,6 +260,10 @@ BEGIN
   IF v_tenant IS NULL OR p_tenant_id IS DISTINCT FROM v_tenant THEN RAISE EXCEPTION 'tenant distinto del de la tx' USING ERRCODE = '42501'; END IF;
   IF ops.catalog_environment() IS DISTINCT FROM 'LOCAL' THEN
     RAISE EXCEPTION 'seed_local_rights_case solo existe en LOCAL' USING ERRCODE = '42501';
+  END IF;
+  -- Un caso terminal es inmutable (policy de UPDATE y trigger): la siembra sobre uno existente no hace nada (sin upsert sobre terminales).
+  IF EXISTS (SELECT 1 FROM app.rights_case c WHERE c.tenant_id = v_tenant AND c.case_ref = p_case_ref AND c.status IN ('RESOLVED', 'WITHDRAWN')) THEN
+    RETURN;
   END IF;
   INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, revocation_ref, origin)
   VALUES (v_tenant, p_case_ref, p_chain_ref, p_revoked_decision_ref, p_status, p_revocation_ref, p_origin)
