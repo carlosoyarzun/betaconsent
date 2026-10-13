@@ -445,9 +445,11 @@ pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggr
   };
   const types = async (x: string): Promise<string[]> =>
     (await admin.query<{ t: string }>("SELECT DISTINCT aggregate_type AS t FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 ORDER BY 1", [T, x])).rows.map((r) => r.t);
-  const waiting = async (): Promise<void> => {
+  const pidOf = async (c: import("pg").Client): Promise<number> => Number((await c.query<{ p: number }>("SELECT pg_backend_pid() AS p")).rows[0]?.p);
+  // Espera a que ESA conexion (pid) quede bloqueada en el advisory lock del ledger del tenant, no cualquier sesion.
+  const waiting = async (pid: number): Promise<void> => {
     for (let i = 0; i < 100; i += 1) {
-      const r = await admin.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()");
+      const r = await admin.query("SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock' AND wait_event = 'advisory'", [pid]);
       if (r.rowCount && r.rowCount > 0) return;
       await new Promise((res) => setTimeout(res, 50));
     }
@@ -459,9 +461,10 @@ pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggr
     const X = fixtureUuid("x1391-a");
     const rc = await open();
     const inv = await open();
+    const invPid = await pidOf(inv); // antes de la sentencia pendiente: un Client de pg encola las consultas
     await rc.query(rc3("c-a", "ch1391", D, X));
     const pending = inv.query(invite(X, 9101)).then(() => "ok", (e: unknown) => codeOf(e));
-    await waiting();
+    await waiting(invPid);
     await rc.query("COMMIT");
     assert.equal(await pending, "23000");
     await inv.query("ROLLBACK");
@@ -472,12 +475,13 @@ pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggr
     const X = fixtureUuid("x1391-b");
     const inv = await open();
     const rc = await open();
+    const rcPid = await pidOf(rc);
     await inv.query(invite(X, 9102));
     const pending = rc.query(rc3("c-b", "ch1391-b", fixtureUuid("d1391-b"), X)).then(() => "ok", (e: unknown) => codeOf(e));
-    await waiting();
+    await waiting(rcPid);
     await inv.query("COMMIT");
-    const outcome = await pending;
-    assert.ok(outcome === "RV409" || outcome === "23000", `RC3 tras el commit de Invitation:X: ${String(outcome)}`);
+    // Determinista: ledger_append comprueba la secuencia (ya hay un evento de X) antes de insertar, asi que falla con RV409 exacto.
+    assert.equal(await pending, "RV409");
     await rc.query("ROLLBACK");
     assert.deepEqual(await types(X), ["Invitation"]);
   }
