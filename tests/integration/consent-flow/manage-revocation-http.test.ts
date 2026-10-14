@@ -378,7 +378,7 @@ test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma 
 
     const manageEntry = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     const entryHtml = await manageEntry.text();
-    assert.match(entryHtml, /id="start-verify-btn"[^<]*<\/button>\s*<p><a href="mailto:ayuda@example\.invalid"/);
+    assert.match(entryHtml, /id="start-verify-btn"[^<]*<\/button>\s*<\/section>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
 
     const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
     sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
@@ -389,14 +389,14 @@ test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma 
 
     const manageStatus = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     const statusHtml = await manageStatus.text();
-    assert.match(statusHtml, /id="start-revocation-btn"[^<]*<\/button>\s*<p><a href="mailto:ayuda@example\.invalid"/);
+    assert.match(statusHtml, /id="start-revocation-btn"[^<]*<\/button>\s*<\/div>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
 
     const confirmSessionCookie = await bringToRevocationConfirmSession(baseUrl, ports, "mgmt-token-588");
     const confirmPage = await fetch(`${baseUrl}/manage/revocation/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${confirmSessionCookie}` } });
     const confirmHtml = await confirmPage.text();
     // La ayuda faltaba por completo en confirmar-retiro; ahora está presente y apilada bajo
     // "Cancelar solicitud de retiro" (no en la misma línea que ningún botón).
-    assert.match(confirmHtml, /id="withdraw-btn"[^<]*<\/button>\s*<p><a href="mailto:ayuda@example\.invalid"/);
+    assert.match(confirmHtml, /id="withdraw-btn"[^<]*<\/button>\s*<\/div>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
