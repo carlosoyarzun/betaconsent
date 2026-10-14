@@ -866,6 +866,13 @@ paths:
       x-api-id: API-CNS-128
       tags: [bearer-decision]
       summary: I9 SUBJECT_MISMATCH_REPORTED por DecisionMaker verificado (→ CANCELLED)
+      description: |
+        Requiere una sesión VERIFICADA del DecisionMaker (post-V3: el OTP del scope DECISION ya se verificó y la sesión lleva el decisionMakerRef
+        ligado en I5); una sesión solo LANDING (sin OTP verificado) recibe 404 uniforme, igual que cualquier otro fallo. El servidor exige
+        invitation.state = VERIFIED y que el decisionMakerRef de la sesión sea el ligado a la invitación (GRD-IV-10, onFail ERR-IV-09, que el
+        borde traduce a 404 uniforme); repetir la llamada sobre una invitación ya CANCELLED por el mismo DecisionMaker responde el mismo acuse
+        (idempotente por (invitationRef, reasonCode), un solo INVITATION_CANCELLED). Tras cancelar, la sesión pierde el decisionMakerRef y el
+        enlace de invitación deja de resolver (P-30). No toca ninguna ConsentDecision.
       x-governed-by: ["invitation.spec I9 (byReasonCode SUBJECT_MISMATCH_REPORTED)", "SM-CNS-001 §2 I9", "EXT-C / DEC-BR-004"]
       x-state-transition: {machine: Invitation, id: I9, from: VERIFIED, to: CANCELLED, reasonCode: SUBJECT_MISMATCH_REPORTED, note: "precondición verificado (EXT-C)"}
       x-route-class: ISSUANCE_DECISION
@@ -887,7 +894,7 @@ paths:
             schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
       responses:
         '200':
-          description: Acuse.
+          description: Acuse (la invitación quedó CANCELLED; sesión verificada requerida).
           content:
             application/json:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SubjectMismatchAck'}
