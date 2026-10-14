@@ -64,7 +64,7 @@ async function seedChain(uow: PgUnitOfWork, tenant: string, n: number): Promise<
   const agg = fixtureUuid(`agg-${tenant}`);
   await uow.inTenant(tenant, async ({ ledger }) => {
     for (let i = 0; i < n; i++) {
-      await ledger.append(ev(tenant, agg, { expectedSequence: i, eventType: i === 0 ? "INVITATION_OPENED" : "INVITATION_CANCELLED" }));
+      await ledger.append(ev(tenant, agg, { expectedSequence: i, eventType: "INVITATION_OPENED" }));
     }
   });
 }

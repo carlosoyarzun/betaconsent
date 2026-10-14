@@ -45,7 +45,7 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
       const records = await h.inTenant(ta, async ({ ledger }) => {
         const a = await ledger.append(event(ta, agg1, { payload: canonPayload, idempotencyKey: idemKey }));
         const b = await ledger.append(event(ta, agg2, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec910") }));
-        const c = await ledger.append(event(ta, agg1, { eventType: "INVITATION_EXPIRED", expectedSequence: 1 }));
+        const c = await ledger.append(event(ta, agg1, { eventType: "INVITATION_OPENED", expectedSequence: 1 }));
         const dup = await ledger.append(event(ta, agg1, { payload: canonPayload, idempotencyKey: idemKey }));
         return { a, b, c, dup };
       });
@@ -112,7 +112,7 @@ export function runLedgerChainContract(adapterName: string, register: RegisterCo
           );
         }
         assert.equal(await ledger.currentSequence(t, agg), 1, "nada escrito por los rechazos");
-        const next = await ledger.append(event(t, agg, { eventType: "INVITATION_CANCELLED", expectedSequence: 1 }));
+        const next = await ledger.append(event(t, agg, { eventType: "INVITATION_OPENED", expectedSequence: 1 }));
         assert.equal(next.chainSeq, 2, "la cadena no avanzo con los rechazos");
         assert.deepEqual(await verifyLedgerChain(ledger, t), { ok: true, verified: 2 });
       });
