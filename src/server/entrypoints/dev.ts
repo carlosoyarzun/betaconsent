@@ -52,6 +52,7 @@ import { createInMemorySubjectDirectory } from "../../infra/adapters/in-memory-s
 import { deriveStaffRosterCursorKey, loadStaffRosterCursorSecret } from "../modules/staff-roster/roster-cursor.ts";
 import { openPostgresStore, type PostgresStore } from "../../infra/adapters/postgres/store.ts";
 import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
+import { createInMemoryGuestMessageSink } from "../../infra/adapters/in-memory-guest-message-sink.adapter.ts";
 import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
 import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
@@ -211,9 +212,10 @@ const recoveryHandlePolicy = loadRecoveryHandlePolicyConfig(LOCAL_ONLY_DEV_RECOV
 // __Host-cns-m-handle que fijan GET /i/{token} y GET /m/{token} sin leer la BD.
 const invitationHandlePolicy = loadInvitationHandlePolicyConfig(LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY);
 const manageHandlePolicy = loadManageHandlePolicyConfig(LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY);
+const guestMessageSink = createInMemoryGuestMessageSink();
 const revocationPorts: RevocationFlowPorts = pgBundle
   ? pgBundle.revocationPorts
-  : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
+  : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo, ports.managementHandleStore);
 if (pgStore) {
   // Siembra del handle por la función SECURITY DEFINER tenant_resolve.register_handle (idempotente; el
   // tenant sale de app.current_tenant_id(); nunca BYPASSRLS).
@@ -290,14 +292,8 @@ const server = createConsentFlowHttpServer({
   // modo activo; los dos mensajes (comprobante y enlace) quedan en el sink LOCAL GET /__dev/message-sink (sin SMTP ni red).
   // El enlace del mensaje apunta a este mismo servidor local para poder abrirlo a mano.
   publicBaseUrl: `http://127.0.0.1:${port}`,
-  ...(pgStore
-    ? {
-        registerManagementHandle: (input: { readonly tenantId: string; readonly handle: string; readonly chainRef: string; readonly revokedDecisionRef: string }) =>
-          pgStore.uow.withTenantTx(input.tenantId, (tx) =>
-            registerTenantHandle(tx, { handle: input.handle, chainRef: input.chainRef, revokedDecisionRef: input.revokedDecisionRef }),
-          ),
-      }
-    : {}),
+  // P2-1: canal explícito (fail-closed fuera de LOCAL y con Postgres). LOCAL: sink en memoria, legible en /__dev/message-sink.
+  guestMessageChannel: guestMessageSink,
 });
 
 server.listen(port, "127.0.0.1", () => {

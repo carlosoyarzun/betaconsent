@@ -25,6 +25,7 @@ import { createPgEnrollmentRepository, ENROLLMENT_SINGLE_ACTIVE_UNIQUE } from ".
 import { createPgInvitationRepository, INVITATION_SINGLE_NON_TERMINAL_UNIQUE } from "./invitation.adapter.ts";
 import { createPgLedgerAdapter } from "./ledger.adapter.ts";
 import { createPgOtpBudgetAdapter } from "./otp-budget.adapter.ts";
+import { createPgManagementHandleRegistry } from "./tenant-handle.adapter.ts";
 import { createPgSecurityEventAdapter } from "./security-event.adapter.ts";
 import { createPgOtpVerificationRepository, OTP_SINGLE_ACTIVE_UNIQUE } from "./otp-verification.adapter.ts";
 import { createPgOutboxAdapter } from "./outbox.adapter.ts";
@@ -125,6 +126,7 @@ export function createPgTenantTxPorts(tx: TenantTx, idempotencyPolicy?: Idempote
     accessLog: createPgAccessLogAdapter(tx),
     securityEvents: createPgSecurityEventAdapter(tx),
     otpBudget: createPgOtpBudgetAdapter(tx),
+    managementHandles: createPgManagementHandleRegistry(tx),
   };
 }
 

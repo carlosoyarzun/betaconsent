@@ -243,6 +243,8 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     }
     participants.push(port);
   }
+  // C3: el registro del handle de gestión (opcional) también deshace con el journal.
+  if (isTxParticipant(ports.managementHandles)) participants.push(ports.managementHandles);
 
   async function run<T>(tenantId: TenantId, work: (tx: TenantTxPorts) => Promise<T>): Promise<T> {
     const journal: Undo[] = [];
@@ -263,6 +265,16 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
         accessLog: scopeAccessLog(ports.accessLog, tenantId),
         securityEvents: scopeSecurityEvents(ports.securityEvents, tenantId),
         otpBudget: scopeOtpBudget(ports.otpBudget, tenantId),
+        ...(ports.managementHandles
+          ? {
+              managementHandles: {
+                register: async (input) => {
+                  if (input.tenantId !== tenantId) throw new TenantScopeViolationError("managementHandles.register");
+                  return ports.managementHandles!.register(input);
+                },
+              },
+            }
+          : {}),
       });
     } catch (error) {
       for (let i = journal.length - 1; i >= 0; i--) journal[i]?.();

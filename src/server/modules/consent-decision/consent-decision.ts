@@ -10,7 +10,7 @@
 // revocación). Ver reporte de la tarea para el detalle de lo diferido.
 
 import { getServedConsentVersion } from "./served-consent-version.ts";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { DomainError } from "../common/errors.ts";
 import { assertActorRoleIn, assertRouteEligible, assertTenantConsistency } from "../common/guards.ts";
@@ -23,6 +23,8 @@ import type {
 } from "../../ports/consent-decision-repository.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
+import type { ManagementHandleRegistryPort } from "../../ports/management-handle.port.ts";
+import { hashTenantHandle } from "../../ports/tenant-handle.port.ts";
 import type { InvitationPorts } from "../invitation/invitation.ts";
 import { invitationPortsInTx, markInvitationCompletedTx, markInvitationDeclinedTx } from "../invitation/invitation.ts";
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
@@ -276,7 +278,38 @@ export function submitDecision(
   consentId: string,
   purposes: readonly PurposeDecision[],
 ): Promise<ConsentDecisionRecord> {
-  return inTx(ports, tenantId, (p) => submitDecisionTx(p, tenantId, actorRole, decisionMakerRef, consentId, purposes));
+  return inTx(ports, tenantId, async (p) => (await submitDecisionTx(p, tenantId, actorRole, decisionMakerRef, consentId, purposes, undefined)).decided);
+}
+
+export interface SubmitDecisionWithLinkResult {
+  readonly decided: ConsentDecisionRecord;
+  /** Handle en claro del enlace de gestión, solo si GRANTED y registrado en la MISMA tx (C3). El llamador lo entrega al canal ligado tras el
+   * commit y lo descarta; nunca a la respuesta HTTP, al ledger ni a logs. */
+  readonly managementHandle?: string;
+}
+
+/** C3/C5 como `submitDecision`, pero C3 además emite el enlace de gestión (revocation.spec managementLink: "issuedBy consent-decision C3, con el
+ * receipt"): el hash del handle se registra DENTRO de la tx del lote y RECEIPT_CREATED.managementLinkIssued refleja el resultado real. C5 (DECLINED)
+ * no emite enlace (consent-decision.spec C5). Si la unidad de trabajo no ofrece registro de handles, no se emite y managementLinkIssued=false. */
+export function submitDecisionIssuingLink(
+  ports: ConsentDecisionPorts,
+  tenantId: TenantId,
+  actorRole: ActorRole,
+  decisionMakerRef: string,
+  consentId: string,
+  purposes: readonly PurposeDecision[],
+): Promise<SubmitDecisionWithLinkResult> {
+  return ports.uow.inTenant(tenantId, (tx) =>
+    submitDecisionTx(
+      { ...ports, repo: tx.consentDecisionRepo, ledger: tx.ledger, invitation: invitationPortsInTx(ports.invitation, tx) },
+      tenantId,
+      actorRole,
+      decisionMakerRef,
+      consentId,
+      purposes,
+      tx.managementHandles,
+    ),
+  );
 }
 
 /** C3/C5 en UNA tx con lock de fila y base previa: los k eventos de la decision declaran base + k
@@ -288,7 +321,8 @@ async function submitDecisionTx(
   decisionMakerRef: string,
   consentId: string,
   purposes: readonly PurposeDecision[],
-): Promise<ConsentDecisionRecord> {
+  managementHandles: ManagementHandleRegistryPort | undefined,
+): Promise<SubmitDecisionWithLinkResult> {
   const base = await decisionSequence(ports, tenantId, consentId);
   const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
@@ -347,6 +381,9 @@ async function submitDecisionTx(
     });
   }
 
+  // C3 emite el enlace de gestión solo si GRANTED y hay registro en la tx (managementLinkIssued = hecho real).
+  const managementHandle = allGranted && managementHandles ? randomBytes(32).toString("base64url") : undefined;
+
   if (allGranted) {
     await seq.append({
       eventType: "CONSENT_GRANTED",
@@ -365,12 +402,20 @@ async function submitDecisionTx(
       aggregateId: consentId,
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
-      // managementLinkIssued: false es el valor factual de este slice IT0: el
-      // management_token nunca se emite todavía (x-scope-note, consent-flow.handler.ts).
-      payload: { receiptRef, managementLinkIssued: false },
+      // managementLinkIssued = resultado real: true solo si el handle se registra abajo, en esta misma tx.
+      payload: { receiptRef, managementLinkIssued: managementHandle !== undefined },
       idempotencyKey: `${consentId}:receipt`,
     });
     await markInvitationCompletedTx(ports.invitation, tenantId, found.invitationRef, consentId); // I6
+    if (managementHandle !== undefined && managementHandles) {
+      // Último paso del lote: si falla, TODO revierte (no existe GRANTED sin enlace registrado).
+      await managementHandles.register({
+        tenantId,
+        handleHash: hashTenantHandle(managementHandle),
+        chainRef: found.chainRef,
+        revokedDecisionRef: consentId,
+      });
+    }
   } else {
     await seq.append({
       eventType: "CONSENT_DECLINED",
@@ -397,5 +442,5 @@ async function submitDecisionTx(
     await markInvitationDeclinedTx(ports.invitation, tenantId, found.invitationRef, consentId); // I7
   }
 
-  return decided;
+  return { decided, ...(managementHandle !== undefined ? { managementHandle } : {}) };
 }

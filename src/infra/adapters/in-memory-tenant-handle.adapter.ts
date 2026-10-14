@@ -15,6 +15,8 @@ interface SeedHandle {
 export interface InMemoryTenantHandleAdapter extends TenantHandlePort {
   /** Emite (o reemplaza) el handle vigente de una cadena; el handle anterior deja de resolver. */
   issue(seed: SeedHandle): void;
+  /** C3 (puerto ManagementHandleRegistryPort): registra por HASH (el token en claro no llega). Devuelve el deshacer para el journal del UoW. */
+  issueByHash(seed: { readonly handleHash: string; readonly tenantId: string; readonly chainRef: string; readonly revokedDecisionRef: string }): () => void;
   /** Marca un handle existente como rotado (deja de resolver) sin emitir uno nuevo. */
   rotate(handle: string): void;
 }
@@ -45,6 +47,15 @@ export function createInMemoryTenantHandleAdapter(seeds: readonly SeedHandle[] =
     },
     async resolveByHash(handleHash: string): Promise<ResolvedHandle | null> {
       return byHandleHash.get(handleHash) ?? null;
+    },
+    issueByHash(seed): () => void {
+      const resolved: ResolvedHandle = { tenantId: seed.tenantId, chainRef: seed.chainRef, revokedDecisionRef: seed.revokedDecisionRef };
+      const previous = byHandleHash.get(seed.handleHash);
+      byHandleHash.set(seed.handleHash, resolved);
+      return () => {
+        if (previous) byHandleHash.set(seed.handleHash, previous);
+        else byHandleHash.delete(seed.handleHash);
+      };
     },
     issue(seed: SeedHandle): void {
       set(seed.handle, { tenantId: seed.tenantId, chainRef: seed.chainRef, revokedDecisionRef: seed.revokedDecisionRef });

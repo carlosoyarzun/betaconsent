@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import type { DecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const REL = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
@@ -22,10 +22,10 @@ test("TEST-CNS-1246: createDefaultConsentFlowPorts sin decisionMakerRefKey falla
 
 test("TEST-CNS-1247: createConsentFlowHttpServer sin clave (ni ports) no arranca; con claves explicitas si", () => {
   assert.throws(
-    () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, otpSecret: TEST_OTP_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }),
+    () => createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, otpSecret: TEST_OTP_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }),
     /obligatoria/,
   );
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     otpPolicy: OTP,
     relationshipConfig: REL,
@@ -43,5 +43,5 @@ test("TEST-CNS-1247: createConsentFlowHttpServer sin clave (ni ports) no arranca
 
 test("TEST-CNS-1248: ports inyectados sin decisionMakerRefKey hacen fallar el arranque del servidor", () => {
   const ports = { ...createDefaultConsentFlowPorts(OTP, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET), decisionMakerRefKey: undefined as unknown as DecisionMakerRefKey };
-  assert.throws(() => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, ports, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }), /decisionMakerRefKey es obligatoria/);
+  assert.throws(() => createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, ports, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }), /decisionMakerRefKey es obligatoria/);
 });

@@ -4,7 +4,7 @@
 // IT0), D-06 (POST /decision/subject-mismatch, API-CNS-128, I9), D-07 (consent-decision.spec C5:
 // DECLINED no emite enlace de gestión), D-01/F-STITCH-17 (sin recursos remotos), F-STITCH-03
 // (nada preseleccionado), sin descarga del comprobante. Datos sintéticos, example.invalid.
-// TEST-CNS-1401..TEST-CNS-1407 (traceability/test-matrix.csv).
+// TEST-CNS-1401..TEST-CNS-1407, 1412..1416 (traceability/test-matrix.csv).
 
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
@@ -21,7 +21,6 @@ import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/cons
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
-import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryGuestMessageSink } from "../../../src/infra/adapters/in-memory-guest-message-sink.adapter.ts";
 import { createInMemorySubjectDirectory } from "../../../src/infra/adapters/in-memory-subject-directory.adapter.ts";
 import { validateApiPayload, type ValidationResult } from "../../contract/schema-lite.ts";
@@ -49,25 +48,26 @@ interface Harness {
   readonly baseUrl: string;
   readonly ports: ConsentFlowPorts;
   readonly sink: ReturnType<typeof createInMemoryGuestMessageSink>;
+  readonly failures: string[];
   close(): Promise<void>;
 }
 
 /** Cablea el flujo del invitado v2 con un sink propio, el directorio sintético "Alumno de prueba 3" y
  * el mismo TenantHandle in-memory que resuelve GET /m/{token}. */
-function startServer(subjectRef: string): Promise<Harness> {
+function startServer(subjectRef: string, channelOverride?: { send(m: unknown): Promise<void> }): Promise<Harness> {
+  const failures: string[] = [];
   const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const revocationPorts = createDefaultRevocationFlowPorts(undefined, base.decision.ledger, base.decision.repo);
+  // El TenantHandle donde C3 registra el handle (misma tx) es el que resuelve GET /m/{token}.
+  const revocationPorts = createDefaultRevocationFlowPorts(undefined, base.decision.ledger, base.decision.repo, base.managementHandleStore);
   const sink = createInMemoryGuestMessageSink();
   const directory = createInMemorySubjectDirectory("LOCAL", [{ tenantId: TENANT_ID, subjectRef, label: "Alumno de prueba 3", participationRef: null }]);
   const ports: ConsentFlowPorts = {
     ...base,
     guest: {
-      messageChannel: sink,
+      messageChannel: (channelOverride as never) ?? sink,
       subjectDirectory: directory,
       publicBaseUrl: "https://consent.example.invalid",
-      registerManagementHandle: async (i) => {
-        (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({ handle: i.handle, tenantId: i.tenantId, chainRef: i.chainRef, revokedDecisionRef: i.revokedDecisionRef });
-      },
+      recordDeliveryFailure: (kind) => void failures.push(kind),
     },
   };
   const server: Server = createConsentFlowHttpServer({
@@ -81,7 +81,7 @@ function startServer(subjectRef: string): Promise<Harness> {
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
-      resolve({ baseUrl: `http://127.0.0.1:${address.port}`, ports, sink, close: () => new Promise((r) => server.close(() => r())) });
+      resolve({ baseUrl: `http://127.0.0.1:${address.port}`, ports, sink, failures, close: () => new Promise((r) => server.close(() => r())) });
     });
   });
 }
@@ -233,6 +233,8 @@ test("TEST-CNS-1403: decisión GRANTED deja dos mensajes aparte en el sink: comp
   try {
     const { session } = await bringToVerified(h, fixtureUuid("inv-1403"), subjectRef);
     const afterSteps = await completeSteps(h, session);
+    const decisionHtml = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
+    assert.match(decisionHtml, /id="state-granted"/);
     const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
     assert.equal(res.status, 200);
     const raw = await res.text();
@@ -266,7 +268,6 @@ test("TEST-CNS-1403: decisión GRANTED deja dos mensajes aparte en el sink: comp
     assert.equal(manage.status, 200);
 
     // La página /decision tras registrar no vuelca ni el token ni la ruta de gestión.
-    const decisionHtml = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
     assert.doesNotMatch(decisionHtml, /\/m\/[A-Za-z0-9_-]{20,}/);
     assert.doesNotMatch(decisionHtml, /Descargar|\.pdf|download|Copiar código/i);
     const decisionJs = await (await fetch(`${h.baseUrl}/assets/decision.js`)).text();
@@ -287,6 +288,7 @@ test("TEST-CNS-1404: decisión DECLINED emite solo el comprobante (sin mensaje n
   try {
     const { session } = await bringToVerified(h, fixtureUuid("inv-1404"), subjectRef);
     const afterSteps = await completeSteps(h, session);
+    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
     const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: DECLINE_ONE } });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string };
@@ -296,7 +298,6 @@ test("TEST-CNS-1404: decisión DECLINED emite solo el comprobante (sin mensaje n
     assert.doesNotMatch(h.sink.sent[0]?.html ?? "", /href=|\/m\//i);
     assert.match(h.sink.sent[0]?.html ?? "", /✕ No acepto/);
 
-    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
     const declined = html.match(/id="state-declined"[\s\S]*?id="state-mismatch"/)?.[0] ?? "";
     assert.ok(declined.length > 0);
     assert.doesNotMatch(declined, /enlace para gestionar|gestionarla o retirarla/);
@@ -391,6 +392,7 @@ test("TEST-CNS-1407: GET /__dev/message-sink existe solo en LOCAL (404 fuera de 
       config: { allowedOrigin: ALLOWED_ORIGIN },
       ports: base,
       ...(environment ? { environment } : {}),
+      guestMessageChannel: createInMemoryGuestMessageSink(),
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     try {
@@ -399,5 +401,137 @@ test("TEST-CNS-1407: GET /__dev/message-sink existe solo en LOCAL (404 fuera de 
     } finally {
       await new Promise((r) => server.close(() => r(undefined)));
     }
+  }
+});
+
+const LEDGER_AGG = "ConsentDecision";
+
+async function receiptEvents(h: Harness, consentId: string): Promise<Array<{ managementLinkIssued: boolean }>> {
+  const events = await h.ports.decision.ledger.listByAggregate(TENANT_ID, LEDGER_AGG, consentId);
+  return events.filter((e) => e.eventType === "RECEIPT_CREATED").map((e) => e.payload as { managementLinkIssued: boolean });
+}
+
+test("TEST-CNS-1412: el ledger dice la verdad: RECEIPT_CREATED.managementLinkIssued=true solo en GRANTED con el handle registrado en la misma tx (resuelve /m/{token}); false en DECLINED (P1-1, consent-decision C3/C5)", async () => {
+  const subjectRef = fixtureUuid("subject-1411");
+  const h = await startServer(subjectRef);
+  try {
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1411"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    const { consentId } = (await res.json()) as { consentId: string };
+    const [granted] = await receiptEvents(h, consentId);
+    assert.equal(granted?.managementLinkIssued, true);
+    // Hay exactamente un mensaje de enlace y su handle ya estaba registrado (C3, misma tx): resuelve.
+    const link = (h.sink.sent.find((m) => m.kind === "MANAGEMENT_LINK")?.text ?? "").match(/(\/m\/[A-Za-z0-9_-]{20,})/)?.[1];
+    assert.ok(link);
+    const redeemed = await fetch(`${h.baseUrl}${link}`, { redirect: "manual" });
+    const mHandle = allSetCookies(redeemed)[MANAGE_HANDLE_COOKIE_NAME];
+    assert.equal((await fetch(`${h.baseUrl}/manage`, { headers: { cookie: `${MANAGE_HANDLE_COOKIE_NAME}=${mHandle}` } })).status, 200);
+
+    const h2 = await startServer(fixtureUuid("subject-1411b"));
+    try {
+      const v2 = await bringToVerified(h2, fixtureUuid("inv-1411b"), fixtureUuid("subject-1411b"));
+      const steps2 = await completeSteps(h2, v2.session);
+      const r2 = await post(h2.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: steps2, body: { purposes: DECLINE_ONE } });
+      const { consentId: c2 } = (await r2.json()) as { consentId: string };
+      assert.equal((await receiptEvents(h2, c2))[0]?.managementLinkIssued, false);
+    } finally {
+      await h2.close();
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1413: si la entrega post-commit falla, la decisión sigue registrada y queda rastro explícito por tipo de mensaje (nunca silencio ni PII/token) (P1-1)", async () => {
+  const subjectRef = fixtureUuid("subject-1412");
+  const failing = { send: async (): Promise<void> => { throw new Error("SMTP_CAIDO a@b.test"); } };
+  const h = await startServer(subjectRef, failing);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1412"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { state: string }).state, "GRANTED");
+    assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"]);
+    assert.ok(!logs.some((l) => /SMTP_CAIDO|a@b\.test|\/m\//.test(l)));
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1414: con store Postgres o entorno distinto de LOCAL el servidor exige guestMessageChannel explícito y nunca cae al sink en memoria (P2-1, fail-closed)", () => {
+  const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
+  const common = { sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports: base };
+  assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "STAGING" }), /guestMessageChannel/);
+  assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "LOCAL", storeMode: "postgres", caseSessions: {} as never }), /guestMessageChannel/);
+  // LOCAL en memoria conserva el sink por defecto.
+  createConsentFlowHttpServer({ ...common, environment: "LOCAL" }).close();
+});
+
+test("TEST-CNS-1415: una cookie vieja no opera sobre una invitación que ya no está VERIFIED: tras cancelar (I9) o tras COMPLETED, /decision, /decision/steps y /decision/submit dan 404 uniforme (P2-2, P-30)", async () => {
+  const subjectRef = fixtureUuid("subject-1414");
+  const h = await startServer(subjectRef);
+  try {
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1414"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    // Copia de la cookie ANTES de cancelar.
+    const cancelled = await post(h.baseUrl, { path: "/decision/subject-mismatch", ...VALID_CSRF, sessionCookie: afterSteps });
+    assert.equal(cancelled.status, 200);
+    assert.equal((await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).status, 404);
+    const step = await post(h.baseUrl, { path: "/decision/steps", ...VALID_CSRF, sessionCookie: afterSteps, body: { stepKind: "CONTEXT_INFORMATION_VIEWED" } });
+    assert.equal(step.status, 404);
+    const submit = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(submit.status, 404);
+    // Sin decisión ni mensajes tras cancelar.
+    assert.equal(h.sink.sent.length, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1416: I9 ramas negativas (GRD-IV-10, ERR-IV-09): estado no VERIFIED o terminal, otro decisionMakerRef (también sobre una ya CANCELLED) y exactamente un INVITATION_CANCELLED en el ledger tras repetir (P2-3, P2-4)", async () => {
+  const { cancelInvitationSubjectMismatch } = await import("../../../src/server/modules/invitation/invitation.ts");
+  const subjectRef = fixtureUuid("subject-1415");
+  const h = await startServer(subjectRef);
+  try {
+    const invitationRef = fixtureUuid("inv-1415");
+    await bringToVerified(h, invitationRef, subjectRef);
+    const record = await h.ports.invitation.uow.inTenant(TENANT_ID, (tx) => tx.invitationRepo.findByRef(TENANT_ID, invitationRef));
+    const dm = record?.boundDecisionMakerRef as string;
+    assert.ok(dm);
+    const expectCode = async (fn: () => Promise<unknown>, code: string): Promise<void> => {
+      await assert.rejects(fn, (e: unknown) => (e as { code?: string }).code === code);
+    };
+    // Otro decisionMakerRef -> ERR-IV-09 (antes de cualquier rama), sin cancelar.
+    await expectCode(() => cancelInvitationSubjectMismatch(h.ports.invitation, TENANT_ID, invitationRef, "otro-dm"), "ERR-IV-09");
+    assert.equal((await h.ports.invitation.uow.inTenant(TENANT_ID, (tx) => tx.invitationRepo.findByRef(TENANT_ID, invitationRef)))?.state, "VERIFIED");
+    // Cancela y repite: idempotente, exactamente un evento.
+    await cancelInvitationSubjectMismatch(h.ports.invitation, TENANT_ID, invitationRef, dm);
+    await cancelInvitationSubjectMismatch(h.ports.invitation, TENANT_ID, invitationRef, dm);
+    const events = await h.ports.invitation.ledger.listByAggregate(TENANT_ID, "Invitation", invitationRef);
+    assert.equal(events.filter((e) => e.eventType === "INVITATION_CANCELLED").length, 1);
+    assert.deepEqual(events.find((e) => e.eventType === "INVITATION_CANCELLED")?.payload, { invitationRef, reasonCode: "SUBJECT_MISMATCH_REPORTED" });
+    // Ya CANCELLED: otro decisionMakerRef sigue sin obtener el acuse.
+    await expectCode(() => cancelInvitationSubjectMismatch(h.ports.invitation, TENANT_ID, invitationRef, "otro-dm"), "ERR-IV-09");
+
+    // Estado no VERIFIED (SENT, nunca verificada) y terminal (COMPLETED) -> ERR-IV-09.
+    const other = fixtureUuid("inv-1415b");
+    await createInvitation(h.ports.invitation, TENANT_ID, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"), invitationRef: other, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef, subjectRef: fixtureUuid("subject-1415b") });
+    await expectCode(() => cancelInvitationSubjectMismatch(h.ports.invitation, TENANT_ID, other, dm), "ERR-IV-09");
+    const done = fixtureUuid("inv-1415c");
+    const doneSubject = fixtureUuid("subject-1415c");
+    const v = await bringToVerified(h, done, doneSubject);
+    const steps = await completeSteps(h, v.session);
+    assert.equal((await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: steps, body: { purposes: GRANT_ALL } })).status, 200);
+    const doneRec = await h.ports.invitation.uow.inTenant(TENANT_ID, (tx) => tx.invitationRepo.findByRef(TENANT_ID, done));
+    assert.equal(doneRec?.state, "COMPLETED");
+    await expectCode(() => cancelInvitationSubjectMismatch(h.ports.invitation, TENANT_ID, done, doneRec?.boundDecisionMakerRef as string), "ERR-IV-09");
+  } finally {
+    await h.close();
   }
 });

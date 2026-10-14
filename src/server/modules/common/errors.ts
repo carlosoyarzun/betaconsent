@@ -32,6 +32,7 @@ export type DomainErrorCode =
   | "ERR-IV-03" // INVITATION_NOT_READY (GRD-IV-03)
   | "ERR-IV-04" // VERSION_OR_MODE_GUARD_FAILED (GRD-IV-04)
   | "ERR-IV-07" // REISSUE_LIMIT_REACHED (GRD-IV-11)
+  | "ERR-IV-09" // CANCEL_REASON_INVALID (GRD-IV-10: reasonCode/actor no corresponde, o la invitación no es cancelable)
   | "ERR-IV-10" // INVITATION_TERMINAL
   // specs/state-machines/otp-challenge.spec.yaml
   | "ERR-OT-01" // OTP_GENERIC_RESPONSE (GRD-OT-01/02/08)

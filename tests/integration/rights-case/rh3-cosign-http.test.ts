@@ -26,7 +26,7 @@ import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decis
 import type { StaffIdentityPort, StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import type { Environment } from "../../../src/server/modules/common/types.ts";
 import { validateApiPayload, validateCommon, validateLedgerEventPayload, type ValidationResult } from "../../contract/schema-lite.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CASE_SESSION_COOKIE_NAME = "__Host-cns-case";
@@ -144,7 +144,7 @@ async function setUp(
 
   const staffIdentity = createInMemoryStaffIdentityAdapter(opts.roster ?? FULL_ROSTER);
 
-  const server = createConsentFlowHttpServer({ sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     revocationPorts,

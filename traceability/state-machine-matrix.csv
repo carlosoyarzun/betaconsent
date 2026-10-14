@@ -90,7 +90,7 @@ invitation,error,ERR-IV-05,SEC-CNS-006 P-11,UNCOVERED,sin test que cite ERR-IV-0
 invitation,error,ERR-IV-06,"SM-CNS-001 §2 I5, 'Inválidas', §2.1 M1, M2",UNCOVERED,sin test que cite ERR-IV-06 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 invitation,error,ERR-IV-07,SEC-CNS-006 P-11,TEST-CNS-712,
 invitation,error,ERR-IV-08,SM-CNS-001 §2 I7u,UNCOVERED,sin test que cite ERR-IV-08 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-invitation,error,ERR-IV-09,SM-CNS-001 §2 I9,UNCOVERED,sin test que cite ERR-IV-09 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
+invitation,error,ERR-IV-09,SM-CNS-001 §2 I9,TEST-CNS-1416,
 invitation,error,ERR-IV-10,SM-CNS-001 §2 'Inválidas';[N-SM] §2,UNCOVERED,sin test que cite ERR-IV-10 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 invitation,event,INVITATION_CREATED,SM-CNS-001 §2 I1;ADR-002 §11,TEST-CNS-475;TEST-CNS-497;TEST-CNS-719,
 invitation,event,INVITATION_READY,SM-CNS-001 §2 I2,TEST-CNS-497,
@@ -101,7 +101,7 @@ invitation,event,INVITATION_VERIFIED,SM-CNS-001 §2 I5,TEST-CNS-486;TEST-CNS-497
 invitation,event,INVITATION_COMPLETED,"SM-CNS-001 §2 I6, §4 C3",TEST-CNS-497,
 invitation,event,INVITATION_DECLINED,"SM-CNS-001 §2 I7, §4 C5",UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-528); ninguno cubre invitation
 invitation,event,INVITATION_EXPIRED,SM-CNS-001 §2 I8,UNCOVERED,sin test que cite INVITATION_EXPIRED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-invitation,event,INVITATION_CANCELLED,SM-CNS-001 §2 I9,UNCOVERED,sin test que cite INVITATION_CANCELLED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
+invitation,event,INVITATION_CANCELLED,SM-CNS-001 §2 I9,TEST-CNS-1416,
 otp-challenge,state,NOT_STARTED,SM-CNS-001 §3;[N-SM] §3,UNCOVERED,sin test que cite NOT_STARTED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 otp-challenge,state,CODE_SENT,SM-CNS-001 §3,UNCOVERED,sin test que cite CODE_SENT en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 otp-challenge,state,VERIFIED,"SM-CNS-001 §3 V3, R0.8",TEST-CNS-485;TEST-CNS-572;TEST-CNS-574,

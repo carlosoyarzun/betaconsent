@@ -42,7 +42,7 @@ import type { StaffSessionStorePort } from "../../../src/server/ports/staff-sess
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest, type PgTestContext } from "./harness.ts";
-import { TEST_OTP_SECRET } from "../../helpers/test-ref-keys.ts";
+import { TEST_OTP_SECRET, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff-ui-pg.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -86,7 +86,7 @@ async function boot(ctx: PgTestContext, roster: readonly StaffPrincipal[], direc
     subjectDirectory: createInMemorySubjectDirectory("LOCAL", directory),
   });
   const sessionSecret = randomBytes(32);
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports: bundle.ports,
     revocationPorts: bundle.revocationPorts,

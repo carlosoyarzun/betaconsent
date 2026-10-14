@@ -23,7 +23,7 @@
 // /decision/submit o /decision/steps se ignora por completo (nunca se lee del payload, SM R0.2;
 // DecisionStepRequest tampoco define ese campo en el contrato).
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { deriveDecisionMakerRef as deriveKeyedDecisionMakerRef, type DecisionMakerRefKey } from "../../modules/consent-decision/decision-maker-ref.ts";
 
 import { DomainError } from "../../modules/common/errors.ts";
@@ -45,7 +45,7 @@ import {
 import {
   recordDecisionStep,
   startDecision,
-  submitDecision,
+  submitDecisionIssuingLink,
   type ConsentDecisionPorts,
   type DecisionStepInput,
 } from "../../modules/consent-decision/consent-decision.ts";
@@ -62,7 +62,8 @@ import {
   type LinkHandleType,
 } from "./link-handle.ts";
 import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
-import type { GuestMessageChannelPort } from "../../ports/guest-message-channel.port.ts";
+import type { InMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
+import type { GuestMessageChannelPort, GuestMessageKind } from "../../ports/guest-message-channel.port.ts";
 import { SUBJECT_LABEL_PATTERN, type SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 import { renderManagementLinkMessage, renderReceiptMessage } from "./guest-messages.ts";
 
@@ -72,13 +73,9 @@ export interface GuestFlowPorts {
   readonly messageChannel: GuestMessageChannelPort;
   /** D-02: directorio sintético (solo LOCAL/CI) que da "Alumno de prueba N". Nunca PII real. */
   readonly subjectDirectory?: SubjectDirectoryPort;
-  /** Registra el handle del enlace de gestión (tenant_resolve.management_token) para (tenant, cadena). */
-  readonly registerManagementHandle: (input: {
-    readonly tenantId: string;
-    readonly handle: string;
-    readonly chainRef: string;
-    readonly revokedDecisionRef: string;
-  }) => Promise<void>;
+  /** Rastro obligatorio si la entrega post-commit falla (nunca silencio): el handle ya quedó registrado en la tx de C3 y la decisión sigue
+   * vigente, pero el mensaje no salió. Solo el tipo de mensaje; cero PII y cero token. */
+  readonly recordDeliveryFailure: (kind: GuestMessageKind) => void;
   /** Origen público del enlace de gestión (sintético: https://consent.example.invalid por defecto). */
   readonly publicBaseUrl: string;
   readonly now?: () => Date;
@@ -86,6 +83,9 @@ export interface GuestFlowPorts {
 
 export interface ConsentFlowPorts {
   readonly guest?: GuestFlowPorts;
+  /** Solo los puertos in-memory por defecto: el TenantHandle donde C3 registra el handle de gestión; el servidor lo comparte con GET /m/{token} y
+   * /manage (createDefaultRevocationFlowPorts). En Postgres lo resuelve tenant_resolve.handle. */
+  readonly managementHandleStore?: InMemoryTenantHandleAdapter;
   readonly invitation: InvitationPorts;
   readonly otp: OtpChallengePorts;
   readonly decision: ConsentDecisionPorts;
@@ -578,6 +578,8 @@ export async function handleRecordDecisionStep(
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.verificationRef || !session.decisionMakerRef || !session.invitationRef) return uniformNotFound();
 
+  if (!(await isInvitationVerifiedForSession(ports, session))) return uniformNotFound(); // P-30
+
   const step = parseDecisionStepInput(request.body);
   if (!step) return problem(422, "ERR-CD-04");
 
@@ -642,6 +644,8 @@ export async function handleSubmitDecision(
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.verificationRef || !session.decisionMakerRef || !session.consentId) return uniformNotFound();
 
+  if (!(await isInvitationVerifiedForSession(ports, session))) return uniformNotFound(); // P-30
+
   const body = (request.body ?? {}) as SubmitDecisionBody;
   const rawPurposes = Array.isArray(body.purposes) ? body.purposes : [];
   const purposes = rawPurposes
@@ -649,7 +653,7 @@ export async function handleSubmitDecision(
     .map((p) => ({ purpose: p.purpose as string, choice: p.choice as PurposeChoice }));
 
   try {
-    const decided = await submitDecision(
+    const { decided, managementHandle } = await submitDecisionIssuingLink(
       ports.decision,
       session.tenantId,
       "DECISION_MAKER",
@@ -661,9 +665,10 @@ export async function handleSubmitDecision(
     // entrega no revierte la decisión ya registrada.
     const subjectLabel = await resolveSubjectLabel(ports, session).catch(() => undefined);
     try {
-      await deliverDecisionMessages(ports, session, decided);
+      await deliverDecisionMessages(ports, session, decided, managementHandle);
     } catch {
-      // sin detalle (cero PII/token en logs)
+      // Fallo previo al envío (lectura de la invitación): rastro explícito, nunca silencio ni detalle (cero PII/token).
+      ports.guest?.recordDeliveryFailure("RECEIPT");
     }
     // DecisionRecorded (contracts/api-payloads.schema.json $defs/DecisionRecorded): receiptRef
     // es requerido (P1: faltaba); nunca incluye el management_token (va solo al canal ligado).
@@ -679,6 +684,21 @@ export async function handleSubmitDecision(
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// P-30 (invitation.spec I9: "invalida handles/sesiones"): una cookie de sesión vieja no sigue operando sobre una invitación que ya no está
+// VERIFIED (CANCELLED, COMPLETED, DECLINED...) ni sobre un DecisionMaker distinto del ligado en I5. Lo usan GET /decision, /decision/steps
+// y /decision/submit (solo lectura; el estado de la invitación se lee bajo el tenant de la sesión).
+// ---------------------------------------------------------------------------
+export async function isInvitationVerifiedForSession(
+  ports: Pick<ConsentFlowPorts, "invitation">,
+  session: Pick<ConsentSessionPayload, "tenantId" | "invitationRef" | "decisionMakerRef">,
+): Promise<boolean> {
+  const invitationRef = session.invitationRef;
+  if (!invitationRef || !session.decisionMakerRef) return false;
+  const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  return invitation?.state === "VERIFIED" && invitation.boundDecisionMakerRef === session.decisionMakerRef;
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +729,7 @@ async function deliverDecisionMessages(
   ports: ConsentFlowPorts,
   session: ConsentSessionPayload,
   decided: { readonly consentId: string; readonly state: string; readonly receiptRef?: string; readonly chainRef: string; readonly purposes: ReadonlyArray<{ readonly purpose: string; readonly choice: PurposeChoice }> },
+  managementHandle: string | undefined,
 ): Promise<void> {
   const guest = ports.guest;
   if (!guest || !session.invitationRef || !decided.receiptRef) return;
@@ -718,7 +739,9 @@ async function deliverDecisionMessages(
   if (!invitation?.recipientChannelRef) return;
   const subjectLabel = await resolveSubjectLabel(ports, session);
   const served = getServedConsentVersion();
-  await guest.messageChannel.send(
+  // Post-commit (C3/C5 ya confirmaron): un fallo de entrega NO revierte la decisión, pero deja rastro y no impide el segundo mensaje.
+  try {
+    await guest.messageChannel.send(
     renderReceiptMessage({
       recipientChannelRef: invitation.recipientChannelRef,
       subjectLabel,
@@ -729,13 +752,19 @@ async function deliverDecisionMessages(
       receiptRef: decided.receiptRef,
       state: decided.state,
     }),
-  );
-  if (decided.state !== "GRANTED") return;
-  const handle = randomBytes(32).toString("base64url");
-  await guest.registerManagementHandle({ tenantId: session.tenantId, handle, chainRef: decided.chainRef, revokedDecisionRef: decided.consentId });
-  await guest.messageChannel.send(
-    renderManagementLinkMessage({ recipientChannelRef: invitation.recipientChannelRef, managementPath: `/m/${handle}`, publicBaseUrl: guest.publicBaseUrl }),
-  );
+    );
+  } catch {
+    guest.recordDeliveryFailure("RECEIPT");
+  }
+  // El handle lo registró C3 dentro de su tx (submitDecisionIssuingLink); aquí solo se entrega el mensaje aparte.
+  if (decided.state !== "GRANTED" || managementHandle === undefined) return;
+  try {
+    await guest.messageChannel.send(
+      renderManagementLinkMessage({ recipientChannelRef: invitation.recipientChannelRef, managementPath: `/m/${managementHandle}`, publicBaseUrl: guest.publicBaseUrl }),
+    );
+  } catch {
+    guest.recordDeliveryFailure("MANAGEMENT_LINK");
+  }
 }
 
 // ---------------------------------------------------------------------------

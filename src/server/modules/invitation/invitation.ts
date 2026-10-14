@@ -523,10 +523,15 @@ export async function cancelInvitationSubjectMismatchTx(
 ): Promise<InvitationRecord> {
   const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
-  if (found.state === "CANCELLED") return found; // idempotente
-  if (found.state !== "VERIFIED" || found.boundDecisionMakerRef !== decisionMakerRef) {
-    // EXT-C: precondición "verificado" y mismo DecisionMaker ligado en I5.
-    throw new DomainError("ERR-CM-06");
+  // GRD-IV-10 (cancel_reason_and_actor, onFail ERR-IV-09): el actor debe ser el DecisionMaker ligado en I5. Se comprueba ANTES de la rama
+  // idempotente: otro decisionMakerRef nunca obtiene el acuse de una invitación ya cancelada.
+  if (found.boundDecisionMakerRef !== decisionMakerRef) {
+    throw new DomainError("ERR-IV-09");
+  }
+  if (found.state === "CANCELLED") return found; // idempotente por (invitationRef, reasonCode)
+  if (found.state !== "VERIFIED") {
+    // EXT-C: precondición "verificado"; cualquier otro estado (incluidos los terminales) no es cancelable.
+    throw new DomainError("ERR-IV-09");
   }
   const cancelled: InvitationRecord = { ...found, state: "CANCELLED" };
   await ports.invitationRepo.save(cancelled);
