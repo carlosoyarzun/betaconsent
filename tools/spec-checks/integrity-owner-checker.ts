@@ -29,6 +29,8 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0039_adr010_ledger_allowlist_close_case_d6.sql": ["set-role"],
   // 0042 (ADR-010 PR-6a): GRANT SELECT y policy por tenant de SOLO LECTURA sobre integrity.audit_event para el worker (ejecutor de R5-R7; DDL sobre integrity.*, antes de PR-7; F-PR6-20).
   "db/migrations/0042_adr010_worker_downstream_only.sql": ["set-role"],
+  // 0041 (ADR-010 rev. 5, F-A10-30): ALTER POLICY de INSERT de app_rw sobre integrity.audit_event (allowlist de 19 pares; DDL sobre integrity.*).
+  "db/migrations/0041_adr010_ledger_allowlist_19_dedupe_estricto.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };
@@ -64,11 +66,14 @@ const M0037 = "db/migrations/0037_adr010_case_state_revocation.sql";
 const M0038 = "db/migrations/0038_adr010_case_state_rights_case.sql";
 const M0039 = "db/migrations/0039_adr010_ledger_allowlist_close_case_d6.sql";
 const M0040 = "db/migrations/0040_adr010_record_assertion_fresh_auth.sql";
+const M0041 = "db/migrations/0041_adr010_ledger_allowlist_19_dedupe_estricto.sql";
 const M0042 = "db/migrations/0042_adr010_worker_downstream_only.sql";
 /** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
 const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
 /** ADR-010 PR-5b: TEST-CNS-1381 asume transition_owner (SET LOCAL ROLE) para probar el trigger TRG-RC-01 por efecto y la policy que protege los terminales. */
 const T5B = "tests/integration/postgres/adr010-pr5b-rights-case.test.ts";
+/** ADR-010 rev. 5 PR-a: TEST-CNS-1441/1442 asumen transition_owner (SET LOCAL ROLE) para llamar case_state.ledger_append (dedupe estricto). */
+const T_PRA = "tests/integration/postgres/adr010-ledger-pr-a.test.ts";
 /** ADR-010 PR-4: fixture LOCAL sintetico del bootstrap del primer PLATFORM (membership_owner), patron TEST-CNS-879. Solo LOCAL; STAFF/datos reales: ceremonia PR-7. */
 const FIX_PLATFORM = "db/fixtures/local/0002_platform_bootstrap.sql";
 export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Record<string, readonly UsageKind[]>>>> = {
@@ -82,8 +87,8 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // 0037 (PR-5a): case_state_owner crea el esquema case_state y le da USAGE/CREATE temporal a transition_owner; transition_owner crea las funciones
   // de transicion (SET LOCAL ROLE). Sin otros caminos: PR-5b y PR-7 amplian esta allowlist con revision (CODEOWNERS).
   // 0038 (PR-5b): mismo patron (CREATE temporal de transition_owner sobre case_state; funciones de RightsCase como transition_owner).
-  case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"] }, // 0039: CREATE temporal para close_case (D6)
-  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0042]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
+  case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"] }, // 0041: CREATE temporal para ledger_append con dedupe estricto; 0039: CREATE temporal para close_case (D6)
+  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

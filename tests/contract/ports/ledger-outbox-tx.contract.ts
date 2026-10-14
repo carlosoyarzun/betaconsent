@@ -60,7 +60,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
       const a = await ledger.append(
         event(t, agg, { actorRole: "UNVERIFIED_BEARER", recordedByRef: fixtureUuid("rec780"), payload: invitationRefPayload("780") }),
       );
-      const b = await ledger.append(event(t, agg, { eventType: "INVITATION_EXPIRED", expectedSequence: 1 }));
+      const b = await ledger.append(event(t, agg, { eventType: "INVITATION_OPENED", expectedSequence: 1 }));
       return [a, b];
     });
     assert.deepEqual(records.map((r) => r.sequence), [1, 2]);
@@ -71,7 +71,7 @@ export function runLedgerOutboxContract(adapterName: string, register: RegisterC
     assert.ok(first?.occurredAt instanceof Date);
 
     const listed = await h.inTenant(t, ({ ledger }) => ledger.listByAggregate(t, "Invitation", agg));
-    assert.deepEqual(listed.map((r) => [r.sequence, r.eventType]), [[1, "INVITATION_OPENED"], [2, "INVITATION_EXPIRED"]]);
+    assert.deepEqual(listed.map((r) => [r.sequence, r.eventType]), [[1, "INVITATION_OPENED"], [2, "INVITATION_OPENED"]]);
     assert.equal(listed[0]?.actorRole, "UNVERIFIED_BEARER");
     assert.equal(listed[0]?.recordedByRef, fixtureUuid("rec780"));
     assert.deepEqual(listed[0]?.payload, invitationRefPayload("780"));
