@@ -294,7 +294,7 @@ async function catalogSets(admin: Client): Promise<{ check: string[]; branches: 
 pgTest("TEST-CNS-1076 pg: los valores del CHECK invitation_state_enum son exactamente la union de las ramas del CASE de la vista; un estado nuevo hace fallar la comparacion", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const { check, branches } = await catalogSets(admin);
-  assert.deepEqual(check, ["COMPLETED", "DECLINED", "DRAFT", "OPENED", "READY", "SENT", "VERIFIED"], "el CHECK vigente");
+  assert.deepEqual(check, ["CANCELLED", "COMPLETED", "DECLINED", "DRAFT", "OPENED", "READY", "SENT", "VERIFIED"], "el CHECK vigente (0043 suma CANCELLED, I9)");
   assert.deepEqual(branches, check, "ramas del CASE == valores del CHECK");
 
   // Demostracion de que el test detecta un estado nuevo: se amplia el CHECK dentro de una tx que se revierte.
@@ -305,7 +305,7 @@ pgTest("TEST-CNS-1076 pg: los valores del CHECK invitation_state_enum son exacta
       "ALTER TABLE app.invitation ADD CONSTRAINT invitation_state_enum CHECK (state IN ('DRAFT','READY','SENT','OPENED','VERIFIED','COMPLETED','DECLINED','EXPIRED','CANCELLED'))",
     );
     const widened = await catalogSets(admin);
-    assert.deepEqual(widened.check.filter((s) => !widened.branches.includes(s)), ["CANCELLED", "EXPIRED"]);
+    assert.deepEqual(widened.check.filter((s) => !widened.branches.includes(s)), ["EXPIRED"]);
     assert.notDeepEqual(widened.branches, widened.check, "con un estado nuevo la comparacion debe fallar");
   } finally {
     await admin.query("ROLLBACK");
