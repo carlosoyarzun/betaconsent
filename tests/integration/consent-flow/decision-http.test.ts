@@ -342,7 +342,7 @@ test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL D
     const html = await res.text();
     assert.match(
       html,
-      /<p class="lp-decision-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
+      /<p class="lp-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
     );
   } finally {
     await harness.close();
@@ -389,7 +389,7 @@ test("TEST-CNS-584: los marcadores [LEGAL DECISION] de /decision (finalidad, enu
     const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
     const html = await res.text();
     const visible = stripHtmlComments(html);
-    assert.match(visible, /\[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos, handoff §3\.3\]/);
+    assert.match(visible, /\[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos\]/);
     assert.match(visible, /\[LEGAL DECISION — enum de relación pendiente de DEC-BR-003 \/ EXT-A \/ LD-01; opción \(b\) de Carlos: lista de valores por configuración\]/);
     assert.match(visible, /\[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 \/ EXT-A \/ LD-01\]/);
   } finally {

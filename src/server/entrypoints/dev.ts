@@ -285,6 +285,18 @@ const server = createConsentFlowHttpServer({
   // REQ-CNS-036 / UX-CNS-005: pantallas del colegio bajo /staff (contexto y version de consentimiento los fija el servidor).
   staffUi: { contextRef: LECTORPRO_BETA_CONFIG.contextRef, consentVersion: "v1-dev" },
   ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
+  // UX-CNS-006/006b (D-03, Carlos 2026-10-14): el enlace de gestión que emite C3 se registra en el almacén de handles del
+  // modo activo; los dos mensajes (comprobante y enlace) quedan en el sink LOCAL GET /__dev/message-sink (sin SMTP ni red).
+  // El enlace del mensaje apunta a este mismo servidor local para poder abrirlo a mano.
+  publicBaseUrl: `http://127.0.0.1:${port}`,
+  ...(pgStore
+    ? {
+        registerManagementHandle: (input: { readonly tenantId: string; readonly handle: string; readonly chainRef: string; readonly revokedDecisionRef: string }) =>
+          pgStore.uow.withTenantTx(input.tenantId, (tx) =>
+            registerTenantHandle(tx, { handle: input.handle, chainRef: input.chainRef, revokedDecisionRef: input.revokedDecisionRef }),
+          ),
+      }
+    : {}),
 });
 
 server.listen(port, "127.0.0.1", () => {
@@ -307,6 +319,8 @@ server.listen(port, "127.0.0.1", () => {
   // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
   console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-127: R4 encola consent.revoked en el outbox in-memory; se lee aquí (solo LOCAL, sin entrega: R5).
+  // D-03: comprobante (sin enlace) y mensaje aparte con el enlace de gestión, tras enviar una decisión.
+  console.log(`Leer los mensajes al canal verificado (comprobante y enlace de gestión): GET ${baseUrl}/__dev/message-sink (y ?view=N para ver el HTML del mensaje N; solo LOCAL).`);
   console.log(`Leer los eventos del outbox: GET ${baseUrl}/__dev/outbox-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
   // (RH3_CASE_REF). Cuatro ojos: registra 7647258d-b4b5-41c0-b8f1-34030bb08f80 y co-firma otro RIGHTS_OPERATOR

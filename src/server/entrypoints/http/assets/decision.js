@@ -7,9 +7,11 @@
 // correcto") y por último /decision/submit con las 4 finalidades. decisionMakerRef y consentId
 // siempre los deriva/guarda el servidor en la sesión (D5); este script nunca los envía.
 //
-// x-scope-note (handoff, reportado a Carlos): "No es mi estudiante" NO llama
-// POST /decision/subject-mismatch (API-CNS-128, fuera de alcance de este slice); solo bloquea el
-// envío y muestra el aviso de ayuda (#subject-mismatch-note).
+// D-06 (Carlos, 2026-10-14): "No es mi estudiante" oculta autoridad/finalidades y muestra un
+// botón explícito "Informar que no es mi estudiante" que llama POST /decision/subject-mismatch
+// (API-CNS-128, I9 -> CANCELLED); elegir la opción por sí sola no cancela nada.
+// Nada preseleccionado; al enviar con campos pendientes se muestra un resumen de errores con
+// enlaces a cada campo y error inline por campo (3.3.1/3.3.3).
 (function () {
   "use strict";
 
@@ -57,6 +59,11 @@
     var stateGranted = document.getElementById("state-granted");
     var stateDeclined = document.getElementById("state-declined");
     var decisionForm = document.getElementById("decision-form");
+    var decisionRest = document.getElementById("decision-rest");
+    var declineNotice = document.getElementById("decline-notice");
+    var reportMismatchBtn = document.getElementById("report-mismatch-btn");
+    var stateMismatch = document.getElementById("state-mismatch");
+    var validationList = document.getElementById("error-validation-list");
     var retryBtn = document.getElementById("retry-btn");
 
     var subjectChoice = null; // "yes" | "no"
@@ -70,6 +77,94 @@
       if (errorUniform) errorUniform.hidden = true;
       if (stateGranted) stateGranted.hidden = true;
       if (stateDeclined) stateDeclined.hidden = true;
+      if (stateMismatch) stateMismatch.hidden = true;
+    }
+
+    // Errores inline por campo (3.3.1): texto + aria-invalid, nunca solo color.
+    function setFieldError(id, visible) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = !visible;
+    }
+
+    function clearFieldErrors() {
+      ["err-subject", "err-relationship", "err-authority"].forEach(function (id) {
+        setFieldError(id, false);
+      });
+      allPurposes().forEach(function (p) {
+        setFieldError("err-" + p, false);
+        var card = document.getElementById("purpose-" + p);
+        if (card) card.removeAttribute("data-invalid");
+      });
+      var subjectGroup = document.getElementById("subject-radiogroup");
+      if (subjectGroup) subjectGroup.removeAttribute("data-invalid");
+      if (relationshipSelect) relationshipSelect.setAttribute("aria-invalid", "false");
+      if (validationList) validationList.textContent = "";
+      if (errorValidation) errorValidation.hidden = true;
+    }
+
+    // Estado "incompleto" (106:189): resumen con un enlace por cada campo pendiente + error
+    // inline por campo; el foco pasa al resumen.
+    function showIncompleteSummary() {
+      clearFieldErrors();
+      var items = [];
+      function add(targetId, text) {
+        items.push({ targetId: targetId, text: text });
+      }
+      if (subjectChoice === null) {
+        add("subject-yes", "Confirma si es tu estudiante.");
+        setFieldError("err-subject", true);
+        var g = document.getElementById("subject-radiogroup");
+        if (g) g.setAttribute("data-invalid", "true");
+      }
+      if (!relationshipSelect || relationshipSelect.value === "") {
+        add("relationship-select", "Indica tu relación con el estudiante.");
+        setFieldError("err-relationship", true);
+        if (relationshipSelect) relationshipSelect.setAttribute("aria-invalid", "true");
+      }
+      if (!authorityCheckbox || !authorityCheckbox.checked) {
+        add("authority-declared", "Marca la casilla de autoridad.");
+        setFieldError("err-authority", true);
+      }
+      allPurposes().forEach(function (p) {
+        if (purposeChoice(p) === null) {
+          var first = document.querySelector('[data-purpose-choice="' + p + '"]');
+          var title = document.querySelector("#purpose-" + p + " h3");
+          if (first && !first.id) first.id = "first-" + p;
+          add(first ? first.id : "purpose-" + p, "Elige una opción en: " + (title ? title.textContent : p));
+          setFieldError("err-" + p, true);
+          var card = document.getElementById("purpose-" + p);
+          if (card) card.setAttribute("data-invalid", "true");
+        }
+      });
+      hideStates();
+      if (validationList) {
+        items.forEach(function (it) {
+          var li = document.createElement("li");
+          var a = document.createElement("a");
+          a.href = "#" + it.targetId;
+          a.textContent = it.text;
+          a.addEventListener("click", function (ev) {
+            var t = document.getElementById(it.targetId);
+            if (t) {
+              ev.preventDefault();
+              t.focus();
+            }
+          });
+          li.appendChild(a);
+          validationList.appendChild(li);
+        });
+      }
+      if (errorValidation) {
+        errorValidation.hidden = false;
+        errorValidation.focus();
+      }
+    }
+
+    function updateDeclineNotice() {
+      var anyDecline = allPurposes().some(function (p) {
+        return purposeChoice(p) === "DECLINE";
+      });
+      if (declineNotice) declineNotice.hidden = !anyDecline;
     }
 
     function setBusy(isBusy) {
@@ -127,6 +222,9 @@
       if (subjectYesBtn) subjectYesBtn.setAttribute("aria-checked", value === "yes" ? "true" : "false");
       if (subjectNoBtn) subjectNoBtn.setAttribute("aria-checked", value === "no" ? "true" : "false");
       if (subjectMismatchNote) subjectMismatchNote.hidden = value !== "no";
+      // D-06: con "No es mi estudiante" se ocultan autoridad y finalidades (no se puede decidir).
+      if (decisionRest) decisionRest.hidden = value === "no";
+      setFieldError("err-subject", false);
       evaluateFormComplete();
     }
 
@@ -136,6 +234,8 @@
           btn.setAttribute("aria-checked", btn.getAttribute("data-choice") === choice ? "true" : "false");
         }
       });
+      setFieldError("err-" + purpose, false);
+      updateDeclineNotice();
       evaluateFormComplete();
     }
 
@@ -143,6 +243,7 @@
       hideStates();
       var detail = document.getElementById("error-validation-detail");
       if (detail && detailText) detail.textContent = detailText;
+      if (validationList) validationList.textContent = "";
       if (errorValidation) errorValidation.hidden = false;
     }
 
@@ -169,7 +270,7 @@
       hideStates();
       if (decisionForm) decisionForm.hidden = true;
       var el = document.getElementById("granted-receipt");
-      if (el) el.textContent = "Comprobante: " + receiptRef;
+      if (el) el.textContent = receiptRef;
       if (stateGranted) {
         stateGranted.hidden = false;
         var heading = document.getElementById("granted-heading");
@@ -181,7 +282,7 @@
       hideStates();
       if (decisionForm) decisionForm.hidden = true;
       var el = document.getElementById("declined-receipt");
-      if (el) el.textContent = "Comprobante: " + receiptRef;
+      if (el) el.textContent = receiptRef;
       if (stateDeclined) {
         stateDeclined.hidden = false;
         var heading = document.getElementById("declined-heading");
@@ -205,7 +306,7 @@
         return res.json().catch(function () {
           return {};
         }).then(function (body) {
-          showValidationError(body && body.code ? "Código: " + body.code : undefined);
+          showValidationError("Revisa las secciones marcadas y vuelve a intentarlo.");
           return null;
         });
       }
@@ -216,7 +317,11 @@
 
     function submitDecision() {
       if (busy) return;
-      if (submitBtn.getAttribute("aria-disabled") === "true") return;
+      if (submitBtn.getAttribute("aria-disabled") === "true") {
+        if (subjectChoice !== "no") showIncompleteSummary();
+        return;
+      }
+      clearFieldErrors();
       hideStates();
       setBusy(true);
 
@@ -274,10 +379,57 @@
         });
     }
 
+    // D-06: POST /decision/subject-mismatch (I9). 200 -> pantalla de aviso registrado; 404 ->
+    // error uniforme; red -> aviso de conexión con reintento.
+    function setMismatchBusy(isBusy) {
+      busy = isBusy;
+      if (reportMismatchBtn) {
+        reportMismatchBtn.setAttribute("aria-disabled", isBusy ? "true" : "false");
+        reportMismatchBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
+      }
+    }
+
+    function reportMismatch() {
+      if (busy) return;
+      setMismatchBusy(true);
+      postJson("/decision/subject-mismatch")
+        .then(function (res) {
+          setMismatchBusy(false);
+          if (res.status === 200) {
+            hideStates();
+            if (decisionForm) decisionForm.hidden = true;
+            if (stateMismatch) {
+              stateMismatch.hidden = false;
+              var h = document.getElementById("mismatch-heading");
+              if (h) h.focus();
+            }
+            return;
+          }
+          if (decisionForm) decisionForm.hidden = true;
+          showUniformError();
+        })
+        .catch(function () {
+          setMismatchBusy(false);
+          showNetworkError();
+        });
+    }
+
+    if (reportMismatchBtn) reportMismatchBtn.addEventListener("click", reportMismatch);
     if (subjectYesBtn) subjectYesBtn.addEventListener("click", function () { selectSubject("yes"); });
     if (subjectNoBtn) subjectNoBtn.addEventListener("click", function () { selectSubject("no"); });
-    if (authorityCheckbox) authorityCheckbox.addEventListener("change", evaluateFormComplete);
-    if (relationshipSelect) relationshipSelect.addEventListener("change", evaluateFormComplete);
+    if (authorityCheckbox) {
+      authorityCheckbox.addEventListener("change", function () {
+        setFieldError("err-authority", false);
+        evaluateFormComplete();
+      });
+    }
+    if (relationshipSelect) {
+      relationshipSelect.addEventListener("change", function () {
+        setFieldError("err-relationship", false);
+        relationshipSelect.setAttribute("aria-invalid", "false");
+        evaluateFormComplete();
+      });
+    }
     purposeChips.forEach(function (btn) {
       btn.addEventListener("click", function () {
         selectPurpose(btn.getAttribute("data-purpose-choice"), btn.getAttribute("data-choice"));

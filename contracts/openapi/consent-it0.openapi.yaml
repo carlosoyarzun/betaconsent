@@ -825,6 +825,10 @@ paths:
         El resultado lo fija el guard determinista sobre la elección explícita del DecisionMaker;
         ningún modelo lo infiere (INV-CM-07). La respuesta nunca incluye el enlace de gestión:
         el management_token va SOLO al canal ligado (C3). Receipt con marca de agua IT0.
+        La respuesta puede incluir `subjectLabel` (D-02: etiqueta sintética de solo lectura
+        "Alumno de prueba N", opcional). Tras C3/C5 el servidor entrega al canal ligado dos
+        mensajes distintos (D-03): comprobante SIN enlace y, solo en GRANTED, un mensaje aparte con
+        el enlace de gestión (C5 no emite enlace de gestión: consent-decision.spec C5).
         Finalidades requeridas y allowPartialGrant se resuelven desde el adapter activo
         (specs/adapters/lectorpro-beta.spec.yaml, F-012; en IT0 allowPartialGrant = false):
         C4 deshabilitada (F-025).

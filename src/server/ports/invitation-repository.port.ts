@@ -15,7 +15,7 @@ export class InvalidRecipientChannelRefError extends Error {
   }
 }
 
-export type InvitationState = "DRAFT" | "READY" | "SENT" | "OPENED" | "VERIFIED" | "COMPLETED" | "DECLINED";
+export type InvitationState = "DRAFT" | "READY" | "SENT" | "OPENED" | "VERIFIED" | "COMPLETED" | "DECLINED" | "CANCELLED";
 
 export interface InvitationRecord {
   readonly invitationRef: string;
