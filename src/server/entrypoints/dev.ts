@@ -46,6 +46,7 @@ import {
   LOCAL_ONLY_DEV_STAFF_ROSTER,
   LOCAL_ONLY_DEV_TENANT_ID,
   LOCAL_ONLY_DEV_SUBJECT_REF,
+  devSubjectDirectoryEntries,
 } from "./dev-local-config.ts";
 import { createInMemorySubjectDirectory } from "../../infra/adapters/in-memory-subject-directory.adapter.ts";
 import { deriveStaffRosterCursorKey, loadStaffRosterCursorSecret } from "../modules/staff-roster/roster-cursor.ts";
@@ -124,10 +125,10 @@ const staffRosterCursorKey = deriveStaffRosterCursorKey(loadStaffRosterCursorSec
 const otpSecret = loadOtpSecret(process.env, environment, () => Buffer.from("LOCAL_ONLY_DEV_OTP_SECRET_SYNTHETIC_DATA_ONLY"));
 // P2-6 (C2): los secretos crudos CNS_*_SECRET presentes deben ser distintos entre si (sesion, OTP, cursor, chainRef, dmref).
 assertDistinctServerSecrets(process.env);
-const subjectDirectory = createInMemorySubjectDirectory(
-  environment,
-  LOCAL_ONLY_DEV_STAFF_STUDENTS.map((s) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })),
-);
+// En Postgres el seed persiste entre arranques: sujeto nuevo por proceso (GRD-IV-01), sintético y sin PII.
+const SEEDED_SUBJECT_REF = pgStore ? randomUUID() : LOCAL_ONLY_DEV_SUBJECT_REF;
+// D-02: el directorio incluye el sujeto de la invitación sembrada (GET /decision muestra "Alumno de prueba N").
+const subjectDirectory = createInMemorySubjectDirectory(environment, devSubjectDirectoryEntries(SEEDED_SUBJECT_REF));
 let ports: ConsentFlowPorts;
 let pgBundle: ReturnType<typeof createPostgresFlowPorts> | undefined;
 if (pgStore) {
@@ -156,7 +157,7 @@ const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 // En Postgres el seed persiste entre arranques: ref y sujeto nuevos por proceso (GRD-IV-01: una sola
 // invitación no terminal por sujeto), sintéticos y sin PII.
 const INVITATION_REF = pgStore ? randomUUID() : "7e1d0c52-8d4e-4a7b-9c21-0e5a7d3b9f77";
-const SUBJECT_REF = pgStore ? randomUUID() : LOCAL_ONLY_DEV_SUBJECT_REF;
+const SUBJECT_REF = SEEDED_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
 await createInvitation(ports.invitation, TENANT_ID, "INVITER", {

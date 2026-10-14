@@ -50,3 +50,17 @@ test("TEST-CNS-726: el roster sintético de dev no reutiliza personas entre role
   assert.throws(() => loadInvitationIssuancePolicyConfig({}));
   assert.throws(() => loadInvitationIssuancePolicyConfig({ expiresInMs: 1000 }));
 });
+
+test("TEST-CNS-1411: el directorio sintético de dev incluye el sujeto de la invitación sembrada y los alumnos de la consola staff, con etiquetas válidas (D-02)", async () => {
+  const { devSubjectDirectoryEntries, LOCAL_ONLY_DEV_SUBJECT_REF, LOCAL_ONLY_DEV_TENANT_ID, LOCAL_ONLY_DEV_STAFF_STUDENTS } = await import("../../../src/server/entrypoints/dev-local-config.ts");
+  const { createInMemorySubjectDirectory } = await import("../../../src/infra/adapters/in-memory-subject-directory.adapter.ts");
+  const { SUBJECT_LABEL_PATTERN } = await import("../../../src/server/ports/subject-directory.port.ts");
+  const dir = createInMemorySubjectDirectory("LOCAL", devSubjectDirectoryEntries(LOCAL_ONLY_DEV_SUBJECT_REF));
+  const seeded = await dir.lookup(LOCAL_ONLY_DEV_TENANT_ID, LOCAL_ONLY_DEV_SUBJECT_REF);
+  assert.ok(seeded && SUBJECT_LABEL_PATTERN.test(seeded.label), "la invitación sembrada debe tener etiqueta sintética");
+  for (const s of LOCAL_ONLY_DEV_STAFF_STUDENTS) {
+    assert.equal((await dir.lookup(LOCAL_ONLY_DEV_TENANT_ID, s.subjectRef))?.label, s.label);
+  }
+  const labels = devSubjectDirectoryEntries(LOCAL_ONLY_DEV_SUBJECT_REF).map((e) => e.label);
+  assert.equal(new Set(labels).size, labels.length, "etiquetas únicas");
+});

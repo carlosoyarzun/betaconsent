@@ -763,3 +763,4 @@ TEST-CNS-1407,integration,tests/integration/consent-flow/guest-flow-v2-http.test
 TEST-CNS-1408,unit,tests/unit/consent-decision/guest-messages.test.ts,"comprobante con campos del §21, marca de agua IT0 y marcadores LEGAL DECISION, sin enlaces ni descarga",UX-CNS-006;D-04;MP §21,ACTIVE
 TEST-CNS-1409,unit,tests/unit/consent-decision/guest-messages.test.ts,"mensaje del enlace de gestión aparte, solo el enlace sintético, escapa lo interpolado",UX-CNS-006b;D-03,ACTIVE
 TEST-CNS-1410,contract,tests/contract/schemas/guest-flow-payloads.test.ts,"DecisionRecorded/DecisionStepRecorded admiten subjectLabel sintético opcional; SubjectMismatchAck",API-CNS-126;API-CNS-127;API-CNS-128;D-02,ACTIVE
+TEST-CNS-1411,integration,tests/integration/consent-flow/dev-local-config.test.ts,"directorio sintético de dev incluye el sujeto de la invitación sembrada y los alumnos staff (D-02)","UX-CNS-003;D-02",ACTIVE

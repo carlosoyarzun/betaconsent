@@ -80,6 +80,21 @@ export const LOCAL_ONLY_DEV_STAFF_STUDENTS: readonly { readonly label: string; r
   { label: "Alumno de prueba 5", subjectRef: "b07be7e0-88b9-4233-807c-ae6263b45aa7", participationRef: "4a54ce87-8bff-4487-8f5b-2f620867768e" },
   { label: "Alumno de prueba 6", subjectRef: "9467c808-e8d3-486d-a73a-87a6cfdc02ef", participationRef: "74a01146-1bf6-4d67-bffe-bd72c89332dc" },
 ];
+/** D-02 (Carlos, 2026-10-14): etiqueta sintética del estudiante de la invitación que dev.ts siembra para el flujo del
+ * invitado (no es un alumno de la consola staff). Con ella GET /decision muestra "Alumno de prueba N" en el flujo dev
+ * por defecto. Cero PII. */
+export const LOCAL_ONLY_DEV_SEEDED_SUBJECT_LABEL = "Alumno de prueba 7";
+
+/** Entradas del directorio sintético de dev: los alumnos de la consola staff (invitaciones creadas desde /staff/...) más
+ * el sujeto de la invitación sembrada por dev.ts. `seededSubjectRef` es LOCAL_ONLY_DEV_SUBJECT_REF en memoria y un UUID
+ * nuevo por proceso en Postgres. */
+export function devSubjectDirectoryEntries(seededSubjectRef: string): readonly { readonly tenantId: string; readonly subjectRef: string; readonly label: string; readonly participationRef: string | null }[] {
+  return [
+    ...LOCAL_ONLY_DEV_STAFF_STUDENTS.map((s) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })),
+    { tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: seededSubjectRef, label: LOCAL_ONLY_DEV_SEEDED_SUBJECT_LABEL, participationRef: null },
+  ];
+}
+
 /** TENANT_ADMIN sintético del colegio de dev (mismo valor que su entrada en LOCAL_ONLY_DEV_STAFF_ROSTER); lo usa la consola dev. */
 export const LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF = "18c54cb1-9df4-4d4d-b371-b606e4c3b8e6";
 export const LOCAL_ONLY_DEV_STAFF_CHANNEL_REF = "staff-recipient@example.invalid";
