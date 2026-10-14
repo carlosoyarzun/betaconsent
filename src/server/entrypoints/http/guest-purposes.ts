@@ -14,7 +14,7 @@ export const PURPOSES: readonly PurposeCopy[] = [
   {
     purpose: "STUDY_PARTICIPATION",
     title: "Participar en el Estudio Beta",
-    description: "Tu hija o hijo participaría en sesiones de lectura del Estudio Beta de LectorPro.",
+    description: "El estudiante participaría en sesiones de lectura del Estudio Beta de LectorPro.",
   },
   {
     purpose: "AUDIO_RECORDING",

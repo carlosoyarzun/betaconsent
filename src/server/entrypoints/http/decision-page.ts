@@ -49,7 +49,7 @@ function registeredStateBlock(kind: "granted" | "declined"): string {
       ${renderStepper(3)}
       <span class="lp-hero-icon" aria-hidden="true">${granted ? "✓" : "•"}</span>
       <h1 id="${kind}-heading" tabindex="-1">${granted ? "Listo, registramos tu decisión" : "Registramos tu decisión"}</h1>
-      ${granted ? "<p>Colegio Ejemplo — Estudio Beta de LectorPro.</p>" : "<p>Tu hija o hijo no participará en el Estudio Beta.</p>"}
+      ${granted ? "<p>Colegio Ejemplo — Estudio Beta de LectorPro.</p>" : "<p>El estudiante no participará en el Estudio Beta.</p><p class=\"lp-legal-note\">[LEGAL DECISION — efecto de no aceptar una finalidad obligatoria (Q-13): copy pendiente de aprobación de Carlos]</p>"}
       <section class="lp-card lp-card-default" aria-labelledby="${kind}-receipt-h2">
         <h2 id="${kind}-receipt-h2">Comprobante</h2>
         <p class="lp-receipt-ref" id="${kind}-receipt"></p>
@@ -100,7 +100,7 @@ export function renderDecisionPage(
     <div id="decision-form">
     ${renderStepper(2)}
     <h1 id="decision-h1">Revisa y decide</h1>
-    <p>Colegio Ejemplo — Estudio Beta de LectorPro. Estás revisando esta decisión para tu hija o hijo.</p>
+    <p>Colegio Ejemplo — Estudio Beta de LectorPro. Estás revisando esta decisión para el estudiante.</p>
 
     <section class="lp-card lp-card-default lp-decision-section" aria-labelledby="consent-text-h2">
       <h2 id="consent-text-h2">Texto del consentimiento</h2>
@@ -145,13 +145,14 @@ export function renderDecisionPage(
 
     <section class="lp-card lp-card-default lp-decision-section" aria-labelledby="purposes-h2">
       <h2 id="purposes-h2">Finalidades</h2>
-      <p>Las 4 finalidades son necesarias para participar en el Estudio Beta. Si no aceptas alguna, tu hija o hijo no participará.</p>
+      <p class="lp-legal-note">[LEGAL DECISION — carácter obligatorio de las 4 finalidades y consecuencia de no aceptar alguna: copy pendiente de aprobación de Carlos]</p>
+      <p>Las 4 finalidades son necesarias para participar en el Estudio Beta. Si no aceptas alguna, el estudiante no participará.</p>
       <p class="lp-legal-note">[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos]</p>
 ${PURPOSES.map(renderPurposeSection).join("")}    </section>
 
     <div role="status" aria-live="polite" class="lp-alert-info" id="decline-notice" hidden>
       ${alertHead("info", "Elegiste no aceptar al menos una finalidad.")}
-      <p>Al enviar, registraremos que tu hija o hijo no participará en el Estudio Beta.</p>
+      <p>Al enviar, registraremos que el estudiante no participará en el Estudio Beta.</p>
       <p class="lp-legal-note">[LEGAL DECISION — efecto de no aceptar una finalidad (Q-13): copy pendiente de aprobación de Carlos]</p>
     </div>
 

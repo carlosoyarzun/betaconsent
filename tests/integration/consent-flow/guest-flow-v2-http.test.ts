@@ -366,6 +366,10 @@ test("TEST-CNS-1406: la pantalla incompleta ofrece resumen de errores con enlace
     assert.match(html, /Registramos tu aviso/);
     assert.match(html, /Cancelamos esta invitación\./);
     assert.match(html, /Nunca lo mostramos aquí\./);
+    // P2-6: el copy de finalidades obligatorias lleva marcador [LEGAL DECISION] y ninguna pantalla presume "hija o hijo".
+    assert.match(html, /\[LEGAL DECISION — carácter obligatorio de las 4 finalidades/);
+    assert.doesNotMatch(html, /hija o hijo/);
+    assert.doesNotMatch(await (await fetch(`${h.baseUrl}/assets/decision.js`)).text(), /hija o hijo/);
     // Todo copy legal conserva su marcador.
     assert.match(html, /\[LEGAL DECISION — enunciado de autoridad/);
     assert.match(html, /\[LEGAL DECISION — efecto de no aceptar una finalidad/);

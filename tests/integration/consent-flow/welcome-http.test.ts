@@ -146,7 +146,7 @@ test("TEST-CNS-540: GET /welcome contiene el copy exacto del handoff (welcome-ha
     assert.match(html, /Colegio Ejemplo te invita a participar en el Estudio Beta de LectorPro\./);
     assert.match(
       html,
-      /LectorPro es una aplicación que apoya la lectura de tu hija o hijo\. El colegio invita a las familias a sumarse a un estudio piloto\./,
+      /LectorPro es una aplicación que apoya la lectura del estudiante\. El colegio invita a las familias a sumarse a un estudio piloto\./,
     );
     assert.match(html, /Cómo funciona/);
     assert.match(

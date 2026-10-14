@@ -40,7 +40,7 @@ export function renderWelcomePage(): string {
       <div>
         <section class="lp-card lp-card-default" aria-label="Detalle de la invitación">
           <p>Colegio Ejemplo te invita a participar en el Estudio Beta de LectorPro.</p>
-          <p>LectorPro es una aplicación que apoya la lectura de tu hija o hijo. El colegio invita a las familias a sumarse a un estudio piloto.</p>
+          <p>LectorPro es una aplicación que apoya la lectura del estudiante. El colegio invita a las familias a sumarse a un estudio piloto.</p>
         </section>
         <section class="lp-card lp-card-default lp-decision-section" aria-labelledby="how-h2">
           <h2 id="how-h2">Cómo funciona</h2>
