@@ -129,7 +129,7 @@ pgTest("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, enum
     await expectFail("INSERT INTO tenant_resolve.handle (handle_hash, tenant_id, chain_ref, revoked_decision_ref, data_class) VALUES ($1, $2, 'c', 'd', 'REAL')", [hex("h839b"), t], "handle_data_class_synthetic");
 
     // Enums, formas y longitudes.
-    await expectFail("INSERT INTO app.invitation (tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state) VALUES ($1, 'i', 'c', 'p', 's', 'CANCELLED')", [t], "invitation_state_enum");
+    await expectFail("INSERT INTO app.invitation (tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state) VALUES ($1, 'i', 'c', 'p', 's', 'EXPIRED')", [t], "invitation_state_enum");
     await expectFail(inv(", recipient_binding", ", 'EMAIL'"), [t], "invitation_binding_enum");
     await expectFail(inv(", token_hash", ", 'no-es-sha256'"), [t], "invitation_token_hash_shape");
     await expectFail("INSERT INTO app.invitation (tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state) VALUES ($1, '', 'c', 'p', 's', 'DRAFT')", [t], "invitation_ref_len");

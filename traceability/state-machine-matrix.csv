@@ -79,7 +79,7 @@ invitation,guard,GRD-IV-08,"SM-CNS-001 §2 I4, §7;SEC F23",TEST-CNS-482;TEST-CN
 invitation,guard,GRD-IV-13,SEC-CNS-012 re-verificación rev. 4b (3)(iii);DEC-BR-018 R14-E;REQ-CNS-TBD-07 AC-07.1;SEC-CNS-006 P-12;INV-CM-08,UNCOVERED,sin test que cite GRD-IV-13 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 invitation,guard,GRD-IV-14,REQ-CNS-036;API-CNS-116;DEC-BR-019;PC-2;RULE-CNS-029,TEST-CNS-1086,
 invitation,guard,GRD-IV-09,"SM-CNS-001 §2 I5, §2.1 M1, M2;LD-21",UNCOVERED,sin test que cite GRD-IV-09 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-invitation,guard,GRD-IV-10,SM-CNS-001 §2 I9,UNCOVERED,sin test que cite GRD-IV-10 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
+invitation,guard,GRD-IV-10,SM-CNS-001 §2 I9,TEST-CNS-1405,
 invitation,guard,GRD-IV-11,SEC-CNS-006 P-11;SM-CNS-001 §2.1 M5,TEST-CNS-712,
 invitation,guard,GRD-IV-12,SM-CNS-001 §2 I8;SEC-CNS-006 P-10,TEST-CNS-713,
 invitation,error,ERR-IV-01,"SM-CNS-001 §2 I3r, I4;REQ-CNS-TBD-07 AC-07.1;ADR-006 §6",TEST-CNS-481;TEST-CNS-499,
