@@ -349,11 +349,12 @@ test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL D
   }
 });
 
-test("TEST-CNS-569: app.css da un tap target >=44px al checkbox de autoridad (#authority-declared), no solo a la fila que lo contiene (Carlos, 2026-09-27, misma decisión que /welcome y /verify)", async () => {
+test("TEST-CNS-569: app.css da un área táctil >=48px a la casilla de autoridad (#authority-declared): caja visual de 24px dentro de una fila-label de 48px (D-05, Carlos 2026-10-14)", async () => {
   const harness = await startServer();
   try {
     const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
-    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+    assert.match(css, /\.lp-decision-checkbox-row\s*\{[^}]*min-height:\s*48px/s);
+    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/s);
   } finally {
     await harness.close();
   }

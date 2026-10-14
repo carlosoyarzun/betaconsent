@@ -30,7 +30,8 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    var continueBtn = document.getElementById("continue-btn");
+    var continueBtns = Array.prototype.slice.call(document.querySelectorAll("[data-continue]"));
+    var continueBtn = continueBtns[0];
     var errorUniform = document.getElementById("error-uniform");
     var errorNetwork = document.getElementById("error-network");
     var retryBtn = errorNetwork ? errorNetwork.querySelector("button") : null;
@@ -46,9 +47,11 @@
 
     function setBusy(isBusy) {
       busy = isBusy;
-      continueBtn.setAttribute("aria-disabled", isBusy ? "true" : "false");
-      continueBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
-      continueBtn.textContent = isBusy ? "Abriendo invitación…" : continueLabel;
+      continueBtns.forEach(function (btn) {
+        btn.setAttribute("aria-disabled", isBusy ? "true" : "false");
+        btn.setAttribute("aria-busy", isBusy ? "true" : "false");
+        btn.textContent = isBusy ? "Abriendo invitación…" : continueLabel;
+      });
     }
 
     function showUniformError() {
@@ -90,7 +93,9 @@
         });
     }
 
-    continueBtn.addEventListener("click", startFlow);
+    continueBtns.forEach(function (btn) {
+      btn.addEventListener("click", startFlow);
+    });
     if (retryBtn) retryBtn.addEventListener("click", startFlow);
   });
 })();

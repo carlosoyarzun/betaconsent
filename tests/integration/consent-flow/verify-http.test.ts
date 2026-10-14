@@ -302,13 +302,13 @@ test("TEST-CNS-560: reenviar el código (POST /otp/resend) desde /verify reempla
   }
 });
 
-test("TEST-CNS-561: app.css fija min-height 44px (tap target) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", async () => {
+test("TEST-CNS-561: app.css fija min-height 48px (tap target, D-05 Carlos 2026-10-14) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", async () => {
   const harness = await startServer();
   try {
     const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
-    assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*44px/);
-    assert.match(css, /\.lp-verify-cta\s*\{[^}]*min-height:\s*44px/);
-    assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*44px/);
+    assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*48px/);
+    assert.match(css, /\.lp-verify-cta[^{]*\{[^}]*min-height:\s*48px/);
+    assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*52px/);
   } finally {
     await harness.close();
   }
@@ -333,12 +333,12 @@ test("TEST-CNS-563: verify.js limpia el error previo y anuncia feedback neutro e
   const harness = await startServer();
   try {
     const js = await (await fetch(`${harness.baseUrl}/assets/verify.js`)).text();
-    assert.match(js, /showResendFeedback\("Te enviamos un nuevo código\."\)/);
-    assert.match(js, /showResendFeedback\("Alcanzaste el límite de reenvíos disponible por ahora\."\)/);
+    assert.match(js, /showResendFeedback\("Te enviamos un nuevo código\.", "ok"\)/);
+    assert.match(js, /showResendFeedback\("Alcanzaste el límite de reenvíos disponible por ahora\.", "limit"\)/);
     // showResendFeedback llama hideStates() primero: limpia code-error/aria-invalid antes de
     // mostrar el mensaje nuevo (fix: la UI ya no dejaba visible "El código ingresado no es
     // correcto…" tras un reenvío exitoso).
-    assert.match(js, /function showResendFeedback\(message\) \{\s*hideStates\(\);/);
+    assert.match(js, /function showResendFeedback\(message, kind\) \{\s*hideStates\(\);/);
     assert.doesNotMatch(js, /\d+\s*(reenvíos|intentos)/i); // P-06 sin valor aprobado: sin cifra
   } finally {
     await harness.close();

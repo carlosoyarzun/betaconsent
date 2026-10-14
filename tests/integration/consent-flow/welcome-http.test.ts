@@ -148,6 +148,7 @@ test("TEST-CNS-540: GET /welcome contiene el copy exacto del handoff (welcome-ha
       html,
       /LectorPro es una aplicación que apoya la lectura de tu hija o hijo\. El colegio invita a las familias a sumarse a un estudio piloto\./,
     );
+    assert.match(html, /Cómo funciona/);
     assert.match(
       html,
       /A continuación te enviaremos un código de verificación\. Después de confirmarlo, podrás revisar la información y decidir si participar\./,
@@ -174,7 +175,7 @@ test("TEST-CNS-541: los estáticos de la lista blanca (design system, app.css, w
 
     const appCss = await fetch(`${harness.baseUrl}/assets/app.css`);
     assert.equal(appCss.status, 200);
-    assert.match(await appCss.text(), /min-height: 44px/);
+    assert.match(await appCss.text(), /min-height: 48px/);
 
     const js = await fetch(`${harness.baseUrl}/assets/welcome.js`);
     assert.equal(js.status, 200);

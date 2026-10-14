@@ -24,11 +24,9 @@
 // cifra concreta (P-06 sin valor aprobado en SEC-CNS-006, igual que el resto del copy de esta
 // pantalla). Reportar a ravena-ux para que lo incorpore al handoff/Figma si corresponde.
 
-const HEAD = `<meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Verifica el código · Consent App</title>
-  <link rel="stylesheet" href="/assets/design-system/index.css">
-  <link rel="stylesheet" href="/assets/app.css">`;
+import { alertHead, GUEST_HELP_LINK, guestHead, guestHeader, renderStepper } from "./guest-layout.ts";
+
+const HEAD = guestHead("Verifica el código");
 
 export type VerifyScope = "DECISION" | "MANAGE" | "REVOCATION";
 
@@ -44,10 +42,10 @@ const NEXT_ROUTE_BY_SCOPE: Readonly<Record<VerifyScope, string>> = {
  * nuevo código". Nunca se muestra en scope REVOCATION/MANAGE (ver renderRightsLockedBlock).
  */
 function renderDecisionLockedBlock(): string {
-  return `    <div role="alert" aria-live="assertive" id="state-locked" hidden>
-      <p>Bloqueamos este código por varios intentos incorrectos.</p>
+  return `    <div role="alert" aria-live="assertive" class="lp-alert-error" id="state-locked" hidden>
+      ${alertHead("error", "Bloqueamos este código por varios intentos incorrectos.")}
       <p>Por seguridad, no podemos usarlo de nuevo. Solicita un código nuevo para continuar.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-locked">Solicitar nuevo código</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="request-new-code-btn-locked">Solicitar nuevo código</button>
     </div>
 `;
 }
@@ -61,11 +59,13 @@ function renderDecisionLockedBlock(): string {
  * sesión MANAGE verificada.
  */
 function renderRightsLockedBlock(): string {
-  return `    <div role="alert" aria-live="assertive" id="state-locked-rights" tabindex="-1" hidden>
-      <p>Bloqueamos este código por varios intentos incorrectos.</p>
+  return `    <div role="alert" aria-live="assertive" class="lp-alert-error" id="state-locked-rights" tabindex="-1" hidden>
+      ${alertHead("error", "Bloqueamos este código por varios intentos incorrectos.")}
       <p>Nunca pierdes la posibilidad de retirar tu consentimiento: elige una opción.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="send-recovery-link-btn">Enviar enlace de recuperación</button>
-      <button type="button" class="lp-btn lp-btn-secondary lp-verify-tap-target" id="open-human-case-btn">Abrir caso con soporte humano</button>
+      <div class="lp-actions-stack">
+        <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="send-recovery-link-btn">Enviar enlace de recuperación</button>
+        <button type="button" class="lp-btn lp-btn-outline lp-cta lp-verify-tap-target" id="open-human-case-btn">Abrir caso con soporte humano</button>
+      </div>
       <div aria-live="polite" role="status" id="rights-locked-feedback" hidden></div>
     </div>
 `;
@@ -86,9 +86,10 @@ export function renderVerifyPage(scope: VerifyScope = "DECISION"): string {
 <head>
   ${HEAD}
 </head>
-<body data-verify-scope="${scope}" data-verify-next="${NEXT_ROUTE_BY_SCOPE[scope]}">
+<body class="lp-guest-body" data-verify-scope="${scope}" data-verify-next="${NEXT_ROUTE_BY_SCOPE[scope]}">
+  ${guestHeader()}
   <main class="lp-page-container lp-verify-page" aria-labelledby="verify-h1">
-    <h1 id="verify-h1">Verifica el código</h1>
+    ${scope === "DECISION" ? renderStepper(1) : ""}<h1 id="verify-h1">Verifica el código</h1>
     <div id="verify-form">
       <p>Enviamos un código a la vía de contacto registrada para continuar. No lo compartas con nadie.</p>
       <div class="lp-form-group" id="verify-form-group">
@@ -105,7 +106,7 @@ export function renderVerifyPage(scope: VerifyScope = "DECISION"): string {
         />
         <p class="lp-input-help" id="code-help">Ingresa el código de [N] caracteres que enviamos (P-01, valor pendiente de aprobación). El código deja de funcionar después de [tiempo pendiente de aprobación] (P-02).</p>
         <div class="lp-input-error-msg" id="code-error" role="alert" aria-live="assertive" hidden>
-          El código ingresado no es correcto. Revísalo e inténtalo nuevamente.
+          <span aria-hidden="true">⚠ </span>El código ingresado no es correcto. Revísalo e inténtalo nuevamente.
         </div>
       </div>
       <div class="lp-verify-resend">
@@ -113,25 +114,25 @@ export function renderVerifyPage(scope: VerifyScope = "DECISION"): string {
       </div>
       <div aria-live="polite" role="status" id="resend-feedback" hidden></div>
       <p>Puedes solicitarlo un número limitado de veces (P-06, valor pendiente de aprobación).</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-cta" id="verify-btn" aria-disabled="false" aria-busy="false">Verificar</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-cta lp-verify-actions" id="verify-btn" aria-disabled="false" aria-busy="false">Verificar</button>
     </div>
-    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
+    ${GUEST_HELP_LINK}
 
-    <div role="alert" aria-live="assertive" id="state-expired" hidden>
-      <p>Este código ya no es válido.</p>
+    <div role="alert" aria-live="assertive" class="lp-alert-warning" id="state-expired" hidden>
+      ${alertHead("warning", "Este código ya no es válido.")}
       <p>Puede haber expirado o haberse usado antes. Solicita uno nuevo para continuar.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="request-new-code-btn-expired">Solicitar nuevo código</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="request-new-code-btn-expired">Solicitar nuevo código</button>
     </div>
 
 ${scope === "DECISION" ? renderDecisionLockedBlock() : renderRightsLockedBlock()}
-    <div role="alert" aria-live="polite" id="error-network" hidden>
-      <p>No pudimos conectar.</p>
+    <div role="alert" aria-live="polite" class="lp-alert-warning" id="error-network" hidden>
+      ${alertHead("warning", "No pudimos conectar.")}
       <p>Revisa tu conexión e inténtalo nuevamente.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
-      <p>No pudimos continuar con esta verificación.</p>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
+      ${alertHead("error", "No pudimos continuar con esta verificación.")}
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
   </main>
@@ -153,13 +154,15 @@ export function renderVerifyUniformErrorPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-verify-page" aria-labelledby="verify-h1">
     <h1 id="verify-h1">Verifica el código</h1>
-    <div role="alert" aria-live="assertive" id="error-uniform">
-      <p>No pudimos continuar con esta verificación.</p>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
+      ${alertHead("error", "No pudimos continuar con esta verificación.")}
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
+    ${GUEST_HELP_LINK}
   </main>
 </body>
 </html>
