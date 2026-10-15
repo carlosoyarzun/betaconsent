@@ -49,6 +49,19 @@ function int(env: Env, name: string, min: number, max: number): number | undefin
  */
 export const MIN_ALLOWLIST_PREFIX = { v4: 8, v6: 8 } as const;
 
+/**
+ * Fuera de LOCAL, cada CIDR de la allowlist debe caer DENTRO de un rango privado (RFC 1918, CGNAT de VPN/Tailscale y ULA IPv6): la plataforma es solo para red privada o VPN (G-6). Un rango publico
+ * (p. ej. 8.0.0.0/8, 2000::/8) se rechaza. En LOCAL no aplica (loopback y pruebas).
+ */
+export const PRIVATE_RANGES: readonly Cidr[] = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"].map(parseCidr);
+
+function insideRange(c: Cidr, range: Cidr): boolean {
+  if (c.family !== range.family || c.prefix < range.prefix) return false;
+  const bits = c.family === 4 ? 32 : 128;
+  const shift = BigInt(bits - range.prefix);
+  return (c.base >> shift) << shift === range.base;
+}
+
 export function loadPlatformSettings(env: Env, environment: string): PlatformSettings {
   const local = environment === "LOCAL";
   const need = (name: string, value: number | undefined, fallback: number | null): number => {
@@ -71,6 +84,11 @@ export function loadPlatformSettings(env: Env, environment: string): PlatformSet
   for (const c of allowedCidrs) {
     if (c.prefix < (c.family === 4 ? MIN_ALLOWLIST_PREFIX.v4 : MIN_ALLOWLIST_PREFIX.v6)) {
       throw new PlatformConfigError(`CNS_PLATFORM_ALLOWED_CIDRS: prefijo demasiado amplio (minimo /${MIN_ALLOWLIST_PREFIX.v4} en IPv4 y /${MIN_ALLOWLIST_PREFIX.v6} en IPv6; /0 equivale a cualquier origen)`);
+    }
+  }
+  if (!local) {
+    for (const c of allowedCidrs) {
+      if (!PRIVATE_RANGES.some((r) => insideRange(c, r))) throw new PlatformConfigError("CNS_PLATFORM_ALLOWED_CIDRS: fuera de LOCAL solo se admiten rangos privados (10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7)");
     }
   }
   const p53 = int(env, "CNS_PLATFORM_P53_MAX_AWAITING", 1, 1_000_000);

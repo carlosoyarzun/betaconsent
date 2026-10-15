@@ -138,6 +138,14 @@ test("TEST-CNS-1514 settings: prefijo P-49 obligatorio fuera de LOCAL; allowlist
     assert.throws(() => loadPlatformSettings({ CNS_PLATFORM_ALLOWED_CIDRS: bad }, "LOCAL"), PlatformConfigError, `LOCAL ${bad}`);
   }
   for (const ok of ["10.0.0.0/8", "fd00::/8", "10.8.0.0/16,192.168.0.0/16"]) assert.ok(loadPlatformSettings({ ...full, CNS_PLATFORM_ALLOWED_CIDRS: ok }, "STAGING"));
+  // Fuera de LOCAL solo rangos privados: los publicos (y los que desbordan un rango privado) se rechazan; en LOCAL no aplica.
+  for (const pub of ["8.0.0.0/8", "8.8.8.0/24", "2000::/8", "172.15.0.0/16", "172.32.0.0/16", "100.128.0.0/16", "11.0.0.0/8", "10.0.0.0/8,8.8.8.8/32"]) {
+    assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_ALLOWED_CIDRS: pub }, "STAGING"), PlatformConfigError, `publico ${pub}`);
+  }
+  for (const priv of ["172.16.0.0/12", "172.20.1.0/24", "192.168.1.0/24", "100.64.0.0/10", "100.100.0.0/16", "fd12:3456::/32", "10.1.2.3/32"]) {
+    assert.ok(loadPlatformSettings({ ...full, CNS_PLATFORM_ALLOWED_CIDRS: priv }, "STAGING"), `privado ${priv}`);
+  }
+  assert.ok(loadPlatformSettings({ CNS_PLATFORM_ALLOWED_CIDRS: "8.0.0.0/8" }, "LOCAL"), "LOCAL no aplica el filtro de rangos privados");
   const idp = { CNS_PLATFORM_IDP_AUTHORIZATION_ENDPOINT: "https://idp.example.invalid/authorize", CNS_PLATFORM_IDP_CLIENT_ID: "c" };
   assert.throws(() => loadPlatformSettings({ ...full, ...idp, CNS_PLATFORM_REDIRECT_URI: "http://platform.example.invalid/cb" }, "STAGING"), PlatformConfigError, "http fuera de LOCAL");
   assert.throws(() => loadPlatformSettings({ ...full, ...idp, CNS_PLATFORM_REDIRECT_URI: "http://127.0.0.1/cb" }, "STAGING"), PlatformConfigError, "loopback http fuera de LOCAL");
