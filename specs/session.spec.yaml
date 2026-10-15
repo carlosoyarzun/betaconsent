@@ -278,6 +278,33 @@ invariants:
     statement: "Toda fila de sesion se proyecta a un evento valido: cada CHECK de ops.security_event (actor_ref, roles, session_ref, case_ref UUIDv4) tiene su equivalente en app.staff_session / app.case_session, y el dev-login CASE valida caseRef (422) antes de emitir. Asi un login nunca crea una sesion cuyo evento no se pueda escribir."
     testIds: [TEST-CNS-1191, TEST-CNS-1193, TEST-CNS-1194, TEST-CNS-1198, TEST-CNS-1203]
 
+# ADR-010 rev. 5 PR-6b (aceptada por Carlos el 2026-10-15; G-5, G-6, G-7, G-8): login de operador del proceso `platform` (equipo de LectorPro). Es DISTINTO de las sesiones STAFF y CASE de arriba:
+# las sesiones PLATFORM/CASE y open_platform_session/open_case_session son PR-6c (F-PR6-32); aqui solo el login hasta la aserción LOGIN y su consumo atómico.
+operatorLogin:
+  status: "PR-6b (implementado hasta la aserción LOGIN); sesiones PLATFORM/CASE: PR-6c"
+  flow:
+    - "GET /platform/auth/login?kind=PLATFORM (sin sesión): P-49 en memoria; begin_oidc_authorization(AWAITING_CALLBACK, state_hash, PKCE, binding = sha256(nonce)); 302 al IdP con scope openid, state, nonce, code_challenge S256, max_age=0 y prompt=login (G-5); cookie __Host- con state (HttpOnly, Secure, SameSite=Lax)."
+    - "GET /platform/auth/callback: state de la cookie == state del query (tiempo constante); complete_oidc_callback (un solo uso, vigente); 303 a una URL SIN code ni ref con Referrer-Policy no-referrer; 404 uniforme si state falta, es ajeno, reusado o vencido (cuenta para P-49)."
+    - "G-8: el exchangeRef viaja SOLO en una cookie __Host- (HttpOnly, Secure, SameSite=Strict); nunca en URL, cuerpo ni headers (contrato: /platform/auth/exchange sin ref en la ruta)."
+    - "verifier: canjea code + PKCE, verifica firma/iss/aud/exp/nonce/auth_time(obligatorio)/acr-amr, calcula sub_hmac y llama platform.record_login_assertion; la BASE resuelve el principal (no se devuelve) y valida auth_time >= created_at - skew (G-5)."
+    - "consume_login_assertion (interna; la usará open_*_session en 6c): sha256(state) = state_hash, kind, target_ref_hash (LOGIN_CASE: la aserción no sirve para otro caso) y vigencia; consumo atómico de un solo uso (G-7, G-8)."
+  assertion:
+    lifeFromAuthTime: "P-52 = 5 min DESDE auth_time (expires_at = auth_time + P-52; CHECK de la tabla: <= 5 min); un solo uso; ligada al operador (principal resuelto por la base), al kind, a state_hash y, en LOGIN_CASE, a target_ref_hash; en LOGIN_CASE el principal resuelto debe ser el de oidc_exchange.principal_ref (si no: REJECTED + evento en platform.session_event)."
+    failClosed: "P-48/P-52 NULL o fuera de rango en la base = REJECTED NOT_CONFIGURED; fuera de LOCAL, sin configuración, el verifier no arranca."
+    noSubHmacPersisted: "ningún rechazo persiste sub_hmac (P2(f)); sub desconocido o key_version no registrada = REJECTED NO_MAPPING sin crear principal (sin JIT)."
+  limits:
+    - {id: P-48, value: "5 intentos FALLIDOS / 15 min por principal resuelto (los ATTESTED legítimos no cuentan); aplica la base (record_login_assertion)", approved: "Carlos, 2026-10-15 (G-6)"}
+    - {id: P-49, value: "20 / 15 min por IP truncada, EN MEMORIA, sin persistir; detrás de NAT/VPN el contador es compartido (limitación documentada; con IP interna por cliente usar prefijo 32)", approved: "Carlos, 2026-10-15 (G-6)"}
+    - {id: P-50, value: "30 solicitudes autenticadas / min por operador; limitador implementado, cableado a rutas autenticadas en 6c", approved: "Carlos, 2026-10-15 (G-6)"}
+    - {id: P-51, value: "5 intentos de confirmación de acciones sensibles / 10 min por operador; aplica la base al INICIAR step-up; el consumo del nonce es 6d", approved: "Carlos, 2026-10-15 (G-6)"}
+    - {id: P-52, value: "5 min desde auth_time, un solo uso", approved: "Carlos, 2026-10-15 (G-7)"}
+    - {id: P-53, value: "tope global de filas AWAITING_CALLBACK; SIN valor aprobado: obligatorio fuera de LOCAL (el proceso platform no arranca sin él)", approved: "PENDIENTE"}
+  exceeded: "rechazo temporal uniforme (404/429 sin revelar el límite) y evento en platform.session_event (tipo de límite, ventana, principal si lo hay), SIN IP ni completa ni truncada (F-PR6-31; persistir IP = LEGAL DECISION)."
+  configuration: "Valores por configuración (CNS_PLATFORM_P49_*, P50_*, P51_*, P53_*; CNS_VERIFIER_P48_*, P52_*); en LOCAL, valores iniciales aprobados; fuera de LOCAL sin defaults y sin arranque si faltan (platform-settings.ts, verifier-process.ts)."
+  network: "G-6: en staging la plataforma solo es accesible por red privada o VPN. Es una restricción de INFRAESTRUCTURA (firewall del host, IPAddressAllow; infra/README.md): NO está implementada ni verificada en el repo. El proceso exige fuera de LOCAL un bind explícito (IP concreta) y una allowlist CIDR como defensa en profundidad."
+  idp: "Adaptador real apagado (src/infra/adapters/oidc-idp.adapter.ts): issuer, token_endpoint y jwks_uri fijados por configuración, sin discovery ni jku, cliente HTTP inyectado (sin red en LOCAL/CI), se niega en LOCAL y sin egress aprobado (P-45). Activación: IT0b (APR-IDP, P-45, TP-02)."
+  tests: [TEST-CNS-1500, TEST-CNS-1501, TEST-CNS-1502, TEST-CNS-1503, TEST-CNS-1504, TEST-CNS-1505, TEST-CNS-1506, TEST-CNS-1507, TEST-CNS-1508, TEST-CNS-1509, TEST-CNS-1510]
+
 residuals:
   - id: R-SE-01
     statement: "Carrera logout <-> dominio: una request en vuelo que ya paso la validacion puede completar su efecto de dominio tras el commit del logout; no hay bloqueo entre revocacion y unidad de trabajo de dominio."

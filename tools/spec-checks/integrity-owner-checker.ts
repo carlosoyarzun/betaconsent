@@ -71,6 +71,9 @@ const M0040 = "db/migrations/0040_adr010_record_assertion_fresh_auth.sql";
 const M0041 = "db/migrations/0041_adr010_ledger_allowlist_19_dedupe_estricto.sql";
 const M0042 = "db/migrations/0042_adr010_worker_downstream_only.sql";
 const M0044 = "db/migrations/0044_invitation_cancel_subject_mismatch_fn.sql"; // I9 por funcion case_state (opcion A de Carlos, 2026-10-14)
+/** ADR-010 rev. 5 PR-6b: 0050 (esquema de login: identidad versionada, oidc_exchange, login_assertion, session_event) y 0051 (funciones de login). */
+const M0050 = "db/migrations/0050_adr010_pr6b_oidc_login_schema.sql";
+const M0051 = "db/migrations/0051_adr010_pr6b_oidc_login_functions.sql";
 /** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
 const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
 /** ADR-010 PR-5b: TEST-CNS-1381 asume transition_owner (SET LOCAL ROLE) para probar el trigger TRG-RC-01 por efecto y la policy que protege los terminales. */
@@ -84,9 +87,10 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // 0035 (PR-3): SET LOCAL ROLE para crear el esquema platform (platform_schema_owner) y sus tablas/funciones (membership_owner, grant_owner).
   // 0036 (PR-4): identidad, no_self_approval, oidc_exchange, grant_assertion y funciones del verifier (mismos tres owners; platform_schema_owner para USAGE/CREATE temporal).
   // 0040 (PR-6-0): CREATE temporal de grant_owner sobre platform (platform_schema_owner) y record_assertion v2 como grant_owner (SET LOCAL ROLE).
-  platform_schema_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"] },
-  membership_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [FIX_PLATFORM]: ["set-role"] },
-  grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"] },
+  // 0050/0051 (PR-6b): CREATE temporal (platform_schema_owner), ALTER de principal_identity (membership_owner) y tablas/funciones de login (grant_owner), mismo patron que 0036.
+  platform_schema_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"], [M0050]: ["set-role"], [M0051]: ["set-role"] },
+  membership_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0050]: ["set-role"], [FIX_PLATFORM]: ["set-role"] },
+  grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"], [M0050]: ["set-role"], [M0051]: ["set-role"] },
   // 0037 (PR-5a): case_state_owner crea el esquema case_state y le da USAGE/CREATE temporal a transition_owner; transition_owner crea las funciones
   // de transicion (SET LOCAL ROLE). Sin otros caminos: PR-5b y PR-7 amplian esta allowlist con revision (CODEOWNERS).
   // 0038 (PR-5b): mismo patron (CREATE temporal de transition_owner sobre case_state; funciones de RightsCase como transition_owner).

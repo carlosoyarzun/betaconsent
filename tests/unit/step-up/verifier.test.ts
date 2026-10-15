@@ -11,7 +11,7 @@ import { runVerifierCycle } from "../../../src/server/modules/step-up/verifier.t
 import type { VerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
 import { computeSubHmac, VerifierConfigError } from "../../../src/server/modules/step-up/id-token.ts";
 import { PlatformDeniedError } from "../../../src/server/ports/oidc-exchange.port.ts";
-import type { AssertionRecord, ClaimedExchange, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
+import type { AssertionRecord, ClaimedExchange, LoginAssertionRecord, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
 import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";
 import { withPlatformTransaction } from "../../../src/infra/adapters/postgres/platform-call.ts";
 import { FakeClient, fakePool, sqlError } from "../postgres/fakes.ts";
@@ -43,11 +43,16 @@ class FakeStore implements OidcExchangeStorePort {
     this.records.push(record);
     return record.decision === "ATTESTED" && this.attestedResult;
   }
+  readonly loginRecords: LoginAssertionRecord[] = [];
+  async recordLoginAssertion(record: LoginAssertionRecord): Promise<boolean> {
+    this.loginRecords.push(record);
+    return record.decision === "ATTESTED" && this.attestedResult;
+  }
 }
 
 function claimed(p: SyntheticIdpAdapter, auth: Parameters<SyntheticIdpAdapter["simulateAuthorization"]>[0]): ClaimedExchange {
   const { code, pkceVerifier } = p.simulateAuthorization(auth);
-  return { exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", nonceHash: NONCE_HASH, principalRef: PRINCIPAL, code, pkceVerifier };
+  return { exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", kind: "STEP_UP", nonceHash: NONCE_HASH, principalRef: PRINCIPAL, code, pkceVerifier };
 }
 
 test("TEST-CNS-1370 verifier: sin solicitudes devuelve IDLE; con una valida registra ATTESTED con solo claims minimos (sub como HMAC, sin email ni token ni code)", async () => {
@@ -110,7 +115,7 @@ test("TEST-CNS-1370 verifier: si la base degrada la asercion (sub_hmac no mapead
   assert.equal(jwks.keys.length, 1);
   assert.ok(!("d" in jwks.keys[0]!));
   // Un error al registrar la asercion no se traga como exito.
-  const failing: OidcExchangeStorePort = { claim: async () => claimed(p, { sub: "s", nonce: NONCE }), recordAssertion: async () => { throw new PlatformDeniedError(); } };
+  const failing: OidcExchangeStorePort = { claim: async () => claimed(p, { sub: "s", nonce: NONCE }), recordAssertion: async () => { throw new PlatformDeniedError(); }, recordLoginAssertion: async () => false };
   await assert.rejects(() => runVerifierCycle({ store: failing, idp: p, config: config(), now: () => NOW_MS }), PlatformDeniedError);
 });
 
@@ -165,7 +170,7 @@ test("TEST-CNS-1370 verifier: una configuracion invalida (NaN, Infinity, negativ
   for (const [label, over] of bad) {
     let claims = 0;
     const store = new FakeStore([claimed(p, { sub: "s", nonce: NONCE })]);
-    const counting: OidcExchangeStorePort = { claim: async () => { claims += 1; return store.claim(); }, recordAssertion: (r) => store.recordAssertion(r) };
+    const counting: OidcExchangeStorePort = { claim: async () => { claims += 1; return store.claim(); }, recordAssertion: (r) => store.recordAssertion(r), recordLoginAssertion: (r) => store.recordLoginAssertion(r) };
     await assert.rejects(() => runVerifierCycle({ store: counting, idp: p, config: config(over), now: () => NOW_MS }), (e) => e instanceof VerifierConfigError, label);
     assert.equal(claims, 0, `${label}: no toca la cola`);
     assert.equal(store.records.length, 0, `${label}: no registra REJECTED`);
@@ -173,7 +178,7 @@ test("TEST-CNS-1370 verifier: una configuracion invalida (NaN, Infinity, negativ
   // Un token vencido hace 100.000 s con skew NaN (el P1): aborta; no se atesta ni se rechaza silenciosamente.
   const old = p.signRaw({ iss: ISSUER, aud: AUDIENCE, sub: "s", iat: 1, exp: Math.floor(NOW_MS / 1000) - 100_000, nonce: NONCE, auth_time: Math.floor(NOW_MS / 1000) });
   const idpOld = { exchangeCode: async () => ({ idToken: old }), getJwks: () => p.getJwks() };
-  const store = new FakeStore([{ exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", nonceHash: NONCE_HASH, principalRef: PRINCIPAL, code: "c", pkceVerifier: "p" }]);
+  const store = new FakeStore([{ exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", kind: "STEP_UP", nonceHash: NONCE_HASH, principalRef: PRINCIPAL, code: "c", pkceVerifier: "p" }]);
   await assert.rejects(() => runVerifierCycle({ store, idp: idpOld, config: config({ clockSkewSeconds: Number.NaN }), now: () => NOW_MS }), VerifierConfigError);
   assert.equal(store.records.length, 0);
 });

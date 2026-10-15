@@ -14,6 +14,7 @@ import { VerifierConfigError } from "../../modules/step-up/id-token.ts";
 import { runVerifierCycle, validateVerifierConfig } from "../../modules/step-up/verifier.ts";
 import type { VerifierConfig, VerifierCycleResult } from "../../modules/step-up/verifier.ts";
 import type { IdpClientPort } from "../../ports/idp-client.port.ts";
+import type { LoginLimits } from "../../ports/oidc-exchange.port.ts";
 
 /** F-A10-23: el proceso verifier niega un IdP sintetico (marca estructural o instancia) fuera de LOCAL. Fail-closed. */
 export function assertIdpAllowedForEnvironment(idp: IdpClientPort, environment: string): void {
@@ -30,12 +31,36 @@ export interface VerifierProcessSettings {
   readonly maxAuthAgeSeconds: number;
   readonly requiredAcrAnyOf: readonly string[];
   readonly subHmacKey: Buffer;
+  /** P-48/P-52 (G-6/G-7). undefined = no configurados: solo LOCAL arranca (valores iniciales aprobados); fuera de LOCAL validateVerifierConfig lanza. */
+  readonly login?: LoginLimits;
+  /** Version vigente de K_sub (F-PR6-16). Default 1. */
+  readonly subKeyVersion?: number;
 }
 
 function requiredEnv(env: Readonly<Record<string, string | undefined>>, name: string): string {
   const value = env[name];
   if (value === undefined || value === "") throw new VerifierConfigError(`${name} es obligatoria (sin default)`);
   return value;
+}
+
+function optionalInt(env: Readonly<Record<string, string | undefined>>, name: string): number | undefined {
+  const value = env[name];
+  if (value === undefined || value === "") return undefined;
+  if (!/^[0-9]{1,9}$/.test(value)) throw new VerifierConfigError(`${name} debe ser un entero positivo`);
+  return Number(value);
+}
+
+/** P-48/P-52 por entorno: las tres variables juntas o ninguna (una configuracion parcial es un despliegue roto). */
+function loadLoginLimits(env: Readonly<Record<string, string | undefined>>): LoginLimits | undefined {
+  const max = optionalInt(env, "CNS_VERIFIER_P48_MAX_FAILURES");
+  const window = optionalInt(env, "CNS_VERIFIER_P48_WINDOW_SECONDS");
+  const life = optionalInt(env, "CNS_VERIFIER_P52_ASSERTION_SECONDS");
+  const present = [max, window, life].filter((v) => v !== undefined).length;
+  if (present === 0) return undefined;
+  if (present !== 3 || max === undefined || window === undefined || life === undefined) {
+    throw new VerifierConfigError("CNS_VERIFIER_P48_MAX_FAILURES, CNS_VERIFIER_P48_WINDOW_SECONDS y CNS_VERIFIER_P52_ASSERTION_SECONDS van juntas");
+  }
+  return { p48MaxFailures: max, p48WindowSeconds: window, p52AssertionSeconds: life };
 }
 
 /** Lee la configuracion del verifier del entorno. Sin defaults para parametros PENDING (P-36, APR-IDP): si falta alguno, el proceso no arranca. */
@@ -50,6 +75,8 @@ export function loadVerifierSettings(env: Readonly<Record<string, string | undef
     maxAuthAgeSeconds: maxAuthAge,
     requiredAcrAnyOf: acr,
     subHmacKey: Buffer.from(keyHex, "hex"),
+    ...(loadLoginLimits(env) === undefined ? {} : { login: loadLoginLimits(env) as LoginLimits }),
+    ...(optionalInt(env, "CNS_VERIFIER_SUB_KEY_VERSION") === undefined ? {} : { subKeyVersion: optionalInt(env, "CNS_VERIFIER_SUB_KEY_VERSION") as number }),
   };
 }
 
@@ -93,6 +120,8 @@ export async function startVerifierProcess(options: StartVerifierProcessOptions 
     environment,
     requiredAcrAnyOf: settings.requiredAcrAnyOf,
     subHmacKey: settings.subHmacKey,
+    ...(settings.login === undefined ? {} : { login: settings.login }),
+    ...(settings.subKeyVersion === undefined ? {} : { subKeyVersion: settings.subKeyVersion }),
   };
   const now = options.now ?? Date.now;
   validateVerifierConfig(config, Math.floor(now() / 1000));

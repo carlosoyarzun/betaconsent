@@ -76,3 +76,25 @@ export const APPROVED_P06_OTP_SEND_WINDOW_MS = 60 * 60_000;
 // nombre NO lleva APPROVED_ y retention.config.ts NO lo usa como default: fuera de LOCAL/DEV la configuración explícita es obligatoria. Sirve
 // solo como valor de referencia de tests/fixtures LOCAL.
 export const PLACEHOLDER_P34_RETENTION_DAYS = 30;
+
+// ADR-010 rev. 5 §5.4 (decisiones G-6 y G-7 de Carlos, 2026-10-15; SEC-CNS-006 P-48..P-52): VALORES INICIALES CONFIGURABLES de los limites del login de operador. No son defaults de
+// produccion: fuera de LOCAL la configuracion explicita es obligatoria y el proceso (platform / verifier) NO arranca sin ella. En LOCAL se usan como valor de trabajo y de referencia de tests.
+// P-53 (tope global de filas AWAITING_CALLBACK) NO tiene valor aprobado: no hay constante; fuera de LOCAL falla cerrado.
+
+/** P-48: intentos FALLIDOS de autenticacion por identidad (principal resuelto) en la ventana = 5. Los ATTESTED legitimos no cuentan. */
+export const APPROVED_P48_LOGIN_MAX_FAILURES = 5;
+/** P-48: ventana = 15 min. */
+export const APPROVED_P48_LOGIN_WINDOW_SECONDS = 15 * 60;
+/** P-49: intentos de autenticacion por IP (truncada, en memoria, sin persistir) en la ventana = 20. Detras de NAT/VPN el contador es compartido (limitacion documentada). */
+export const APPROVED_P49_AUTH_MAX_PER_IP = 20;
+/** P-49: ventana = 15 min. */
+export const APPROVED_P49_AUTH_WINDOW_SECONDS = 15 * 60;
+/** P-50: solicitudes autenticadas por operador por minuto = 30 (ventana de 60 s). */
+export const APPROVED_P50_REQUESTS_MAX_PER_MINUTE = 30;
+export const APPROVED_P50_WINDOW_SECONDS = 60;
+/** P-51: intentos de confirmacion de acciones sensibles por operador en la ventana = 5. */
+export const APPROVED_P51_STEP_UP_MAX_ATTEMPTS = 5;
+/** P-51: ventana = 10 min. */
+export const APPROVED_P51_STEP_UP_WINDOW_SECONDS = 10 * 60;
+/** P-52: vida de la asercion LOGIN contada DESDE auth_time = 5 min; un solo uso; la base no admite mas de 300 s. */
+export const APPROVED_P52_LOGIN_ASSERTION_SECONDS = 5 * 60;
