@@ -198,6 +198,25 @@ test("TEST-CNS-1401: GET /decision no preselecciona nada (chips, casilla ni sele
   }
 });
 
+test("TEST-CNS-1451: la casilla de autoridad de /decision tiene como nombre accesible el texto de la declaracion (label for/id y aria-labelledby al mismo texto), no 'on' (UX-CNS-003, accesibilidad)", async () => {
+  const subjectRef = fixtureUuid("subject-1451");
+  const h = await startServer(subjectRef);
+  try {
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1451"), subjectRef);
+    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
+    const input = html.match(/<input[^>]*id="authority-declared"[^>]*>/)?.[0] ?? "";
+    assert.match(input, /type="checkbox"/);
+    assert.doesNotMatch(input, /\bvalue=/, "sin value: el arbol de accesibilidad no debe caer en 'on'");
+    assert.match(input, /aria-labelledby="authority-declared-label"/);
+    assert.match(html, /<label[^>]*for="authority-declared"/);
+    const label = html.match(/<span id="authority-declared-label">([^<]*)<\/span>/)?.[1] ?? "";
+    assert.match(label, /Declaro que tengo la autoridad/);
+    assert.equal((html.match(/id="authority-declared-label"/g) ?? []).length, 1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("TEST-CNS-1402: las páginas del invitado (welcome, verify, decision, manage) no cargan recursos remotos, ni <style> ni style= inline, y app.css no importa nada remoto (D-01, F-STITCH-17)", async () => {
   const subjectRef = fixtureUuid("subject-1402");
   const h = await startServer(subjectRef);
@@ -462,6 +481,208 @@ test("TEST-CNS-1413: si la entrega post-commit falla, la decisión sigue registr
     assert.equal(((await res.json()) as { state: string }).state, "GRANTED");
     assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"]);
     assert.ok(!logs.some((l) => /SMTP_CAIDO|a@b\.test|\/m\//.test(l)));
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
+/** Espia las escrituras de `tx.securityEvents` que hace el handler (post-commit) sin tocar el resto de la unidad de trabajo. `failRecord` simula que ops.security_event no responde. */
+function spyOnSecurityEvents(h: Harness, failRecord = false): unknown[] {
+  const seen: unknown[] = [];
+  const base = h.ports.invitation.uow;
+  (h.ports as { invitation: unknown }).invitation = {
+    ...h.ports.invitation,
+    uow: {
+      inTenant: <T>(tenantId: never, work: (tx: never) => Promise<T>) =>
+        base.inTenant(tenantId, (tx) =>
+          work({
+            ...tx,
+            securityEvents: {
+              record: async (entry: unknown) => {
+                if (failRecord) throw new Error("ops.security_event caido a@b.test");
+                seen.push(entry);
+                return tx.securityEvents.record(entry as never);
+              },
+            },
+          } as never),
+        ),
+    },
+  };
+  return seen;
+}
+
+test("TEST-CNS-1446: el fallo de entrega post-commit deja un evento PERSISTENTE GUEST_MESSAGE_DELIVERY_FAILED por tipo de mensaje, con receiptRef opaca y sin PII ni token (SEC-CNS-PR94 P2-A)", async () => {
+  const subjectRef = fixtureUuid("subject-1446");
+  const failing = { send: async (): Promise<void> => { throw new Error("SMTP_CAIDO a@b.test"); } };
+  const h = await startServer(subjectRef, failing);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    const events = spyOnSecurityEvents(h);
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1446"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { state: string; receiptRef: string };
+    assert.equal(body.state, "GRANTED");
+    assert.deepEqual(events, [
+      { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT", receiptRef: body.receiptRef },
+      { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: body.receiptRef },
+    ]);
+    assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"], "la alerta inmediata sigue ocurriendo");
+    assert.ok(!JSON.stringify(events).match(/SMTP_CAIDO|@|\/m\//), "el evento persistido no lleva PII ni token");
+    assert.ok(!logs.some((l) => /SMTP_CAIDO|a@b\.test|\/m\//.test(l)));
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1447: si tampoco se puede persistir el evento de fallo de entrega, la decision sigue en 200 y queda la alerta inmediata (mejor esfuerzo, sin detalle) (SEC-CNS-PR94 P2-A)", async () => {
+  const subjectRef = fixtureUuid("subject-1447");
+  const failing = { send: async (): Promise<void> => { throw new Error("SMTP_CAIDO"); } };
+  const h = await startServer(subjectRef, failing);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    spyOnSecurityEvents(h, true);
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1447"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { state: string }).state, "GRANTED");
+    assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"]);
+    assert.ok(logs.includes("guest_message_delivery_failure_not_persisted"));
+    assert.ok(!logs.some((l) => /a@b\.test|ops\.security_event caido/.test(l)), "sin detalle del error");
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
+/** Tras confirmar C3 (la decision ya esta registrada), la lectura de la invitacion que hace la entrega post-commit falla (`throws`) o devuelve la invitacion sin canal ligado. */
+function breakDeliveryLookup(h: Harness, mode: "throws" | "no-channel"): void {
+  let armed = false;
+  const decision = h.ports.decision;
+  (h.ports as { decision: unknown }).decision = {
+    ...decision,
+    uow: { inTenant: async <T>(tenantId: never, work: (tx: never) => Promise<T>) => { const r = await decision.uow.inTenant(tenantId, work as never); armed = true; return r as T; } },
+  };
+  const base = h.ports.invitation.uow;
+  (h.ports as { invitation: unknown }).invitation = {
+    ...h.ports.invitation,
+    uow: {
+      inTenant: <T>(tenantId: never, work: (tx: never) => Promise<T>) =>
+        base.inTenant(tenantId, (tx) =>
+          work({
+            ...tx,
+            invitationRepo: {
+              ...tx.invitationRepo,
+              findByRef: async (t: never, ref: string) => {
+                const found = await tx.invitationRepo.findByRef(t, ref);
+                if (!armed) return found;
+                if (mode === "throws") throw new Error("lectura caida");
+                return found ? { ...found, recipientChannelRef: undefined } : found;
+              },
+            },
+          } as never),
+        ),
+    },
+  };
+}
+
+for (const mode of ["throws", "no-channel"] as const) {
+  test(`TEST-CNS-${mode === "throws" ? "1453" : "1454"}: GRANTED con la entrega rota antes de enviar (${mode === "throws" ? "falla la lectura de la invitacion" : "invitacion sin canal ligado"}) registra RECEIPT y MANAGEMENT_LINK como no entregados (SEC-CNS-PR96 P2-1)`, async () => {
+    const subjectRef = fixtureUuid(`subject-${mode}-1453`);
+    const h = await startServer(subjectRef);
+    const origError = console.error;
+    console.error = () => undefined;
+    try {
+      const events = spyOnSecurityEvents(h);
+      const { session } = await bringToVerified(h, fixtureUuid(`inv-${mode}-1453`), subjectRef);
+      const afterSteps = await completeSteps(h, session);
+      breakDeliveryLookup(h, mode);
+      const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { state: string; receiptRef: string };
+      assert.equal(body.state, "GRANTED");
+      assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"]);
+      assert.deepEqual(events, [
+        { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT", receiptRef: body.receiptRef },
+        { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: body.receiptRef },
+      ]);
+      assert.equal(h.sink.sent.length, 0);
+    } finally {
+      console.error = origError;
+      await h.close();
+    }
+  });
+}
+
+test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registro del handle de gestion falla dentro de C3, la decision sigue PENDING, el ledger no tiene RECEIPT_CREATED ni CONSENT_GRANTED ni INVITATION_COMPLETED, la invitacion sigue VERIFIED y no sale ningun mensaje; un reintento sano concluye (SEC-CNS-PR94 P2-B)", async () => {
+  const subjectRef = fixtureUuid("subject-1448");
+  const h = await startServer(subjectRef);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    const invitationRef = fixtureUuid("inv-1448");
+    const { session } = await bringToVerified(h, invitationRef, subjectRef);
+    const afterSteps = await completeSteps(h, session);
+
+    // Inyeccion: el registro del handle de gestion (ultimo paso del lote C3) falla. Se captura el consentId que recibe (revokedDecisionRef).
+    const healthyDecision = h.ports.decision;
+    let consentId = "";
+    let handleHash = "";
+    (h.ports as { decision: unknown }).decision = {
+      ...healthyDecision,
+      uow: {
+        inTenant: <T>(tenantId: never, work: (tx: never) => Promise<T>) =>
+          healthyDecision.uow.inTenant(tenantId, (tx) =>
+            work({
+              ...tx,
+              managementHandles: {
+                register: async (input: { revokedDecisionRef: string; handleHash: string }) => {
+                  consentId = input.revokedDecisionRef;
+                  handleHash = input.handleHash;
+                  await (tx as { managementHandles?: { register(i: unknown): Promise<void> } }).managementHandles?.register(input); // el registro REAL ocurre y luego falla
+                  throw new Error("fallo inyectado tras el registro del handle");
+                },
+              },
+            } as never),
+          ),
+      },
+    };
+    const ledgerBefore = (await healthyDecision.uow.inTenant(TENANT_ID as never, (tx) => tx.ledger.readChain(TENANT_ID as never))).length;
+    const failed = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(failed.status, 500, "el fallo no se traga: el invitado no recibe un 200 de una decision no registrada");
+    assert.ok(consentId, "el registro del handle se alcanzo (ultimo paso del lote C3)");
+
+    const state = await healthyDecision.uow.inTenant(TENANT_ID as never, async (tx) => ({
+      decision: await tx.consentDecisionRepo.findByConsentId(TENANT_ID as never, consentId),
+      invitation: await tx.invitationRepo.findByRef(TENANT_ID as never, invitationRef),
+      decisionEvents: (await tx.ledger.listByAggregate(TENANT_ID as never, "ConsentDecision", consentId)).map((e) => e.eventType),
+      invitationEvents: (await tx.ledger.listByAggregate(TENANT_ID as never, "Invitation", invitationRef)).map((e) => e.eventType),
+    }));
+    assert.equal(state.decision?.state, "PENDING");
+    assert.equal(state.decision?.receiptRef, undefined);
+    assert.equal(state.invitation?.state, "VERIFIED");
+    for (const type of ["CONSENT_GRANTED", "RECEIPT_CREATED", "CONSENT_DECLINED"]) assert.ok(!state.decisionEvents.includes(type), `no debe haber ${type}`);
+    assert.ok(!state.invitationEvents.includes("INVITATION_COMPLETED"), "no debe haber INVITATION_COMPLETED");
+    assert.equal(h.sink.sent.length, 0, "ningun mensaje salio");
+    assert.deepEqual(h.failures, []);
+    assert.equal((await healthyDecision.uow.inTenant(TENANT_ID as never, (tx) => tx.ledger.readChain(TENANT_ID as never))).length, ledgerBefore, "el ledger del tenant no cambio");
+    // El handle que el registro REAL escribio antes del fallo se deshizo con la tx: no resuelve.
+    assert.equal(await h.ports.managementHandleStore?.resolveByHash(handleHash), null, "ningun handle quedo registrado");
+
+    // Sin residuo: restaurado el registro sano, el reintento de la misma decision concluye.
+    (h.ports as { decision: unknown }).decision = healthyDecision;
+    const retried = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(retried.status, 200);
+    assert.equal(((await retried.json()) as { state: string }).state, "GRANTED");
   } finally {
     console.error = origError;
     await h.close();

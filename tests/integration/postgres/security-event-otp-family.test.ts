@@ -22,11 +22,12 @@ const VERIFICATION = fixtureUuid("v-1305");
 const CHANNEL = fixtureUuid("ch-1305");
 const CHAIN = fixtureUuid("cn-1305");
 const RECOVERY = fixtureUuid("rc-1305");
+const RECEIPT = fixtureUuid("rp-1448");
 
 type Row = Record<string, string | null>;
 const NULLS: Row = {
   verification_ref: null, otp_scope: null, scope_class: null, channel_ref: null, key_kind: null, window_kind: null,
-  chain_ref: null, recovery_ref: null, trigger_kind: null, actor_ref: null, actor_role: null, session_kind: null, session_ref: null, case_ref: null,
+  chain_ref: null, recovery_ref: null, trigger_kind: null, delivery_kind: null, receipt_ref: null, actor_ref: null, actor_role: null, session_kind: null, session_ref: null, case_ref: null,
 };
 const COLUMNS = ["tenant_id", "event_type", ...Object.keys(NULLS)];
 
@@ -49,6 +50,8 @@ const VALID: Array<[string, Row]> = [
   ["RECOVERY_TOKEN_ISSUED", row("RECOVERY_TOKEN_ISSUED", { recovery_ref: RECOVERY, trigger_kind: "REQUESTER_ASKED" })],
   ["MANAGEMENT_TOKEN_ROTATED", row("MANAGEMENT_TOKEN_ROTATED", { chain_ref: CHAIN, trigger_kind: "FAILURE_CAP" })],
   ["OTP_BUDGET_EXHAUSTED INVITATION/DECISION/LIFETIME (V6a)", row("OTP_BUDGET_EXHAUSTED", { verification_ref: VERIFICATION, scope_class: "DECISION", key_kind: "INVITATION", window_kind: "LIFETIME" })],
+  ["GUEST_MESSAGE_DELIVERY_FAILED RECEIPT (0045)", row("GUEST_MESSAGE_DELIVERY_FAILED", { delivery_kind: "RECEIPT", receipt_ref: RECEIPT })],
+  ["GUEST_MESSAGE_DELIVERY_FAILED MANAGEMENT_LINK (0045)", row("GUEST_MESSAGE_DELIVERY_FAILED", { delivery_kind: "MANAGEMENT_LINK", receipt_ref: RECEIPT })],
 ];
 
 pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVERY, MANAGEMENT): cada tipo con columnas faltantes o sobrantes, refs no UUIDv4 o enums fuera de rango da 23514 (INV-21-04)", async (ctx) => {
@@ -134,6 +137,16 @@ pgTest("TEST-CNS-1305 pg: CHECK por familia de ops.security_event (OTP_*, RECOVE
   await expectFail("trigger_kind fuera del enum", { ...VALID[8]![1], trigger_kind: "WHENEVER" }, ["security_event_otp_shape", "security_event_trigger_kind_enum"]);
   await expectFail("tipo fuera del enum", row("OTP_REVEALED", { verification_ref: VERIFICATION, otp_scope: "DECISION" }), ["security_event_otp_shape", "security_event_type_enum"]);
   // Los tipos de sesion con columnas OTP/recovery -> 23514 (otp_shape); su forma propia sigue en security_event_session_shape (TEST-CNS-1191).
+  // 0045: GUEST_MESSAGE_DELIVERY_FAILED exige delivery_kind en {RECEIPT, MANAGEMENT_LINK} y receipt_ref UUIDv4, y nada mas; las columnas nuevas no existen en otros tipos.
+  const GUEST = (over: Row): Row => row("GUEST_MESSAGE_DELIVERY_FAILED", { delivery_kind: "RECEIPT", receipt_ref: RECEIPT, ...over });
+  await expectFail("GUEST sin delivery_kind", GUEST({ delivery_kind: null }), "security_event_otp_shape");
+  await expectFail("GUEST sin receipt_ref", GUEST({ receipt_ref: null }), "security_event_otp_shape");
+  await expectFail("GUEST con delivery_kind fuera del enum", GUEST({ delivery_kind: "SMS" }), "security_event_delivery_kind_enum");
+  await expectFail("GUEST con receipt_ref no UUIDv4", GUEST({ receipt_ref: "11111111-1111-1111-1111-111111111111" }), "security_event_receipt_ref_uuidv4");
+  await expectFail("GUEST con columna ajena (channel_ref)", GUEST({ channel_ref: CHANNEL }), "security_event_otp_shape");
+  await expectFail("GUEST con trigger_kind", GUEST({ trigger_kind: "FAILURE_CAP" }), "security_event_otp_shape");
+  await expectFail("OTP_FAILED con delivery_kind", row("OTP_FAILED", { verification_ref: VERIFICATION, otp_scope: "DECISION", delivery_kind: "RECEIPT" }), ["security_event_delivery_cols_only_for_type", "security_event_otp_shape"]);
+  await expectFail("MANAGEMENT_TOKEN_ROTATED con receipt_ref", row("MANAGEMENT_TOKEN_ROTATED", { chain_ref: CHAIN, trigger_kind: "FAILURE_CAP", receipt_ref: RECEIPT }), "security_event_delivery_cols_only_for_type");
   await expectFail(
     "STAFF_LOGIN con verification_ref",
     row("STAFF_LOGIN", { actor_ref: "staff-synthetic-01", actor_role: "TENANT_ADMIN", session_kind: "STAFF", session_ref: fixtureUuid("sr-1305"), verification_ref: VERIFICATION }),

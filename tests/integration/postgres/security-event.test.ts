@@ -22,7 +22,7 @@ const CASE_REF = fixtureUuid("case-1191");
 
 const EVENT_COLUMNS = ["tenant_id", "event_type", "actor_ref", "actor_role", "session_kind", "session_ref", "case_ref"];
 // 0029 (SEC-CNS-021 PR-1): columnas de la familia OTP / RECOVERY / MANAGEMENT.
-const OTP_FAMILY_COLUMNS = ["verification_ref", "otp_scope", "scope_class", "channel_ref", "key_kind", "window_kind", "chain_ref", "recovery_ref", "trigger_kind"];
+const OTP_FAMILY_COLUMNS = ["verification_ref", "otp_scope", "scope_class", "channel_ref", "key_kind", "window_kind", "chain_ref", "recovery_ref", "trigger_kind", "delivery_kind", "receipt_ref"]; // 0045 suma delivery_kind y receipt_ref
 
 pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSERT por tenant, grants exactos por columna (sin SELECT para app_rw), nada para worker/platform_rw y triggers ENABLE ALWAYS", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
@@ -61,8 +61,8 @@ pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSE
   const columns = (await admin.query<{ attname: string }>(
     "SELECT attname FROM pg_attribute WHERE attrelid = 'ops.security_event'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attname",
   )).rows.map((r) => r.attname);
-  assert.deepEqual(columns, ["actor_ref", "actor_role", "case_ref", "chain_ref", "channel_ref", "data_class", "environment", "event_id", "event_seq", "event_type", "key_kind", "occurred_at", "otp_scope", "recovery_ref", "schema_version", "scope_class", "session_kind", "session_ref", "tenant_id", "trigger_kind", "verification_ref", "window_kind"]);
-  assert.ok(!columns.some((c) => /sid|hash|cookie|csrf|ip|agent|mail|name|rut|detail|message|payload/.test(c)));
+  assert.deepEqual(columns, ["actor_ref", "actor_role", "case_ref", "chain_ref", "channel_ref", "data_class", "delivery_kind", "environment", "event_id", "event_seq", "event_type", "key_kind", "occurred_at", "otp_scope", "receipt_ref", "recovery_ref", "schema_version", "scope_class", "session_kind", "session_ref", "tenant_id", "trigger_kind", "verification_ref", "window_kind"]);
+  assert.ok(!columns.some((c) => /(^|_)(sid|hash|cookie|csrf|ip|agent|mail|name|rut|detail|message|payload)(_|$)/.test(c))); // por palabra: receipt_ref (0045) no es "ip"
 
   const triggers = (await admin.query<{ tgname: string; tgenabled: string }>(
     "SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'ops.security_event'::regclass AND NOT tgisinternal ORDER BY tgname",

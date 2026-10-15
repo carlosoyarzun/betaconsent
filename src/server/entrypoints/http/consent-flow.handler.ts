@@ -63,6 +63,7 @@ import {
 } from "./link-handle.ts";
 import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
 import { LedgerSequenceConflictError } from "../../ports/ledger.port.ts";
+import type { TenantId } from "../../modules/common/types.ts";
 import type { InMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { GuestMessageChannelPort, GuestMessageKind } from "../../ports/guest-message-channel.port.ts";
 import { SUBJECT_LABEL_PATTERN, type SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
@@ -669,7 +670,7 @@ export async function handleSubmitDecision(
       await deliverDecisionMessages(ports, session, decided, managementHandle);
     } catch {
       // Fallo previo al envío (lectura de la invitación): rastro explícito, nunca silencio ni detalle (cero PII/token).
-      ports.guest?.recordDeliveryFailure("RECEIPT");
+      await reportUndelivered(ports, session.tenantId, decided, managementHandle);
     }
     // DecisionRecorded (contracts/api-payloads.schema.json $defs/DecisionRecorded): receiptRef
     // es requerido (P1: faltaba); nunca incluye el management_token (va solo al canal ligado).
@@ -737,7 +738,11 @@ async function deliverDecisionMessages(
   if (decided.state !== "GRANTED" && decided.state !== "DECLINED") return;
   const invitationRef = session.invitationRef;
   const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
-  if (!invitation?.recipientChannelRef) return;
+  if (!invitation?.recipientChannelRef) {
+    // Sin canal ligado no sale ningun mensaje: es un fallo de entrega (nunca silencio) de todo lo que debia salir.
+    await reportUndelivered(ports, session.tenantId, decided, managementHandle);
+    return;
+  }
   const subjectLabel = await resolveSubjectLabel(ports, session);
   const served = getServedConsentVersion();
   // Post-commit (C3/C5 ya confirmaron): un fallo de entrega NO revierte la decisión, pero deja rastro y no impide el segundo mensaje.
@@ -755,7 +760,7 @@ async function deliverDecisionMessages(
     }),
     );
   } catch {
-    guest.recordDeliveryFailure("RECEIPT");
+    await reportDeliveryFailure(ports, session.tenantId, "RECEIPT", decided.receiptRef);
   }
   // El handle lo registró C3 dentro de su tx (submitDecisionIssuingLink); aquí solo se entrega el mensaje aparte.
   if (decided.state !== "GRANTED" || managementHandle === undefined) return;
@@ -764,7 +769,35 @@ async function deliverDecisionMessages(
       renderManagementLinkMessage({ recipientChannelRef: invitation.recipientChannelRef, managementPath: `/m/${managementHandle}`, publicBaseUrl: guest.publicBaseUrl }),
     );
   } catch {
-    guest.recordDeliveryFailure("MANAGEMENT_LINK");
+    await reportDeliveryFailure(ports, session.tenantId, "MANAGEMENT_LINK", decided.receiptRef);
+  }
+}
+
+/** Ningun mensaje llego a enviarse: reporta RECEIPT y, si la decision es GRANTED y hay handle registrado, tambien MANAGEMENT_LINK (SEC-CNS-PR96 P2-1). */
+async function reportUndelivered(
+  ports: ConsentFlowPorts,
+  tenantId: string,
+  decided: { readonly state: string; readonly receiptRef?: string },
+  managementHandle: string | undefined,
+): Promise<void> {
+  await reportDeliveryFailure(ports, tenantId, "RECEIPT", decided.receiptRef);
+  if (decided.state === "GRANTED" && managementHandle !== undefined) await reportDeliveryFailure(ports, tenantId, "MANAGEMENT_LINK", decided.receiptRef);
+}
+
+/** SEC-CNS-PR94 P2-A: fallo de entrega POST-COMMIT (la decision ya confirmo y NO se revierte). Deja (1) la alerta/rastro inmediato de `guest.recordDeliveryFailure`
+ * (stderr + sink dev) y (2) un evento PERSISTENTE GUEST_MESSAGE_DELIVERY_FAILED en ops.security_event (0045) con solo el tipo de mensaje y la receiptRef opaca; cero PII
+ * y cero token. La escritura es mejor-esfuerzo: si tambien falla, queda solo la alerta (el flujo del invitado no cambia ni se reintenta aqui; la reemision es DEC-BR-017).
+ * `managementLinkIssued=true` en RECEIPT_CREATED significa "registrado", no "entregado". */
+async function reportDeliveryFailure(ports: ConsentFlowPorts, tenantId: string, kind: GuestMessageKind, receiptRef: string | undefined): Promise<void> {
+  ports.guest?.recordDeliveryFailure(kind);
+  if (!receiptRef) return;
+  try {
+    await ports.invitation.uow.inTenant(tenantId as TenantId, (tx) =>
+      tx.securityEvents.record({ tenantId: tenantId as TenantId, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: kind, receiptRef }),
+    );
+  } catch {
+    // Sin detalle (podria traer valores de fila): solo la senal; el rastro inmediato ya se dejo arriba.
+    console.error("guest_message_delivery_failure_not_persisted");
   }
 }
 

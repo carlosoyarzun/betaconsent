@@ -137,8 +137,8 @@ export function renderDecisionPage(
         <p class="lp-field-error" id="err-relationship" hidden><span aria-hidden="true">⚠ </span>Elige una opción.</p>
       </div>
       <label class="lp-decision-checkbox-row" for="authority-declared">
-        <input type="checkbox" id="authority-declared" class="lp-decision-checkbox" aria-describedby="err-authority" />
-        <span>[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 / EXT-A / LD-01] Declaro que tengo la autoridad para tomar esta decisión por el estudiante.</span>
+        <input type="checkbox" id="authority-declared" class="lp-decision-checkbox" aria-labelledby="authority-declared-label" aria-describedby="err-authority" />
+        <span id="authority-declared-label">[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 / EXT-A / LD-01] Declaro que tengo la autoridad para tomar esta decisión por el estudiante.</span>
       </label>
       <p class="lp-field-error" id="err-authority" hidden><span aria-hidden="true">⚠ </span>Marca la casilla para continuar.</p>
     </section>

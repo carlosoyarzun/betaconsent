@@ -312,6 +312,31 @@ pgTest("TEST-CNS-1076 pg: los valores del CHECK invitation_state_enum son exacta
   }
 });
 
+// --- 1452: CANCELLED (I9 SUBJECT_MISMATCH_REPORTED) segun invitation.spec projections.staffInvitationStatus PC-1 (Carlos, opcion b) ---------------
+pgTest("TEST-CNS-1452 pg: una invitacion CANCELLED se muestra SENT hasta expires_at y luego CLOSED_WITHOUT_DECISION (PC-1 b: no revela que el apoderado reporto 'no es mi estudiante'); una CANCELLED vigente no tapa una invitacion nueva posterior", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  await withPool(ctx, async (uow) => {
+    const t = fixtureUuid("t1452");
+    const [sFuture, sExpired, sReissued] = [fixtureUuid("s1452-a"), fixtureUuid("s1452-b"), fixtureUuid("s1452-c")];
+    await seedScene(admin, {
+      tenantId: t,
+      subjects: [sFuture, sExpired, sReissued],
+      participations: [{ participationRef: fixtureUuid("p1452"), contextRef: "CTX_A" }],
+      invitations: [
+        { subjectRef: sFuture, contextRef: "CTX_A", state: "CANCELLED", expiresInMs: 3_600_000 },
+        { subjectRef: sExpired, contextRef: "CTX_A", state: "CANCELLED", expiresInMs: -3_600_000 },
+        { subjectRef: sReissued, contextRef: "CTX_A", state: "CANCELLED", expiresInMs: 3_600_000 },
+        { subjectRef: sReissued, contextRef: "CTX_A", state: "DRAFT", expiresInMs: null },
+      ],
+    });
+    const rows = await createPgStaffRosterReader(uow).readPage({ tenantId: t, principalRef: fixtureUuid("staff-1452"), actorRole: "TENANT_ADMIN", after: null, rowLimit: 10 });
+    const status = new Map(rows.map((r) => [r.subjectRef, r.staffStatus]));
+    assert.equal(status.get(sFuture), "SENT");
+    assert.equal(status.get(sExpired), "CLOSED_WITHOUT_DECISION");
+    assert.equal(status.get(sReissued), "PENDING_SEND", "la invitacion nueva posterior manda sobre la CANCELLED vigente");
+  });
+});
+
 // --- 1077: sin dependencia de decision/revocacion/ledger/otp/outbox (T-17) -----------------------------------------
 pgTest("TEST-CNS-1077 pg: la vista solo depende de subject, school_participation, invitation y enrollment (nada de decision, revocacion, ledger, otp ni outbox)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();

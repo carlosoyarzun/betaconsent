@@ -15,11 +15,12 @@ export function createPgSecurityEventAdapter(tx: Pick<TenantTx, "query">): Secur
           // Una sola sentencia para toda la familia: las columnas que no aplican al tipo van NULL (la base lo exige con security_event_otp_shape).
           const e = entry as unknown as Record<string, string | undefined>;
           await tx.query(
-            `INSERT INTO ops.security_event (tenant_id, event_type, verification_ref, otp_scope, scope_class, channel_ref, key_kind, window_kind, chain_ref, recovery_ref, trigger_kind)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            `INSERT INTO ops.security_event (tenant_id, event_type, verification_ref, otp_scope, scope_class, channel_ref, key_kind, window_kind, chain_ref, recovery_ref, trigger_kind, delivery_kind, receipt_ref)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
             [
               e.tenantId, e.eventType, e.verificationRef ?? null, e.otpScope ?? null, e.scopeClass ?? null, e.channelRef ?? null,
               e.keyKind ?? null, e.windowKind ?? null, e.chainRef ?? null, e.recoveryRef ?? null, e.trigger ?? null,
+              e.messageKind ?? null, e.receiptRef ?? null,
             ],
           );
           return;

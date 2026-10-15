@@ -4,6 +4,7 @@
 #   privilegios de columna sobre la tabla (más estricto que la rev. 0.2). Sin esto la tabla de roles de runtime conserva "sin privilegios sobre tablas de platform".
 # rev. 0.2 (2026-10-11, lampone-architect, ADR-010 PR-1 `spec:`, sin código): incorpora Q-17 (a), Q-18 (a), Q-19 y Q-20 (c), decididas por Carlos el 2026-10-11.
 # rev. 0.1 (2026-10-11): primera versión sobre rev. 3.
+# 0045 (2026-10-14, lampone-dev, SEC-CNS-PR94 P2-A): ops.security_event admite GUEST_MESSAGE_DELIVERY_FAILED (ver la fila de ops.security_event de app_rw); sin cambio de roles, membresías ni dueños.
 # Base verificada: origin/main 9c8a764, migraciones 0000–0033.
 # Estado por elemento: MAIN = existe hoy (cita archivo:línea); PR-2…PR-7 = lo crea o cambia ese PR de ADR-010 §7; DECIDIDO = decisión de Carlos
 # del 2026-10-11 (Q-17…Q-20) que no estaba en rev. 3. Los números de migración NO se fijan (ADR-010 §7).
@@ -114,7 +115,7 @@ roles:
       - {object: ops.access_log, privileges: ["SELECT", "INSERT(columnas)"], status: "MAIN (0014:62-63); se mantiene (Q-17: lecturas del roster STAFF)"}
       - {object: app.staff_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0021:66-69); se mantiene con RLS por tenant (Q-17)"}
       - {object: app.case_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0022:65-68); PR-5 REVOKE ALL (pasa a platform)"}
-      - {object: ops.security_event, privileges: ["INSERT(columnas 0025:78, 0029:105)"], policy: "security_event_app_rw_insert (0029:96-103)", status: "MAIN; PR-5: la policy conserva OTP_*, RECOVERY_TOKEN_ISSUED, MANAGEMENT_TOKEN_ROTATED, STAFF_LOGIN, STAFF_LOGOUT y SESSION_REVOKED_BY_ROTATION con session_kind STAFF; quita CASE_LOGIN, CASE_LOGOUT y la rotación CASE (a platform_rw)"}
+      - {object: ops.security_event, privileges: ["INSERT(columnas 0025:78, 0029:105)", "INSERT(delivery_kind, receipt_ref) (0045)"], policy: "security_event_app_rw_insert (0029:96-103; 0045 la altera con ALTER POLICY y suma GUEST_MESSAGE_DELIVERY_FAILED)", status: "MAIN; 0045 (SEC-CNS-PR94 P2-A, Carlos 2026-10-14): tipo GUEST_MESSAGE_DELIVERY_FAILED (fallo de entrega post-commit de RECEIPT/MANAGEMENT_LINK; solo delivery_kind y receipt_ref UUIDv4 opaca; sin PII ni token), CHECK security_event_type_enum/otp_shape/delivery_kind_enum/receipt_ref_uuidv4/delivery_cols_only_for_type; DDL como security_event_owner, sin cambio de dueno ni de las 4 policies; PR-5: la policy conserva OTP_*, RECOVERY_TOKEN_ISSUED, MANAGEMENT_TOKEN_ROTATED, STAFF_LOGIN, STAFF_LOGOUT y SESSION_REVOKED_BY_ROTATION con session_kind STAFF; quita CASE_LOGIN, CASE_LOGOUT y la rotación CASE (a platform_rw)"}
       - {object: ops.otp_budget, privileges: [SELECT, "INSERT(columnas)", "UPDATE(failures, window_start, expires_at)"], status: "MAIN (0032:89-100)"}
     functions:
       - {name: "app.current_tenant_id()", status: "MAIN (0001:39)"}

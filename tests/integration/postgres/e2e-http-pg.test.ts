@@ -60,7 +60,7 @@ function cookiesOf(res: Response): Record<string, string> {
   return out;
 }
 
-async function boot(ctx: PgTestContext) {
+async function boot(ctx: PgTestContext, guestChannel: { send(message: never): Promise<void> } = TEST_GUEST_CHANNEL) {
   // SEC-CNS-017 F5: cualquier throw no capturado de una ruta (p. ej. OutsideTransactionError) pasa por el catch global
   // y deja `request_failed` en el log; close() exige que no haya ninguno en todo el recorrido HTTP del test.
   const failed: string[] = [];
@@ -86,7 +86,7 @@ async function boot(ctx: PgTestContext) {
     decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ guestMessageChannel: guestChannel as typeof TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN },
     ports: bundle.ports,
     revocationPorts: bundle.revocationPorts,
@@ -644,6 +644,97 @@ pgTest("TEST-CNS-1417 e2e pg (app_rw): C3 registra el handle de gestion en la MI
     assert.equal((await fetch(`${env.baseUrl}/decision`, { headers: { cookie: `__Host-cns-session=${m.session}` } })).status, 404);
     assert.equal((await post(env, "/decision/steps", { "__Host-cns-session": m.session }, { stepKind: "CONTEXT_INFORMATION_VIEWED" })).status, 404);
   } finally {
+    await env.close();
+  }
+});
+
+pgTest("TEST-CNS-1449 e2e pg (app_rw): el fallo de entrega post-commit deja filas persistentes GUEST_MESSAGE_DELIVERY_FAILED en ops.security_event (RECEIPT y MANAGEMENT_LINK, receipt_ref opaca, sin otras columnas) y la decision sigue GRANTED (SEC-CNS-PR94 P2-A)", async (ctx) => {
+  const env = await boot(ctx, { send: async (): Promise<void> => { throw new Error("SMTP_CAIDO persona@ejemplo.cl"); } });
+  const bootConsoleError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => {
+    const line = a.join(" ");
+    logs.push(line);
+    if (line.startsWith("request_failed")) bootConsoleError(...a);
+  };
+  try {
+    const g = await pgVerifiedSession(env, "1449");
+    const res = await post(env, "/decision/submit", { "__Host-cns-session": g.session }, { purposes: GRANT_ALL });
+    assert.equal(res.status, 200);
+    const { consentId, state, receiptRef } = (await res.json()) as { consentId: string; state: string; receiptRef: string };
+    assert.equal(state, "GRANTED");
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2 AND state = 'GRANTED'", [T, consentId]), 1);
+    const rows = (await env.admin.query<Record<string, string | null>>(
+      "SELECT event_type, delivery_kind, receipt_ref::text AS receipt_ref, verification_ref, otp_scope, channel_ref, trigger_kind, chain_ref, recovery_ref, actor_ref, session_ref, case_ref FROM ops.security_event WHERE tenant_id = $1 AND receipt_ref = $2 ORDER BY event_seq",
+      [T, receiptRef],
+    )).rows;
+    assert.deepEqual(rows.map((r) => [r.event_type, r.delivery_kind, r.receipt_ref]), [
+      ["GUEST_MESSAGE_DELIVERY_FAILED", "RECEIPT", receiptRef],
+      ["GUEST_MESSAGE_DELIVERY_FAILED", "MANAGEMENT_LINK", receiptRef],
+    ]);
+    for (const r of rows) assert.ok(Object.entries(r).every(([k, v]) => ["event_type", "delivery_kind", "receipt_ref"].includes(k) || v === null), "sin otras columnas pobladas");
+    assert.ok(!logs.some((l) => /SMTP_CAIDO|persona@ejemplo|\/m\//.test(l)), "la alerta no lleva PII ni token");
+    assert.ok(logs.includes("guest_message_delivery_failed kind=RECEIPT") && logs.includes("guest_message_delivery_failed kind=MANAGEMENT_LINK"));
+    assert.ok(!logs.includes("guest_message_delivery_failure_not_persisted"), "los dos eventos se persistieron");
+  } finally {
+    console.error = bootConsoleError;
+    await env.close();
+  }
+});
+
+pgTest("TEST-CNS-1450 e2e pg (app_rw): rollback con inyeccion de fallo: si el registro del handle de gestion falla dentro de C3, la decision sigue PENDING, sin RECEIPT_CREATED/CONSENT_GRANTED/INVITATION_COMPLETED en el ledger, la invitacion VERIFIED y ningun handle nuevo; el reintento sano concluye (SEC-CNS-PR94 P2-B)", async (ctx) => {
+  const env = await boot(ctx);
+  const bootConsoleError = console.error;
+  const swallowed: string[] = [];
+  console.error = (...a: unknown[]) => {
+    const line = a.join(" ");
+    if (line.startsWith("request_failed")) swallowed.push(line); // el 500 inyectado es lo esperado; boot() no debe contarlo como fallo
+    else bootConsoleError(...a);
+  };
+  try {
+    const g = await pgVerifiedSession(env, "1450");
+    const handlesBefore = await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]);
+    const ledgerBefore = await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [T]);
+    const healthy = env.bundle.ports.decision;
+    let consentId = "";
+    (env.bundle.ports as { decision: unknown }).decision = {
+      ...healthy,
+      uow: {
+        inTenant: <R>(tenantId: never, work: (tx: never) => Promise<R>) =>
+          healthy.uow.inTenant(tenantId, (tx) =>
+            work({
+              ...tx,
+              managementHandles: {
+                register: async (input: { revokedDecisionRef: string }) => {
+                  consentId = input.revokedDecisionRef;
+                  await (tx as { managementHandles: { register(i: unknown): Promise<void> } }).managementHandles.register(input); // el registro REAL ocurre y luego falla
+                  throw new Error("fallo inyectado tras el registro del handle");
+                },
+              },
+            } as never),
+          ),
+      },
+    };
+    const failed = await post(env, "/decision/submit", { "__Host-cns-session": g.session }, { purposes: GRANT_ALL });
+    assert.equal(failed.status, 500);
+    assert.equal(swallowed.length, 1);
+    assert.ok(consentId, "el registro del handle se alcanzo (ultimo paso del lote C3)");
+
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2 AND state = 'PENDING' AND receipt_ref IS NULL", [T, consentId]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type IN ('CONSENT_GRANTED', 'RECEIPT_CREATED', 'CONSENT_DECLINED')", [T, consentId]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'INVITATION_COMPLETED'", [T, g.inv]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'VERIFIED'", [T, g.inv]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]), handlesBefore, "el INSERT real del handle se revirtio");
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [T]), ledgerBefore, "el ledger del tenant no cambio");
+
+    // Sin residuo: con el registro sano el reintento concluye y deja RECEIPT_CREATED (managementLinkIssued=true) e INVITATION_COMPLETED.
+    (env.bundle.ports as { decision: unknown }).decision = healthy;
+    const retried = await post(env, "/decision/submit", { "__Host-cns-session": g.session }, { purposes: GRANT_ALL });
+    assert.equal(retried.status, 200);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'RECEIPT_CREATED' AND (payload->>'managementLinkIssued')::boolean IS TRUE", [T, consentId]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'INVITATION_COMPLETED'", [T, g.inv]), 1);
+  } finally {
+    console.error = bootConsoleError;
     await env.close();
   }
 });
