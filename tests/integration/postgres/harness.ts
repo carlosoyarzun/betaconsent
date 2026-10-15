@@ -36,7 +36,7 @@ export const MIGRATIONS_DIR = join(HERE, "..", "..", "..", "db", "migrations");
 const HARNESS_LOCK_KEY = 7_240_125;
 const IN_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
-export type PgRole = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier";
+export type PgRole = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier" | "integrity_reconciler";
 
 export interface PgTestContext {
   dbName: string;
@@ -183,6 +183,7 @@ async function provisionTemplate(config: Config, admin: Client): Promise<string>
     worker: config.appPassword,
     platform_rw: config.appPassword,
     integrity_verifier: config.appPassword, // ADR-010 PR-2 (0034)
+    integrity_reconciler: config.appPassword, // ADR-010 rev. 5 PR-6e (0056)
   });
 
   const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);

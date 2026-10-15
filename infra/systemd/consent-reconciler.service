@@ -1,0 +1,53 @@
+# Gobierna: ADR-010 rev. 5 §2 (sexto proceso y credencial: reconciler -> integrity_reconciler, G-9, P2(e)), §4.2.c (exit code != 0 ante divergencia; log sin PII), §10 fila 6e, F-PR6-29,
+# INV-DBR-02; ADR-003 rev. 7 (host dedicado de LectorPro, sin proveedor cloud).
+# ARTEFACTO de IT0 (EXIT-LOCAL, solo datos sinteticos): NO se instala ni se ejecuta en este repo; sin despliegue. Un usuario de SO por proceso (consent-reconciler), un rol LOGIN de Postgres por proceso.
+# La credencial va SOLO en /etc/consent/reconciler.env (root:root, modo 0600: systemd la lee como root antes de bajar privilegios); nunca en el repo. Plantilla: infra/systemd/reconciler.env.example.
+# Una corrida por activacion (Type=oneshot, la dispara consent-reconciler.timer). Exit 0 = conciliado; 2 = divergencias (el servicio queda "failed" y el journal trae el detalle sin PII); 1 = arranque fallido.
+[Unit]
+Description=Consent App - Proceso reconciler (conciliacion del ledger y del estado; solo lectura; sin HTTP) (rol integrity_reconciler)
+After=network.target postgresql.service
+Wants=postgresql.service
+# P2-7 (seguridad PR #99): una divergencia (exit 2) o un fallo de arranque (exit 1) deja el servicio en "failed" y dispara la unidad de alerta LOCAL (journal, sin egress).
+OnFailure=consent-reconciler-alert.service
+
+[Service]
+Type=oneshot
+User=consent-reconciler
+Group=consent-reconciler
+WorkingDirectory=/opt/consent-app
+EnvironmentFile=/etc/consent/reconciler.env
+ExecStart=/usr/bin/node /opt/consent-app/src/server/entrypoints/reconciler/main.ts
+# Sin Restart: una divergencia (exit 2) es un hallazgo, no una falla transitoria; reintentar no la corrige. La siguiente corrida la dispara el timer.
+TimeoutStartSec=15min
+# Ningun SuccessExitStatus: todo exit != 0 (1 error, 2 divergencias) es fallo y activa OnFailure=.
+
+# Aislamiento del proceso
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+RestrictRealtime=true
+RemoveIPC=true
+
+# Red: sin salidas a internet y sin egress de ningun tipo (P2(e), §2: "sin egress"). Solo loopback (Postgres en el mismo host dedicado; si la base va en otro host, el IPAddressAllow se completa
+# en la primera historia de infraestructura).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost

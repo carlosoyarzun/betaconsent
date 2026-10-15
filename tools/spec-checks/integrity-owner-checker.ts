@@ -36,6 +36,8 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql": ["set-role"],
   "db/migrations/0048_adr010_ledger_gen_invitation.sql": ["set-role"],
   "db/migrations/0049_adr010_ledger_gen_decision_seed_close_insert.sql": ["set-role"],
+  // 0057 (ADR-010 rev. 5 PR-6e, G-9): USAGE del esquema integrity, SELECT por columnas y policy de SELECT explicita TO integrity_reconciler sobre integrity.audit_event (DDL sobre integrity.*, antes de PR-7).
+  "db/migrations/0057_adr010_pr6e_reconciler_ledger_select.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };
