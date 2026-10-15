@@ -17,8 +17,8 @@ import type { PlatformSessionPort, SessionLifetime } from "../../ports/platform-
 import { CASE_REF_RE, OIDC_EXCHANGE_COOKIE, OIDC_STATE_COOKIE } from "./auth-routes.ts";
 import { CASE_SESSION_COOKIE, cookie, expireCookie, json, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, tooManyRequests } from "./http-util.ts";
 import type { OperatorLimitDeps } from "./http-util.ts";
-import type { Cidr } from "./rate-limit.ts";
-import { ipInCidrs } from "./rate-limit.ts";
+import type { Cidr, SlidingLimiter } from "./rate-limit.ts";
+import { ipInCidrs, truncateIp } from "./rate-limit.ts";
 
 export const SESSION_ROUTES = {
   openPlatform: "/platform/sessions/platform",
@@ -31,6 +31,10 @@ export interface SessionRoutesDeps extends OperatorLimitDeps {
   readonly sessions: PlatformSessionPort;
   readonly lifetime: SessionLifetime;
   readonly allowedCidrs: readonly Cidr[];
+  /** P-49 (por IP truncada, en memoria): se aplica a la apertura de sesion PLATFORM y a los logout (mismo limitador que login/callback). */
+  readonly p49: SlidingLimiter;
+  readonly p49WindowSeconds: number;
+  readonly ipv4Prefix: number;
   /** Origen publico de la plataforma (esquema + host + puerto). Ausente = login no configurado: todas las rutas responden 404. */
   readonly publicOrigin: string | undefined;
 }
@@ -70,6 +74,14 @@ export async function handleSessionRoute(req: IncomingMessage, res: ServerRespon
   const site = req.headers["sec-fetch-site"];
   if (site !== undefined && site !== "same-origin") return notFound(res), true;
 
+  // P-49 (seguridad PR-6c): intentos de autenticacion por IP truncada en memoria; solo la apertura de sesion PLATFORM y los logout (la sesion CASE ya exige una sesion PLATFORM validada: P-50).
+  if (path !== SESSION_ROUTES.openCase) {
+    const d = deps.p49.hit(truncateIp(remote, deps.ipv4Prefix));
+    if (!d.allowed) {
+      if (d.firstDenial) void deps.authorization.recordLimitEvent({ limitKind: "P-49", windowSeconds: deps.p49WindowSeconds }).catch(() => {});
+      return notFound(res), true;
+    }
+  }
   const cookies = parseCookies(req.headers.cookie);
   const clearFlow = [expireCookie(OIDC_STATE_COOKIE, "Lax"), expireCookie(OIDC_EXCHANGE_COOKIE, "Strict")];
   const sidOf = (name: string): string | undefined => {

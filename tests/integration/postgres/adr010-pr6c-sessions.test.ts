@@ -537,3 +537,80 @@ pgTest("TEST-CNS-1561 pg: P-23/P-37/P-36/P-25 (SEC-CNS-006 rev. 5 §1): grant <=
   await assert.rejects(sess("abs", 14401, 900), (e) => codeOf(e) === "23514", "absoluta > 4 h");
   await assert.rejects(sess("idle", 3600, 901), (e) => codeOf(e) === "23514", "inactividad > 15 min");
 });
+
+pgTest("TEST-CNS-1562 pg: validate_session de CASE exige la inactividad de la sesion PLATFORM padre y la actividad CASE avanza last_seen de la padre", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const platform = await connect(ctx, "platform_rw");
+  const R = P("1562-r");
+  const mk = async (n: string, parentIdle: number, parentSeenAgo: number): Promise<string> => {
+    const sidP = randomBytes(32).toString("hex");
+    const sidC = randomBytes(32).toString("hex");
+    const caseRef = fixtureUuid(`pr6c-1562-case-${n}`);
+    const lg = async (kind: string, target: string | null, k: string): Promise<string> => {
+      const ref = randomUUID();
+      await admin.query("INSERT INTO platform.login_assertion (exchange_ref, kind, state_hash, target_ref_hash, principal_ref, decision, assertion_hash, auth_time, expires_at, consumed_at) VALUES ($1, $2, $3, $4, $5, 'ATTESTED', $6, now(), now() + interval '5 minutes', now())", [ref, kind, sha(`s-${n}-${k}`), target, R, sha(`a-${n}-${k}`)]);
+      return (await admin.query<{ assertion_ref: string }>("SELECT assertion_ref FROM platform.login_assertion WHERE exchange_ref = $1", [ref])).rows[0]!.assertion_ref;
+    };
+    const parent = (await admin.query<{ session_ref: string }>(
+      `INSERT INTO platform.platform_session (sid_hash, session_kind, principal_ref, assertion_ref, issued_at, expires_at, idle_seconds, last_seen_at)
+       VALUES ($1, 'PLATFORM', $2, $3, now() - interval '2 hours', now() + interval '1 hour', $4, now() - make_interval(secs => $5)) RETURNING session_ref`,
+      [sha(sidP), R, await lg("LOGIN_PLATFORM", null, "p"), parentIdle, parentSeenAgo])).rows[0]!;
+    const grant = (await admin.query<{ grant_ref: string }>("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour') RETURNING grant_ref", [TENANT, caseRef, R])).rows[0]!;
+    await admin.query(
+      `INSERT INTO platform.platform_session (sid_hash, session_kind, principal_ref, assertion_ref, parent_session_ref, tenant_id, case_ref, grant_ref, expires_at, idle_seconds)
+       VALUES ($1, 'CASE', $2, $3, $4, $5, $6, $7, now() + interval '1 hour', 600)`,
+      [sha(sidC), R, await lg("LOGIN_CASE", sha(caseRef), "c"), parent.session_ref, TENANT, caseRef, grant.grant_ref]);
+    return `${sidP}|${sidC}`;
+  };
+  await seedOperator(admin, R, "RIGHTS_OPERATOR");
+  // Padre inactiva (idle 60 s, vista hace 1 h): la CASE (con su propia actividad fresca) NO valida.
+  const [, idleChild] = (await mk("idle", 60, 3600)).split("|") as [string, string];
+  assert.equal((await validate(platform, idleChild, "CASE")).length, 0, "padre inactiva invalida a la hija");
+  // Padre viva pero atrasada > 60 s: valida y la actividad CASE avanza la de la padre.
+  const [liveParent, liveChild] = (await mk("live", 600, 120)).split("|") as [string, string];
+  assert.equal((await validate(platform, liveChild, "CASE")).length, 1);
+  const age = Number((await admin.query<{ a: string }>("SELECT extract(epoch FROM now() - last_seen_at)::int::text AS a FROM platform.platform_session WHERE sid_hash = $1", [sha(liveParent)])).rows[0]!.a);
+  assert.ok(age < 5, `la actividad CASE avanza la padre (${age} s)`);
+});
+
+pgTest("TEST-CNS-1563 pg carrera: logout concurrente de la sesion PLATFORM y open_case_session no dejan una CASE sin revocar (FOR SHARE sobre la padre)", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
+  const c1 = await ctx.connectAs("platform_rw");
+  const c2 = await ctx.connectAs("platform_rw");
+  const R = P("1563-r");
+  const sub = await seedOperator(admin, R, "RIGHTS_OPERATOR");
+  const clients = { platform, verifier };
+  await grantFor(admin, R, CASE_A);
+  const plat = async (): Promise<string> => (await openPlatform(platform, (await loginFlow(clients, "LOGIN_PLATFORM", sub))!))!;
+  const caseFlow = async (sid: string): Promise<LoginFlow> => (await loginFlow(clients, "LOGIN_CASE", sub, { sid, targetRefHash: sha(CASE_A) }))!;
+  const live = async (sid: string): Promise<boolean> => (await admin.query("SELECT 1 FROM platform.platform_session WHERE sid_hash = $1 AND revoked_at IS NULL", [sha(sid)])).rowCount === 1;
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  // Orden 1: el logout de la padre esta en curso (sin commit); open_case_session espera y NO crea la CASE.
+  const p1 = await plat();
+  const f1 = await caseFlow(p1);
+  await c1.query("BEGIN");
+  await c1.query("SELECT platform.revoke_session($1, 'PLATFORM')", [p1]);
+  const opening = openCase(c2, f1, CASE_A, p1);
+  await wait(300);
+  await c1.query("COMMIT");
+  assert.equal(await opening, null, "la padre ya estaba revocada");
+  assert.equal((await admin.query("SELECT 1 FROM platform.platform_session WHERE session_kind = 'CASE' AND parent_session_ref = (SELECT session_ref FROM platform.platform_session WHERE sid_hash = $1)", [sha(p1)])).rowCount, 0);
+
+  // Orden 2: open_case_session en curso (sin commit, retiene FOR SHARE); el logout espera y su cascada revoca la CASE recien creada.
+  const p2 = await plat();
+  const f2 = await caseFlow(p2);
+  await c1.query("BEGIN");
+  const caseSid = (await c1.query<{ s: string | null }>("SELECT platform.open_case_session($1::uuid, $2, $3, $4, 3600, 600, NULL) AS s", [f2.ref, f2.state, CASE_A, p2])).rows[0]!.s!;
+  assert.match(caseSid, HEX64);
+  const logout = call<{ r: boolean }>(c2, null, "SELECT platform.revoke_session($1, 'PLATFORM') AS r", [p2]);
+  await wait(300);
+  await c1.query("COMMIT");
+  assert.equal((await logout)[0]!.r, true);
+  assert.equal(await live(caseSid), false, "la CASE creada concurrentemente cae con la padre");
+  assert.ok((await events(admin, R)).includes("CASE_LOGOUT|PARENT_REVOKED|CASE|case"));
+  await c1.end();
+  await c2.end();
+});

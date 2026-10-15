@@ -135,7 +135,9 @@ BEGIN
     -- Sesion PLATFORM vigente (no revocada, dentro de su vida absoluta y de inactividad) del MISMO principal que la asercion.
     SELECT * INTO v_parent FROM platform.platform_session s
      WHERE s.sid_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_platform_sid, 'UTF8')), 'hex') AND s.session_kind = 'PLATFORM'
-       AND s.revoked_at IS NULL AND s.expires_at > pg_catalog.now() AND s.last_seen_at > pg_catalog.now() - pg_catalog.make_interval(secs => s.idle_seconds);
+       AND s.revoked_at IS NULL AND s.expires_at > pg_catalog.now() AND s.last_seen_at > pg_catalog.now() - pg_catalog.make_interval(secs => s.idle_seconds)
+     FOR SHARE;
+    -- FOR SHARE: un logout concurrente de la sesion PLATFORM espera a que esta tx termine (y su cascada ve la sesion CASE nueva) o, si ya termino, aqui no se encuentra la sesion: nunca queda una CASE sin revocar.
     IF NOT FOUND THEN v_reason := 'NO_SESSION'; EXIT decide; END IF;
     IF v_parent.principal_ref <> v_principal THEN v_reason := 'PRINCIPAL_MISMATCH'; EXIT decide; END IF;
     -- F-PR6-37 / F-PR6-34: rol RIGHTS_OPERATOR ACTIVE re-chequeado aqui.
@@ -189,12 +191,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM platform.platform_role_assignment a WHERE a.principal_ref = v_s.principal_ref AND a.platform_role = 'RIGHTS_OPERATOR' AND a.status = 'ACTIVE')
        OR NOT EXISTS (SELECT 1 FROM platform.rights_case_grant g WHERE g.grant_ref = v_s.grant_ref AND g.operator_principal_ref = v_s.principal_ref AND g.case_ref = v_s.case_ref
                          AND g.revoked_at IS NULL AND g.expires_at > pg_catalog.now())
-       OR NOT EXISTS (SELECT 1 FROM platform.platform_session p WHERE p.session_ref = v_s.parent_session_ref AND p.revoked_at IS NULL AND p.expires_at > pg_catalog.now()) THEN
+       OR NOT EXISTS (SELECT 1 FROM platform.platform_session p WHERE p.session_ref = v_s.parent_session_ref AND p.revoked_at IS NULL AND p.expires_at > pg_catalog.now()
+                         AND p.last_seen_at > pg_catalog.now() - pg_catalog.make_interval(secs => p.idle_seconds)) THEN
       RETURN;
     END IF;
   END IF;
   -- Avanza la actividad solo si esta atrasada mas que la granularidad (60 s): una escritura por minuto, no por request.
   UPDATE platform.platform_session x SET last_seen_at = pg_catalog.now() WHERE x.session_ref = v_s.session_ref AND x.last_seen_at < pg_catalog.now() - interval '60 seconds';
+  -- La actividad de una sesion CASE mantiene viva a su sesion PLATFORM (la inactividad de la padre tambien invalida la hija).
+  IF p_kind = 'CASE' THEN
+    UPDATE platform.platform_session x SET last_seen_at = pg_catalog.now() WHERE x.session_ref = v_s.parent_session_ref AND x.last_seen_at < pg_catalog.now() - interval '60 seconds';
+  END IF;
   RETURN QUERY SELECT v_s.session_ref, v_s.session_kind, v_s.principal_ref, v_s.case_ref;
 END
 $$;

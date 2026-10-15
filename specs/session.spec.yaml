@@ -314,7 +314,7 @@ operatorLogin:
   configuration: "Valores por configuración (CNS_PLATFORM_P49_*, P50_*, P51_*, P53_*; CNS_VERIFIER_P48_*, P52_*); en LOCAL, valores iniciales aprobados; fuera de LOCAL sin defaults y sin arranque si faltan (platform-settings.ts, verifier-process.ts)."
   network: "G-6: en staging la plataforma solo es accesible por red privada o VPN. Es una restricción de INFRAESTRUCTURA (firewall del host, IPAddressAllow; infra/README.md): NO está implementada ni verificada en el repo. El proceso exige fuera de LOCAL un bind explícito (IP concreta) y una allowlist CIDR como defensa en profundidad."
   idp: "Adaptador real apagado (src/infra/adapters/oidc-idp.adapter.ts): issuer, token_endpoint y jwks_uri fijados por configuración, sin discovery ni jku, cliente HTTP inyectado (sin red en LOCAL/CI), se niega en LOCAL y sin egress aprobado (P-45). Activación: IT0b (APR-IDP, P-45, TP-02)."
-  tests: [TEST-CNS-1500, TEST-CNS-1501, TEST-CNS-1502, TEST-CNS-1503, TEST-CNS-1504, TEST-CNS-1505, TEST-CNS-1506, TEST-CNS-1507, TEST-CNS-1508, TEST-CNS-1509, TEST-CNS-1510, TEST-CNS-1550, TEST-CNS-1551, TEST-CNS-1552, TEST-CNS-1553, TEST-CNS-1554, TEST-CNS-1555, TEST-CNS-1556, TEST-CNS-1557, TEST-CNS-1558, TEST-CNS-1559, TEST-CNS-1560, TEST-CNS-1561]
+  tests: [TEST-CNS-1500, TEST-CNS-1501, TEST-CNS-1502, TEST-CNS-1503, TEST-CNS-1504, TEST-CNS-1505, TEST-CNS-1506, TEST-CNS-1507, TEST-CNS-1508, TEST-CNS-1509, TEST-CNS-1510, TEST-CNS-1550, TEST-CNS-1551, TEST-CNS-1552, TEST-CNS-1553, TEST-CNS-1554, TEST-CNS-1555, TEST-CNS-1556, TEST-CNS-1557, TEST-CNS-1558, TEST-CNS-1559, TEST-CNS-1560, TEST-CNS-1561, TEST-CNS-1562, TEST-CNS-1563, TEST-CNS-1564]
 
 residuals:
   - id: R-SE-01

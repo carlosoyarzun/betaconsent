@@ -19,7 +19,7 @@ import { PlatformDeniedError } from "../../../src/server/ports/oidc-exchange.por
 import type { BeginAuthorizationInput, ExchangeStatus, OidcAuthorizationPort } from "../../../src/server/ports/oidc-exchange.port.ts";
 
 const ORIGIN = "http://127.0.0.1:8788";
-const ENV = { CNS_PLATFORM_IDP_AUTHORIZATION_ENDPOINT: "http://127.0.0.1:9000/authorize", CNS_PLATFORM_IDP_CLIENT_ID: "consent-platform", CNS_PLATFORM_REDIRECT_URI: `${ORIGIN}/platform/auth/callback` };
+const ENV = { CNS_PLATFORM_P49_MAX: "1000", CNS_PLATFORM_IDP_AUTHORIZATION_ENDPOINT: "http://127.0.0.1:9000/authorize", CNS_PLATFORM_IDP_CLIENT_ID: "consent-platform", CNS_PLATFORM_REDIRECT_URI: `${ORIGIN}/platform/auth/callback` };
 const PRINCIPAL = "0f1e2d3c-4b5a-4968-8776-655443322110";
 const OTHER = "1f1e2d3c-4b5a-4968-8776-655443322111";
 const REF = "2f1e2d3c-4b5a-4968-8776-655443322112";
@@ -210,4 +210,16 @@ test("TEST-CNS-1559 P-50 cableado a las rutas autenticadas: por principal de la 
   assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "14401" }, "STAGING"), PlatformConfigError, "techo P-36/P-25 (4 h)");
   assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_SESSION_IDLE_SECONDS: "901" }, "STAGING"), PlatformConfigError, "techo P-36/P-25 (15 min)");
   assert.deepEqual(loadPlatformSettings({}, "LOCAL").session, { absoluteSeconds: 14400, idleSeconds: 900 });
+});
+
+test("TEST-CNS-1564 P-49 por IP truncada aplica a POST /platform/sessions/platform y a los logout (404 uniforme, un evento sin IP); no a la sesion CASE (ya exige sesion validada)", async () => {
+  await withServer({ CNS_PLATFORM_P49_MAX: "3", CNS_PLATFORM_P49_WINDOW_SECONDS: "900" }, async (base, sessions, authz) => {
+    const flow = { [OIDC_STATE_COOKIE]: STATE, [OIDC_EXCHANGE_COOKIE]: REF };
+    const post = (path: string): Promise<Res> => send(base, "POST", path, { origin: ORIGIN, cookie: cookieHeader(flow) });
+    const statuses: number[] = [];
+    for (const path of ["/platform/sessions/platform", "/platform/logout", "/platform/case-session/logout", "/platform/sessions/platform", "/platform/logout"]) statuses.push((await post(path)).status);
+    assert.deepEqual(statuses, [404, 404, 404, 404, 404]);
+    assert.equal(sessions.calls.filter((c) => c === "openPlatformSession").length, 1, "tras el limite la base no se toca");
+    assert.deepEqual(authz.limitEvents, [{ limitKind: "P-49", windowSeconds: 900 }], "un solo evento, sin principal ni IP");
+  });
 });
