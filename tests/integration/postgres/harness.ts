@@ -44,6 +44,8 @@ export interface PgTestContext {
   connectAs(role: PgRole): Promise<Client>;
   /** Conexión de superusuario a la base de este archivo (solo para preparar/inspeccionar). */
   connectAsSuperuser(): Promise<Client>;
+  /** Conexion de superusuario COMPARTIDA (una por archivo) para los helpers de fixtures: connectAsSuperuser abre una conexion nueva por llamada y el service container de CI tiene max_connections=100. */
+  fixtureAdmin(): Promise<Client>;
   /**
    * Ejecuta `fn` con el lock de cluster de mutaciones del catalogo de roles (el mismo de migrate.ts). OBLIGATORIO para todo test que haga
    * CREATE/ALTER/GRANT/REVOKE sobre roles: el catalogo es global al cluster y los archivos de test corren en paralelo; sin el lock otro
@@ -83,7 +85,7 @@ export const LEDGER_GEN_TRIGGERS: ReadonlyArray<readonly [string, string]> = [
  * el INSERT por columnas y una policy por tenant para app_rw, para poder ejercitar esa mecanica. Los archivos que prueban "app_rw no inserta" NO lo llaman. Helper de tests, nunca de producto.
  */
 export async function enableLedgerMechanicsAppend(ctx: PgTestContext): Promise<void> {
-  const admin = await ctx.connectAsSuperuser();
+  const admin = await ctx.fixtureAdmin();
   await admin.query(
     `GRANT INSERT (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
                    chain_seq, payload_hash, previous_event_hash, event_hash, occurred_at, environment) ON integrity.audit_event TO app_rw`,
@@ -97,20 +99,20 @@ let currentCtx: PgTestContext | undefined;
 /** Como `seedRaw` sobre la base del test en curso (para helpers de siembra que no reciben `ctx`). Solo tests. */
 export async function seedFixture<T>(work: () => Promise<T>): Promise<T> {
   if (currentCtx === undefined) throw new Error("seedFixture solo se usa dentro de un pgTest");
-  return seedRaw(await currentCtx.connectAsSuperuser(), work);
+  return seedRaw(await currentCtx.fixtureAdmin(), work);
 }
 
 /** Como `seedFixture` pero entrega la conexion de superusuario al fixture (p. ej. para dejar una decision en REVOKED sin pasar por R4: la base solo lo admite por apply_revocation). Solo tests. */
 export async function seedFixtureAdmin<T>(work: (admin: Client) => Promise<T>): Promise<T> {
   if (currentCtx === undefined) throw new Error("seedFixtureAdmin solo se usa dentro de un pgTest");
-  const admin = await currentCtx.connectAsSuperuser();
+  const admin = await currentCtx.fixtureAdmin();
   return seedRaw(admin, () => work(admin));
 }
 
 /** `pgTest` cuyo cuerpo corre con los triggers de ledger_gen deshabilitados: para tests de ESQUEMA (CHECK, UNIQUE, RLS) que ejercitan SQL crudo y no el ledger. Solo tests. */
 export function pgTestRaw(name: string, fn: (ctx: PgTestContext) => Promise<void>): void {
   pgTest(name, async (ctx) => {
-    await seedRaw(await ctx.connectAsSuperuser(), () => fn(ctx));
+    await seedRaw(await ctx.fixtureAdmin(), () => fn(ctx));
   });
 }
 
@@ -195,6 +197,7 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
   await admin.connect();
   const dbName = `t_${randomBytes(6).toString("hex")}`;
   const clients: Client[] = [];
+  let fixtureClient: Promise<Client> | undefined;
   try {
     await admin.query("SELECT pg_advisory_lock($1)", [HARNESS_LOCK_KEY]);
     try {
@@ -231,6 +234,17 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
       } finally {
         await locker.end();
       }
+    },
+    fixtureAdmin() {
+      fixtureClient ??= (async () => {
+        const u = new URL(config.url);
+        u.pathname = `/${dbName}`;
+        const client = new pg.Client({ connectionString: u.toString() });
+        await client.connect();
+        clients.push(client);
+        return client;
+      })();
+      return fixtureClient;
     },
     async connectAsSuperuser() {
       const u = new URL(config.url);
