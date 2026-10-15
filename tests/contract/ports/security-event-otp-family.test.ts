@@ -45,6 +45,8 @@ const VALID: OtpFamilySecurityEventEntry[] = [
   { tenantId: T, eventType: "RECOVERY_TOKEN_ISSUED", recoveryRef: RC, trigger: "LIMIT_REACHED" },
   { tenantId: T, eventType: "MANAGEMENT_TOKEN_ROTATED", chainRef: CN, trigger: "RECEIPT_REISSUED" },
   { tenantId: T, eventType: "OTP_BUDGET_EXHAUSTED", verificationRef: V, scopeClass: "DECISION", keyKind: "INVITATION", windowKind: "LIFETIME" }, // V6a (TEST-CNS-1341)
+  { tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT", receiptRef: CN }, // 0045
+  { tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: CN },
 ];
 
 /** Proyeccion al sobre SecurityEvent (payload del contrato; el sobre lleva eventId/tenantRef/occurredAt/environment/dataClass). */
@@ -57,6 +59,7 @@ function envelopeOf(r: AnySecurityEventRecord): Record<string, unknown> {
     case "OTP_BUDGET_EXHAUSTED": payload = { verificationRef: e.verificationRef, scopeClass: e.scopeClass, keyKind: e.keyKind, windowKind: e.windowKind }; break;
     case "RECOVERY_TOKEN_ISSUED": payload = { recoveryRef: e.recoveryRef, trigger: e.trigger }; break;
     case "MANAGEMENT_TOKEN_ROTATED": payload = { chainRef: e.chainRef, trigger: e.trigger }; break;
+    case "GUEST_MESSAGE_DELIVERY_FAILED": payload = { messageKind: e.messageKind, receiptRef: e.receiptRef }; break;
     default: throw new Error("tipo de sesion fuera de esta prueba");
   }
   return {
@@ -114,6 +117,12 @@ test("TEST-CNS-1304 contrato: la familia OTP/RECOVERY/MANAGEMENT del puerto vali
     [{ ...VALID[7], recoveryRef: "no-uuid" }, "recoveryRef"],
     [{ ...VALID[4], windowKind: "HOURS_1" }, "windowKind"],
     [{ ...VALID[0], tenantId: "" }, "tenantId"],
+    // 0045: el evento de fallo de entrega solo admite el tipo de mensaje y la receiptRef opaca; un token o canal se rechaza por nombre.
+    [{ tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "SMS", receiptRef: CN }, "messageKind"],
+    [{ tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT", receiptRef: "persona@ejemplo.cl" }, "receiptRef"],
+    [{ tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT" }, "receiptRef"],
+    [{ tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: CN, token: "abc" }, "unknownField"],
+    [{ tenantId: T, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: CN, recipientChannelRef: "x@y.test" }, "unknownField"],
   ];
   for (const [bad, field] of bads) {
     assert.throws(
@@ -150,7 +159,9 @@ test("TEST-CNS-1304 contrato: la familia OTP/RECOVERY/MANAGEMENT del puerto vali
   assert.deepEqual(listOf("key_kind"), [...SECURITY_EVENT_KEY_KINDS].sort());
   assert.deepEqual([...win![1]!.matchAll(/'([A-Z0-9_]+)'/g)].map((x) => x[1]!).sort(), [...SECURITY_EVENT_WINDOW_KINDS].sort(), "CHECK vigente (0033) == puerto");
   assert.deepEqual(listOf("trigger_kind"), [...RECOVERY_TOKEN_TRIGGERS, ...MANAGEMENT_TOKEN_TRIGGERS].sort());
-  const typeEnum = /security_event_type_enum CHECK \(event_type IN \(([^)]*)\)\)/.exec(sql);
-  assert.ok(typeEnum, "no hay security_event_type_enum en 0029");
-  assert.deepEqual([...typeEnum![1]!.matchAll(/'([A-Z_]+)'/g)].map((x) => x[1]!).sort(), [...ALL_SECURITY_EVENT_TYPES].sort(), "CHECK de tipo de 0029 == tipos del puerto");
+  // 0045 reemplaza security_event_type_enum (suma GUEST_MESSAGE_DELIVERY_FAILED): el vocabulario vigente de event_type es el de 0045.
+  const sql45 = readFileSync(join(ROOT, "db", "migrations", "0045_security_event_guest_message_delivery_failed.sql"), "utf8").replace(/--[^\n]*/g, "");
+  const typeEnum = /security_event_type_enum CHECK \(event_type IN \(([^)]*)\)\)/.exec(sql45);
+  assert.ok(typeEnum, "no hay security_event_type_enum en 0045");
+  assert.deepEqual([...typeEnum![1]!.matchAll(/'([A-Z_]+)'/g)].map((x) => x[1]!).sort(), [...ALL_SECURITY_EVENT_TYPES].sort(), "CHECK de tipo vigente (0045) == tipos del puerto");
 });

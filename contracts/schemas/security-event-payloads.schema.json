@@ -12,7 +12,8 @@
     "DEC-BR-017 §6 (fuera del ledger)",
     "ADR-002 §3",
     "CA-141 (Carlos, 2026-10-06): eventos de sesion STAFF/CASE en ops.security_event (migracion 0025); NO son transitorios del ledger",
-    "SEC-CNS-021 PR-1 (CA-146 / P-34, Carlos 2026-10-08): ops.security_event (migracion 0029) admite ya la familia OTP_*/RECOVERY_TOKEN_ISSUED/MANAGEMENT_TOKEN_ROTATED; hasta SEC-CNS-021 PR-2 siguen siendo transitorios del ledger (x-ops-only no cambia)"
+    "SEC-CNS-021 PR-1 (CA-146 / P-34, Carlos 2026-10-08): ops.security_event (migracion 0029) admite ya la familia OTP_*/RECOVERY_TOKEN_ISSUED/MANAGEMENT_TOKEN_ROTATED; hasta SEC-CNS-021 PR-2 siguen siendo transitorios del ledger (x-ops-only no cambia)",
+    "SEC-CNS-PR94 P2-A (Carlos, 2026-10-14): ops.security_event (migracion 0045) admite GUEST_MESSAGE_DELIVERY_FAILED (fallo de entrega post-commit de RECEIPT/MANAGEMENT_LINK)"
   ],
   "$defs": {
     "OTP_ISSUED": {
@@ -450,6 +451,7 @@
             "OTP_BUDGET_EXHAUSTED",
             "MANAGEMENT_TOKEN_ROTATED",
             "RECOVERY_TOKEN_ISSUED",
+            "GUEST_MESSAGE_DELIVERY_FAILED",
             "STAFF_LOGIN",
             "STAFF_LOGOUT",
             "CASE_LOGIN",
@@ -626,6 +628,25 @@
           "if": {
             "properties": {
               "eventType": {
+                "const": "GUEST_MESSAGE_DELIVERY_FAILED"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/GUEST_MESSAGE_DELIVERY_FAILED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "eventType": {
                 "const": "STAFF_LOGIN"
               }
             },
@@ -722,6 +743,26 @@
         "OPEN-CM-02 (eventTypes de seguridad sin nombre: Guard T fallido, binding M1, INTEGRITY_FAILURE)",
         "LD-15 (retención)"
       ]
+    },
+    "GUEST_MESSAGE_DELIVERY_FAILED": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "messageKind": {
+          "enum": [
+            "RECEIPT",
+            "MANAGEMENT_LINK"
+          ]
+        },
+        "receiptRef": {
+          "$ref": "common.schema.json#/$defs/Ref"
+        }
+      },
+      "required": [
+        "messageKind",
+        "receiptRef"
+      ],
+      "description": "SEC-CNS-PR94 P2-A (0045): fallo de entrega post-commit; solo tipo de mensaje y receiptRef opaca. Sin token, canal ni correo."
     }
   },
   "x-ops-only": [

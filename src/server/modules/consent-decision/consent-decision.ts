@@ -403,6 +403,9 @@ async function submitDecisionTx(
       actorType: "HUMAN",
       actorRole: "DECISION_MAKER",
       // managementLinkIssued = resultado real: true solo si el handle se registra abajo, en esta misma tx.
+      // SEMANTICA (SEC-CNS-PR94 P2-A): true significa "REGISTRADO" (hay un handle de gestion vigente en la base), NO "entregado". La entrega al canal
+      // ligado es post-commit y puede fallar; ese fallo queda en ops.security_event (GUEST_MESSAGE_DELIVERY_FAILED, db/migrations/0045), no aqui.
+      // La reemision del enlace ante un fallo de entrega queda para DEC-BR-017 (no implementada).
       payload: { receiptRef, managementLinkIssued: managementHandle !== undefined },
       idempotencyKey: `${consentId}:receipt`,
     });

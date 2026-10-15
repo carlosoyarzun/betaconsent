@@ -28,9 +28,11 @@ export const SECURITY_EVENT_REF_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}
 
 /** Tipos de la familia OTP/RECOVERY/MANAGEMENT. `SecurityEventType`/`SECURITY_EVENT_TYPES` siguen siendo SOLO los de sesion (x-ops-only). */
 export type OtpFamilySecurityEventType =
-  | "OTP_ISSUED" | "OTP_FAILED" | "OTP_LOCKED" | "OTP_EXPIRED" | "OTP_BUDGET_EXHAUSTED" | "RECOVERY_TOKEN_ISSUED" | "MANAGEMENT_TOKEN_ROTATED";
+  | "OTP_ISSUED" | "OTP_FAILED" | "OTP_LOCKED" | "OTP_EXPIRED" | "OTP_BUDGET_EXHAUSTED" | "RECOVERY_TOKEN_ISSUED" | "MANAGEMENT_TOKEN_ROTATED"
+  | "GUEST_MESSAGE_DELIVERY_FAILED";
 export const OTP_FAMILY_SECURITY_EVENT_TYPES: readonly OtpFamilySecurityEventType[] = [
   "OTP_ISSUED", "OTP_FAILED", "OTP_LOCKED", "OTP_EXPIRED", "OTP_BUDGET_EXHAUSTED", "RECOVERY_TOKEN_ISSUED", "MANAGEMENT_TOKEN_ROTATED",
+  "GUEST_MESSAGE_DELIVERY_FAILED",
 ];
 export type AnySecurityEventType = SecurityEventType | OtpFamilySecurityEventType;
 export const ALL_SECURITY_EVENT_TYPES: readonly AnySecurityEventType[] = [...SECURITY_EVENT_TYPES, ...OTP_FAMILY_SECURITY_EVENT_TYPES];
@@ -82,8 +84,18 @@ export interface ManagementTokenRotatedEntry {
   readonly chainRef: string;
   readonly trigger: ManagementTokenTrigger;
 }
+/** SEC-CNS-PR94 P2-A (db/migrations/0045): fallo de entrega POST-COMMIT de un mensaje al invitado. Solo el tipo de mensaje y la receiptRef opaca de la decision:
+ * nunca el token, el canal ni el correo. La decision ya confirmo y no se revierte. */
+export type GuestMessageKindEvent = "RECEIPT" | "MANAGEMENT_LINK";
+export const GUEST_MESSAGE_KINDS_EVENT: readonly GuestMessageKindEvent[] = ["RECEIPT", "MANAGEMENT_LINK"];
+export interface GuestMessageDeliveryFailedEntry {
+  readonly tenantId: TenantId;
+  readonly eventType: "GUEST_MESSAGE_DELIVERY_FAILED";
+  readonly messageKind: GuestMessageKindEvent;
+  readonly receiptRef: string;
+}
 export type OtpFamilySecurityEventEntry =
-  | OtpIssuedEntry | OtpOutcomeEntry | OtpBudgetExhaustedEntry | RecoveryTokenIssuedEntry | ManagementTokenRotatedEntry;
+  | OtpIssuedEntry | OtpOutcomeEntry | OtpBudgetExhaustedEntry | RecoveryTokenIssuedEntry | ManagementTokenRotatedEntry | GuestMessageDeliveryFailedEntry;
 
 /** Cualquier entrada que el puerto acepta: sesion (`SecurityEventEntry`, sin cambios) o familia OTP/RECOVERY/MANAGEMENT. */
 export type AnySecurityEventEntry = SecurityEventEntry | OtpFamilySecurityEventEntry;
@@ -190,6 +202,7 @@ const OTP_FAMILY_ALLOWED_KEYS: Readonly<Record<OtpFamilySecurityEventType, reado
   OTP_BUDGET_EXHAUSTED: ["tenantId", "eventType", "verificationRef", "scopeClass", "keyKind", "windowKind"],
   RECOVERY_TOKEN_ISSUED: ["tenantId", "eventType", "recoveryRef", "trigger"],
   MANAGEMENT_TOKEN_ROTATED: ["tenantId", "eventType", "chainRef", "trigger"],
+  GUEST_MESSAGE_DELIVERY_FAILED: ["tenantId", "eventType", "messageKind", "receiptRef"],
 };
 
 /**
@@ -234,6 +247,9 @@ function validateOtpFamilyEntry(entry: OtpFamilySecurityEventEntry): void {
       return;
     case "MANAGEMENT_TOKEN_ROTATED":
       ref("chainRef"); oneOf("trigger", MANAGEMENT_TOKEN_TRIGGERS);
+      return;
+    case "GUEST_MESSAGE_DELIVERY_FAILED":
+      oneOf("messageKind", GUEST_MESSAGE_KINDS_EVENT); ref("receiptRef");
       return;
     default:
       return fail("eventType");

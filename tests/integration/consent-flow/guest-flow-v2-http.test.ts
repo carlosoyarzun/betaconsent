@@ -468,6 +468,82 @@ test("TEST-CNS-1413: si la entrega post-commit falla, la decisión sigue registr
   }
 });
 
+/** Espia las escrituras de `tx.securityEvents` que hace el handler (post-commit) sin tocar el resto de la unidad de trabajo. `failRecord` simula que ops.security_event no responde. */
+function spyOnSecurityEvents(h: Harness, failRecord = false): unknown[] {
+  const seen: unknown[] = [];
+  const base = h.ports.invitation.uow;
+  (h.ports as { invitation: unknown }).invitation = {
+    ...h.ports.invitation,
+    uow: {
+      inTenant: <T>(tenantId: never, work: (tx: never) => Promise<T>) =>
+        base.inTenant(tenantId, (tx) =>
+          work({
+            ...tx,
+            securityEvents: {
+              record: async (entry: unknown) => {
+                if (failRecord) throw new Error("ops.security_event caido a@b.test");
+                seen.push(entry);
+                return tx.securityEvents.record(entry as never);
+              },
+            },
+          } as never),
+        ),
+    },
+  };
+  return seen;
+}
+
+test("TEST-CNS-1446: el fallo de entrega post-commit deja un evento PERSISTENTE GUEST_MESSAGE_DELIVERY_FAILED por tipo de mensaje, con receiptRef opaca y sin PII ni token (SEC-CNS-PR94 P2-A)", async () => {
+  const subjectRef = fixtureUuid("subject-1446");
+  const failing = { send: async (): Promise<void> => { throw new Error("SMTP_CAIDO a@b.test"); } };
+  const h = await startServer(subjectRef, failing);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    const events = spyOnSecurityEvents(h);
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1446"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { state: string; receiptRef: string };
+    assert.equal(body.state, "GRANTED");
+    assert.deepEqual(events, [
+      { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT", receiptRef: body.receiptRef },
+      { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: body.receiptRef },
+    ]);
+    assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"], "la alerta inmediata sigue ocurriendo");
+    assert.ok(!JSON.stringify(events).match(/SMTP_CAIDO|@|\/m\//), "el evento persistido no lleva PII ni token");
+    assert.ok(!logs.some((l) => /SMTP_CAIDO|a@b\.test|\/m\//.test(l)));
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
+test("TEST-CNS-1447: si tampoco se puede persistir el evento de fallo de entrega, la decision sigue en 200 y queda la alerta inmediata (mejor esfuerzo, sin detalle) (SEC-CNS-PR94 P2-A)", async () => {
+  const subjectRef = fixtureUuid("subject-1447");
+  const failing = { send: async (): Promise<void> => { throw new Error("SMTP_CAIDO"); } };
+  const h = await startServer(subjectRef, failing);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    spyOnSecurityEvents(h, true);
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1447"), subjectRef);
+    const afterSteps = await completeSteps(h, session);
+    const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { state: string }).state, "GRANTED");
+    assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"]);
+    assert.ok(logs.includes("guest_message_delivery_failure_not_persisted"));
+    assert.ok(!logs.some((l) => /a@b\.test|ops\.security_event caido/.test(l)), "sin detalle del error");
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
 test("TEST-CNS-1414: con store Postgres o entorno distinto de LOCAL el servidor exige guestMessageChannel explícito y nunca cae al sink en memoria (P2-1, fail-closed)", () => {
   const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const common = { sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports: base };
