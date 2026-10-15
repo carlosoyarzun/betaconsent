@@ -3,9 +3,13 @@
 //
 // Apagado significa: (a) NO abre sockets por si mismo: el cliente HTTP se INYECTA (`IdpHttpClient`; el proxy de egress de IT0b lo proveera) y en este repo nadie lo cablea; (b) el factory se niega en LOCAL
 // (ahi se usa el IdP sintetico), se niega sin la bandera `egressApproved` (P-45) y se niega ante cualquier configuracion incompleta o insegura (fail-closed); (c) createVerifierIdp sigue lanzando fuera de LOCAL.
+// El cliente inyectado NO debe seguir redirecciones (un 3xx es un error: el token endpoint y el JWKS son los fijados, P-45) y el adaptador acota el cuerpo de cada respuesta a 64 KiB.
 // Cero PII y cero secretos en errores: los mensajes nunca incluyen code, verifier PKCE, token ni cuerpo de respuesta.
 
 import type { IdpClientPort, Jwks } from "../../server/ports/idp-client.port.ts";
+
+/** Tope del cuerpo de respuesta (token endpoint y JWKS): 64 KiB. */
+export const MAX_IDP_BODY_BYTES = 64 * 1024;
 
 export interface IdpHttpResponse {
   readonly status: number;
@@ -79,6 +83,7 @@ export function createOidcIdpAdapter(config: OidcIdpConfig, http: IdpHttpClient)
         { timeoutMs: config.timeoutMs },
       );
       if (res.status !== 200) throw new Error("canje rechazado por el IdP");
+      if (Buffer.byteLength(res.body, "utf8") > MAX_IDP_BODY_BYTES) throw new Error("respuesta del IdP demasiado grande");
       let parsed: unknown;
       try {
         parsed = JSON.parse(res.body);
@@ -94,6 +99,7 @@ export function createOidcIdpAdapter(config: OidcIdpConfig, http: IdpHttpClient)
       if (cache !== null && now() - cache.at < config.jwksCacheTtlMs) return cache.jwks;
       const res = await http.get(jwks.toString(), { timeoutMs: config.timeoutMs });
       if (res.status !== 200) throw new Error("JWKS no disponible");
+      if (Buffer.byteLength(res.body, "utf8") > MAX_IDP_BODY_BYTES) throw new Error("JWKS demasiado grande");
       let parsed: unknown;
       try {
         parsed = JSON.parse(res.body);

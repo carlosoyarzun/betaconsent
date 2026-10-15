@@ -9,6 +9,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { rawFetch } from "../../helpers/raw-http.ts";
 import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";
 import { AUTH_CONTINUE_PATH, OIDC_EXCHANGE_COOKIE, OIDC_STATE_COOKIE } from "../../../src/server/entrypoints/platform/auth-routes.ts";
 import { loadPlatformSettings, PlatformConfigError } from "../../../src/server/entrypoints/platform/platform-settings.ts";
@@ -20,6 +21,8 @@ import type { VerifierConfig } from "../../../src/server/modules/step-up/verifie
 import type { AssertionRecord, BeginAuthorizationInput, ClaimedExchange, ExchangeStatus, LoginAssertionRecord, OidcAuthorizationPort, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
 import { PlatformDeniedError } from "../../../src/server/ports/oidc-exchange.port.ts";
 
+// Sec-Fetch de una navegacion legitima al login (seguridad PR-6b): same-origin|none + navigate.
+const NAV = { "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate" };
 const sha = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 
 test("TEST-CNS-1505 limitadores en memoria: ventana deslizante, un solo evento por clave, tope de claves fail-closed; truncado de IP; allowlist CIDR (v4 y v6)", () => {
@@ -64,7 +67,7 @@ test("TEST-CNS-1506 platform-settings: fuera de LOCAL no hay defaults (P-49..P-5
   assert.equal(local.idp, undefined);
   const full = {
     CNS_PLATFORM_BIND_ADDRESS: "10.8.0.5", CNS_PLATFORM_ALLOWED_CIDRS: "10.8.0.0/16", CNS_PLATFORM_P53_MAX_AWAITING: "500",
-    CNS_PLATFORM_P49_MAX: "20", CNS_PLATFORM_P49_WINDOW_SECONDS: "900", CNS_PLATFORM_P50_MAX: "30", CNS_PLATFORM_P50_WINDOW_SECONDS: "60", CNS_PLATFORM_P51_MAX: "5", CNS_PLATFORM_P51_WINDOW_SECONDS: "600",
+    CNS_PLATFORM_P49_MAX: "20", CNS_PLATFORM_P49_WINDOW_SECONDS: "900", CNS_PLATFORM_P49_IPV4_PREFIX: "32", CNS_PLATFORM_P50_MAX: "30", CNS_PLATFORM_P50_WINDOW_SECONDS: "60", CNS_PLATFORM_P51_MAX: "5", CNS_PLATFORM_P51_WINDOW_SECONDS: "600",
   };
   const ok = loadPlatformSettings(full, "STAGING");
   assert.equal(ok.bindAddress, "10.8.0.5");
@@ -127,7 +130,7 @@ const cookieValue = (setCookie: string | null, name: string): string => new RegE
 test("TEST-CNS-1507 rutas de login: 302 al IdP con max_age=0, prompt=login, PKCE S256, state y nonce; callback compara state, 303 sin code ni ref, exchangeRef solo en cookie __Host- Strict; 404 uniforme; P-49; allowlist", async () => {
   await withServer({ ...IDP, CNS_PLATFORM_P49_MAX: "60", CNS_PLATFORM_P49_WINDOW_SECONDS: "900" }, async (base, auth) => {
     // Login PLATFORM: sin principal; 302 con los parametros del IdP.
-    const r = await fetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual" });
+    const r = await rawFetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual", headers: NAV });
     assert.equal(r.status, 302);
     assert.equal(r.headers.get("referrer-policy"), "no-referrer");
     assert.equal(r.headers.get("cache-control"), "no-store");
@@ -151,7 +154,7 @@ test("TEST-CNS-1507 rutas de login: 302 al IdP con max_age=0, prompt=login, PKCE
     assert.match(sc, new RegExp(`^${OIDC_STATE_COOKIE}=${state}; Path=/; Secure; HttpOnly; SameSite=Lax`));
     assert.equal(begin.state, state);
     // kind=CASE (PR-6c) y kind ajeno: 404.
-    for (const k of ["CASE", "OTRO", ""]) assert.equal((await fetch(`${base}/platform/auth/login?kind=${k}`, { redirect: "manual" })).status, 404, k);
+    for (const k of ["CASE", "OTRO", ""]) assert.equal((await rawFetch(`${base}/platform/auth/login?kind=${k}`, { redirect: "manual", headers: NAV })).status, 404, k);
 
     // Callback: sin cookie, con cookie distinta o con state ajeno => 404 uniforme y no completa.
     const cb = (qs: string, cookie?: string): Promise<Response> => fetch(`${base}/platform/auth/callback?${qs}`, { redirect: "manual", headers: cookie === undefined ? {} : { cookie } });
@@ -180,7 +183,7 @@ test("TEST-CNS-1507 rutas de login: 302 al IdP con max_age=0, prompt=login, PKCE
     assert.equal((await fetch(`${base}/platform/auth/exchanges/${ref}`, { headers: { cookie: both } })).status, 404, "la ruta antigua con ref en la URL ya no existe");
     // Un DENY de la base en el login => 404 uniforme, sin motivo.
     auth.deny = true;
-    const denied = await fetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual" });
+    const denied = await rawFetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual", headers: NAV });
     assert.equal(denied.status, 404);
     assert.deepEqual(await denied.json(), { error: "not_found" });
   });
@@ -188,7 +191,7 @@ test("TEST-CNS-1507 rutas de login: 302 al IdP con max_age=0, prompt=login, PKCE
   // P-49: 6 intentos (login/callback) por IP truncada; el 7.o => 404 y UN evento sin IP ni principal.
   await withServer({ ...IDP, CNS_PLATFORM_P49_MAX: "6", CNS_PLATFORM_P49_WINDOW_SECONDS: "900" }, async (base, auth) => {
     const codes: number[] = [];
-    for (let i = 0; i < 9; i++) codes.push((await fetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual" })).status);
+    for (let i = 0; i < 9; i++) codes.push((await rawFetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual", headers: NAV })).status);
     assert.deepEqual(codes, [302, 302, 302, 302, 302, 302, 404, 404, 404]);
     await new Promise((r) => setTimeout(r, 20));
     assert.deepEqual(auth.limitEvents, [{ limitKind: "P-49", windowSeconds: 900 }], "un evento, sin IP ni principal");
@@ -196,12 +199,12 @@ test("TEST-CNS-1507 rutas de login: 302 al IdP con max_age=0, prompt=login, PKCE
 
   // Allowlist: un origen fuera del CIDR recibe 404 uniforme y no toca la base.
   await withServer({ ...IDP, CNS_PLATFORM_ALLOWED_CIDRS: "10.99.0.0/16" }, async (base, auth) => {
-    assert.equal((await fetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual" })).status, 404);
+    assert.equal((await rawFetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual", headers: NAV })).status, 404);
     assert.equal(auth.begins.length, 0);
   });
   // Sin IdP configurado (adaptador real apagado): el login no existe.
   await withServer({}, async (base) => {
-    assert.equal((await fetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual" })).status, 404);
+    assert.equal((await rawFetch(`${base}/platform/auth/login?kind=PLATFORM`, { redirect: "manual", headers: NAV })).status, 404);
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
   });
 });

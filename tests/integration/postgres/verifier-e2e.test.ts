@@ -6,7 +6,8 @@
 
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { createPgOidcExchangeQueue, createPgOidcExchangeStore, nonceBinding } from "../../../src/infra/adapters/postgres/oidc-exchange.adapter.ts";
+import { createPgOidcExchangeStore, nonceBinding } from "../../../src/infra/adapters/postgres/oidc-exchange.adapter.ts";
+import { createPgOidcExchangeQueue } from "../../helpers/pg-oidc-exchange-queue.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { withPlatformTransaction } from "../../../src/infra/adapters/postgres/platform-call.ts";
 import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";

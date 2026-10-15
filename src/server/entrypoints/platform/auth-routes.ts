@@ -92,6 +92,17 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse,
     return true;
   }
 
+  // /login solo por navegacion de nivel superior del propio sitio (o tecleada): Sec-Fetch-Site in {same-origin, none} y Sec-Fetch-Mode = navigate. Un origen ajeno (CSRF de login, <img>, fetch cruzado)
+  // o un cliente sin esos headers recibe 404 uniforme, ANTES de tocar P-49 o la base.
+  if (isLogin) {
+    const site = req.headers["sec-fetch-site"];
+    const mode = req.headers["sec-fetch-mode"];
+    if ((site !== "same-origin" && site !== "none") || mode !== "navigate") {
+      notFound(res);
+      return true;
+    }
+  }
+
   // P-49: solo login y callback (intentos de autenticacion), por IP truncada en memoria.
   if (isLogin || isCallback) {
     const decision = deps.p49.hit(truncateIp(remote, deps.ipv4Prefix));

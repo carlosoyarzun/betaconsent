@@ -43,7 +43,8 @@ export function platformRequestHandler(deps?: PlatformHandlerDeps): Parameters<t
   const p49 = deps === undefined ? undefined : createSlidingLimiter({ max: deps.settings.p49.max, windowMs: deps.settings.p49.windowSeconds * 1000, ...(deps.now === undefined ? {} : { now: deps.now }) });
   return (req, res) => {
     if (deps !== undefined && p49 !== undefined && (req.url ?? "").startsWith("/platform/")) {
-      void handleAuthRoute(req, res, {
+      // Promise.resolve().then(...): tambien una excepcion SINCRONA al armar las dependencias cae en el .catch (no tumba el proceso).
+      void Promise.resolve().then(() => handleAuthRoute(req, res, {
         authorization: deps.authorization,
         ...(deps.settings.idp === undefined ? {} : { idp: deps.settings.idp }),
         p49,
@@ -52,10 +53,18 @@ export function platformRequestHandler(deps?: PlatformHandlerDeps): Parameters<t
         allowedCidrs: deps.settings.allowedCidrs,
         maxAwaiting: deps.settings.maxAwaiting,
         flowTtlSeconds: 600,
-      }).then((handled) => {
+      })).then((handled) => {
         if (!handled && !res.headersSent) {
           res.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
           res.end(JSON.stringify({ error: "not_found" }));
+        }
+      }).catch(() => {
+        // Una excepcion inesperada del handler NO tumba el proceso (unhandledRejection): 404 uniforme, sin detalle; si ya se enviaron headers, se corta la respuesta.
+        if (!res.headersSent) {
+          res.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ error: "not_found" }));
+        } else {
+          res.destroy();
         }
       });
       return;

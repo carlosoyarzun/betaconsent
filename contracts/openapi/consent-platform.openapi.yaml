@@ -96,6 +96,22 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+  /platform/auth/continue:
+    get:
+      operationId: platformAuthContinue
+      x-api-id: API-CNS-TBD-P01c
+      tags: [platform]
+      summary: "platformAuthContinue - Destino del 303 del callback (sin code ni ref en la URL). Marcador de PR-6b; la pagina que abre la sesion PLATFORM llega en PR-6c."
+      x-roles: "none"
+      x-step-up: "none"
+      x-db-role: "platform_rw"
+      x-db-function: "(ninguna)"
+      x-delivery: "PR-6b (marcador); PR-6c (UI y open_platform_session)"
+      responses:
+        '200':
+          description: "{status: login_in_progress}. Cache-Control no-store, Referrer-Policy no-referrer."
+        '404':
+          description: Respuesta uniforme (origen fuera de la allowlist).
   /platform/auth/exchange:
     get:
       operationId: platformAuthExchangeStatus

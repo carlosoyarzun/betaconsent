@@ -4,23 +4,20 @@
 //
 // Adaptadores sobre las funciones SECURITY DEFINER de platform; ninguno toca tablas (los roles no tienen privilegios de tabla):
 //  - createPgOidcAuthorization(pool de platform_rw): begin (AWAITING_CALLBACK con state_hash + PKCE), complete (state -> PENDING con el code), status y eventos de limite.
-//  - createPgOidcExchangeQueue(pool de platform_rw, stepUpLimit): composicion begin + complete(STEP_UP) con un state propio, para tests y LOCAL (un navegador honesto haria lo mismo). La ruta
-//    HTTP de produccion usa begin y complete por separado, con el state en una cookie.
+//  - (La composicion begin + complete(STEP_UP) con un state propio vive en tests/helpers/pg-oidc-exchange-queue.ts: no es codigo de produccion.)
 //  - createPgOidcExchangeStore(pool de integrity_verifier): claim (lease), recordAssertion (STEP_UP) y recordLoginAssertion (LOGIN_*). Los secretos (code, PKCE) devueltos por claim viven solo
 //    en memoria. La base resuelve el principal del login; esta capa nunca lo recibe.
 // Un DENY de la base ya esta confirmado (authorization_check / session_event) cuando aqui se traduce a PlatformDeniedError uniforme (F-A10-13).
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import type {
   AssertionRecord,
   BeginAuthorizationInput,
   ClaimedExchange,
-  EnqueueExchangeInput,
   ExchangeKind,
   ExchangeStatus,
   LoginAssertionRecord,
   OidcAuthorizationPort,
-  OidcExchangeQueuePort,
   OidcExchangeStorePort,
 } from "../../../server/ports/oidc-exchange.port.ts";
 import { PlatformDeniedError } from "../../../server/ports/oidc-exchange.port.ts";
@@ -94,34 +91,6 @@ export function createPgOidcAuthorization(pool: PoolLike): OidcAuthorizationPort
         await tx.query("SELECT platform.record_limit_event($1, $2)", [input.limitKind, input.windowSeconds]);
         return null;
       });
-    },
-  };
-}
-
-export interface StepUpLimitConfig {
-  readonly max: number;
-  readonly windowSeconds: number;
-}
-
-/** Composicion begin + complete para STEP_UP (tests/LOCAL). Genera su propio state (>= 128 bits). */
-export function createPgOidcExchangeQueue(pool: PoolLike, stepUpLimit: StepUpLimitConfig): OidcExchangeQueuePort {
-  const authorization = createPgOidcAuthorization(pool);
-  return {
-    async enqueue(input: EnqueueExchangeInput): Promise<string> {
-      const state = randomBytes(24).toString("base64url");
-      await authorization.begin({
-        kind: "STEP_UP",
-        state,
-        bindingHex: nonceBinding(input.actionNonce),
-        pkceVerifier: input.pkceVerifier,
-        principalRef: input.principalRef,
-        ttlSeconds: input.ttlSeconds,
-        maxAwaiting: null,
-        stepUpLimit: { max: stepUpLimit.max, windowSeconds: stepUpLimit.windowSeconds },
-      });
-      const ref = await authorization.complete({ state, code: input.code });
-      if (ref === null) throw new PlatformDeniedError();
-      return ref;
     },
   };
 }

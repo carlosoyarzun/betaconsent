@@ -43,6 +43,12 @@ function int(env: Env, name: string, min: number, max: number): number | undefin
   return Number(v);
 }
 
+/**
+ * Umbral de amplitud de la allowlist (seguridad PR-6b): prefijo minimo /8 en IPv4 y /8 en IPv6. Cubre los rangos privados legitimos (10.0.0.0/8, fd00::/8 ULA) y rechaza /0../7, que equivaldrian
+ * a "cualquier origen". Aplica en todos los entornos.
+ */
+export const MIN_ALLOWLIST_PREFIX = { v4: 8, v6: 8 } as const;
+
 export function loadPlatformSettings(env: Env, environment: string): PlatformSettings {
   const local = environment === "LOCAL";
   const need = (name: string, value: number | undefined, fallback: number | null): number => {
@@ -62,6 +68,11 @@ export function loadPlatformSettings(env: Env, environment: string): PlatformSet
   } catch {
     throw new PlatformConfigError("CNS_PLATFORM_ALLOWED_CIDRS contiene un CIDR invalido");
   }
+  for (const c of allowedCidrs) {
+    if (c.prefix < (c.family === 4 ? MIN_ALLOWLIST_PREFIX.v4 : MIN_ALLOWLIST_PREFIX.v6)) {
+      throw new PlatformConfigError(`CNS_PLATFORM_ALLOWED_CIDRS: prefijo demasiado amplio (minimo /${MIN_ALLOWLIST_PREFIX.v4} en IPv4 y /${MIN_ALLOWLIST_PREFIX.v6} en IPv6; /0 equivale a cualquier origen)`);
+    }
+  }
   const p53 = int(env, "CNS_PLATFORM_P53_MAX_AWAITING", 1, 1_000_000);
   if (!local && p53 === undefined) throw new PlatformConfigError("CNS_PLATFORM_P53_MAX_AWAITING (P-53, sin valor aprobado) es obligatoria fuera de LOCAL");
   const idpVars = [env.CNS_PLATFORM_IDP_AUTHORIZATION_ENDPOINT, env.CNS_PLATFORM_IDP_CLIENT_ID, env.CNS_PLATFORM_REDIRECT_URI].map((v) => (v === undefined || v === "" ? undefined : v));
@@ -79,6 +90,16 @@ export function loadPlatformSettings(env: Env, environment: string): PlatformSet
     if (u.protocol !== "https:" && !(local && u.protocol === "http:" && (u.hostname === "127.0.0.1" || u.hostname === "localhost"))) {
       throw new PlatformConfigError("el endpoint del IdP debe ser https (http solo en LOCAL contra 127.0.0.1)");
     }
+    let r: URL;
+    try {
+      r = new URL(redirectUri);
+    } catch {
+      throw new PlatformConfigError("CNS_PLATFORM_REDIRECT_URI no es una URL");
+    }
+    if (r.protocol !== "https:" && !(local && r.protocol === "http:" && (r.hostname === "127.0.0.1" || r.hostname === "localhost"))) {
+      throw new PlatformConfigError("CNS_PLATFORM_REDIRECT_URI debe ser https (http solo en LOCAL contra loopback)");
+    }
+    if (r.username !== "" || r.password !== "" || r.hash !== "") throw new PlatformConfigError("CNS_PLATFORM_REDIRECT_URI sin credenciales ni fragmento");
     idp = { authorizationEndpoint: endpoint, clientId, redirectUri };
   }
   return {
@@ -87,7 +108,8 @@ export function loadPlatformSettings(env: Env, environment: string): PlatformSet
     p49: {
       max: need("CNS_PLATFORM_P49_MAX", int(env, "CNS_PLATFORM_P49_MAX", 1, 100_000), APPROVED_P49_AUTH_MAX_PER_IP),
       windowSeconds: need("CNS_PLATFORM_P49_WINDOW_SECONDS", int(env, "CNS_PLATFORM_P49_WINDOW_SECONDS", 1, 86_400), APPROVED_P49_AUTH_WINDOW_SECONDS),
-      ipv4Prefix: int(env, "CNS_PLATFORM_P49_IPV4_PREFIX", 8, 32) ?? 24,
+      // Fuera de LOCAL el prefijo es OBLIGATORIO (sin default /24: detras de la VPN lo decide infraestructura; 32 = una clave por cliente). En LOCAL, /24.
+      ipv4Prefix: need("CNS_PLATFORM_P49_IPV4_PREFIX", int(env, "CNS_PLATFORM_P49_IPV4_PREFIX", 8, 32), 24),
     },
     p50: {
       max: need("CNS_PLATFORM_P50_MAX", int(env, "CNS_PLATFORM_P50_MAX", 1, 100_000), APPROVED_P50_REQUESTS_MAX_PER_MINUTE),
