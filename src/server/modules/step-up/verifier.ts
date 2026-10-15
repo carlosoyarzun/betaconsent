@@ -5,10 +5,18 @@
 // se autentico en el IdP. La decision de si el sub_hmac corresponde al principal_ref la toma la BASE (platform.record_assertion, N6), no este modulo.
 // Cero PII y cero secretos en logs/errores: el resultado del ciclo es un enum; nunca se devuelve el token, el code ni los claims.
 
+// ADR-010 rev. 5 PR-6b (§5.2 paso 3): ademas del step-up, el ciclo atiende LOGIN_PLATFORM / LOGIN_CASE. En un login el verifier entrega el sub_hmac (con su key_version) y la BASE resuelve el
+// principal (record_login_assertion); este modulo nunca recibe ni conoce el principal. auth_time es obligatorio (id-token.ts) y su frescura frente a la creacion del flujo (G-5) la impone la base.
+
 import { computeSubHmac, IdTokenRejected, validateIdTokenPolicy, VerifierConfigError, verifyIdToken } from "./id-token.ts";
 import type { IdTokenPolicy } from "./id-token.ts";
+import {
+  APPROVED_P48_LOGIN_MAX_FAILURES,
+  APPROVED_P48_LOGIN_WINDOW_SECONDS,
+  APPROVED_P52_LOGIN_ASSERTION_SECONDS,
+} from "../common/approved-parameters.ts";
 import type { IdpClientPort } from "../../ports/idp-client.port.ts";
-import type { OidcExchangeStorePort, RejectionReason } from "../../ports/oidc-exchange.port.ts";
+import type { LoginLimits, OidcExchangeStorePort, RejectionReason } from "../../ports/oidc-exchange.port.ts";
 
 export interface VerifierConfig {
   issuer: string;
@@ -28,6 +36,28 @@ export interface VerifierConfig {
    */
   leaseSeconds?: number;
   clockSkewSeconds?: number;
+  /**
+   * P-48 / P-52 (G-6, G-7; Carlos 2026-10-15): limites del login, por configuracion. OBLIGATORIO fuera de LOCAL (sin el, validateVerifierConfig lanza y el proceso no arranca: fail-closed).
+   * En LOCAL, si falta, se usan los valores iniciales aprobados (approved-parameters.ts).
+   */
+  login?: LoginLimits;
+  /** Version vigente de K_sub (F-PR6-16; la rotacion con doble HMAC es PR-7). Entero 1..1000, default 1. */
+  subKeyVersion?: number;
+}
+
+const isInt = (value: unknown, min: number, max: number): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+
+/** Limites de login efectivos: la configuracion explicita o, SOLO en LOCAL, los valores iniciales aprobados. */
+export function resolveLoginLimits(config: Pick<VerifierConfig, "login" | "environment">): LoginLimits {
+  if (config.login !== undefined) return config.login;
+  if (config.environment === "LOCAL") {
+    return {
+      p48MaxFailures: APPROVED_P48_LOGIN_MAX_FAILURES,
+      p48WindowSeconds: APPROVED_P48_LOGIN_WINDOW_SECONDS,
+      p52AssertionSeconds: APPROVED_P52_LOGIN_ASSERTION_SECONDS,
+    };
+  }
+  throw new VerifierConfigError("los limites de login P-48/P-52 son obligatorios fuera de LOCAL");
 }
 
 export interface VerifierDeps {
@@ -56,6 +86,12 @@ export function validateVerifierConfig(config: VerifierConfig, nowSeconds: numbe
   const lease = config.leaseSeconds ?? 30;
   if (typeof lease !== "number" || !Number.isSafeInteger(lease) || lease < 1 || lease > 120) throw new VerifierConfigError("leaseSeconds debe ser un entero entre 1 y 120");
   if (!Buffer.isBuffer(config.subHmacKey) || config.subHmacKey.length < 32) throw new VerifierConfigError("K_sub debe tener al menos 32 bytes");
+  const limits = resolveLoginLimits(config);
+  // Rangos que la base tambien impone (0051): P-48 1..1000 intentos y ventana 60..86400 s; P-52 1..300 s (la base no admite mas de los 5 min aprobados).
+  if (!isInt(limits.p48MaxFailures, 1, 1000) || !isInt(limits.p48WindowSeconds, 60, 86400) || !isInt(limits.p52AssertionSeconds, 1, 300)) {
+    throw new VerifierConfigError("limites de login fuera de rango (P-48: 1..1000 y 60..86400 s; P-52: 1..300 s)");
+  }
+  if (config.subKeyVersion !== undefined && !isInt(config.subKeyVersion, 1, 1000)) throw new VerifierConfigError("subKeyVersion debe ser un entero entre 1 y 1000");
 }
 
 function rejectionFor(error: unknown): RejectionReason {
@@ -83,10 +119,26 @@ export async function runVerifierCycle(deps: VerifierDeps): Promise<VerifierCycl
       ...(config.clockSkewSeconds === undefined ? {} : { clockSkewSeconds: config.clockSkewSeconds }),
       nowSeconds: Math.floor(now() / 1000),
     });
+    const subHmac = computeSubHmac(config.subHmacKey, config.issuer, verified.sub);
+    if (claimed.kind !== "STEP_UP") {
+      // LOGIN_*: la base resuelve el principal por (key_version, sub_hmac) y no lo devuelve; aqui solo se sabe si quedo ATTESTED.
+      const loginAttested = await store.recordLoginAssertion({
+        decision: "ATTESTED",
+        exchangeRef: claimed.exchangeRef,
+        subHmac,
+        keyVersion: config.subKeyVersion ?? 1,
+        assertionHash: verified.assertionHash,
+        authTime: verified.authTime,
+        acr: verified.acr,
+        amr: verified.amr,
+        limits: resolveLoginLimits(config),
+      });
+      return loginAttested ? "ATTESTED" : "REJECTED";
+    }
     const attested = await store.recordAssertion({
       decision: "ATTESTED",
       exchangeRef: claimed.exchangeRef,
-      subHmac: computeSubHmac(config.subHmacKey, config.issuer, verified.sub),
+      subHmac,
       assertionHash: verified.assertionHash,
       authTime: verified.authTime,
       acr: verified.acr,
@@ -97,7 +149,11 @@ export async function runVerifierCycle(deps: VerifierDeps): Promise<VerifierCycl
   } catch (error) {
     if (error instanceof VerifierConfigError) throw error; // despliegue roto: se aborta, no se "rechaza" al titular
     // Cualquier fallo del canje o de la verificacion cierra la solicitud como REJECTED (sin detalle). Si ni eso se puede registrar, la solicitud vence por TTL.
-    await store.recordAssertion({ decision: "REJECTED", exchangeRef: claimed.exchangeRef, reason: rejectionFor(error) });
+    if (claimed.kind !== "STEP_UP") {
+      await store.recordLoginAssertion({ decision: "REJECTED", exchangeRef: claimed.exchangeRef, reason: rejectionFor(error) === "INVALID_CLAIMS" ? "INVALID_CLAIMS" : "EXCHANGE_FAILED" });
+    } else {
+      await store.recordAssertion({ decision: "REJECTED", exchangeRef: claimed.exchangeRef, reason: rejectionFor(error) });
+    }
     return "REJECTED";
   }
   // El ID token crudo solo existio dentro del try: no se asigna fuera ni se devuelve.

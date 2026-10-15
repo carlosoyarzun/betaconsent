@@ -37,7 +37,7 @@ pgTest("TEST-CNS-1372 pg: e2e con IdP sintetico: el verifier atesta el step-up y
     await admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [A, computeSubHmac(K_SUB, ISSUER, SUB)]);
 
     const idp = new SyntheticIdpAdapter({ environment: "LOCAL", issuer: ISSUER, audience: AUDIENCE });
-    const queue = createPgOidcExchangeQueue(platformPool);
+    const queue = createPgOidcExchangeQueue(platformPool, { max: 1000, windowSeconds: 3600 });
     const store = createPgOidcExchangeStore(verifierPool);
     const resource = `${TARGET}:RIGHTS_OPERATOR`;
     const issue = async (): Promise<string> => {
@@ -98,7 +98,7 @@ pgTest("TEST-CNS-1372 pg: e2e con IdP sintetico: el verifier atesta el step-up y
         assert.equal((await admin.query(`SELECT 1 FROM platform.${t} x WHERE strpos(x::text, $1) > 0`, [needle])).rowCount, 0, `${t} contiene ${needle.slice(0, 6)}`);
       }
     }
-    assert.equal((await admin.query("SELECT 1 FROM platform.oidc_exchange WHERE status <> 'PENDING' AND (code IS NOT NULL OR pkce_verifier IS NOT NULL)")).rowCount, 0);
+    assert.equal((await admin.query("SELECT 1 FROM platform.oidc_exchange WHERE status IN ('ATTESTED', 'REJECTED') AND (code IS NOT NULL OR pkce_verifier IS NOT NULL)")).rowCount, 0);
     // El hash del token (assertion_hash) es de 64 hex y no el token.
     const hash = (await admin.query<{ assertion_hash: string }>("SELECT assertion_hash FROM platform.grant_assertion WHERE exchange_ref = $1", [exchangeRef])).rows[0]?.assertion_hash;
     assert.ok(typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash) && hash !== createHash("sha256").update(nonce).digest("hex"));

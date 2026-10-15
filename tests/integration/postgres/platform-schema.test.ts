@@ -103,24 +103,34 @@ const EXPECTED_EXECUTE: Record<string, string[]> = {
   identity_guard: [],
   oidc_exchange_guard: [],
   deny_guard: [],
-  enqueue_oidc_exchange: ["platform_rw"],
   claim_oidc_exchange: ["integrity_verifier"],
   record_assertion: ["integrity_verifier"],
   purge_expired_oidc_exchange: ["worker"],
+  // ADR-010 PR-6b (0050/0051): login sin principal previo, state en la base, aserciones LOGIN, limites.
+  begin_oidc_authorization: ["platform_rw"],
+  complete_oidc_callback: ["platform_rw"],
+  exchange_status: ["platform_rw"],
+  record_limit_event: ["platform_rw"],
+  record_login_assertion: ["integrity_verifier"],
+  consume_login_assertion: [],
+  login_assertion_guard: [],
 };
 const FUNCTION_OWNERS: Record<string, string> = {
   request_membership: "membership_owner", approve_membership: "membership_owner", request_role_assignment: "membership_owner", approve_role_assignment: "membership_owner",
   membership_guard: "membership_owner", membership_no_truncate: "membership_owner",
   authorize: "grant_owner", issue_action_nonce: "grant_owner", authorize_target: "grant_owner", action_nonce_guard: "grant_owner", authorization_check_guard: "grant_owner",
-  identity_guard: "membership_owner", oidc_exchange_guard: "grant_owner", deny_guard: "grant_owner", enqueue_oidc_exchange: "grant_owner", claim_oidc_exchange: "grant_owner",
+  identity_guard: "membership_owner", oidc_exchange_guard: "grant_owner", deny_guard: "grant_owner", claim_oidc_exchange: "grant_owner",
   record_assertion: "grant_owner", purge_expired_oidc_exchange: "grant_owner",
+  begin_oidc_authorization: "grant_owner", complete_oidc_callback: "grant_owner", exchange_status: "grant_owner", record_limit_event: "grant_owner",
+  record_login_assertion: "grant_owner", consume_login_assertion: "grant_owner", login_assertion_guard: "grant_owner",
 };
 const TABLE_OWNERS: Record<string, string> = {
   tenant_membership: "membership_owner", platform_role_assignment: "membership_owner", principal_identity: "membership_owner",
   action_nonce: "grant_owner", authorization_check: "grant_owner", oidc_exchange: "grant_owner", grant_assertion: "grant_owner",
+  login_assertion: "grant_owner", session_event: "grant_owner",
 };
 
-pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 7 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 18 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
+pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 9 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 24 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
 
   const ns = (await admin.query<{ owner: string }>("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'platform'")).rows;
@@ -158,7 +168,7 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 7 tablas de
     assert.deepEqual(g, { s: false, w: false }, `grant_owner sobre platform.${table}: solo SELECT por columnas`);
     assert.equal((await admin.query("SELECT 1 FROM information_schema.column_privileges WHERE table_schema = 'platform' AND table_name = $1 AND grantee = 'grant_owner' AND privilege_type = 'SELECT'", [table])).rowCount! > 0, true);
   }
-  for (const table of ["action_nonce", "authorization_check", "oidc_exchange", "grant_assertion"]) {
+  for (const table of ["action_nonce", "authorization_check", "oidc_exchange", "grant_assertion", "login_assertion", "session_event"]) {
     assert.equal((await admin.query<{ p: boolean }>("SELECT has_any_column_privilege('membership_owner', $1::regclass, 'SELECT,INSERT,UPDATE,REFERENCES') AS p", [`platform.${table}`])).rows[0]?.p, false);
   }
 
@@ -191,16 +201,16 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 7 tablas de
     }
   }
 
-  // Triggers: 14, BEFORE, ENABLE ALWAYS.
+  // Triggers: 18 (14 + 4 de PR-6b), BEFORE, ENABLE ALWAYS.
   const triggers = (await admin.query<{ tgname: string; tgenabled: string; tgtype: number }>(
     `SELECT g.tgname, g.tgenabled, g.tgtype FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'platform' AND NOT g.tgisinternal ORDER BY g.tgname`,
   )).rows;
   assert.deepEqual(triggers.map((t) => t.tgname), [
     "action_nonce_guard", "action_nonce_no_truncate", "authorization_check_append_only", "authorization_check_no_truncate",
-    "grant_assertion_immutable", "grant_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
+    "grant_assertion_immutable", "grant_assertion_no_truncate", "login_assertion_guard", "login_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
     "platform_role_assignment_guard", "platform_role_assignment_no_truncate", "principal_identity_guard", "principal_identity_no_truncate",
-    "tenant_membership_guard", "tenant_membership_no_truncate",
+    "session_event_immutable", "session_event_no_truncate", "tenant_membership_guard", "tenant_membership_no_truncate",
   ]);
   for (const t of triggers) {
     assert.equal(t.tgenabled, "A", `${t.tgname} ENABLE ALWAYS`);

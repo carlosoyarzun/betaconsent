@@ -38,6 +38,9 @@ test("TEST-CNS-1397 F-A10-23: assertIdpAllowedForEnvironment niega el IdP sintet
   assert.throws(() => new SyntheticIdpAdapter({ environment: "DEV", ...BASE }), /solo existe en LOCAL/);
 });
 
+// PR-6b: fuera de LOCAL P-48/P-52 son obligatorios (G-6/G-7); estos casos prueban F-A10-23 / IdP, asi que los aportan (valores iniciales aprobados).
+const LOGIN_ENV = { CNS_VERIFIER_P48_MAX_FAILURES: "5", CNS_VERIFIER_P48_WINDOW_SECONDS: "900", CNS_VERIFIER_P52_ASSERTION_SECONDS: "300" };
+
 test("TEST-CNS-1397 createVerifierIdp: LOCAL devuelve el sintetico; DEV/STAGING no tienen IdP activable (APR-IDP y P-45 PENDING) y lanzan", () => {
   assert.equal(createVerifierIdp("LOCAL", BASE).synthetic, true);
   for (const env of ["DEV", "STAGING"] as const) assert.throws(() => createVerifierIdp(env, BASE), VerifierConfigError, env);
@@ -46,9 +49,9 @@ test("TEST-CNS-1397 createVerifierIdp: LOCAL devuelve el sintetico; DEV/STAGING 
 test("TEST-CNS-1397 startVerifierProcess fuera de LOCAL no arranca: con IdP sintetico inyectado, sin IdP, y sin MFA (requiredAcrAnyOf) antes de tocar la base", async () => {
   const synthetic = new SyntheticIdpAdapter({ environment: "LOCAL", ...BASE });
   // DEV con acr configurado y el IdP sintetico inyectado -> F-A10-23 (antes de abrir ningun pool: la URL apunta a un puerto cerrado).
-  await assert.rejects(() => startVerifierProcess({ env: baseEnv("DEV", { CNS_VERIFIER_REQUIRED_ACR_ANY_OF: "urn:synthetic:mfa" }), idp: synthetic }), (e: unknown) => e instanceof VerifierConfigError && /sintetico/.test(e.message));
+  await assert.rejects(() => startVerifierProcess({ env: baseEnv("DEV", { CNS_VERIFIER_REQUIRED_ACR_ANY_OF: "urn:synthetic:mfa", ...LOGIN_ENV }), idp: synthetic }), (e: unknown) => e instanceof VerifierConfigError && /sintetico/.test(e.message));
   // DEV con acr y sin IdP inyectado -> no hay IdP activable.
-  await assert.rejects(() => startVerifierProcess({ env: baseEnv("DEV", { CNS_VERIFIER_REQUIRED_ACR_ANY_OF: "urn:synthetic:mfa" }) }), (e: unknown) => e instanceof VerifierConfigError && /IdP/.test(e.message));
+  await assert.rejects(() => startVerifierProcess({ env: baseEnv("DEV", { CNS_VERIFIER_REQUIRED_ACR_ANY_OF: "urn:synthetic:mfa", ...LOGIN_ENV }) }), (e: unknown) => e instanceof VerifierConfigError && /IdP/.test(e.message));
   // STAGING sin requiredAcrAnyOf -> MFA obligatorio fuera de LOCAL (PR-6-0).
   await assert.rejects(() => startVerifierProcess({ env: baseEnv("STAGING"), idp: synthetic }), (e: unknown) => e instanceof VerifierConfigError && /requiredAcrAnyOf/.test(e.message));
   // environment fuera del enum cerrado -> no arranca.
