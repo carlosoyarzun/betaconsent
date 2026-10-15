@@ -5,11 +5,11 @@
 --
 -- integrity.audit_event es del ledger (dueno integrity_owner; RLS ENABLE + FORCE). Se concede al reconciler:
 --   * USAGE sobre el esquema integrity;
---   * SELECT POR COLUMNAS (las 20 columnas de la tabla: ids opacos, tipos, secuencias, payload de la lista blanca y la cadena; sin default de columna futura: una columna nueva NO queda legible
---     hasta una migracion revisada). El payload es necesario para recomputar payload_hash; el proceso NUNCA lo escribe en logs ni en la salida (cero PII, §4.2.c). Los seudonimos del payload
---     (decisionMakerRef, DECISION_MAKER_*) son dato personal: su encuadre es LEGAL DECISION (LG-9); la lectura es de un rol sin egress, sin DML, en infra propia, y no se emite.
+--   * SELECT POR COLUMNAS de SOLO 7 columnas sin contenido: tenant_id, aggregate_type, aggregate_id, sequence, event_type, chain_seq, occurred_at. SIN payload (lleva seudonimos del titular,
+--     LG-9), sin recorded_by_ref / cosigned_by_ref, sin idempotency_key_hash ni hashes de la cadena (seguridad PR #99, P1-1: ADR-010 rev. 5 §2 "columnas sin PII" y §4.2.c "el verifier conserva el
+--     recomputo de la cadena"). Por eso el reconciler NO recomputa la cadena SHA-256: eso es del verifier (OI-DBR-10 / F-PR6E-06).
 --   * una policy de SELECT explicita `TO integrity_reconciler USING (true)` (cross-tenant a proposito: la conciliacion recorre todos los tenants). Es la UNICA policy del rol sobre la tabla.
--- Ningun INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER. No se crea ninguna funcion (TEST-CNS-1470: sin funciones nuevas que mencionen integrity.audit_event).
+-- Ningun INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER. No se crea ninguna funcion (TEST-CNS-1470).
 -- No se conceden permisos a otros roles ni se modifican las policies existentes (todas son `TO <rol>` y no alcanzan al reconciler).
 -- DDL como integrity_owner (allowlist de integrity-owner-checker.ts) y sin grants temporales: la policy no usa funciones de app.
 -- Idempotente: GRANT/REVOKE repetibles y DROP POLICY IF EXISTS + CREATE POLICY.
@@ -18,9 +18,7 @@ SET LOCAL ROLE integrity_owner;
 
 GRANT USAGE ON SCHEMA integrity TO integrity_reconciler;
 
-GRANT SELECT (event_id, tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
-              occurred_at, environment, evidentiary, data_class, chain_seq, payload_hash, previous_event_hash, event_hash)
-  ON integrity.audit_event TO integrity_reconciler;
+GRANT SELECT (tenant_id, aggregate_type, aggregate_id, sequence, event_type, chain_seq, occurred_at) ON integrity.audit_event TO integrity_reconciler;
 
 DROP POLICY IF EXISTS audit_event_reconciler_select ON integrity.audit_event;
 CREATE POLICY audit_event_reconciler_select ON integrity.audit_event FOR SELECT TO integrity_reconciler USING (true);
@@ -39,9 +37,11 @@ BEGIN
   IF NOT pg_catalog.has_schema_privilege('integrity_reconciler', 'integrity', 'USAGE') OR pg_catalog.has_schema_privilege('integrity_reconciler', 'integrity', 'CREATE') THEN
     RAISE EXCEPTION '0057: integrity_reconciler debe tener solo USAGE sobre integrity';
   END IF;
-  -- Lee TODAS las columnas actuales (una columna nueva sin grant haria parcial la recomputacion de la cadena: esta asercion obliga a revisarla en una migracion nueva).
+  -- Columnas legibles: EXACTAMENTE las 7 aprobadas (sin payload, hashes ni refs de actor), y ninguna con escritura/REFERENCES.
   FOR col IN SELECT a.attname FROM pg_catalog.pg_attribute a WHERE a.attrelid = led AND a.attnum > 0 AND NOT a.attisdropped LOOP
-    IF NOT pg_catalog.has_column_privilege('integrity_reconciler', led, col, 'SELECT') THEN RAISE EXCEPTION '0057: integrity_reconciler sin SELECT en la columna %', col; END IF;
+    IF pg_catalog.has_column_privilege('integrity_reconciler', led, col, 'SELECT') <> (col = ANY (ARRAY['tenant_id', 'aggregate_type', 'aggregate_id', 'sequence', 'event_type', 'chain_seq', 'occurred_at'])) THEN
+      RAISE EXCEPTION '0057: SELECT de integrity_reconciler sobre la columna % no coincide con las 7 aprobadas', col;
+    END IF;
     IF pg_catalog.has_column_privilege('integrity_reconciler', led, col, 'INSERT,UPDATE,REFERENCES') THEN RAISE EXCEPTION '0057: integrity_reconciler tiene escritura/REFERENCES en la columna %', col; END IF;
   END LOOP;
   IF pg_catalog.has_table_privilege('integrity_reconciler', led, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN

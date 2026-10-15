@@ -6,7 +6,7 @@
 // el cliente no fije GUC app.*). Solo SELECT por las columnas concedidas: nada de tokens, canales, seudonimos del titular ni hashes de token. Sin DML y sin funciones.
 // ADAPTADOR (ADR-001 §11): el dominio (modules/integrity/ledger-reconciliation.ts) no conoce Postgres.
 
-import type { ConsentDecisionStateRow, InvitationStateRow, ReconciledEvent, TenantReconciliationInput } from "../../../server/modules/integrity/ledger-reconciliation.ts";
+import type { ConsentDecisionStateRow, InvitationStateRow, ReconciledEvent, RevocationLinkRow, TenantReconciliationInput } from "../../../server/modules/integrity/ledger-reconciliation.ts";
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike, Queryable } from "./pool.ts";
 
@@ -16,24 +16,14 @@ interface EventRow {
   aggregate_id: string;
   sequence: number;
   event_type: string;
-  actor_type: string;
-  actor_role: string | null;
-  recorded_by_ref: string | null;
-  cosigned_by_ref: string | null;
-  payload: Record<string, unknown>;
-  idempotency_key_hash: string | null;
   occurred_at_txt: string;
-  environment: string;
   chain_seq: number | null;
-  payload_hash: string | null;
-  previous_event_hash: string | null;
-  event_hash: string | null;
 }
 
-/** Columnas de integrity.audit_event concedidas en 0057. chain_seq es bigint: float8 es exacto hasta 2^53 y llega como number (igual que ledger.adapter.ts). */
+/** SOLO las 7 columnas de integrity.audit_event concedidas en 0057 (sin payload, hashes ni refs de actor). chain_seq es bigint: float8 es exacto hasta 2^53 y llega como number. */
 const EVENT_COLUMNS =
-  "tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash, " +
-  `to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at_txt, environment, chain_seq::float8 AS chain_seq, payload_hash, previous_event_hash, event_hash`;
+  "tenant_id::text AS tenant_id, aggregate_type, aggregate_id, sequence, event_type, " +
+  `to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS occurred_at_txt, chain_seq::float8 AS chain_seq`;
 
 function toEvent(row: EventRow): ReconciledEvent {
   return {
@@ -43,18 +33,7 @@ function toEvent(row: EventRow): ReconciledEvent {
     aggregateId: row.aggregate_id,
     sequence: row.sequence,
     eventType: row.event_type,
-    actorType: row.actor_type,
-    actorRole: row.actor_role,
-    recordedByRef: row.recorded_by_ref,
-    cosignedByRef: row.cosigned_by_ref,
-    idempotencyKeyHash: row.idempotency_key_hash,
     occurredAt: row.occurred_at_txt,
-    environment: row.environment,
-    // Los hashes son NOT NULL cuando hay eslabon (CHECK all_or_none); sin eslabon quedan vacios y el dominio no los recomputa.
-    payloadHash: row.payload_hash ?? "",
-    previousEventHash: row.previous_event_hash ?? "",
-    eventHash: row.event_hash ?? "",
-    payload: row.payload,
   };
 }
 
@@ -64,6 +43,7 @@ async function listTenants(db: Queryable): Promise<string[]> {
     `SELECT tenant_id::text AS tenant_id FROM integrity.audit_event
      UNION SELECT tenant_id::text FROM app.invitation
      UNION SELECT tenant_id::text FROM app.consent_decision
+     UNION SELECT tenant_id::text FROM app.revocation
      ORDER BY 1`,
   );
   return r.rows.map((x) => x.tenant_id);
@@ -73,8 +53,13 @@ async function readTenant(db: Queryable, tenantId: string): Promise<TenantReconc
   const events = await db.query<EventRow>(`SELECT ${EVENT_COLUMNS} FROM integrity.audit_event WHERE tenant_id = $1 ORDER BY chain_seq NULLS FIRST, aggregate_id, sequence`, [tenantId]);
   const invitations = await db.query<{ tenant_id: string; invitation_ref: string; state: string }>("SELECT tenant_id::text AS tenant_id, invitation_ref, state FROM app.invitation WHERE tenant_id = $1 ORDER BY invitation_ref", [tenantId]);
   const decisions = await db.query<{ tenant_id: string; consent_id: string; state: string }>("SELECT tenant_id::text AS tenant_id, consent_id, state FROM app.consent_decision WHERE tenant_id = $1 ORDER BY consent_id", [tenantId]);
+  const revocations = await db.query<{ tenant_id: string; revocation_ref: string; revoked_decision_ref: string | null }>(
+    "SELECT tenant_id::text AS tenant_id, revocation_ref, revoked_decision_ref FROM app.revocation WHERE tenant_id = $1 ORDER BY revocation_ref",
+    [tenantId],
+  );
   return {
     tenantId,
+    revocations: revocations.rows.map((r): RevocationLinkRow => ({ tenantId: r.tenant_id, revocationRef: r.revocation_ref, revokedDecisionRef: r.revoked_decision_ref })),
     events: events.rows.map(toEvent),
     invitations: invitations.rows.map((r): InvitationStateRow => ({ tenantId: r.tenant_id, invitationRef: r.invitation_ref, state: r.state })),
     decisions: decisions.rows.map((r): ConsentDecisionStateRow => ({ tenantId: r.tenant_id, consentId: r.consent_id, state: r.state })),

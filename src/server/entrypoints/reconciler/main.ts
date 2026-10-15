@@ -15,7 +15,9 @@ try {
     await proc.stop();
   }
 } catch (error) {
-  console.error(`reconciler: no concilia (${(error as Error).name}). ${(error as Error).message}`);
+  // Solo nombre y codigo (P2-6, seguridad PR #99): el message de un error de pg/de la URL puede llevar host, usuario o fragmentos de datos.
+  const e = error as { name?: unknown; code?: unknown };
+  console.error(`reconciler: no concilia (name=${typeof e.name === "string" ? e.name : "Error"}${typeof e.code === "string" ? ` code=${e.code}` : ""})`);
   code = RECONCILER_EXIT.ERROR;
 }
 process.exitCode = code;

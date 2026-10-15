@@ -7,6 +7,8 @@
 Description=Consent App - Proceso reconciler (conciliacion del ledger y del estado; solo lectura; sin HTTP) (rol integrity_reconciler)
 After=network.target postgresql.service
 Wants=postgresql.service
+# P2-7 (seguridad PR #99): una divergencia (exit 2) o un fallo de arranque (exit 1) deja el servicio en "failed" y dispara la unidad de alerta LOCAL (journal, sin egress).
+OnFailure=consent-reconciler-alert.service
 
 [Service]
 Type=oneshot
@@ -17,6 +19,7 @@ EnvironmentFile=/etc/consent/reconciler.env
 ExecStart=/usr/bin/node /opt/consent-app/src/server/entrypoints/reconciler/main.ts
 # Sin Restart: una divergencia (exit 2) es un hallazgo, no una falla transitoria; reintentar no la corrige. La siguiente corrida la dispara el timer.
 TimeoutStartSec=15min
+# Ningun SuccessExitStatus: todo exit != 0 (1 error, 2 divergencias) es fallo y activa OnFailure=.
 
 # Aislamiento del proceso
 NoNewPrivileges=true
@@ -26,6 +29,7 @@ ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true

@@ -1,10 +1,11 @@
 // Gobierna: ADR-010 rev. 5 §2 (fila `integrity_reconciler`), §4.2.c (conciliacion: exit code != 0 y log sin PII), §10 fila 6e, G-9 (aprobado), F-PR6-29, P2(e), condicion de §15.3 / seguridad rev. c punto 7
 // (integrity_reconciler NOBYPASSRLS con policies de SELECT explicitas y assert), INV-DBR-01/02/03/08; db/migrations/0056-0058; specs/db-roles.spec.yaml. SYNTHETIC ONLY.
-// TEST-CNS-1610 (privilegios exactos del rol: atributos, sin membresias, columnas, 3 policies, sin EXECUTE; el verifier sigue sin SELECT de principal_identity),
+// Seguridad PR #99 (P1-1): el reconciler NO lee payload, hashes ni refs de actor (7 columnas de integrity.audit_event) y NO recomputa la cadena (es del verifier, F-PR6E-06).
+// TEST-CNS-1610 (privilegios exactos del rol: atributos, sin membresias, columnas, 4 policies, sin EXECUTE; el verifier sigue sin SELECT de principal_identity),
 // TEST-CNS-1611 (cross-tenant correcto: el reconciler ve todos los tenants sin GUC; app_rw solo el suyo; la conciliacion de datos coherentes da ok),
-// TEST-CNS-1612 (reconciler sin escritura ni lectura fuera de alcance: DML, columnas con PII, tablas ajenas, funciones, SET ROLE y session_replication_role = 42501),
+// TEST-CNS-1612 (reconciler sin escritura ni lectura de payload y demas columnas con PII/hashes, ni tablas ajenas, funciones, SET ROLE ni session_replication_role: 42501),
 // TEST-CNS-1613 (arranque con rol equivocado rechazado: startup-checks y entrypoint; el rol correcto pasa),
-// TEST-CNS-1614 (cadena rota: payload mutado en un tenant; el resto sigue integro y el exit code es 2), TEST-CNS-1615 (hueco: evento borrado -> chain_seq y sequence),
+// TEST-CNS-1614 (division de tareas: un payload mutado NO lo ve el reconciler (lo detecta el verifier) y la salida no lo filtra), TEST-CNS-1615 (hueco: evento borrado -> chain_seq y sequence),
 // TEST-CNS-1616 (par fuera de la particion con cadena valida), TEST-CNS-1617 (los pares del oraculo coinciden con las policies de la base; CANCELLED <-> INVITATION_CANCELLED y REVOKED <-> CONSENT_REVOKED).
 // Los tests que corrompen el ledger usan tenants propios y van al final del archivo. Requiere Postgres real (harness.ts); skip sin entorno.
 
@@ -95,7 +96,7 @@ async function tamper(admin: Client, work: () => Promise<void>): Promise<void> {
 const A = fixtureUuid("t1611-a");
 const B = fixtureUuid("t1611-b");
 
-pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS sin membresias; SELECT solo de las columnas aprobadas; exactamente 3 policies de SELECT TO integrity_reconciler; sin EXECUTE; sin acceso a principal_identity (P2(e))", async (ctx) => {
+pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS sin membresias; SELECT solo de las columnas aprobadas; exactamente 4 policies de SELECT TO integrity_reconciler; sin EXECUTE; sin acceso a principal_identity (P2(e))", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   const role = (await admin.query<{ rolcanlogin: boolean; rolsuper: boolean; rolbypassrls: boolean; rolcreatedb: boolean; rolcreaterole: boolean; rolreplication: boolean; rolconfig: string[] }>(
     "SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication, rolconfig FROM pg_roles WHERE rolname = 'integrity_reconciler'")).rows[0];
@@ -110,15 +111,17 @@ pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS s
           AND has_column_privilege('integrity_reconciler', a.attrelid, a.attname, 'SELECT')`, [rel])).rows[0]?.c ?? "";
   assert.equal(await cols("app.invitation"), "invitation_ref,state,tenant_id");
   assert.equal(await cols("app.consent_decision"), "consent_id,state,tenant_id");
-  assert.equal((await cols("integrity.audit_event")).split(",").length, 20);
+  assert.equal(await cols("app.revocation"), "revocation_ref,revoked_decision_ref,tenant_id");
+  assert.equal(await cols("integrity.audit_event"), "aggregate_id,aggregate_type,chain_seq,event_type,occurred_at,sequence,tenant_id", "sin payload, hashes ni refs de actor (P1-1)");
   // Exactamente 3 policies (todas SELECT, TO integrity_reconciler, USING true), una por tabla.
   const pol = (await admin.query<{ rel: string; polname: string; polcmd: string; q: string }>(
     `SELECT p.polrelid::regclass::text AS rel, p.polname, p.polcmd, pg_get_expr(p.polqual, p.polrelid) AS q FROM pg_policy p
-      WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_reconciler') = ANY (p.polroles) OR 0 = ANY (p.polroles) AND p.polrelid::regclass::text IN ('integrity.audit_event', 'app.invitation', 'app.consent_decision')
+      WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_reconciler') = ANY (p.polroles) OR 0 = ANY (p.polroles) AND p.polrelid::regclass::text IN ('integrity.audit_event', 'app.invitation', 'app.consent_decision', 'app.revocation')
       ORDER BY 1`)).rows;
   assert.deepEqual(pol.map((p) => [p.rel, p.polname, p.polcmd, p.q]), [
     ["app.consent_decision", "consent_decision_reconciler_select", "r", "true"],
     ["app.invitation", "invitation_reconciler_select", "r", "true"],
+    ["app.revocation", "revocation_reconciler_select", "r", "true"],
     ["integrity.audit_event", "audit_event_reconciler_select", "r", "true"],
   ]);
   // Sin privilegios de escritura ni EXECUTE en ningun esquema de dominio; ningun privilegio sobre otras tablas de app/ops/platform.
@@ -130,7 +133,7 @@ pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS s
   const reads = (await admin.query<{ t: string }>(
     `SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'ops', 'platform', 'integrity', 'case_state', 'ledger_gen', 'tenant_resolve') AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_any_column_privilege('integrity_reconciler', c.oid, 'SELECT') ORDER BY 1`)).rows.map((r) => r.t);
-  assert.deepEqual(reads, ["app.consent_decision", "app.invitation", "integrity.audit_event", "ops.db_catalog"]);
+  assert.deepEqual(reads, ["app.consent_decision", "app.invitation", "app.revocation", "integrity.audit_event", "ops.db_catalog"]);
   const fns = await admin.query(
     `SELECT n.nspname || '.' || p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname IN ('app', 'ops', 'platform', 'integrity', 'case_state', 'ledger_gen', 'tenant_resolve') AND has_function_privilege('integrity_reconciler', p.oid, 'EXECUTE')`);
@@ -192,7 +195,7 @@ pgTest("TEST-CNS-1611 pg: cross-tenant correcto: el reconciler lee todos los ten
   assert.match(formatReport(report)[0]!, /^reconciler_run ok=true tenants=\d+ events=\d+ divergences=0$/);
 });
 
-pgTest("TEST-CNS-1612 pg: el reconciler no escribe ni lee fuera de alcance: DML, TRUNCATE, columnas con PII, tablas ajenas (revocation, rights_case, case_session, platform.*), funciones, SET ROLE y session_replication_role dan 42501", async (ctx) => {
+pgTest("TEST-CNS-1612 pg: el reconciler da 42501 al leer payload y demas columnas con PII/hashes del ledger y de las tablas de estado, y al escribir, leer tablas ajenas (rights_case, case_session, platform.*), ejecutar funciones, SET ROLE y session_replication_role", async (ctx) => {
   const rec = await ctx.connectAs("integrity_reconciler");
   // default_transaction_read_only = on (defensa en profundidad) daria 25006 antes del chequeo de privilegios: se levanta para probar que el CONTROL son los privilegios.
   await rec.query("SET default_transaction_read_only = off");
@@ -208,12 +211,19 @@ pgTest("TEST-CNS-1612 pg: el reconciler no escribe ni lee fuera de alcance: DML,
   await denied("DELETE FROM app.invitation", "DELETE invitation");
   await denied("UPDATE app.consent_decision SET state = 'REVOKED'", "UPDATE decision");
   await denied("INSERT INTO app.consent_decision (tenant_id, consent_id) VALUES (gen_random_uuid(), 'x')", "INSERT decision");
+  // Ledger: payload (seudonimos del titular), refs de actor, hashes y claves de idempotencia NO son legibles (P1-1); SELECT * tampoco.
+  await denied("SELECT * FROM integrity.audit_event", "SELECT * ledger");
+  for (const col of ["payload", "recorded_by_ref", "cosigned_by_ref", "idempotency_key_hash", "payload_hash", "previous_event_hash", "event_hash", "actor_type", "actor_role", "event_id", "environment"]) {
+    await denied(`SELECT ${col} FROM integrity.audit_event`, `audit_event.${col}`);
+  }
+  for (const col of ["payload", "event_hash"]) await denied(`SELECT count(*) FROM integrity.audit_event WHERE ${col} IS NOT NULL`, `audit_event.${col} en WHERE`);
+  for (const col of ["status", "case_ref", "recorded_by_ref", "reason_code", "verification_ref"]) await denied(`SELECT ${col} FROM app.revocation`, `revocation.${col}`);
   // Columnas con PII o secretos: SELECT * y columnas concretas.
   await denied("SELECT * FROM app.invitation", "SELECT * invitation");
   for (const col of ["token_hash", "recipient_channel_ref", "subject_ref", "bound_decision_maker_ref"]) await denied(`SELECT ${col} FROM app.invitation`, `invitation.${col}`);
   for (const col of ["decision_maker_ref", "subject_ref", "receipt_ref"]) await denied(`SELECT ${col} FROM app.consent_decision`, `consent_decision.${col}`);
   // Tablas ajenas y esquema platform.
-  for (const t of ["app.revocation", "app.rights_case", "app.case_session", "app.outbox", "ops.security_event", "app.otp_verification", "app.enrollment", "tenant_resolve.handle"]) await denied(`SELECT 1 FROM ${t}`, t);
+  for (const t of ["app.rights_case", "app.case_session", "app.outbox", "ops.security_event", "app.otp_verification", "app.enrollment", "tenant_resolve.handle"]) await denied(`SELECT 1 FROM ${t}`, t);
   await denied("SELECT 1 FROM platform.principal_identity", "principal_identity");
   await denied("SELECT 1 FROM platform.oidc_exchange", "oidc_exchange");
   await denied("SELECT 1 FROM platform.session_event", "session_event (fuera de 6e: 6c)");
@@ -266,23 +276,16 @@ pgTest("TEST-CNS-1613 pg: arranque con rol equivocado rechazado (startup-checks 
   await assert.rejects(() => startReconcilerProcess({ env: { CNS_ENVIRONMENT: "DEV", CNS_DATABASE_URL: ctx.urlFor("integrity_reconciler") } }), /catálogo|catalogo|environment/);
 });
 
-pgTest("TEST-CNS-1614 pg: cadena rota: un payload mutado en un tenant (trigger de inmutabilidad deshabilitado solo en la base descartable) se detecta con motivo y chainSeq; los otros tenants siguen integros; exit code 2 y log sin PII", async (ctx) => {
+pgTest("TEST-CNS-1614 pg: division de tareas (P1-1): un payload mutado en el ledger NO lo ve el reconciler (no lo lee; lo detecta el recomputo del verifier) y la salida del reconciler no lo filtra", async (ctx) => {
   const C = fixtureUuid("t1614-c");
-  const D = fixtureUuid("t1614-d");
   const admin = await ctx.fixtureAdmin();
   await driveInvitation(ctx, C, "1614-c", "READY");
-  await driveInvitation(ctx, D, "1614-d", "READY");
   await tamper(admin, async () => {
     await admin.query("UPDATE integrity.audit_event SET occurred_at = now(), payload = payload || '{\"manipulado\":\"PII-SENTINELA\"}'::jsonb WHERE tenant_id = $1 AND event_type = 'INVITATION_READY'", [C]);
   });
   const report = await runReconciler(ctx);
-  const dc = forTenant(report, C);
-  assert.ok(dc.some((d) => d.kind === "CHAIN_BROKEN" && d.detail === "PAYLOAD_HASH_MISMATCH" && d.chainSeq === 2), JSON.stringify(dc));
-  assert.deepEqual(forTenant(report, D).map(tag), [], "el tenant D sigue integro");
-  assert.equal(report.ok, false);
-  assert.equal(exitCodeFor(report), RECONCILER_EXIT.DIVERGENCE);
+  assert.deepEqual(forTenant(report, C).map(tag), [], "el reconciler no recomputa hashes: la mutacion del payload no es su deteccion");
   const log = formatReport(report).join("\n");
-  assert.match(log, /reconciler_divergence kind=CHAIN_BROKEN tenant=[0-9a-f-]{36} .*detail=PAYLOAD_HASH_MISMATCH chainSeq=2/);
   for (const secret of ["PII-SENTINELA", "manipulado", "example.invalid", "dm-pr6e"]) assert.ok(!log.includes(secret), `la salida filtra ${secret}`);
 });
 
@@ -296,7 +299,7 @@ pgTest("TEST-CNS-1615 pg: hueco: un evento borrado del ledger rompe chain_seq y 
   });
   const report = await runReconciler(ctx);
   const tags = forTenant(report, E).map(tag);
-  assert.ok(tags.includes("CHAIN_BROKEN:CHAIN_SEQ_GAP"), tags.join(","));
+  assert.ok(tags.includes("CHAIN_SEQ_GAP"), tags.join(","));
   assert.ok(tags.includes("AGGREGATE_SEQUENCE_GAP"), tags.join(","));
   assert.ok(tags.includes("STATE_EVENT_MISMATCH:MISSING:INVITATION_READY"), tags.join(","));
   assert.equal(report.ok, false);

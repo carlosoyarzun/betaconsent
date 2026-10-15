@@ -36,8 +36,9 @@ BEGIN
 END
 $revoke$;
 
--- Misma disciplina de timeout que 0000/0034 para los roles de runtime (D9), mas solo lectura por defecto.
-ALTER ROLE integrity_reconciler SET idle_in_transaction_session_timeout = '10s';
+-- Timeout PROPIO y holgado (seguridad PR #99 P2-3): el reconciler lee un snapshot REPEATABLE READ tenant por tenant y procesa en CPU entre lecturas; los 10s de 0000/0034 lo matarian a mitad de corrida.
+-- Sigue siendo finito (D9). Mas solo lectura por defecto.
+ALTER ROLE integrity_reconciler SET idle_in_transaction_session_timeout = '120s';
 ALTER ROLE integrity_reconciler SET default_transaction_read_only = on;
 
 -- Aserciones del estado resultante (fail-closed).

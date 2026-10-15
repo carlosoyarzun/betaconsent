@@ -820,17 +820,17 @@ TEST-CNS-1469,integration,tests/integration/postgres/adr010-ledger-pr-b-hardenin
 TEST-CNS-1470,integration,tests/integration/postgres/adr010-ledger-pr-b-hardening.test.ts,"pg permanente: solo las funciones declaradas mencionan ledger_append/audit_event; tenant_resolve.handle filtra por NEW.tenant_id","PR #98 seguridad P2-6;INV-DBR-07",ACTIVE
 TEST-CNS-1600,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"pares ledger_writer 19 / transition_owner 14 coinciden con la spec y son disjuntos","ADR-010 rev.5 §4.2.c;INV-DBR-08;6e",ACTIVE
 TEST-CNS-1601,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"ledger y estado coherentes no producen divergencias","ADR-010 rev.5 §4.2.c;INV-DBR-08;6e",ACTIVE
-TEST-CNS-1602,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"detecta cadena rota: payload, eventHash, previous_hash","ADR-010 rev.5 §4.2.c;X6;6e",ACTIVE
-TEST-CNS-1603,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"detecta huecos de chain_seq y sequence; evento sin eslabon","ADR-010 rev.5 §4.2.c;X6;6e",ACTIVE
+TEST-CNS-1602,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"detecta hueco de chain_seq, eventos sin eslabon y tenant malformado sin abortar la corrida","ADR-010 rev.5 §4.2.c;X6;6e",ACTIVE
+TEST-CNS-1603,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"detecta huecos de sequence por agregado y ocurrencias duplicadas (una sola vez)","ADR-010 rev.5 §4.2.c;X6;6e",ACTIVE
 TEST-CNS-1604,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"par fuera de la particion es divergencia","ADR-010 rev.5 §4.2.b;INV-DBR-07;6e",ACTIVE
 TEST-CNS-1605,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"estado <-> ledger en ambos sentidos (CANCELLED, REVOKED, fila sin evento, evento sin fila)","ADR-010 rev.5 §4.2.c;INV-DBR-08;6e",ACTIVE
 TEST-CNS-1606,unit,tests/unit/integrity/ledger-reconciliation.test.ts,"salida sin PII, enmascarado, tope de lineas y exit codes","ADR-010 rev.5 §4.2.c;P6-8;6e",ACTIVE
 TEST-CNS-1607,unit,tests/unit/integrity/reconciler-process.test.ts,"reconciler solo arranca con integrity_reconciler; URL/PGOPTIONS/entorno invalidos abortan antes de conectar","ADR-010 rev.5 §2;INV-DBR-02;G-9",ACTIVE
-TEST-CNS-1610,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: atributos, sin membresias, columnas, 3 policies, sin EXECUTE, sin principal_identity","ADR-010 rev.5 §2;P2(e);G-9;§15.3",ACTIVE
+TEST-CNS-1610,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: atributos, sin membresias, 7 columnas del ledger sin PII, 4 policies, sin EXECUTE, sin principal_identity","ADR-010 rev.5 §2;P2(e);G-9;§15.3",ACTIVE
 TEST-CNS-1611,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: cross-tenant correcto del reconciler; app_rw aislado; conciliacion ok","ADR-010 rev.5 §4.2.c;§15.3 punto 7",ACTIVE
-TEST-CNS-1612,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: reconciler sin escritura ni lectura fuera de alcance (42501)","ADR-010 rev.5 §2;P2(e);INV-DBR-01",ACTIVE
+TEST-CNS-1612,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: 42501 al leer payload y columnas con PII/hashes, escribir, tablas ajenas y funciones","ADR-010 rev.5 §2;P2(e);INV-DBR-01",ACTIVE
 TEST-CNS-1613,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: arranque con rol equivocado rechazado","ADR-010 rev.5 §2;INV-DBR-02;G-9",ACTIVE
-TEST-CNS-1614,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: cadena rota detectada, otros tenants integros, exit 2 sin PII","ADR-010 rev.5 §4.2.c;X6;6e",ACTIVE
+TEST-CNS-1614,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: division de tareas: payload mutado no lo ve el reconciler y la salida no lo filtra","ADR-010 rev.5 §4.2.c;X6;6e",ACTIVE
 TEST-CNS-1615,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: hueco por evento borrado (chain_seq y sequence)","ADR-010 rev.5 §4.2.c;6e",ACTIVE
 TEST-CNS-1616,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: par fuera de la particion con cadena valida","ADR-010 rev.5 §4.2.b;INV-DBR-07;6e",ACTIVE
 TEST-CNS-1617,integration,tests/integration/postgres/adr010-pr6e-reconciler.test.ts,"pg: pares del oraculo = policies; REVOKED/CANCELLED contra datos reales","ADR-010 rev.5 §4.2.c;INV-DBR-08;6e",ACTIVE

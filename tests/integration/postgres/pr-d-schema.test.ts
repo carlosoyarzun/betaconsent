@@ -40,7 +40,7 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
     assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_reconciler_select$'",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
       [table],
     )).rows;
     // 0031 (SEC-CNS-021 PR-3): app.otp_verification suma SELECT y DELETE acotados por vencimiento TO security_event_owner; app_rw queda exactamente INSERT/SELECT/UPDATE.
