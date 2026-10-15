@@ -1,0 +1,104 @@
+# Tabla OLD->NEW de derivacion del ledger (ADR-010 rev. 5 §4.2.b, capa 1; PR-b, migraciones 0046-0049). UNICA fuente de la emision del ledger no-Revocation.
+# rev. 0.1 (2026-10-15, lampone-dev, `spec:`): primera version. Aceptada por Carlos el 2026-10-15 para IT0b (LG-1..LG-10, G-2, G-10, G-11); dictamen de arquitectura 2026-10-15 sobre F-PRB-01..04.
+# La base (triggers de ledger_gen, rol ledger_writer) y la funcion pura TS (src/server/modules/common/ledger-derivation.ts: adaptador in-memory y oraculo de los vectores dorados TS<->SQL) implementan ESTA
+# tabla; tests/unit/common/ledger-derivation-spec.test.ts la compara con LEDGER_DERIVATION_EDGES y los tests TEST-CNS-1455 y TEST-CNS-1459 comparan la base con el oraculo.
+# No decide si hubo consentimiento, si el OTP es valido ni la autorizacion del tenant: registra transiciones ya decididas por el dominio y por las guardas (Master Plan §32). Cualquier cambio de
+# lo que significa GRANTED, DECLINED o REVOKED, o de la version consentida, es human gate de Carlos (LEGAL DECISION LD-06 para la opcion (c) de LG-2).
+specId: SPEC-CNS-LEDGER-DERIVATION
+title: "Derivacion del ledger desde OLD->NEW por agregado (capa 1, ledger_writer / ledger_gen)"
+version: "0.1.0"
+status: ACCEPTED_FOR_IT0B
+owner: lampone-architect
+governedBy:
+  - "ADR-010 rev. 5 §4.2.b (LG-1..LG-10), §4.2.b(14) (encaje de I9 / Q-18-I9, F-PR6-22), F-PR6-23, F-PR6-28, F-PR6-30"
+  - "specs/db-roles.spec.yaml (ledgerWriter, INV-DBR-07)"
+  - "specs/state-machines/{tenant-context,invitation,otp-challenge,consent-decision}.spec.yaml"
+  - "contracts/schemas/ledger-event-payloads.schema.json"
+
+rules:
+  - {id: LD-RULE-01, statement: "La emision depende SOLO de la tabla `edges` (OLD->NEW de la fila); nunca de current_user, de case_state.effect ni de un GUC elegible por el llamador."}
+  - {id: LD-RULE-02, statement: "Toda arista fuera de `edges` (y fuera de `notEdges`) devuelve 42501 uniforme, sin valores, desde la guarda BEFORE (SECURITY INVOKER, sin lock de ledger)."}
+  - {id: LD-RULE-03, statement: "El lock de ledger por tenant se toma solo en ledger_append y solo si hay evento. Orden de locks global: invitacion -> otp_verification | consent_decision -> ledger (0032:20-21 revalidado)."}
+  - {id: LD-RULE-04, statement: "Aristas 'permitidas sin emision de ledger_writer': C6 (GRANTED->REVOKED, solo con una Revocation CONFIRMED del tenant con revoked_decision_ref = consent_id; la emite transition_owner por apply_revocation) e I9 (cualquier arista hacia CANCELLED; la emite transition_owner por case_state.cancel_invitation_subject_mismatch, Q-18-I9). El AFTER no emite en ellas: sin INVITATION_CANCELLED duplicado."}
+  - {id: LD-RULE-05, statement: "CANCELLED, COMPLETED, DECLINED y REVOKED son terminales. La guarda de ->CANCELLED usa solo OLD/NEW. La guarda 'el cierre de la invitacion exige una decision terminal' excluye CANCELLED (I9 cierra sin decision)."}
+  - {id: LD-RULE-06, statement: "bound_decision_maker_ref de Invitation solo se escribe en la arista I5 y es inmutable desde VERIFIED (tambien para I9 y los terminales). Los cruces entre filas (OTP VERIFIED de la invitacion en I5; decision terminal de la invitacion en I6/I7; invitacion VERIFIED del mismo seudonimo en C1) son consistencia, NO autenticidad."}
+  - {id: LD-RULE-07, statement: "Dedupe estricto en ledger_gen.ledger_append (igual que case_state.ledger_append): la misma clave de idempotencia solo es un reintento si agregado, tipo, actor y payload canonico son iguales; si no, RV002. La secuencia por agregado es max+1 bajo el lock por tenant en ambos append: unica por (tenant, aggregate_id)."}
+  - {id: LD-RULE-08, statement: "RECEIPT_CREATED.managementLinkIssued = 'registrado, no entregado' (F-PRB-01): la base lo deriva de la existencia en tenant_resolve.handle de una fila no rotada con el mismo tenant y revoked_decision_ref = consent_id (el dominio registra el handle ANTES del UPDATE a GRANTED, en la misma tx); solo GRANTED puede emitir enlace."}
+
+edges:
+  # Enrollment (EN0)
+  - {id: EN0, aggregate: Enrollment, from: null, to: ACTIVE, emits: ["Enrollment:ENROLLMENT_STATUS_CHANGED"], emitter: ledger_writer}
+  # otp_verification -> DecisionMakerVerification (todos los scopes)
+  - {id: V3, aggregate: DecisionMakerVerification, from: CODE_SENT, to: VERIFIED, emits: ["DecisionMakerVerification:DECISION_MAKER_CHANNEL_VERIFIED"], emitter: ledger_writer}
+  # Invitation
+  - {id: I1, aggregate: Invitation, from: null, to: DRAFT, emits: ["Invitation:INVITATION_CREATED"], emitter: ledger_writer}
+  - {id: I2, aggregate: Invitation, from: DRAFT, to: READY, emits: ["Invitation:INVITATION_READY"], emitter: ledger_writer}
+  - {id: I3, aggregate: Invitation, from: READY, to: SENT, emits: ["Invitation:INVITATION_SENT"], emitter: ledger_writer}
+  - {id: I4, aggregate: Invitation, from: SENT, to: OPENED, emits: ["Invitation:INVITATION_OPENED"], emitter: ledger_writer}
+  - {id: I5, aggregate: Invitation, from: OPENED, to: VERIFIED, emits: ["Invitation:INVITATION_VERIFIED"], emitter: ledger_writer}
+  - {id: I6, aggregate: Invitation, from: VERIFIED, to: COMPLETED, emits: ["Invitation:INVITATION_COMPLETED"], emitter: ledger_writer}
+  - {id: I7, aggregate: Invitation, from: VERIFIED, to: DECLINED, emits: ["Invitation:INVITATION_DECLINED"], emitter: ledger_writer}
+  - {id: I9-DRAFT, aggregate: Invitation, from: DRAFT, to: CANCELLED, emits: [], emitter: transition_owner}
+  - {id: I9-READY, aggregate: Invitation, from: READY, to: CANCELLED, emits: [], emitter: transition_owner}
+  - {id: I9-SENT, aggregate: Invitation, from: SENT, to: CANCELLED, emits: [], emitter: transition_owner}
+  - {id: I9-OPENED, aggregate: Invitation, from: OPENED, to: CANCELLED, emits: [], emitter: transition_owner}
+  - {id: I9, aggregate: Invitation, from: VERIFIED, to: CANCELLED, emits: [], emitter: transition_owner}
+  # ConsentDecision
+  - {id: C1, aggregate: ConsentDecision, from: null, to: PENDING, emits: [], emitter: none}
+  - {id: C2, aggregate: ConsentDecision, from: PENDING, to: PENDING, emits: ["ConsentDecision:<stepKind>"], emitter: ledger_writer}
+  - {id: C3, aggregate: ConsentDecision, from: PENDING, to: GRANTED, emits: ["ConsentDecision:PURPOSE_DECISION_RECORDED", "ConsentDecision:CONSENT_GRANTED", "ConsentDecision:RECEIPT_CREATED"], emitter: ledger_writer}
+  - {id: C5, aggregate: ConsentDecision, from: PENDING, to: DECLINED, emits: ["ConsentDecision:PURPOSE_DECISION_RECORDED", "ConsentDecision:CONSENT_DECLINED", "ConsentDecision:RECEIPT_CREATED"], emitter: ledger_writer}
+  - {id: C6, aggregate: ConsentDecision, from: GRANTED, to: REVOKED, emits: [], emitter: transition_owner}
+
+notEdges:
+  - {id: EN1-CLOSE, aggregate: Enrollment, from: ACTIVE, to: CLOSED, status: "No habilitada hasta EN1 + Q-28 (OPEN-TC-03, Carlos): ENROLLMENT_STATUS_CHANGED con toStatus CLOSED exige closeReason (x-pending), no hay columna ni productor. La guarda la rechaza con 42501 (F-PRB-03)."}
+  - {id: I8-EXPIRE, aggregate: Invitation, from: "*", to: EXPIRED, status: "INVITATION_EXPIRED no tiene estado persistido (I8 perezosa): sin arista."}
+  - {id: I3R-ROTATE, aggregate: Invitation, from: "*", to: "*", status: "INVITATION_TOKEN_ROTATED sin productor: sin arista (token_hash inmutable desde SENT)."}
+  - {id: SEEDS, aggregate: "Tenant, SchoolParticipation", status: "TENANT_SEEDED / SCHOOL_PARTICIPATION_SEEDED no tienen tabla de estado: los emite ledger_gen.seed_local_catalog_event (LG-4; entorno LOCAL de ops.db_catalog, actor FIXTURE, payload constante {}). TENANT_STATUS_CHANGED y SCHOOL_PARTICIPATION_STATUS_CHANGED no tienen productor."}
+  - {id: SEED-REVOKE, aggregate: ConsentDecision, status: "case_state.seed_local_revoke_decision se retiro en 0049 (F-PRB-02): un REVOKED sembrado pasa por seed_local_revocation hasta CONFIRMED y luego R4/C6."}
+
+pairs:
+  ledgerWriter: 19    # 17 derivados + 2 siembra LOCAL (F-PRB-04)
+  transitionOwner: 14
+  disjoint: true
+
+derivation:   # columnas de las que sale cada evento (nombres de columna de las tablas de app)
+  actor:
+    Enrollment: {actorType: HUMAN, actorRole: INVITER}
+    Invitation_OPENED: {actorType: HUMAN, actorRole: UNVERIFIED_BEARER}
+    Invitation_CREATED_READY_SENT: {actorType: HUMAN, actorRole: INVITER}
+    Invitation_VERIFIED_COMPLETED_DECLINED: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    DecisionMakerVerification: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    ConsentDecision: {actorType: HUMAN, actorRole: DECISION_MAKER}
+    seeds: {actorType: FIXTURE, actorRole: null}
+  idempotencyKey:
+    ENROLLMENT_STATUS_CHANGED: "<tenant>:<subject_ref>:<participation_ref>:en0"
+    INVITATION_CREATED: "<invitation_ref>"
+    INVITATION_READY: "<invitation_ref>:ready"
+    INVITATION_SENT: "<invitation_ref>:sent"
+    INVITATION_OPENED: "<invitation_ref>:opened"
+    INVITATION_VERIFIED: "<invitation_ref>:<verified_by_ref>"
+    INVITATION_COMPLETED: "<invitation_ref>:completed"
+    INVITATION_DECLINED: "<invitation_ref>:declined"
+    DECISION_MAKER_CHANNEL_VERIFIED: "<verification_ref>:verified"
+    stepKind: "<consent_id>:<stepKind>"
+    PURPOSE_DECISION_RECORDED: "<consent_id>:purpose:<purpose>"
+    CONSENT_GRANTED: "<consent_id>:granted"
+    CONSENT_DECLINED: "<consent_id>:declined"
+    RECEIPT_CREATED: "<consent_id>:receipt"
+  columnsAddedByPRb:
+    app.otp_verification: [decision_maker_ref, dm_ref_key_version]
+    app.invitation: [delivery_channel, verified_by_ref, dm_ref_key_version, closed_by_consent_id]
+    app.consent_decision: [relationship_ref, consent_version, consent_text_hash, privacy_notice_version]
+  dataProtection: "decision_maker_ref / bound_decision_maker_ref son SEUDONIMOS, es decir DATO PERSONAL: su encuadre es LEGAL DECISION (LG-9). Sin UNIQUE ni indice; CHECK 2..1000 en dm_ref_key_version; bajo la purga de retencion de 0031/0033 (otp_verification) y la de la propia fila."
+  versionSource: "LG-2 (a): version/hash del texto servido las escribe web con la semantica de hoy (en CONSENT_VERSION_VIEWED y al decidir). (b) catalogo en la base: requisito previo a datos reales (G-10). (c) 'version vista en el paso': gate de Carlos + LEGAL DECISION LD-06; NO implementada."
+  requiredPurposesCatalog: "LG-10 / G-10: catalogo de finalidades requeridas en la base, requisito previo a datos reales; en IT0 la guarda de GRANTED exige purposes no vacio, sin duplicados y todas GRANT."
+
+findings:
+  - {id: F-PRB-01, severity: P2, status: "Resuelto por dictamen de arquitectura 2026-10-15", text: "El diseno decia managementLinkIssued constante false; desde #94 es true cuando se registra el handle. Se deriva de tenant_resolve.handle (LD-RULE-08)."}
+  - {id: F-PRB-02, severity: P2, status: "Resuelto por dictamen 2026-10-15", text: "seed_local_revoke_decision ponia REVOKED sin Revocation CONFIRMED y chocaba con la guarda de C6. Se retira (0049); sin exencion por rol ni por GUC."}
+  - {id: F-PRB-03, severity: P2, status: "Aceptado por dictamen 2026-10-15", text: "Enrollment ACTIVE->CLOSED no es arista (closeReason pendiente, Q-28)."}
+  - {id: F-PRB-04, severity: P2, status: "Aceptado por dictamen 2026-10-15", text: "Numeracion 0046 (cluster) + 0047-0049 y ledger_writer = 19 pares (17 derivados + 2 siembra LOCAL); transition_owner = 14."}
+  - {id: F-PRB-05, severity: P2, status: "Abierto (informativo)", text: "El maximo de intentos OTP (P-03) es parametro del dominio con override solo LOCAL; la guarda de la base impone attempts monotono y de a uno, no el tope."}
+
+tests: [TEST-CNS-1455, TEST-CNS-1456, TEST-CNS-1457, TEST-CNS-1458, TEST-CNS-1459, TEST-CNS-1460, TEST-CNS-1461, TEST-CNS-1462, TEST-CNS-1463, TEST-CNS-1464]
