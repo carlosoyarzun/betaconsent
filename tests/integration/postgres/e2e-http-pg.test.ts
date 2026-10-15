@@ -681,3 +681,57 @@ pgTest("TEST-CNS-1449 e2e pg (app_rw): el fallo de entrega post-commit deja fila
     await env.close();
   }
 });
+
+pgTest("TEST-CNS-1450 e2e pg (app_rw): rollback con inyeccion de fallo: si el registro del handle de gestion falla dentro de C3, la decision sigue PENDING, sin RECEIPT_CREATED/CONSENT_GRANTED/INVITATION_COMPLETED en el ledger, la invitacion VERIFIED y ningun handle nuevo; el reintento sano concluye (SEC-CNS-PR94 P2-B)", async (ctx) => {
+  const env = await boot(ctx);
+  const bootConsoleError = console.error;
+  const swallowed: string[] = [];
+  console.error = (...a: unknown[]) => {
+    const line = a.join(" ");
+    if (line.startsWith("request_failed")) swallowed.push(line); // el 500 inyectado es lo esperado; boot() no debe contarlo como fallo
+    else bootConsoleError(...a);
+  };
+  try {
+    const g = await pgVerifiedSession(env, "1450");
+    const handlesBefore = await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]);
+    const healthy = env.bundle.ports.decision;
+    let consentId = "";
+    (env.bundle.ports as { decision: unknown }).decision = {
+      ...healthy,
+      uow: {
+        inTenant: <R>(tenantId: never, work: (tx: never) => Promise<R>) =>
+          healthy.uow.inTenant(tenantId, (tx) =>
+            work({
+              ...tx,
+              managementHandles: {
+                register: async (input: { revokedDecisionRef: string }) => {
+                  consentId = input.revokedDecisionRef;
+                  throw new Error("fallo inyectado del registro del handle");
+                },
+              },
+            } as never),
+          ),
+      },
+    };
+    const failed = await post(env, "/decision/submit", { "__Host-cns-session": g.session }, { purposes: GRANT_ALL });
+    assert.equal(failed.status, 500);
+    assert.equal(swallowed.length, 1);
+    assert.ok(consentId, "el registro del handle se alcanzo (ultimo paso del lote C3)");
+
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2 AND state = 'PENDING' AND receipt_ref IS NULL", [T, consentId]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type IN ('CONSENT_GRANTED', 'RECEIPT_CREATED', 'CONSENT_DECLINED')", [T, consentId]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'INVITATION_COMPLETED'", [T, g.inv]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'VERIFIED'", [T, g.inv]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]), handlesBefore);
+
+    // Sin residuo: con el registro sano el reintento concluye y deja RECEIPT_CREATED (managementLinkIssued=true) e INVITATION_COMPLETED.
+    (env.bundle.ports as { decision: unknown }).decision = healthy;
+    const retried = await post(env, "/decision/submit", { "__Host-cns-session": g.session }, { purposes: GRANT_ALL });
+    assert.equal(retried.status, 200);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'RECEIPT_CREATED' AND (payload->>'managementLinkIssued')::boolean IS TRUE", [T, consentId]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'INVITATION_COMPLETED'", [T, g.inv]), 1);
+  } finally {
+    console.error = bootConsoleError;
+    await env.close();
+  }
+});

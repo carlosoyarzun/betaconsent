@@ -544,6 +544,66 @@ test("TEST-CNS-1447: si tampoco se puede persistir el evento de fallo de entrega
   }
 });
 
+test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registro del handle de gestion falla dentro de C3, la decision sigue PENDING, el ledger no tiene RECEIPT_CREATED ni CONSENT_GRANTED ni INVITATION_COMPLETED, la invitacion sigue VERIFIED y no sale ningun mensaje; un reintento sano concluye (SEC-CNS-PR94 P2-B)", async () => {
+  const subjectRef = fixtureUuid("subject-1448");
+  const h = await startServer(subjectRef);
+  const origError = console.error;
+  const logs: string[] = [];
+  console.error = (...a: unknown[]) => void logs.push(a.join(" "));
+  try {
+    const invitationRef = fixtureUuid("inv-1448");
+    const { session } = await bringToVerified(h, invitationRef, subjectRef);
+    const afterSteps = await completeSteps(h, session);
+
+    // Inyeccion: el registro del handle de gestion (ultimo paso del lote C3) falla. Se captura el consentId que recibe (revokedDecisionRef).
+    const healthyDecision = h.ports.decision;
+    let consentId = "";
+    (h.ports as { decision: unknown }).decision = {
+      ...healthyDecision,
+      uow: {
+        inTenant: <T>(tenantId: never, work: (tx: never) => Promise<T>) =>
+          healthyDecision.uow.inTenant(tenantId, (tx) =>
+            work({
+              ...tx,
+              managementHandles: {
+                register: async (input: { revokedDecisionRef: string }) => {
+                  consentId = input.revokedDecisionRef;
+                  throw new Error("fallo inyectado del registro del handle");
+                },
+              },
+            } as never),
+          ),
+      },
+    };
+    const failed = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(failed.status, 500, "el fallo no se traga: el invitado no recibe un 200 de una decision no registrada");
+    assert.ok(consentId, "el registro del handle se alcanzo (ultimo paso del lote C3)");
+
+    const state = await healthyDecision.uow.inTenant(TENANT_ID as never, async (tx) => ({
+      decision: await tx.consentDecisionRepo.findByConsentId(TENANT_ID as never, consentId),
+      invitation: await tx.invitationRepo.findByRef(TENANT_ID as never, invitationRef),
+      decisionEvents: (await tx.ledger.listByAggregate(TENANT_ID as never, "ConsentDecision", consentId)).map((e) => e.eventType),
+      invitationEvents: (await tx.ledger.listByAggregate(TENANT_ID as never, "Invitation", invitationRef)).map((e) => e.eventType),
+    }));
+    assert.equal(state.decision?.state, "PENDING");
+    assert.equal(state.decision?.receiptRef, undefined);
+    assert.equal(state.invitation?.state, "VERIFIED");
+    for (const type of ["CONSENT_GRANTED", "RECEIPT_CREATED", "CONSENT_DECLINED"]) assert.ok(!state.decisionEvents.includes(type), `no debe haber ${type}`);
+    assert.ok(!state.invitationEvents.includes("INVITATION_COMPLETED"), "no debe haber INVITATION_COMPLETED");
+    assert.equal(h.sink.sent.length, 0, "ningun mensaje salio");
+    assert.deepEqual(h.failures, []);
+
+    // Sin residuo: restaurado el registro sano, el reintento de la misma decision concluye.
+    (h.ports as { decision: unknown }).decision = healthyDecision;
+    const retried = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+    assert.equal(retried.status, 200);
+    assert.equal(((await retried.json()) as { state: string }).state, "GRANTED");
+  } finally {
+    console.error = origError;
+    await h.close();
+  }
+});
+
 test("TEST-CNS-1414: con store Postgres o entorno distinto de LOCAL el servidor exige guestMessageChannel explícito y nunca cae al sink en memoria (P2-1, fail-closed)", () => {
   const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const common = { sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports: base };
