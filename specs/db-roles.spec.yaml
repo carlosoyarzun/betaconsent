@@ -158,7 +158,8 @@ roles:
       - {schema: case_state, privileges: [USAGE], status: PR-5}
     tables:
       - {object: ops.db_catalog, privileges: [SELECT], status: "MAIN (0001:76)"}
-      - {object: platform.oidc_exchange, privileges: [], note: "sin privilegios de tabla: encola SOLO por platform.enqueue_oidc_exchange (el spec 0.2 admitía INSERT(columnas)); code y PKCE son secretos operativos (N4) y nadie hace SELECT", status: "MAIN (0036)"}
+      - {object: platform.oidc_exchange, privileges: [], note: "sin privilegios de tabla ni DML (N4): inicia y completa SOLO por platform.begin_oidc_authorization / complete_oidc_callback (rev. 5 §2; enqueue_oidc_exchange se retiró en 0051); code y PKCE son secretos operativos y nadie hace SELECT. Columnas 0050: kind (LOGIN_PLATFORM|LOGIN_CASE|STEP_UP), state_hash (UNIQUE), target_ref_hash (solo LOGIN_CASE), estado AWAITING_CALLBACK", status: "MAIN (0036, 0050, 0051)"}
+      - {object: "platform.login_assertion / platform.session_event", privileges: [], note: "tablas de grant_owner (0050), FORCE RLS, sin privilegios de runtime; login_assertion: vida <= 5 min desde auth_time (CHECK), un solo uso, sin sub_hmac; session_event: sin IP (F-PR6-31), append-only; retención = LEGAL DECISION LD-15/P-34", status: "MAIN (0050)"}
       - {object: ops.access_log, privileges: ["INSERT(columnas)"], status: "PR-5 (lecturas del operador); app_rw lo conserva para STAFF"}
       - {object: ops.security_event, privileges: ["INSERT(columnas de sesión)"], policy: "nueva policy FOR INSERT TO platform_rw: CASE_LOGIN, CASE_LOGOUT y SESSION_REVOKED_BY_ROTATION con session_kind CASE (y PLATFORM si se agrega al enum)", status: "PR-5 (SEC-CNS-021 §3); DDL como security_event_owner"}
       - {object: app.case_session, privileges: [], note: "sin DML directo; solo por funciones (N7)", status: PR-5}
@@ -168,7 +169,11 @@ roles:
       - {name: "platform.authorize(action, resource_ref)", status: PR-3}
       - {name: "platform.issue_action_nonce(action, refs)", status: PR-3}
       - {name: "platform.request_membership / approve_membership / request_role_assignment / approve_role_assignment", status: "PR-3 (nombres propuestos; Q4)"}
-      - {name: "platform.enqueue_oidc_exchange(binding, code, pkce_verifier, ttl_seconds) (dueño grant_owner; devuelve exchange_ref o NULL con evidencia)", status: "MAIN (0036)"}
+      - {name: "platform.begin_oidc_authorization(kind, state_hash, binding, pkce_verifier, target_ref_hash, ttl, max_awaiting, p51_max, p51_window) (dueño grant_owner; crea AWAITING_CALLBACK; aplica P-53 y, en STEP_UP, P-51; NULL ante DENY con evidencia)", status: "MAIN (0051); reemplaza a platform.enqueue_oidc_exchange (retirada)"}
+      - {name: "platform.complete_oidc_callback(state, code) (AWAITING_CALLBACK -> PENDING solo si sha256(state) coincide, vigente y sin uso previo)", status: "MAIN (0051)"}
+      - {name: "platform.exchange_status(exchange_ref, state) (estado sin code ni claims; exige state coherente; contrato G-8: el ref solo viaja en cookie __Host- Strict)", status: "MAIN (0051)"}
+      - {name: "platform.record_limit_event(limit_kind, window_seconds) (solo P-49/P-50, aplicados en memoria por el proceso platform; sin IP)", status: "MAIN (0051)"}
+      - {name: "platform.consume_login_assertion(exchange_ref, state, kind, target_ref_hash) (INTERNA, sin EXECUTE de runtime: la llamarán open_platform_session/open_case_session en 6c)", status: "MAIN (0051); uso en 6c (F-PR6-32)"}
       - {name: "platform.open_case_session / platform.open_platform_session / platform.validate_session / platform.revoke_session", status: "PR-5 (N7: exigen login ATTESTED; STAFF fuera, Q-17)"}
       - {name: "case_state.approve_case_verification", status: "PR-5 (aprobador PRIVACY_LEGAL/SECURITY en sesión PLATFORM; dueño transition_owner)"}
       - {name: "platform.request_grant / platform.approve_grant", status: "PR-5 (dueño grant_owner)"}
@@ -224,14 +229,15 @@ roles:
       - {object: ops.db_catalog, privileges: [SELECT], note: "contrastar CNS_ENVIRONMENT con la base (F-PR6-08)", status: "INTERINO 0042 (ADR-010 PR-6a): pendiente de ratificacion F-PR6-21"}
       - {object: platform.oidc_exchange, privileges: [], note: "sin privilegios de tabla (más estricto que SELECT(code, pkce_verifier, binding)/UPDATE de la rev. 0.2): toma la solicitud con platform.claim_oidc_exchange(lease) y la cierra con platform.record_assertion, que anula code y PKCE en la misma transacción", status: "MAIN (0036)"}
       - {object: platform.grant_assertion, privileges: [], note: "solo vía función platform.record_assertion(ATTESTED|REJECTED); append-only; la ÚNICA forma de fijar action_nonce.attested_at", status: "MAIN (0036)"}
+      - {object: platform.login_assertion, privileges: [], note: "solo vía platform.record_login_assertion: la BASE resuelve el principal por (key_version, sub_hmac) y NO lo devuelve (N6'); valida auth_time (G-5), P-48 (solo fallos), P-52 (5 min desde auth_time, un solo uso) y, en LOGIN_CASE, principal = oidc_exchange.principal_ref; NUNCA persiste sub_hmac; P-48/P-52 NULL o fuera de rango = REJECTED NOT_CONFIGURED (fail-closed). Sin SELECT sobre platform.principal_identity", status: "MAIN (0050, 0051)"}
       - {object: integrity.audit_event, privileges: ["SELECT (cross-tenant por policy o función de integrity_owner)"], status: "PR-4 (DDL integrity.* ANTES de PR-7)"}
       - {object: "app.revocation / app.rights_case / app.consent_decision", privileges: ["SELECT(columnas de estado y refs, sin PII) cross-tenant"], status: "PR-5 (conciliación N2/FN-6/FN-7, ambos sentidos)"}
       - {object: "integrity.checkpoint (o equivalente)", privileges: [INSERT], status: PR-7}
       - {object: "pg_catalog.pg_roles / pg_stat_activity", privileges: [SELECT], note: "alertas Q-20 (c): ddl_breakglass con LOGIN o sesiones fuera de ceremonia", status: PR-7}
     mustNot: ["DML de dominio", "PII (pii.*, channel_ref, case_contact)", "Sesiones", "Persistir el ID token crudo o el email"]
     verifiedBy:
-      startupChecks: ["expectedRole = integrity_verifier (MAIN PR-6a: entrypoints/verifier; IdP sintetico negado fuera de LOCAL, F-A10-23)", "no miembro de owners", "sin DML en app.*", "EXECUTE exacto en platform: claim_oidc_exchange y record_assertion (PLATFORM_RUNTIME_EXECUTE)"]
-      tests: [TEST-CNS-1365, TEST-CNS-1366, TEST-CNS-1367, TEST-CNS-1372]
+      startupChecks: ["expectedRole = integrity_verifier (MAIN PR-6a: entrypoints/verifier; IdP sintetico negado fuera de LOCAL, F-A10-23)", "no miembro de owners", "sin DML en app.*", "EXECUTE exacto en platform: claim_oidc_exchange, record_assertion y record_login_assertion (PLATFORM_RUNTIME_EXECUTE)", "PR-6b: fuera de LOCAL, sin P-48/P-52 configurados (CNS_VERIFIER_P48_MAX_FAILURES, CNS_VERIFIER_P48_WINDOW_SECONDS, CNS_VERIFIER_P52_ASSERTION_SECONDS) el proceso no arranca (VerifierConfigError)"]
+      tests: [TEST-CNS-1365, TEST-CNS-1366, TEST-CNS-1367, TEST-CNS-1372, TEST-CNS-1501, TEST-CNS-1503, TEST-CNS-1504, TEST-CNS-1508, TEST-CNS-1509]
       newTests: ["TEST-CNS-TBD-DBR-05: integrity_verifier no puede INSERT/UPDATE en app.revocation ni leer pii.*"]
 
   # ---------------------------------------------------------------- roles de alcance (NOLOGIN)

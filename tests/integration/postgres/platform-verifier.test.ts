@@ -2,7 +2,7 @@
 // db/migrations/0036_adr010_verifier_assertions.sql; findings F-A10-12; decision 6 de Carlos del 2026-10-11 (nadie aprueba su propio acceso).
 // TEST-CNS-1363: principal_ref UUIDv4 estricto (sin staff-synthetic-) y principal_identity (UNIQUE sub_hmac <-> principal_ref, append-only).
 // TEST-CNS-1364: decision 6: CHECK approved_by_ref <> principal_ref en membership y role_assignment, y SELF_ACCESS en authorize_target (aparte de SELF_APPROVAL).
-// TEST-CNS-1365: flujo real nonce -> enqueue_oidc_exchange -> claim -> record_assertion -> ALLOW con consumo; record_assertion es la unica via de attested_at.
+// TEST-CNS-1365: flujo real nonce -> begin/complete_oidc_authorization -> claim -> record_assertion -> ALLOW con consumo; record_assertion es la unica via de attested_at.
 // TEST-CNS-1366: N6 en la base: sub_hmac no mapeado/distinto => REJECTED/SUB_MISMATCH aunque el verifier pida ATTESTED; entradas invalidas; sin replay.
 // TEST-CNS-1367: oidc_exchange: secretos anulados al decidir, lease, sin SELECT para ningun runtime, guard (solo lease/cierre/borrado de vencidas), purga del worker.
 // TEST-CNS-1368: bootstrap LOCAL sintetico del primer PLATFORM (db/fixtures/local/0002): dos principals ACTIVE, idempotente, el doble control se completa con ellos.
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import type { Client } from "pg";
 import { applyLocalFixtures, loadLocalFixtures } from "../../../src/infra/adapters/postgres/local-fixtures.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { enqueueStepUp } from "../../helpers/step-up-enqueue.ts";
 import { pgTest } from "./harness.ts";
 
 const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "db", "fixtures", "local");
@@ -85,11 +86,11 @@ async function claimOwn(verifier: Client, principal: string, lease: number): Pro
   return own;
 }
 
-/** Camino real hasta ATTESTED: issue_action_nonce (A, platform_rw) -> enqueue_oidc_exchange -> claim (verifier). Devuelve lo necesario para registrar la asercion. */
+/** Camino real hasta ATTESTED: issue_action_nonce (A, platform_rw) -> begin/complete_oidc_authorization -> claim (verifier). Devuelve lo necesario para registrar la asercion. */
 async function startStepUp(platform: Client, verifier: Client, principal: string, action: string, resource: string, tenant: string | null): Promise<{ exchangeRef: string; nonce: string }> {
   const nonce = (await call<{ n: string | null }>(platform, principal, "SELECT platform.issue_action_nonce($1, $2::text[], $3::uuid, 300) AS n", [action, [resource], tenant]))[0]?.n;
   assert.ok(typeof nonce === "string" && nonce.length >= 32, "nonce emitido");
-  const exchangeRef = (await call<{ r: string | null }>(platform, principal, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, 60) AS r", [sha(nonce), `code-${randomUUID()}`, PKCE]))[0]?.r;
+  const exchangeRef = await enqueueStepUp(platform, principal, sha(nonce), `code-${randomUUID()}`, PKCE);
   assert.ok(typeof exchangeRef === "string", "solicitud encolada");
   const claimed = (await claimOwn(verifier, principal, 30)).map((r) => r.o_exchange_ref);
   assert.ok(claimed.includes(exchangeRef!), "el verifier toma la solicitud");
@@ -127,7 +128,7 @@ pgTest("TEST-CNS-1363 pg: principal_ref UUIDv4 estricto (sin staff-synthetic-) y
   // principal_identity: un principal <-> un sub_hmac, en ambos sentidos.
   await bindIdentity(admin, A);
   await assert.rejects(admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [A, sha("otro-sub")]), (e) => codeOf(e) === "23505");
-  await assert.rejects(admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [B, sha(`sub-${A}`)]), (e) => codeOf(e) === "23505" && constraintOf(e) === "principal_identity_sub_hmac_unique");
+  await assert.rejects(admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [B, sha(`sub-${A}`)]), (e) => codeOf(e) === "23505" && constraintOf(e) === "principal_identity_version_sub_hmac_unique");
   await assert.rejects(admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, 'no-es-hex')", [B]), (e) => codeOf(e) === "23514");
   await assert.rejects(admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ('staff-synthetic-03', $1)", [sha("x")]), (e) => codeOf(e) === "23514");
   // Append-only: ni UPDATE ni DELETE ni TRUNCATE (ENABLE ALWAYS: tampoco el superusuario).
@@ -141,7 +142,7 @@ pgTest("TEST-CNS-1363 pg: principal_ref UUIDv4 estricto (sin staff-synthetic-) y
     await assert.rejects(c.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [B, sha("y")]), (e) => codeOf(e) === "42501", role);
   }
   const cols = (await admin.query<{ attname: string }>("SELECT attname FROM pg_attribute WHERE attrelid = 'platform.principal_identity'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum")).rows.map((r) => r.attname);
-  assert.deepEqual(cols, ["principal_ref", "sub_hmac", "created_at", "data_class"]);
+  assert.deepEqual(cols, ["principal_ref", "sub_hmac", "created_at", "data_class", "key_version"]);
 });
 
 pgTest("TEST-CNS-1364 pg: decision 6 de Carlos: CHECK approved_by_ref <> principal_ref en las dos tablas y SELF_ACCESS en authorize_target (aparte del solicitante <> aprobador)", async (ctx) => {
@@ -196,7 +197,7 @@ pgTest("TEST-CNS-1364 pg: decision 6 de Carlos: CHECK approved_by_ref <> princip
   assert.deepEqual(active, [{ approved_by_ref: Z }]);
 });
 
-pgTest("TEST-CNS-1365 pg: flujo real nonce -> enqueue_oidc_exchange -> claim -> record_assertion ATTESTED -> la accion se autoriza y consume el nonce; record_assertion es la unica via de attested_at", async (ctx) => {
+pgTest("TEST-CNS-1365 pg: flujo real nonce -> begin/complete_oidc_authorization -> claim -> record_assertion ATTESTED -> la accion se autoriza y consume el nonce; record_assertion es la unica via de attested_at", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const platform = await ctx.connectAs("platform_rw");
   const verifier = await ctx.connectAs("integrity_verifier");
@@ -251,7 +252,7 @@ pgTest("TEST-CNS-1365 pg: flujo real nonce -> enqueue_oidc_exchange -> claim -> 
     await assert.rejects(c.query("SELECT platform.record_assertion($1::uuid, 'ATTESTED', NULL, $2, $2, now(), NULL, NULL)", [exchangeRef, subHmac]), (e) => codeOf(e) === "42501", `${role} record_assertion`);
     await assert.rejects(c.query("SELECT * FROM platform.claim_oidc_exchange(30)"), (e) => codeOf(e) === "42501", `${role} claim`);
   }
-  for (const sql of ["SELECT platform.issue_action_nonce('APPROVE_ROLE_ASSIGNMENT', ARRAY['x'], NULL, 60)", "SELECT platform.enqueue_oidc_exchange('x', 'y', 'z', 60)", "SELECT platform.authorize('REQUEST_ROLE_ASSIGNMENT', 'x')", "SELECT platform.purge_expired_oidc_exchange()"]) {
+  for (const sql of ["SELECT platform.issue_action_nonce('APPROVE_ROLE_ASSIGNMENT', ARRAY['x'], NULL, 60)", "SELECT platform.begin_oidc_authorization('STEP_UP', 'x', 'y', 'z', NULL, 60, NULL, 5, 600)", "SELECT platform.authorize('REQUEST_ROLE_ASSIGNMENT', 'x')", "SELECT platform.purge_expired_oidc_exchange()"]) {
     await assert.rejects(verifier.query(sql), (e) => codeOf(e) === "42501", sql);
   }
 });
@@ -311,7 +312,7 @@ pgTest("TEST-CNS-1366 pg: N6 en la base: un sub_hmac no mapeado o distinto degra
 
   // 5b. record_assertion exige un lease VIGENTE: sin claim previo, o con el lease vencido, la asercion no se registra (el timeout HTTP del IdP debe ser menor que el lease).
   const noClaim = await call<{ n: string }>(platform, A, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 300) AS n", [resource(P("t1366-lease"))]);
-  const noClaimRef = (await call<{ r: string }>(platform, A, "SELECT platform.enqueue_oidc_exchange($1, 'code-lease', $2, 60) AS r", [sha(noClaim[0]!.n), PKCE]))[0]!.r;
+  const noClaimRef = (await enqueueStepUp(platform, A, sha(noClaim[0]!.n), "code-lease", PKCE))!;
   assert.equal((await record(verifier, noClaimRef, "ATTESTED", null, subA))[0]?.ok, false, "sin claim no hay lease");
   assert.equal((await admin.query("SELECT 1 FROM platform.grant_assertion WHERE exchange_ref = $1", [noClaimRef])).rowCount, 0);
   assert.equal((await admin.query("SELECT 1 FROM platform.action_nonce WHERE nonce_hash = $1 AND attested_at IS NOT NULL", [sha(noClaim[0]!.n)])).rowCount, 0);
@@ -325,17 +326,17 @@ pgTest("TEST-CNS-1366 pg: N6 en la base: un sub_hmac no mapeado o distinto degra
   // 5c. tope de reencolados de un mismo nonce tras REJECTED (placeholder de 3): el cuarto intento es DENY RETRY_LIMIT.
   const retryNonce = (await call<{ n: string }>(platform, A, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 300) AS n", [resource(P("t1366-retry"))]))[0]!.n;
   for (let i = 0; i < 3; i++) {
-    const r = (await call<{ r: string | null }>(platform, A, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, 60) AS r", [sha(retryNonce), `code-retry-${i}`, PKCE]))[0]?.r;
+    const r = await enqueueStepUp(platform, A, sha(retryNonce), `code-retry-${i}`, PKCE);
     assert.ok(typeof r === "string", `intento ${i + 1} se encola`);
     assert.ok((await claimOwn(verifier, A, 30)).some((x) => x.o_exchange_ref === r));
     assert.equal((await record(verifier, r!, "REJECTED", "EXCHANGE_FAILED", null, null))[0]?.ok, false);
   }
-  assert.equal((await call<{ r: string | null }>(platform, A, "SELECT platform.enqueue_oidc_exchange($1, 'code-retry-4', $2, 60) AS r", [sha(retryNonce), PKCE]))[0]?.r, null);
+  assert.equal(await enqueueStepUp(platform, A, sha(retryNonce), "code-retry-4", PKCE), null);
   assert.equal((await lastCheck(admin, A, "ENQUEUE_EXCHANGE"))?.reason_code, "RETRY_LIMIT");
 
   // 6. un principal no puede encolar con el nonce de otro: NONCE_NOT_FOUND.
   const nonceOfA = (await call<{ n: string | null }>(platform, A, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 60) AS n", [resource(P("t1366-t8"))]))[0]?.n as string;
-  assert.equal((await call<{ r: string | null }>(platform, U, "SELECT platform.enqueue_oidc_exchange($1, 'code-x', $2, 60) AS r", [sha(nonceOfA), PKCE]))[0]?.r, null);
+  assert.equal(await enqueueStepUp(platform, U, sha(nonceOfA), "code-x", PKCE), null);
   assert.equal((await lastCheck(admin, U, "ENQUEUE_EXCHANGE"))?.reason_code, "NONCE_NOT_FOUND");
 });
 
@@ -351,7 +352,7 @@ pgTest("TEST-CNS-1367 pg: oidc_exchange: code y PKCE anulados al decidir, lease 
   const res = (t: string): string => `${t}:CONTEXT_OWNER`;
   const issue = async (p: string, ref: string): Promise<string> => (await call<{ n: string }>(platform, p, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 120) AS n", [res(ref)]))[0]!.n;
   const enqueue = async (p: string, nonce: string, code: string, pkce = PKCE, ttl = 60): Promise<string | null> =>
-    (await call<{ r: string | null }>(platform, p, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, $4) AS r", [sha(nonce), code, pkce, ttl]))[0]?.r ?? null;
+    await enqueueStepUp(platform, p, sha(nonce), code, pkce, ttl);
   const lastReason = async (p: string): Promise<string | undefined> => (await lastCheck(admin, p, "ENQUEUE_EXCHANGE"))?.reason_code;
 
   const n1 = await issue(A, P("t1367-1"));
@@ -359,11 +360,13 @@ pgTest("TEST-CNS-1367 pg: oidc_exchange: code y PKCE anulados al decidir, lease 
   assert.equal(await enqueue(A, n1, "code-ok", PKCE, 0), null);
   assert.equal(await lastReason(A), "INVALID_TTL");
   assert.equal(await enqueue(A, n1, "code-ok", PKCE, 601), null);
-  assert.equal(await enqueue(A, n1, "code con espacio"), null);
-  assert.equal(await lastReason(A), "INVALID_INPUT");
+  // PR-6b: el code se valida en complete_oidc_callback (no en begin): un code invalido deja la fila AWAITING_CALLBACK sin code (no avanza a PENDING).
+  const nCode = await issue(A, P("t1367-code"));
+  assert.equal(await enqueue(A, nCode, "code con espacio"), null);
+  assert.deepEqual((await admin.query("SELECT status, code IS NULL AS no_code FROM platform.oidc_exchange WHERE binding = $1", [sha(nCode)])).rows, [{ status: "AWAITING_CALLBACK", no_code: true }]);
   assert.equal(await enqueue(A, n1, "code-ok", "corto"), null);
-  assert.equal((await call<{ r: string | null }>(platform, A, "SELECT platform.enqueue_oidc_exchange('no-hex', 'c', $1, 60) AS r", [PKCE]))[0]?.r, null);
-  assert.equal((await call<{ r: string | null }>(platform, null, "SELECT platform.enqueue_oidc_exchange($1, 'c', $2, 60) AS r", [sha(n1), PKCE]))[0]?.r, null, "sin principal");
+  assert.equal(await enqueueStepUp(platform, A, "no-hex", "c", PKCE), null);
+  assert.equal(await enqueueStepUp(platform, null, sha(n1), "c", PKCE), null, "sin principal");
   // OK, y un segundo PENDING con el mismo nonce es DUPLICATE_EXCHANGE.
   const code1 = `code-${randomUUID()}`;
   const ref1 = await enqueue(A, n1, code1);
@@ -402,11 +405,11 @@ pgTest("TEST-CNS-1367 pg: oidc_exchange: code y PKCE anulados al decidir, lease 
   assert.deepEqual((await admin.query("SELECT status, code, pkce_verifier FROM platform.oidc_exchange WHERE exchange_ref = $1", [ref1])).rows, [{ status: "ATTESTED", code: null, pkce_verifier: null }]);
   const n2 = await issue(B, P("t1367-2"));
   await assert.rejects(
-    admin.query("INSERT INTO platform.oidc_exchange (binding, principal_ref, code, pkce_verifier, status, decided_at, expires_at) VALUES ($1, $2, 'c', $3, 'ATTESTED', now(), now() + interval '1 minute')", [sha(n2), B, PKCE]),
+    admin.query("INSERT INTO platform.oidc_exchange (binding, principal_ref, kind, state_hash, code, pkce_verifier, status, decided_at, expires_at) VALUES ($1, $2, 'STEP_UP', encode(sha256(gen_random_uuid()::text::bytea), 'hex'), 'c', $3, 'ATTESTED', now(), now() + interval '1 minute')", [sha(n2), B, PKCE]),
     (e) => codeOf(e) === "23514",
   );
   await assert.rejects(
-    admin.query("INSERT INTO platform.oidc_exchange (binding, principal_ref, code, pkce_verifier, expires_at) VALUES ($1, $2, 'c', $3, now() + interval '11 minutes')", [sha(n2), B, PKCE]),
+    admin.query("INSERT INTO platform.oidc_exchange (binding, principal_ref, kind, state_hash, code, pkce_verifier, expires_at) VALUES ($1, $2, 'STEP_UP', encode(sha256(gen_random_uuid()::text::bytea), 'hex'), 'c', $3, now() + interval '11 minutes')", [sha(n2), B, PKCE]),
     (e) => codeOf(e) === "23514",
   );
   const ref2 = await enqueue(B, n2, "code-b");
@@ -425,7 +428,7 @@ pgTest("TEST-CNS-1367 pg: oidc_exchange: code y PKCE anulados al decidir, lease 
 
   // Purga del worker: solo vencidas (la fila vigente ref2 sobrevive); el verifier y platform_rw no la ejecutan.
   const expired = (await admin.query<{ exchange_ref: string }>(
-    "INSERT INTO platform.oidc_exchange (binding, principal_ref, code, pkce_verifier, created_at, expires_at) VALUES ($1, $2, 'c', $3, now() - interval '5 minutes', now() - interval '1 minute') RETURNING exchange_ref",
+    "INSERT INTO platform.oidc_exchange (binding, principal_ref, kind, state_hash, code, pkce_verifier, created_at, expires_at) VALUES ($1, $2, 'STEP_UP', encode(sha256(gen_random_uuid()::text::bytea), 'hex'), 'c', $3, now() - interval '5 minutes', now() - interval '1 minute') RETURNING exchange_ref",
     [sha(randomUUID()), B, PKCE],
   )).rows[0]!.exchange_ref;
   assert.equal((await claim(30)).length, 0);

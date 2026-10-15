@@ -30,10 +30,16 @@ export const SUB_HMAC_DOMAIN = "consent-app/sub-hmac/v1\u001f";
 /** Rechazo del ID token. Sin detalle del token: solo un codigo interno de diagnostico (no se persiste en la base; ahi va INVALID_CLAIMS). */
 export class IdTokenRejected extends Error {
   readonly reason: string;
-  constructor(reason: string) {
+  /**
+   * Solo si el rechazo ocurrio DESPUES de verificar firma, iss, aud, exp y nonce (acr/auth_time/amr invalidos): el `sub` ya es de confianza. El verifier lo usa unicamente para calcular el sub_hmac
+   * que la base necesita para contar P-48 por identidad (F-PR6-33); nunca se persiste ni se registra. No forma parte del mensaje.
+   */
+  readonly verifiedSub: string | undefined;
+  constructor(reason: string, verifiedSub?: string) {
     super(`id_token rechazado: ${reason}`);
     this.name = "IdTokenRejected";
     this.reason = reason;
+    this.verifiedSub = verifiedSub;
   }
 }
 
@@ -206,17 +212,17 @@ export function verifyIdToken(idToken: string, jwks: Jwks, nonceHashHex: string,
   const nonce = claims.nonce;
   if (typeof nonce !== "string" || nonce.length < 1 || nonce.length > 512 || !/^[0-9a-f]{64}$/.test(nonceHashHex) || !safeEqualHex(sha256Hex(nonce), nonceHashHex)) throw new IdTokenRejected("nonce");
   const authTime = claims.auth_time;
-  if (typeof authTime !== "number" || !Number.isFinite(authTime) || authTime - skew > now || now - authTime > policy.maxAuthAgeSeconds + skew) throw new IdTokenRejected("auth_time");
+  if (typeof authTime !== "number" || !Number.isFinite(authTime) || authTime - skew > now || now - authTime > policy.maxAuthAgeSeconds + skew) throw new IdTokenRejected("auth_time", sub);
 
   let acr: string | null = null;
   if (claims.acr !== undefined) {
-    if (typeof claims.acr !== "string" || !ACR_RE.test(claims.acr)) throw new IdTokenRejected("acr");
+    if (typeof claims.acr !== "string" || !ACR_RE.test(claims.acr)) throw new IdTokenRejected("acr", sub);
     acr = claims.acr;
   }
-  if (policy.requiredAcrAnyOf !== undefined && policy.requiredAcrAnyOf.length > 0 && (acr === null || !policy.requiredAcrAnyOf.includes(acr))) throw new IdTokenRejected("acr no exigido");
+  if (policy.requiredAcrAnyOf !== undefined && policy.requiredAcrAnyOf.length > 0 && (acr === null || !policy.requiredAcrAnyOf.includes(acr))) throw new IdTokenRejected("acr no exigido", sub);
   let amr: string[] | null = null;
   if (claims.amr !== undefined) {
-    if (!Array.isArray(claims.amr) || claims.amr.length < 1 || claims.amr.length > 8 || !claims.amr.every((x) => typeof x === "string" && AMR_ITEM_RE.test(x))) throw new IdTokenRejected("amr");
+    if (!Array.isArray(claims.amr) || claims.amr.length < 1 || claims.amr.length > 8 || !claims.amr.every((x) => typeof x === "string" && AMR_ITEM_RE.test(x))) throw new IdTokenRejected("amr", sub);
     amr = claims.amr as string[];
   }
   return { sub, authTime: new Date(Math.round(authTime * 1000)), acr, amr, assertionHash: sha256Hex(idToken) };

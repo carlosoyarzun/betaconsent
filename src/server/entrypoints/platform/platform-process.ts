@@ -7,13 +7,23 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { createPgOidcAuthorization } from "../../../infra/adapters/postgres/oidc-exchange.adapter.ts";
 import { openProcessPool, parseRuntimeEnvironment } from "../../../infra/adapters/postgres/runtime-process.ts";
+import type { OidcAuthorizationPort } from "../../ports/oidc-exchange.port.ts";
+import { handleAuthRoute } from "./auth-routes.ts";
+import { loadPlatformSettings } from "./platform-settings.ts";
+import type { PlatformSettings } from "./platform-settings.ts";
+import { createSlidingLimiter } from "./rate-limit.ts";
+import type { SlidingLimiter } from "./rate-limit.ts";
 import type { ProcessPool } from "../../../infra/adapters/postgres/runtime-process.ts";
 
 export interface PlatformProcess {
   readonly server: Server;
   readonly pool: ProcessPool;
   readonly port: number;
+  readonly settings: PlatformSettings;
+  /** P-50 (30/min por operador): limitador listo; se cablea a las rutas autenticadas en PR-6c (no hay sesiones aun). */
+  readonly operatorLimiter: SlidingLimiter;
   stop(): Promise<void>;
 }
 
@@ -23,8 +33,42 @@ export interface StartPlatformProcessOptions {
   readonly port?: number;
 }
 
-export function platformRequestHandler(): Parameters<typeof createServer>[1] {
+export interface PlatformHandlerDeps {
+  readonly authorization: OidcAuthorizationPort;
+  readonly settings: PlatformSettings;
+  readonly now?: () => number;
+}
+
+export function platformRequestHandler(deps?: PlatformHandlerDeps): Parameters<typeof createServer>[1] {
+  const p49 = deps === undefined ? undefined : createSlidingLimiter({ max: deps.settings.p49.max, windowMs: deps.settings.p49.windowSeconds * 1000, ...(deps.now === undefined ? {} : { now: deps.now }) });
   return (req, res) => {
+    if (deps !== undefined && p49 !== undefined && (req.url ?? "").startsWith("/platform/")) {
+      // Promise.resolve().then(...): tambien una excepcion SINCRONA al armar las dependencias cae en el .catch (no tumba el proceso).
+      void Promise.resolve().then(() => handleAuthRoute(req, res, {
+        authorization: deps.authorization,
+        ...(deps.settings.idp === undefined ? {} : { idp: deps.settings.idp }),
+        p49,
+        p49WindowSeconds: deps.settings.p49.windowSeconds,
+        ipv4Prefix: deps.settings.p49.ipv4Prefix,
+        allowedCidrs: deps.settings.allowedCidrs,
+        maxAwaiting: deps.settings.maxAwaiting,
+        flowTtlSeconds: 600,
+      })).then((handled) => {
+        if (!handled && !res.headersSent) {
+          res.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ error: "not_found" }));
+        }
+      }).catch(() => {
+        // Una excepcion inesperada del handler NO tumba el proceso (unhandledRejection): 404 uniforme, sin detalle; si ya se enviaron headers, se corta la respuesta.
+        if (!res.headersSent) {
+          res.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
+          res.end(JSON.stringify({ error: "not_found" }));
+        } else {
+          res.destroy();
+        }
+      });
+      return;
+    }
     const path = (req.url ?? "").split("?")[0];
     if (req.method === "GET" && path === "/healthz") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
@@ -40,13 +84,15 @@ export function platformRequestHandler(): Parameters<typeof createServer>[1] {
 export async function startPlatformProcess(options: StartPlatformProcessOptions = {}): Promise<PlatformProcess> {
   const env = options.env ?? process.env;
   const environment = parseRuntimeEnvironment(env.CNS_ENVIRONMENT);
+  // Configuracion ANTES de abrir el pool: fuera de LOCAL, P-49..P-51/P-53, bind y allowlist son obligatorios (G-6); sin ellos no arranca.
+  const settings = loadPlatformSettings(env, environment);
   const pool = await openProcessPool({ process: "platform", environment, env, max: 4 });
-  const server = createServer(platformRequestHandler());
+  const server = createServer(platformRequestHandler({ authorization: createPgOidcAuthorization(pool), settings }));
   const requested = options.port ?? Number(env.CNS_PLATFORM_PORT ?? 8788);
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(requested, "127.0.0.1", () => resolve());
+      server.listen(requested, settings.bindAddress, () => resolve());
     });
   } catch (error) {
     await pool.end().catch(() => {});
@@ -57,6 +103,8 @@ export async function startPlatformProcess(options: StartPlatformProcessOptions 
     server,
     pool,
     port,
+    settings,
+    operatorLimiter: createSlidingLimiter({ max: settings.p50.max, windowMs: settings.p50.windowSeconds * 1000 }),
     stop: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await pool.end();

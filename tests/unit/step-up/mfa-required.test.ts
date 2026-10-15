@@ -11,7 +11,7 @@ import { IdTokenRejected, VerifierConfigError, verifyIdToken } from "../../../sr
 import type { IdTokenPolicy } from "../../../src/server/modules/step-up/id-token.ts";
 import { runVerifierCycle, validateVerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
 import type { VerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
-import type { AssertionRecord, ClaimedExchange, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
+import type { AssertionRecord, ClaimedExchange, LoginAssertionRecord, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
 import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";
 
 const ISSUER = "https://idp.synthetic.invalid";
@@ -30,7 +30,8 @@ function policy(environment: string, acr: readonly string[] | null = [ACR_OK]): 
   return acr === null ? base : { ...base, requiredAcrAnyOf: acr };
 }
 function config(environment: string, acr: readonly string[] | null = [ACR_OK]): VerifierConfig {
-  const base: VerifierConfig = { issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, environment, subHmacKey: K_SUB };
+  // PR-6b: fuera de LOCAL P-48/P-52 son obligatorios (G-6/G-7); este test es de MFA, asi que los aporta con los valores iniciales aprobados.
+  const base: VerifierConfig = { issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, environment, subHmacKey: K_SUB, login: { p48MaxFailures: 5, p48WindowSeconds: 900, p52AssertionSeconds: 300 } };
   return acr === null ? base : { ...base, requiredAcrAnyOf: acr };
 }
 const configError = (fn: () => unknown, label: string): void => assert.throws(fn, (e) => e instanceof VerifierConfigError && /requiredAcrAnyOf|environment/.test(e.message), label);
@@ -45,6 +46,9 @@ class CountingStore implements OidcExchangeStorePort {
   }
   async recordAssertion(record: AssertionRecord): Promise<boolean> {
     this.records.push(record);
+    return false;
+  }
+  async recordLoginAssertion(): Promise<boolean> {
     return false;
   }
 }
@@ -97,7 +101,7 @@ test("TEST-CNS-1393 acr del id_token contra la lista: fuera de la lista o ausent
   // El ciclo del verifier registra REJECTED/INVALID_CLAIMS (no ATTESTED) cuando el acr no esta en la lista.
   const { code, pkceVerifier } = p.simulateAuthorization({ sub: "sub-synthetic-1", nonce: NONCE, authTime: NOW_S - 5, acr: "urn:synthetic:pwd-only" });
   const store = new CountingStore();
-  store.next = { exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", nonceHash: NONCE_HASH, principalRef: "5b0c1d2e-3f40-4a51-8b62-73849a0b1c2d", code, pkceVerifier };
+  store.next = { exchangeRef: "0f1e2d3c-4b5a-4968-8776-655443322110", kind: "STEP_UP", nonceHash: NONCE_HASH, principalRef: "5b0c1d2e-3f40-4a51-8b62-73849a0b1c2d", code, pkceVerifier };
   assert.equal(await runVerifierCycle({ store, idp: p, config: config("STAGING"), now: () => NOW_MS }), "REJECTED");
   assert.deepEqual(store.records.map((r) => (r.decision === "REJECTED" ? r.reason : r.decision)), ["INVALID_CLAIMS"]);
 });

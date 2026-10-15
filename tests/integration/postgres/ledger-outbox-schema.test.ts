@@ -106,6 +106,10 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     ["platform.action_nonce/action_nonce_owner_update", "grant_owner"],
     ["platform.authorization_check/authorization_check_owner_insert", "grant_owner"], ["platform.authorization_check/authorization_check_owner_select", "grant_owner"],
     ["platform.grant_assertion/grant_assertion_owner_insert", "grant_owner"], ["platform.grant_assertion/grant_assertion_owner_select", "grant_owner"],
+    // ADR-010 PR-6b (0050): login_assertion y session_event (solo grant_owner).
+    ["platform.login_assertion/login_assertion_owner_insert", "grant_owner"], ["platform.login_assertion/login_assertion_owner_select", "grant_owner"],
+    ["platform.login_assertion/login_assertion_owner_update", "grant_owner"],
+    ["platform.session_event/session_event_owner_insert", "grant_owner"], ["platform.session_event/session_event_owner_select", "grant_owner"],
     ["platform.oidc_exchange/oidc_exchange_owner_delete", "grant_owner"], ["platform.oidc_exchange/oidc_exchange_owner_insert", "grant_owner"],
     ["platform.oidc_exchange/oidc_exchange_owner_select", "grant_owner"], ["platform.oidc_exchange/oidc_exchange_owner_update", "grant_owner"],
     ["platform.platform_role_assignment/platform_role_assignment_authorize_select", "grant_owner"],

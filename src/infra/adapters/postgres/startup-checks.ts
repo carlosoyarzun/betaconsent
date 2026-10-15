@@ -62,14 +62,16 @@ export class StartupCheckError extends Error {
 
 /**
  * ADR-010 PR-3 (specs/db-roles.spec.yaml): funciones de platform ejecutables por cada rol de runtime. app_rw (web, consola STAFF, Q-17) solo SOLICITA
- * membership de TENANT_ADMIN; platform_rw (equipo de LectorPro) el resto. ADR-010 PR-4: platform_rw encola el canje OIDC (enqueue_oidc_exchange, sin
- * SELECT sobre oidc_exchange); el worker purga las solicitudes vencidas; integrity_verifier toma el canje y registra la asercion (UNICO que atesta).
+ * membership de TENANT_ADMIN; platform_rw (equipo de LectorPro) el resto. ADR-010 PR-6b (rev. 5 §2): platform_rw inicia y completa la autorizacion OIDC
+ * (begin_oidc_authorization / complete_oidc_callback, sin SELECT ni DML sobre oidc_exchange; reemplazan a enqueue_oidc_exchange), consulta el estado con (ref, state)
+ * y registra los limites P-49/P-50; el worker purga las solicitudes vencidas; integrity_verifier toma el canje y registra las aserciones (UNICO que atesta: step-up y login).
+ * consume_login_assertion es INTERNA (sin EXECUTE de runtime).
  */
 export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]>> = {
   app_rw: ["request_membership"],
-  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "enqueue_oidc_exchange"],
+  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event"],
   worker: ["purge_expired_oidc_exchange"],
-  integrity_verifier: ["claim_oidc_exchange", "record_assertion"],
+  integrity_verifier: ["claim_oidc_exchange", "record_assertion", "record_login_assertion"],
 };
 
 const ALLOWED_ENVIRONMENTS = new Set(["LOCAL", "DEV", "STAGING"]);

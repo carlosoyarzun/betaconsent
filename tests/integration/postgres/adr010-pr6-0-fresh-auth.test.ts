@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { enqueueStepUp } from "../../helpers/step-up-enqueue.ts";
 import { pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
@@ -58,7 +59,7 @@ async function startFlow(admin: Client, platform: Client, verifier: Client, labe
   const subHmac = await seedPrincipal(admin, principal);
   const nonce = (await call<{ n: string | null }>(platform, principal, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', $1::text[], NULL, 300) AS n", [[`${P(`${label}-target`)}:RIGHTS_OPERATOR`]]))[0]?.n;
   assert.ok(typeof nonce === "string" && nonce.length >= 32, "nonce emitido");
-  const exchangeRef = (await call<{ r: string | null }>(platform, principal, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, 60) AS r", [sha(nonce), `code-${randomUUID()}`, PKCE]))[0]?.r;
+  const exchangeRef = await enqueueStepUp(platform, principal, sha(nonce), `code-${randomUUID()}`, PKCE);
   assert.ok(typeof exchangeRef === "string", "solicitud encolada");
   assert.ok((await claimOwn(verifier, principal)).includes(exchangeRef!), "el verifier toma la solicitud");
   return { exchangeRef: exchangeRef!, nonce, nonceHash: sha(nonce), subHmac, principal };
@@ -136,7 +137,7 @@ pgTest("TEST-CNS-1394 pg: record_assertion exige reautenticacion fresca (auth_ti
   assert.equal((await admin.query("SELECT 1 FROM platform.grant_assertion WHERE exchange_ref = $1", [a.exchangeRef])).rowCount, 1);
 
   // (h) reintento: tras el rechazo el nonce sigue vigente; un exchange NUEVO sobre el mismo nonce con auth_time fresco lo atesta.
-  const retryRef = (await call<{ r: string | null }>(platform, a.principal, "SELECT platform.enqueue_oidc_exchange($1, $2, $3, 60) AS r", [a.nonceHash, `code-${randomUUID()}`, PKCE]))[0]?.r;
+  const retryRef = await enqueueStepUp(platform, a.principal, a.nonceHash, `code-${randomUUID()}`, PKCE);
   assert.ok(typeof retryRef === "string" && retryRef !== a.exchangeRef, "nuevo exchange para el mismo nonce");
   assert.ok((await claimOwn(verifier, a.principal)).includes(retryRef!), "el verifier toma el reintento");
   assert.equal(await record(verifier, { ...a, exchangeRef: retryRef! }, await shifted(admin, a, 1)), true);
