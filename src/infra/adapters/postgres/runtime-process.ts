@@ -18,6 +18,7 @@ export const RUNTIME_PROCESS_ROLES = {
   platform: "platform_rw",
   worker: "worker",
   verifier: "integrity_verifier",
+  reconciler: "integrity_reconciler", // ADR-010 rev. 5 PR-6e (G-9, F-PR6-29)
 } as const;
 
 /** Pool de un proceso de runtime (alias para que los entrypoints no importen `pg`, ADR-001 §11). */
