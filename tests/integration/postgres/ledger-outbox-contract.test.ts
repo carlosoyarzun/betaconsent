@@ -6,10 +6,11 @@ import { runLedgerChainContract } from "../../contract/ports/ledger-chain.contra
 import { runLedgerOutboxContract } from "../../contract/ports/ledger-outbox-tx.contract.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, enableLedgerMechanicsAppend } from "./harness.ts";
 
 for (const run of [runLedgerOutboxContract, runLedgerChainContract]) run("postgres", (name, body) => {
   pgTest(name, async (ctx) => {
+    await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: mecanica del ledger (app_rw ya no inserta en produccion)
     const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
     try {
       const uow = new PgUnitOfWork(pool);

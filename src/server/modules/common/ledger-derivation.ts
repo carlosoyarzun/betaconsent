@@ -14,6 +14,7 @@
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03 } from "./opaque-ref.ts";
 import type { ActorRole, ActorType } from "./types.ts";
 import type { EnrollmentRecord } from "../../ports/enrollment-repository.port.ts";
+import type { InvitationRecord } from "../../ports/invitation-repository.port.ts";
 import type { OtpVerificationRecord } from "../../ports/otp-verification-repository.port.ts";
 
 export interface DerivedLedgerEvent {
@@ -43,7 +44,50 @@ export const LEDGER_DERIVATION_EDGES: readonly DerivationEdge[] = [
   { id: "EN0", aggregate: "Enrollment", from: null, to: "ACTIVE", emits: ["Enrollment:ENROLLMENT_STATUS_CHANGED"], emitter: "ledger_writer" },
   // otp_verification (DecisionMakerVerification), todos los scopes.
   { id: "V3", aggregate: "DecisionMakerVerification", from: "CODE_SENT", to: "VERIFIED", emits: ["DecisionMakerVerification:DECISION_MAKER_CHANNEL_VERIFIED"], emitter: "ledger_writer" },
+  // Invitation. Toda arista * -> CANCELLED (I9) es "permitida sin emision de ledger_writer; emisor transition_owner (Q-18-I9)": el AFTER no emite (sin INVITATION_CANCELLED duplicado).
+  { id: "I1", aggregate: "Invitation", from: null, to: "DRAFT", emits: ["Invitation:INVITATION_CREATED"], emitter: "ledger_writer" },
+  { id: "I2", aggregate: "Invitation", from: "DRAFT", to: "READY", emits: ["Invitation:INVITATION_READY"], emitter: "ledger_writer" },
+  { id: "I3", aggregate: "Invitation", from: "READY", to: "SENT", emits: ["Invitation:INVITATION_SENT"], emitter: "ledger_writer" },
+  { id: "I4", aggregate: "Invitation", from: "SENT", to: "OPENED", emits: ["Invitation:INVITATION_OPENED"], emitter: "ledger_writer" },
+  { id: "I5", aggregate: "Invitation", from: "OPENED", to: "VERIFIED", emits: ["Invitation:INVITATION_VERIFIED"], emitter: "ledger_writer" },
+  { id: "I6", aggregate: "Invitation", from: "VERIFIED", to: "COMPLETED", emits: ["Invitation:INVITATION_COMPLETED"], emitter: "ledger_writer" },
+  { id: "I7", aggregate: "Invitation", from: "VERIFIED", to: "DECLINED", emits: ["Invitation:INVITATION_DECLINED"], emitter: "ledger_writer" },
+  { id: "I9-DRAFT", aggregate: "Invitation", from: "DRAFT", to: "CANCELLED", emits: [], emitter: "transition_owner" },
+  { id: "I9-READY", aggregate: "Invitation", from: "READY", to: "CANCELLED", emits: [], emitter: "transition_owner" },
+  { id: "I9-SENT", aggregate: "Invitation", from: "SENT", to: "CANCELLED", emits: [], emitter: "transition_owner" },
+  { id: "I9-OPENED", aggregate: "Invitation", from: "OPENED", to: "CANCELLED", emits: [], emitter: "transition_owner" },
+  { id: "I9", aggregate: "Invitation", from: "VERIFIED", to: "CANCELLED", emits: [], emitter: "transition_owner" },
 ];
+
+const iso = (d: Date): string => d.toISOString();
+
+/** Invitation: OLD (null = INSERT) -> NEW. ->CANCELLED no emite aqui (lo emite transition_owner). */
+export function deriveInvitationEvents(prev: InvitationRecord | null, next: InvitationRecord): readonly DerivedLedgerEvent[] {
+  const ref = next.invitationRef;
+  const ev = (eventType: string, actorRole: ActorRole, payload: Record<string, unknown>, idempotencyKey: string): DerivedLedgerEvent[] => [
+    { eventType, aggregateType: "Invitation", aggregateId: ref, actorType: "HUMAN", actorRole, payload, idempotencyKey },
+  ];
+  if (prev === null) {
+    // Fixtures legacy sin enrollment/participation (la base los exige en el INSERT): en memoria no emiten.
+    if (next.state !== "DRAFT" || next.enrollmentRef === undefined || next.participationRef === undefined) return [];
+    return ev("INVITATION_CREATED", "INVITER", { invitationRef: ref, participationRef: next.participationRef, enrollmentRef: next.enrollmentRef, subjectRef: next.subjectRef, reissueOfRef: next.reissueOfRef ?? null }, ref);
+  }
+  if (prev.state === "DRAFT" && next.state === "READY" && next.expiresAt !== undefined && next.consentVersion !== undefined && next.recipientBinding !== undefined) {
+    return ev("INVITATION_READY", "INVITER", { invitationRef: ref, consentVersion: next.consentVersion, expiresAt: iso(next.expiresAt), recipientBinding: next.recipientBinding }, `${ref}:ready`);
+  }
+  if (prev.state === "READY" && next.state === "SENT" && next.expiresAt !== undefined && next.deliveryChannel !== undefined) {
+    return ev("INVITATION_SENT", "INVITER", { invitationRef: ref, deliveryChannel: next.deliveryChannel, expiresAt: iso(next.expiresAt) }, `${ref}:sent`);
+  }
+  if (prev.state === "SENT" && next.state === "OPENED") return ev("INVITATION_OPENED", "UNVERIFIED_BEARER", { invitationRef: ref }, `${ref}:opened`);
+  if (prev.state === "OPENED" && next.state === "VERIFIED" && next.verifiedByRef !== undefined && next.dmRefKeyVersion !== undefined && next.boundDecisionMakerRef !== undefined) {
+    return ev("INVITATION_VERIFIED", "DECISION_MAKER", {
+      invitationRef: ref, verificationRef: next.verifiedByRef, decisionMakerRef: next.boundDecisionMakerRef, decisionMakerRefKeyVersion: next.dmRefKeyVersion, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03,
+    }, `${ref}:${next.verifiedByRef}`);
+  }
+  if (prev.state === "VERIFIED" && next.state === "COMPLETED" && next.closedByConsentId !== undefined) return ev("INVITATION_COMPLETED", "DECISION_MAKER", { invitationRef: ref, consentId: next.closedByConsentId }, `${ref}:completed`);
+  if (prev.state === "VERIFIED" && next.state === "DECLINED" && next.closedByConsentId !== undefined) return ev("INVITATION_DECLINED", "DECISION_MAKER", { invitationRef: ref, consentId: next.closedByConsentId }, `${ref}:declined`);
+  return [];
+}
 
 /** Secuencia de eventos de un agregado derivados de OLD (null = INSERT) -> NEW. Pura y determinista. */
 export function deriveEnrollmentEvents(prev: EnrollmentRecord | null, next: EnrollmentRecord): readonly DerivedLedgerEvent[] {

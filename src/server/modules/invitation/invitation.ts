@@ -116,27 +116,6 @@ export async function createInvitationTx(
     ...(input.reissueOfRef !== undefined ? { reissueOfRef: input.reissueOfRef } : {}),
   };
   await ports.invitationRepo.save(record);
-  await ports.ledger.append({
-    expectedSequence: 0, // agregado nuevo (la carrera por el sujeto la resuelve el UNIQUE parcial GRD-IV-01)
-    eventType: "INVITATION_CREATED",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: record.invitationRef,
-    actorType: "HUMAN",
-    actorRole: "INVITER",
-    // ledger-event-payloads.schema.json#/$defs/INVITATION_CREATED exige participationRef,
-    // enrollmentRef y reissueOfRef (nullable). Con la API de staff (CA-125) el payload es completo;
-    // los llamadores legacy sin esas refs conservan el payload anterior (discrepancia previa,
-    // documentada en tests/contract/ledger/ledger-event-payloads-contract.test.ts).
-    payload: {
-      invitationRef: record.invitationRef,
-      participationRef: input.participationRef,
-      enrollmentRef: input.enrollmentRef,
-      subjectRef: record.subjectRef,
-      reissueOfRef: input.reissueOfRef ?? null,
-    },
-    idempotencyKey: record.invitationRef,
-  });
   return record;
 }
 
@@ -168,7 +147,6 @@ export async function markInvitationReadyTx(
   invitationRef: string,
   input: MarkInvitationReadyInput,
 ): Promise<InvitationRecord> {
-  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
 
@@ -192,24 +170,6 @@ export async function markInvitationReadyTx(
     ...(input.recipientChannelRef !== undefined ? { recipientChannelRef: input.recipientChannelRef } : {}),
   };
   await ports.invitationRepo.save(ready);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "INVITATION_READY",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: invitationRef,
-    actorType: "HUMAN",
-    actorRole: "INVITER",
-    // ledger-event-payloads.schema.json#/$defs/INVITATION_READY exige también expiresAt y
-    // recipientBinding (P1: faltaban).
-    payload: {
-      invitationRef,
-      consentVersion: input.consentVersion,
-      expiresAt: input.expiresAt.toISOString(),
-      recipientBinding,
-    },
-    idempotencyKey: `${invitationRef}:ready`,
-  });
   return ready;
 }
 
@@ -255,7 +215,6 @@ export async function sendInvitationTx(
   invitationRef: string,
   options: SendInvitationOptions,
 ): Promise<SendInvitationResult> {
-  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   assertActorRoleIn(actorRole, INVITER_ROLES);
 
@@ -270,23 +229,8 @@ export async function sendInvitationTx(
   const token = randomBytes(32).toString("hex"); // GRD-IV-05: CSPRNG, opaco, no JWT.
   const tokenHash = hashToken(token);
   const expiresAt = options.expiresAt ?? found.expiresAt;
-  const sent: InvitationRecord = { ...found, state: "SENT", tokenHash, ...(expiresAt !== undefined ? { expiresAt } : {}) };
+  const sent: InvitationRecord = { ...found, state: "SENT", tokenHash, deliveryChannel: options.deliveryChannel, ...(expiresAt !== undefined ? { expiresAt } : {}) };
   await ports.invitationRepo.save(sent);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "INVITATION_SENT",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: invitationRef,
-    actorType: "HUMAN",
-    actorRole: "INVITER",
-    payload: {
-      invitationRef,
-      deliveryChannel: options.deliveryChannel,
-      expiresAt: expiresAt?.toISOString(), // I2 lo fija siempre (READY exige expiresAt, ver arriba)
-    },
-    idempotencyKey: `${invitationRef}:sent`,
-  });
   return { record: sent, token };
 }
 
@@ -299,7 +243,6 @@ async function transitionInvitationToOpened(
   invitationRef: string,
   expectedTokenHash?: string,
 ): Promise<InvitationRecord> {
-  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef); // ERR-CM-01 si no existe o es de otro tenant
   if (expectedTokenHash !== undefined && found.tokenHash !== expectedTokenHash) {
     // Defensa en profundidad (SEC-CNS-015 P2-A, igual que resolveInvitationForRedeemByHash): la ref resuelta debe corresponder al hash.
@@ -318,17 +261,6 @@ async function transitionInvitationToOpened(
 
   const opened: InvitationRecord = { ...found, state: "OPENED" };
   await ports.invitationRepo.save(opened);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "INVITATION_OPENED",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: found.invitationRef,
-    actorType: "HUMAN",
-    actorRole: "UNVERIFIED_BEARER",
-    payload: { invitationRef: found.invitationRef },
-    idempotencyKey: `${found.invitationRef}:opened`,
-  });
   return opened;
 }
 
@@ -404,24 +336,12 @@ export async function markInvitationVerifiedTx(
   decisionMakerRefKeyVersion: number,
   verificationRef: string,
 ): Promise<InvitationRecord> {
-  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "OPENED") {
     throw new DomainError("ERR-CM-06");
   }
-  const verified: InvitationRecord = { ...found, state: "VERIFIED", boundDecisionMakerRef: decisionMakerRef };
+  const verified: InvitationRecord = { ...found, state: "VERIFIED", boundDecisionMakerRef: decisionMakerRef, verifiedByRef: verificationRef, dmRefKeyVersion: decisionMakerRefKeyVersion };
   await ports.invitationRepo.save(verified);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "INVITATION_VERIFIED",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: invitationRef,
-    actorType: "HUMAN",
-    actorRole: "DECISION_MAKER",
-    payload: { invitationRef, verificationRef, decisionMakerRef, decisionMakerRefKeyVersion, bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 },
-    idempotencyKey: `${invitationRef}:${verificationRef}`,
-  });
   return verified;
 }
 
@@ -442,24 +362,12 @@ export async function markInvitationCompletedTx(
   invitationRef: string,
   consentId: string,
 ): Promise<InvitationRecord> {
-  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
-  const completed: InvitationRecord = { ...found, state: "COMPLETED" };
+  const completed: InvitationRecord = { ...found, state: "COMPLETED", closedByConsentId: consentId };
   await ports.invitationRepo.save(completed);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "INVITATION_COMPLETED",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: invitationRef,
-    actorType: "HUMAN",
-    actorRole: "DECISION_MAKER",
-    payload: { invitationRef, consentId },
-    idempotencyKey: `${invitationRef}:completed`,
-  });
   return completed;
 }
 
@@ -480,24 +388,12 @@ export async function markInvitationDeclinedTx(
   invitationRef: string,
   consentId: string,
 ): Promise<InvitationRecord> {
-  const base = await invitationSequence(ports, tenantId, invitationRef);
   const found = await requireInvitation(ports, tenantId, invitationRef);
   if (found.state !== "VERIFIED") {
     throw new DomainError("ERR-CM-06");
   }
-  const declined: InvitationRecord = { ...found, state: "DECLINED" };
+  const declined: InvitationRecord = { ...found, state: "DECLINED", closedByConsentId: consentId };
   await ports.invitationRepo.save(declined);
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: "INVITATION_DECLINED",
-    tenantId,
-    aggregateType: "Invitation",
-    aggregateId: invitationRef,
-    actorType: "HUMAN",
-    actorRole: "DECISION_MAKER",
-    payload: { invitationRef, consentId },
-    idempotencyKey: `${invitationRef}:declined`,
-  });
   return declined;
 }
 

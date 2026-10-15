@@ -10,7 +10,7 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, pgTestRaw } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const constraintOf = (error: unknown): string | undefined => (error as { constraint?: string }).constraint;
@@ -81,11 +81,12 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
   }
   // Solo cambian de estado las columnas de estado; la identidad se fija al crear.
   assert.deepEqual(await columnsWith(admin, "app.invitation", "app_rw", "UPDATE"), [
-    "bound_decision_maker_ref", "consent_version", "expires_at", "otp_exhausted", "recipient_binding", "recipient_channel_ref", "state", "token_hash",
-  ]); // 0032: otp_exhausted (V6a) actualizable, no insertable
+    "bound_decision_maker_ref", "closed_by_consent_id", "consent_version", "delivery_channel", "dm_ref_key_version", "expires_at", "otp_exhausted", "recipient_binding",
+    "recipient_channel_ref", "state", "token_hash", "verified_by_ref",
+  ]); // 0032: otp_exhausted (V6a) actualizable, no insertable; 0048 (PR-b): columnas de las que la base deriva el ledger, solo UPDATE
   assert.deepEqual(await columnsWith(admin, "app.otp_verification", "app_rw", "UPDATE"), [
-    "attempts", "code_hash", "consumed_at", "expires_at", "last_sent_at", "resend_count", "sends_in_window", "sends_window_start", "state",
-  ]); // 0032: marcas de envio P-06
+    "attempts", "code_hash", "consumed_at", "decision_maker_ref", "dm_ref_key_version", "expires_at", "last_sent_at", "resend_count", "sends_in_window", "sends_window_start", "state",
+  ]); // 0032: marcas de envio P-06; 0047 (PR-b): seudonimo del apoderado, solo UPDATE
   assert.deepEqual(await columnsWith(admin, "app.otp_verification", "app_rw", "INSERT"), [
     "attempts", "channel_ref", "code_hash", "consumed_at", "expires_at", "last_sent_at", "parent_ref", "resend_count", "scope", "sends_in_window",
     "sends_window_start", "state", "tenant_id", "verification_ref",
@@ -100,7 +101,7 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
   assert.deepEqual(bypass, []);
 });
 
-pgTest("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, enums, formas, longitudes) y SEC-CNS-015 P2-B: toda columna de contacto o destino solo admite email de dominio reservado", async (ctx) => {
+pgTestRaw("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, enums, formas, longitudes) y SEC-CNS-015 P2-B: toda columna de contacto o destino solo admite email de dominio reservado", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const t = fixtureUuid("t839");
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_rights_case', false)"); // ADR-010 PR-5b: siembra LOCAL como superusuario (0038)
@@ -271,7 +272,7 @@ pgTest("TEST-CNS-840 pg: tenant_resolve.invitation_token y handle cerrados para 
   }
 });
 
-pgTest("TEST-CNS-841 pg: unicos parciales GRD-IV-01, GRD-OT-08, GRD-RC-02 y GRD-TC-03 (23505 por constraint) y PgUnitOfWork reintenta al perdedor hasta ver al ganador o rendirse con el error de dominio del guard", async (ctx) => {
+pgTestRaw("TEST-CNS-841 pg: unicos parciales GRD-IV-01, GRD-OT-08, GRD-RC-02 y GRD-TC-03 (23505 por constraint) y PgUnitOfWork reintenta al perdedor hasta ver al ganador o rendirse con el error de dominio del guard", async (ctx) => {
   const t = fixtureUuid("t841");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
   try {
@@ -302,7 +303,7 @@ pgTest("TEST-CNS-841 pg: unicos parciales GRD-IV-01, GRD-OT-08, GRD-RC-02 y GRD-
       () => uow.withTenantTx(t, (tx) => tx.query(otpSql("v841-b", "NOT_STARTED"), [t])),
       (e: unknown) => codeOf(e) === "23505" && constraintOf(e) === "otp_single_active_uq",
     );
-    await uow.withTenantTx(t, (tx) => tx.query("UPDATE app.otp_verification SET state = 'VERIFIED' WHERE verification_ref = 'v841-a'"));
+    await uow.withTenantTx(t, (tx) => tx.query("UPDATE app.otp_verification SET state = 'EXPIRED' WHERE verification_ref = 'v841-a'"));
     await uow.withTenantTx(t, (tx) => tx.query(otpSql("v841-b", "CODE_SENT"), [t]));
 
     // GRD-RC-02: un caso no terminal por (cadena, decision).

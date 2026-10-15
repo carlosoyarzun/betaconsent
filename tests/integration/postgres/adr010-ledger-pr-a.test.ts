@@ -21,21 +21,25 @@ const REMOVED_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ["Invitation", "INVITATION_TOKEN_ROTATED"],
   ["Invitation", "INVITATION_EXPIRED"],
   ["Invitation", "INVITATION_CANCELLED"],
+  // ADR-010 rev. 5 PR-b: los pares de Enrollment, DMV e Invitation los emite ledger_writer desde la fila; app_rw ya no los inserta (ledger-derivation.spec.yaml).
+  ["Enrollment", "ENROLLMENT_STATUS_CHANGED"],
+  ["DecisionMakerVerification", "DECISION_MAKER_CHANNEL_VERIFIED"],
+  ["Invitation", "INVITATION_OPENED"],
 ];
 
-pgTest("TEST-CNS-1440 pg: la allowlist de INSERT de app_rw son exactamente 19 pares y los 5 sin productor (TENANT_STATUS_CHANGED, SCHOOL_PARTICIPATION_STATUS_CHANGED, INVITATION_TOKEN_ROTATED, INVITATION_EXPIRED, INVITATION_CANCELLED) dan 42501", async (ctx) => {
+pgTest("TEST-CNS-1440 pg: la allowlist de INSERT de app_rw solo conserva los pares aun no migrados a ledger_gen (PR-b: 10 tras 0048) y los 5 sin productor (TENANT_STATUS_CHANGED, SCHOOL_PARTICIPATION_STATUS_CHANGED, INVITATION_TOKEN_ROTATED, INVITATION_EXPIRED, INVITATION_CANCELLED) mas los ya derivados dan 42501", async (ctx) => {
   const T = fixtureUuid("t1440");
   const admin = await ctx.connectAsSuperuser();
   const H = "a".repeat(64);
   const row = (agg: string, id: string, type: string, chainSeq: number): string =>
     `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, chain_seq, payload_hash, previous_event_hash, event_hash)
-     VALUES (current_setting('app.tenant_id')::uuid, '${agg}', '${id}', 1, '${type}', 'HUMAN', '${JSON.stringify(invitationRefPayload("1440"))}'::jsonb, ${chainSeq}, '${H}', '${String(chainSeq).padStart(64, "d")}', '${String(chainSeq).padStart(64, "c")}')`;
+     VALUES (current_setting('app.tenant_id')::uuid, '${agg}', '${id}', 1, '${type}', 'HUMAN', '${JSON.stringify({ consentId: fixtureUuid("c1440") })}'::jsonb, ${chainSeq}, '${H}', '${String(chainSeq).padStart(64, "d")}', '${String(chainSeq).padStart(64, "c")}')`;
   // Catalogo: la expresion WITH CHECK contiene exactamente 19 literales Agregado:Evento, ninguno de los 5 retirados.
   const pol = await admin.query<{ e: string }>(
     "SELECT pg_get_expr(p.polwithcheck, p.polrelid) AS e FROM pg_policy p WHERE p.polrelid = 'integrity.audit_event'::regclass AND p.polname = 'audit_event_tenant_insert'");
   const expr = pol.rows[0]?.e ?? "";
   const pairs = new Set([...expr.matchAll(/'([A-Za-z]+:[A-Z_]+)'/g)].map((m) => m[1]));
-  assert.equal(pairs.size, 19);
+  assert.equal(pairs.size, 10);
   for (const [agg, ev] of REMOVED_PAIRS) assert.ok(!pairs.has(`${agg}:${ev}`), `${agg}:${ev} fuera de la allowlist`);
   const reach = await admin.query<{ n: number }>(
     `SELECT count(*)::int AS n FROM pg_policy p WHERE p.polrelid = 'integrity.audit_event'::regclass AND p.polcmd IN ('a', '*')
@@ -52,8 +56,8 @@ pgTest("TEST-CNS-1440 pg: la allowlist de INSERT de app_rw son exactamente 19 pa
         `${agg}:${ev}`,
       );
     }
-    // Control positivo: un par que sigue en la allowlist se inserta.
-    await uow.withTenantTx(T, (tx) => tx.query(row("Invitation", "agg1440-ok", "INVITATION_OPENED", seq++)));
+    // Control positivo: un par que sigue en la allowlist (aun no migrado) se inserta.
+    await uow.withTenantTx(T, (tx) => tx.query(row("ConsentDecision", "agg1440-ok", "CONTEXT_INFORMATION_VIEWED", seq++)));
   } finally {
     await pool.end();
   }
@@ -64,8 +68,8 @@ pgTest("TEST-CNS-1440 pg: la allowlist de INSERT de app_rw son exactamente 19 pa
 /** Llama case_state.ledger_append como transition_owner en una tx del tenant; devuelve [sequence, deduped] o el SQLSTATE. */
 async function append(admin: import("pg").Client, tenant: string, agg: string, over: { eventType?: string; actorType?: string; actorRole?: string | null; payload?: unknown } = {}): Promise<{ seq: number; deduped: boolean }> {
   const r = await admin.query<{ o_sequence: number; o_deduped: boolean }>(
-    "SELECT o_sequence, o_deduped FROM case_state.ledger_append('Invitation', $1, $2, $3, $4, NULL, NULL, $5::jsonb, $6, 0)",
-    [agg, over.eventType ?? "INVITATION_OPENED", over.actorType ?? "HUMAN", over.actorRole === undefined ? "DECISION_MAKER" : over.actorRole, JSON.stringify(over.payload ?? invitationRefPayload("1441")), `key-${agg}`],
+    "SELECT o_sequence, o_deduped FROM case_state.ledger_append('Revocation', $1, $2, $3, $4, NULL, NULL, $5::jsonb, $6, 0)",
+    [agg, over.eventType ?? "REVOCATION_REQUESTED", over.actorType ?? "HUMAN", over.actorRole === undefined ? "DECISION_MAKER" : over.actorRole, JSON.stringify(over.payload ?? invitationRefPayload("1441")), `key-${agg}`],
   );
   void tenant;
   return { seq: r.rows[0]?.o_sequence ?? -1, deduped: r.rows[0]?.o_deduped ?? false };
@@ -93,7 +97,7 @@ pgTest("TEST-CNS-1441 pg: dedupe estricto de case_state.ledger_append: la misma 
       ["payload distinto", { payload: { ...invitationRefPayload("1441"), invitationRef: fixtureUuid("otra") } }],
       ["actor_type distinto", { actorType: "SYSTEM_GUARD" }],
       ["actor_role distinto", { actorRole: "UNVERIFIED_BEARER" }],
-      ["event_type distinto", { eventType: "INVITATION_VERIFIED" }],
+      ["event_type distinto", { eventType: "REVOCATION_VERIFIED" }],
     ];
     for (const [label, over] of variants) {
       await admin.query("SAVEPOINT v");

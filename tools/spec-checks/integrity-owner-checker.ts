@@ -34,6 +34,7 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   // 0047/0048/0049 (ADR-010 rev. 5 PR-b, F-A10-30): GRANT de SELECT/INSERT y policies por tenant de ledger_writer, ALTER POLICY de transition_owner (particion de pares) y de app_rw (retiro por
   // agregado) y, en 0049, DROP POLICY y REVOKE INSERT de app_rw sobre integrity.audit_event (DDL sobre integrity.*, antes de PR-7).
   "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql": ["set-role"],
+  "db/migrations/0048_adr010_ledger_gen_invitation.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };
@@ -76,6 +77,7 @@ const M0042 = "db/migrations/0042_adr010_worker_downstream_only.sql";
 const M0044 = "db/migrations/0044_invitation_cancel_subject_mismatch_fn.sql"; // I9 por funcion case_state (opcion A de Carlos, 2026-10-14)
 const M0046 = "db/migrations/0046_adr010_ledger_roles.sql"; // ADR-010 rev. 5 PR-b: roles de cluster ledger_gen_owner y ledger_writer
 const M0047 = "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql";
+const M0048 = "db/migrations/0048_adr010_ledger_gen_invitation.sql";
 
 /** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
 const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
@@ -100,8 +102,8 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [M0044]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
   // 0046 (PR-b): GRANT de ambos roles a consent_owner WITH INHERIT FALSE, SET TRUE (F-PR6-11; solo IT0B_SYNTHETIC). 0047/0048/0049: ledger_gen_owner crea el esquema ledger_gen y reparte USAGE/CREATE temporal;
   // ledger_writer crea sus funciones guard_*/emit_*/ledger_append/seed_local_catalog_event (SET LOCAL ROLE, patron 0037). Los tests de PR-b asumen ledger_writer para sus vectores y asserts.
-  ledger_gen_owner: { [M0046]: ["grant-membership"], [M0047]: ["set-role"] },
-  ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"] },
+  ledger_gen_owner: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"] },
+  ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

@@ -26,7 +26,7 @@ import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts"
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { revokeVia } from "../../contract/x6-revocation-scenarios.ts";
 import type { X6Env } from "../../contract/x6-revocation-scenarios.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, enableLedgerMechanicsAppend } from "./harness.ts";
 import type { PgRole, PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
@@ -180,6 +180,7 @@ pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 int
   assert.deepEqual(await refsAs(B), ["r1398-b"]);
   assert.deepEqual(await refsAs(null), []);
   // Ledger: siembra eventos en A y B (por el adaptador del ledger como app_rw) y el worker solo ve los del tenant fijado.
+  await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: siembra de eventos arbitrarios (mecanica del ledger)
   const seedPool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   try {
     const seedUow = new PgUnitOfWork(seedPool);

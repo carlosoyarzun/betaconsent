@@ -14,12 +14,13 @@ import type { RevocationPorts } from "../../../src/server/modules/revocation/rev
 import { LedgerPayloadViolationError } from "../../../src/server/modules/common/ledger-payload-contract.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { REVOCATION_PATHS, revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, enableLedgerMechanicsAppend, seedFixture } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 import { completeDownstreamAsWorker } from "./worker-env.ts";
 
 async function withEnv<R>(ctx: PgTestContext, body: (env: X6Env, outside: ReturnType<typeof pgOutsideTxPorts>) => Promise<R>): Promise<R> {
+  await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: algunos escenarios siembran eventos de ledger como app_rw (mecanica)
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
   try {
     const uow = new PgUnitOfWork(pool);
@@ -90,10 +91,13 @@ pgTest("TEST-CNS-971 pg (INV-6): con SchoolParticipation SUSPENDED/CLOSED, Enrol
       await admin.query("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, $2, 'BETA_2026_01', 'LECTORPRO_BETA', $3)", [T, ref, status]);
     }
     await withEnv(ctx, async (env, outside) => {
-      await outside.enrollmentRepo.save({ enrollmentRef: fixtureUuid("e971"), tenantId: T, subjectRef: fixtureUuid("s971"), participationRef: "p971-s", state: "CLOSED" });
-      await outside.otpRepo.save({
-        verificationRef: fixtureUuid("otp971"), tenantId: T, scope: "REVOCATION", parentRef: fixtureUuid("chain-971-OTP"), channelRef: "x6+971@example.invalid",
-        codeHash: "0".repeat(64), attempts: 99, expiresAt: new Date("2000-01-01T00:00:00Z"), state: "LOCKED", resendCount: 5,
+      // ADR-010 rev. 5 PR-b: fixtures crudos (Enrollment CLOSED, OTP LOCKED con 99 intentos): seedFixture deshabilita los triggers de ledger_gen solo durante la siembra.
+      await seedFixture(async () => {
+        await outside.enrollmentRepo.save({ enrollmentRef: fixtureUuid("e971"), tenantId: T, subjectRef: fixtureUuid("s971"), participationRef: "p971-s", state: "CLOSED" });
+        await outside.otpRepo.save({
+          verificationRef: fixtureUuid("otp971"), tenantId: T, scope: "REVOCATION", parentRef: fixtureUuid("chain-971-OTP"), channelRef: "x6+971@example.invalid",
+          codeHash: "0".repeat(64), attempts: 99, expiresAt: new Date("2000-01-01T00:00:00Z"), state: "LOCKED", resendCount: 5,
+        });
       });
       for (const path of REVOCATION_PATHS) {
         const { revocationRef } = await revokeVia(env, T, `971-${path}`, path);

@@ -108,7 +108,7 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
 pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coincide con el catalogo; detecta fila extra/faltante; REAL_DATA falla cerrado; el arranque de app_rw sigue pasando", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
-  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 12);
+  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 14); // ADR-010 rev. 5 PR-b: ledger_gen_owner y ledger_writer (doce owners)
   assert.equal((await checkRoleMemberships(admin, "REAL_DATA")).length, 1, "REAL_DATA no esta activado hasta PR-7");
 
   // Fila extra (rolled back: las membresias son transaccionales y no se tocan para otros archivos de test).

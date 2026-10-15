@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, seedRaw } from "./harness.ts";
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
 const DM = "dm-1443";
@@ -25,10 +25,10 @@ pgTest("TEST-CNS-1443 pg (app_rw): case_state.cancel_invitation_subject_mismatch
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   try {
     const uow = new PgUnitOfWork(pool);
-    await admin.query(SEED_INV("v1443", "VERIFIED", DM), [A]);
-    await admin.query(SEED_INV("s1443", "SENT", null), [A]);
-    await admin.query(SEED_INV("c1443", "COMPLETED", DM), [A]);
-    await admin.query(SEED_INV("n1443", "VERIFIED", null), [A]); // sin DM ligado: NULL no es "el ligado"
+    await seedRaw(admin, () => admin.query(SEED_INV("v1443", "VERIFIED", DM), [A])); // fixture crudo: triggers de ledger_gen deshabilitados solo durante la siembra
+    await seedRaw(admin, () => admin.query(SEED_INV("s1443", "SENT", null), [A])); // fixture crudo: triggers de ledger_gen deshabilitados solo durante la siembra
+    await seedRaw(admin, () => admin.query(SEED_INV("c1443", "COMPLETED", DM), [A])); // fixture crudo: triggers de ledger_gen deshabilitados solo durante la siembra
+    await seedRaw(admin, () => admin.query(SEED_INV("n1443", "VERIFIED", null), [A])); // fixture crudo: triggers de ledger_gen deshabilitados solo durante la siembra // sin DM ligado: NULL no es "el ligado"
     const call = (tenant: string, ref: string, dm: string, seq = 0): Promise<unknown> =>
       uow.withTenantTx(tenant, (tx) => tx.query("SELECT case_state.cancel_invitation_subject_mismatch($1, $2, $3)", [ref, dm, seq]));
     const events = async (ref: string): Promise<number> =>
@@ -80,9 +80,9 @@ pgTest("TEST-CNS-1444 pg: app_rw sigue SIN poder insertar el par Invitation:INVI
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   try {
     const uow = new PgUnitOfWork(pool);
-    await admin.query(SEED_INV("v1444", "VERIFIED", DM), [T]);
-    await admin.query(SEED_INV("x1444", "VERIFIED", DM), [T]);
-    await admin.query("UPDATE app.invitation SET state = 'CANCELLED' WHERE tenant_id = $1 AND invitation_ref = 'x1444'", [T]);
+    await seedRaw(admin, () => admin.query(SEED_INV("v1444", "VERIFIED", DM), [T])); // fixture crudo: triggers de ledger_gen deshabilitados solo durante la siembra
+    await seedRaw(admin, () => admin.query(SEED_INV("x1444", "VERIFIED", DM), [T])); // fixture crudo: triggers de ledger_gen deshabilitados solo durante la siembra
+    await seedRaw(admin, () => admin.query("UPDATE app.invitation SET state = 'CANCELLED' WHERE tenant_id = $1 AND invitation_ref = 'x1444'", [T]));
     // Insert directo del par en el ledger: RLS (allowlist de 19 pares, 0041).
     await assert.rejects(
       () => uow.withTenantTx(T, (tx) => tx.query(
@@ -100,7 +100,7 @@ pgTest("TEST-CNS-1444 pg: app_rw sigue SIN poder insertar el par Invitation:INVI
     assert.equal((await admin.query<{ state: string }>("SELECT state FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = 'x1444'", [T])).rows[0]?.state, "CANCELLED");
     assert.equal((await admin.query<{ state: string }>("SELECT state FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = 'v1444'", [T])).rows[0]?.state, "VERIFIED");
 
-    // Catalogo: funcion, dueno, EXECUTE exacto y allowlist de 19 pares sin el par.
+    // Catalogo: funcion, dueno, EXECUTE exacto y allowlist sin el par.
     const f = (await admin.query<{ owner: string; secdef: boolean; cfg: string[] }>(
       "SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS secdef, p.proconfig AS cfg FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = 'cancel_invitation_subject_mismatch'")).rows[0];
     assert.equal(f?.owner, "transition_owner");
@@ -112,7 +112,7 @@ pgTest("TEST-CNS-1444 pg: app_rw sigue SIN poder insertar el par Invitation:INVI
     for (const role of ["worker", "platform_rw", "integrity_verifier"]) assert.equal(await ex(role), false, role);
     const expr = (await admin.query<{ e: string }>("SELECT pg_get_expr(polwithcheck, polrelid) AS e FROM pg_policy WHERE polrelid = 'integrity.audit_event'::regclass AND polname = 'audit_event_tenant_insert'")).rows[0]?.e ?? "";
     assert.equal(expr.includes("Invitation:INVITATION_CANCELLED"), false);
-    assert.equal([...expr.matchAll(/'([A-Za-z]+:[A-Z_]+)'/g)].length, 19);
+    assert.equal([...expr.matchAll(/'([A-Za-z]+:[A-Z_]+)'/g)].length, 10); // ADR-010 rev. 5 PR-b: sin los pares de Invitation (los emite ledger_writer)
   } finally {
     await pool.end();
   }

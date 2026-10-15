@@ -22,7 +22,7 @@ pgTest("TEST-CNS-876 pg X5: con una sola conexion A->B->(sin tenant) ninguna tab
     const B = fixtureUuid("tenant-b-876");
     const key = fixtureUuid("k").replaceAll("-", "").padEnd(64, "0");
     await uow.inTenant(A, async (tx) => {
-      await tx.invitationRepo.save({ invitationRef: fixtureUuid("inv"), tenantId: A, contextRef: "BETA_2026_01", productRef: "LECTORPRO", subjectRef: fixtureUuid("s"), state: "DRAFT" });
+      await tx.invitationRepo.save({ invitationRef: fixtureUuid("inv"), enrollmentRef: fixtureUuid("en"), participationRef: fixtureUuid("p"), tenantId: A, contextRef: "BETA_2026_01", productRef: "LECTORPRO", subjectRef: fixtureUuid("s"), state: "DRAFT" });
       await tx.otpRepo.save({ verificationRef: fixtureUuid("ver"), tenantId: A, scope: "DECISION", parentRef: fixtureUuid("inv"), channelRef: "x876@example.invalid", codeHash: key, attempts: 0, expiresAt: new Date(Date.now() + 60_000), state: "CODE_SENT", resendCount: 0 });
       await tx.rightsCaseRepo.save({ caseRef: fixtureUuid("case"), tenantId: A, chainRef: fixtureUuid("chain-876"), revokedDecisionRef: fixtureUuid("d"), status: "OPEN" });
       await tx.enrollmentRepo.save({ enrollmentRef: fixtureUuid("en"), tenantId: A, subjectRef: fixtureUuid("s"), participationRef: fixtureUuid("p"), state: "ACTIVE" });

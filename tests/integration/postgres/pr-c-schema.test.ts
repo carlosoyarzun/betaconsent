@@ -341,6 +341,11 @@ async function unguardedEmailColumns(db: Client): Promise<string[]> {
           SELECT 1 FROM pg_constraint k
            WHERE k.conrelid = c.oid AND k.contype = 'c' AND a.attnum = ANY (k.conkey)
              AND pg_get_constraintdef(k.oid) ~ 'is_reserved_email')
+        -- ADR-010 rev. 5 PR-b (0048): enum CERRADO de canal de entrega (invitation.delivery_channel IN ('SCHOOL_CHANNEL','CONSENT_APP_EMAIL')): no almacena un contacto.
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_constraint k
+           WHERE k.conrelid = c.oid AND k.contype = 'c' AND a.attnum = ANY (k.conkey) AND cardinality(k.conkey) = 1
+             AND pg_get_constraintdef(k.oid) ~ '= ANY \\(ARRAY\\[')
       ORDER BY 1`,
   );
   return r.rows.map((row) => row.col);

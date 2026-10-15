@@ -16,12 +16,18 @@ import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.
 import { StaffRosterUnavailableError } from "../../../src/server/ports/staff-roster.port.ts";
 import { runStaffRosterContract, type RosterHarness, type RosterScene } from "../../contract/ports/staff-roster.contract.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { MIGRATIONS_DIR, pgTest, type PgTestContext } from "./harness.ts";
+import { MIGRATIONS_DIR, pgTest, seedRaw, type PgTestContext } from "./harness.ts";
 
 const VIEW = "app.staff_roster_invitation_status";
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
 async function seedScene(admin: Client, scene: RosterScene): Promise<void> {
+  // ADR-010 rev. 5 PR-b: la escena siembra filas en estados arbitrarios (SENT, COMPLETED, CLOSED...) que la derivacion del ledger no admite por INSERT directo; fixture crudo con los
+  // triggers de ledger_gen deshabilitados SOLO durante la siembra (seedRaw, helper de tests).
+  await seedRaw(admin, () => seedSceneRows(admin, scene));
+}
+
+async function seedSceneRows(admin: Client, scene: RosterScene): Promise<void> {
   for (const subjectRef of scene.subjects) {
     await admin.query("INSERT INTO app.subject (tenant_id, subject_ref) VALUES ($1, $2)", [scene.tenantId, subjectRef]);
   }

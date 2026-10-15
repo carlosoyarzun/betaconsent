@@ -28,7 +28,7 @@ import type { TenantCatalogPort } from "../../server/ports/tenant-catalog.port.t
 import type { IdempotencyPort } from "../../server/ports/idempotency.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-work.port.ts";
 import { isTxParticipant, TX_JOURNAL, type TxParticipant, type Undo } from "./in-memory-tx.ts";
-import { deriveEnrollmentEvents, deriveOtpEvents, type DerivedLedgerEvent } from "../../server/modules/common/ledger-derivation.ts";
+import { deriveEnrollmentEvents, deriveInvitationEvents, deriveOtpEvents, type DerivedLedgerEvent } from "../../server/modules/common/ledger-derivation.ts";
 
 /** Escritura con tenantId distinto del de la unidad de trabajo (equivale a WITH CHECK de RLS). */
 export class TenantScopeViolationError extends Error {
@@ -99,7 +99,7 @@ function scopeRecoveryTokenRepo(inner: RecoveryTokenRepositoryPort, tenant: Tena
   };
 }
 
-function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId): InvitationRepositoryPort {
+function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId, ledger: LedgerPort): InvitationRepositoryPort {
   return {
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
@@ -108,7 +108,9 @@ function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId):
     markOtpExhausted: async (t, ref) => (t === tenant ? inner.markOtpExhausted(t, ref) : undefined),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("invitationRepo.save");
-      return inner.save(record);
+      const prev = await inner.findByRef(record.tenantId, record.invitationRef);
+      await inner.save(record);
+      await emitDerived(ledger, tenant, deriveInvitationEvents(prev, record));
     },
   };
 }
@@ -272,7 +274,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
         revocationRepo: scopeRevocationRepo(ports.revocationRepo, tenantId),
         consentDecisionRepo: scopeConsentDecisionRepo(ports.consentDecisionRepo, tenantId),
         recoveryTokenRepo: scopeRecoveryTokenRepo(ports.recoveryTokenRepo, tenantId),
-        invitationRepo: scopeInvitationRepo(ports.invitationRepo, tenantId),
+        invitationRepo: scopeInvitationRepo(ports.invitationRepo, tenantId, ports.ledger),
         otpRepo: scopeOtpRepo(ports.otpRepo, tenantId, ports.ledger),
         rightsCaseRepo: scopeRightsCaseRepo(ports.rightsCaseRepo, tenantId),
         enrollmentRepo: scopeEnrollmentRepo(ports.enrollmentRepo, tenantId, ports.ledger),

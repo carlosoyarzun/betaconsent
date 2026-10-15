@@ -33,7 +33,7 @@ import { createPgTenantResolver } from "../../../src/infra/adapters/postgres/ten
 import { DEFAULT_UOW_MAX_ATTEMPTS, PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, seedFixture } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
@@ -96,7 +96,7 @@ const eventCount = (count: (sql: string, values: unknown[]) => Promise<number>, 
   count("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = $3", [tenant, aggregate, type]);
 
 async function seedOpenedInvitation(outside: ReturnType<typeof pgOutsideTxPorts>, tenant: string, invitationRef: string, subject: string, state: "OPENED" | "VERIFIED" = "OPENED", dm?: string): Promise<void> {
-  await outside.invitationRepo.save({
+  await seedFixture(() => outside.invitationRepo.save({
     invitationRef,
     tenantId: tenant,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -105,7 +105,7 @@ async function seedOpenedInvitation(outside: ReturnType<typeof pgOutsideTxPorts>
     state,
     recipientChannelRef: CHANNEL,
     ...(dm !== undefined ? { boundDecisionMakerRef: dm } : {}),
-  });
+  })); // ADR-010 rev. 5 PR-b: fixture crudo (seedFixture), no el ciclo completo
 }
 
 pgTest("TEST-CNS-845 pg: OTP verify ∥ verify en dos conexiones: exactamente una verifica (un solo DECISION_MAKER_CHANNEL_VERIFIED con sequence 1, una sola INVITATION_VERIFIED) y la otra falla con ERR-OT-03; sin conflicto de secuencia (valla = FOR UPDATE de app.otp_verification, expectedSequence 0)", async (ctx) => {

@@ -139,7 +139,7 @@ export function runTenantReposPrDContract(adapterName: string, register: Registe
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, a.parentRef, "DECISION")), a);
     assert.equal(await h.uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, a.parentRef, "MANAGE")), null, "otro scope no es el mismo padre activo");
 
-    const verified: OtpVerificationRecord = { ...a, attempts: 1, state: "VERIFIED", consumedAt: new Date("2029-12-31T00:00:00.000Z"), resendCount: 2, codeHash: sha("code:831-new") };
+    const verified: OtpVerificationRecord = { ...a, attempts: 1, state: "VERIFIED", consumedAt: new Date("2029-12-31T00:00:00.000Z"), resendCount: 2, codeHash: sha("code:831-new"), decisionMakerRef: fixtureUuid("dm-831"), dmRefKeyVersion: 2 }; // ADR-010 rev. 5 PR-b: VERIFIED lleva el seudonimo del apoderado
     await h.uow.inTenant(t, (tx) => tx.otpRepo.save(verified));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.otpRepo.findByRef(t, a.verificationRef)), verified);
     assert.equal(await h.uow.inTenant(t, (tx) => tx.otpRepo.findActiveByParent(t, a.parentRef, "DECISION")), null, "VERIFIED ya no es activo");
