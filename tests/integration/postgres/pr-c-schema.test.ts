@@ -9,7 +9,7 @@ import { claimOutbox, createPgOutboxAdapter } from "../../../src/infra/adapters/
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, pgTestRaw } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const constraintOf = (error: unknown): string | undefined => (error as { constraint?: string }).constraint;
@@ -96,7 +96,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
     "rights_case.rights_case_transition_insert:INSERT", "rights_case.rights_case_transition_select:SELECT", "rights_case.rights_case_transition_update:UPDATE", // 0038 (PR-5b)
   ]);
-  assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["prior_steps_complete", "purposes", "receipt_ref", "state", "steps_recorded"]);
+  assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["consent_text_hash", "consent_version", "prior_steps_complete", "privacy_notice_version", "purposes", "receipt_ref", "relationship_ref", "state", "steps_recorded"]); // 0049 (PR-b): columnas de las que la base deriva el ledger, solo UPDATE
   // ADR-010 PR-5a (INV-RV-12, F-A10-01): app_rw ya no escribe app.revocation (ni INSERT ni UPDATE); solo transition_owner via case_state.*.
   assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "UPDATE"), []);
   assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "INSERT"), []);
@@ -110,7 +110,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
   assert.deepEqual(bypass, []);
 });
 
-pgTest("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums, forma del hash, longitudes, par de atestacion)", async (ctx) => {
+pgTestRaw("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums, forma del hash, longitudes, par de atestacion)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   const t = fixtureUuid("t808");
@@ -154,7 +154,7 @@ pgTest("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, enums
   }
 });
 
-pgTest("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id falso rechazado; conexion reusada A->B (max=1) no ve lo de A, sobre las tablas nuevas", async (ctx) => {
+pgTestRaw("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id falso rechazado; conexion reusada A->B (max=1) no ve lo de A, sobre las tablas nuevas", async (ctx) => {
   const ta = fixtureUuid("t809-a");
   const tb = fixtureUuid("t809-b");
   const admin = await ctx.connectAsSuperuser();
@@ -449,7 +449,7 @@ pgTest("TEST-CNS-813 pg: el worker solo lee el sobre del outbox de eventos CLAIM
   }
 });
 
-pgTest("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el runtime no puede borrar ni escribir columnas fijadas por la base", async (ctx) => {
+pgTestRaw("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el runtime no puede borrar ni escribir columnas fijadas por la base", async (ctx) => {
   const t = fixtureUuid("t814");
   const admin = await ctx.connectAsSuperuser();
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)

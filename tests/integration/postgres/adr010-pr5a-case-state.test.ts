@@ -18,7 +18,7 @@ import type { RevocationPorts } from "../../../src/server/modules/revocation/rev
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
 import { runFA1029Scenarios } from "../../contract/f-a10-29-scenarios.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, pgTestRaw } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 import { completeDownstreamAsWorker } from "./worker-env.ts";
 
@@ -26,7 +26,7 @@ const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code
 const constraintOf = (e: unknown): string | undefined => (e as { constraint?: string }).constraint;
 const SEED = "SELECT set_config('case_state.effect', 'seed_local_revocation', false)";
 
-pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision REVOKED; el trigger exige transition_owner y el efecto de la funcion (INV-RV-12, F-A10-01/06)", async (ctx) => {
+pgTestRaw("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision REVOKED; el trigger exige transition_owner y el efecto de la funcion (INV-RV-12, F-A10-01/06)", async (ctx) => {
   const T = fixtureUuid("t1373");
   const admin = await ctx.connectAsSuperuser();
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
@@ -132,7 +132,7 @@ pgTest("TEST-CNS-1374 pg: CHECKs nuevos GRD-RV-26 (cosigned <> recorded), GRD-RV
   await ins(B, "v1", "verified_auth_path, verification_ref", "'VERIFIED', 'OTP', 'ver-1374'");
 });
 
-pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json = canonicalJson de ledger-chain.ts y la cadena que escriben las funciones (hash en SQL) verifica en TS, sin huecos y con cada via", async (ctx) => {
+pgTestRaw("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json = canonicalJson de ledger-chain.ts y la cadena que escriben las funciones (hash en SQL) verifica en TS, sin huecos y con cada via", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const vectors: unknown[] = [
     { b: 1, a: "x" },
@@ -169,7 +169,7 @@ pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json =
   }
 });
 
-pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSISTED (solo RH3 con cuatro ojos) y case_state tiene exactamente las funciones declaradas, de transition_owner", async (ctx) => {
+pgTestRaw("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSISTED (solo RH3 con cuatro ojos) y case_state tiene exactamente las funciones declaradas, de transition_owner", async (ctx) => {
   const T = fixtureUuid("t1376");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED);
@@ -196,7 +196,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "cancel_invitation_subject_mismatch", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
     "cosign_case_confirmation", "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
     "propose_case_verification", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
-    "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_revoke_decision", "seed_local_rights_case", "verify_revocation_otp",
+    "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_rights_case", "verify_revocation_otp",
     "withdraw_case_verification_proposal", "withdraw_revocation",
   ]); // ADR-010 PR-5b (0038) agrega las funciones de RightsCase
   assert.ok(fns.every((f) => f.o === "transition_owner"));
@@ -215,7 +215,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
   for (const role of ["platform_rw", "integrity_verifier"]) assert.equal(await ex(role, "apply_revocation"), false, role);
 });
 
-pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el tenant B, withdraw/apply/revoke_with_recovery_link/propose sobre refs de A fallan (RV001/RV007) sin cambiar la fila, el token ni el ledger de A", async (ctx) => {
+pgTestRaw("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el tenant B, withdraw/apply/revoke_with_recovery_link/propose sobre refs de A fallan (RV001/RV007) sin cambiar la fila, el token ni el ledger de A", async (ctx) => {
   const A = fixtureUuid("t1378-a");
   const B = fixtureUuid("t1378-b");
   const admin = await ctx.connectAsSuperuser();
@@ -255,7 +255,7 @@ pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el
   assert.equal(await snapshot(), before, "la fila, el token, la decision, el ledger y el outbox de A quedan intactos");
 });
 
-pgTest("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no confirma HUMAN_ASSISTED y R1 exige decision GRANTED de la misma cadena (F-A10-29), igual que in-memory; la base tambien lo impone", async (ctx) => {
+pgTestRaw("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no confirma HUMAN_ASSISTED y R1 exige decision GRANTED de la misma cadena (F-A10-29), igual que in-memory; la base tambien lo impone", async (ctx) => {
   const T = fixtureUuid("t1380");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
   try {

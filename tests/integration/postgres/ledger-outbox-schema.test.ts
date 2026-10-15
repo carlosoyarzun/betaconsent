@@ -45,7 +45,8 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     )).rows;
     assert.ok(policies.length >= 2, `${schema}.${table} sin policies`);
     const runtime = policies.filter((p) => p.roles.includes("app_rw"));
-    assert.deepEqual(runtime.map((p) => p.cmd).sort(), ["INSERT", "SELECT"], "app_rw solo SELECT/INSERT por policy");
+    // ADR-010 rev. 5 PR-b (0049): app_rw ya NO inserta en el ledger (lo emiten los triggers de ledger_gen); solo lee. El outbox conserva SELECT/INSERT.
+    assert.deepEqual(runtime.map((p) => p.cmd).sort(), schema === "integrity" ? ["SELECT"] : ["INSERT", "SELECT"], "app_rw: ledger solo SELECT; outbox SELECT/INSERT por policy");
     for (const p of runtime) {
       assert.match(`${p.qual ?? ""}${p.with_check ?? ""}`, /app\.current_tenant_id\(\)/);
     }
@@ -152,7 +153,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
        VALUES ($1, 'ConsentDecision', 'b', 1, 'CONSENT_GRANTED', 'HUMAN', '{}'::jsonb, 'DEV', 1, repeat('a', 64), repeat('0', 64), repeat('a', 64))`,
       [fixtureUuid("t787")],
     ),
-    (e: unknown) => codeOf(e) === "23514", // 0013 (P2-1): el grant existe pero el CHECK fija environment = catalogo
+    (e: unknown) => codeOf(e) === "42501", // ADR-010 rev. 5 PR-b (0049): app_rw ya no tiene INSERT en el ledger (antes 23514: el CHECK de 0013 fijaba environment = catalogo)
   );
   await app.query("ROLLBACK");
 });

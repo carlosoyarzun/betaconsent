@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import { checkRoleMemberships, EXPECTED_MEMBERSHIPS } from "../../../src/infra/adapters/postgres/role-membership.ts";
-import { pgTest } from "./harness.ts";
+import { enableLedgerMechanicsAppend, pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
@@ -72,6 +72,7 @@ pgTest("TEST-CNS-1231 pg: el ledger pertenece a integrity_owner, sin CREATE temp
 
   // Append de app_rw (grants por columnas heredados) y UNIQUE de idempotencia.
   const tenant = "11111111-1111-4111-8111-111111111111";
+  await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: app_rw ya no inserta en produccion; aqui se ejercita la cadena/idempotencia del ledger
   const app = await ctx.connectAs("app_rw");
   await app.query("BEGIN");
   await app.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);

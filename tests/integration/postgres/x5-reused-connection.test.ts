@@ -10,11 +10,11 @@ import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTestRaw } from "./harness.ts";
 
 const TABLES = ["invitation", "otp_verification", "rights_case", "enrollment", "consent_decision", "revocation", "recovery_token", "idempotency_key"] as const;
 
-pgTest("TEST-CNS-876 pg X5: con una sola conexion A->B->(sin tenant) ninguna tabla de agregado de PR-C/D/E filtra filas ni admite escritura cruzada", async (ctx) => {
+pgTestRaw("TEST-CNS-876 pg X5: con una sola conexion A->B->(sin tenant) ninguna tabla de agregado de PR-C/D/E filtra filas ni admite escritura cruzada", async (ctx) => {
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 1 });
   try {
     const uow = new PgUnitOfWork(pool, { idempotencyPolicy: { ttlMs: 60_000 } });

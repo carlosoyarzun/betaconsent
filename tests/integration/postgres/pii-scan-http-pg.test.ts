@@ -40,7 +40,7 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { SCAN_ORIGIN, assertNonVacuous, describeStats, newCorpus, runAllFlows, scanForLeaks, startCapture } from "../consent-flow/pii-scan-driver.ts";
 import type { ScanEnv } from "../consent-flow/pii-scan-driver.ts";
 import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, seedFixture } from "./harness.ts";
 import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const T = LOCAL_ONLY_DEV_TENANT_ID;
@@ -111,7 +111,7 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
       const consentId = fixtureUuid(`consent-${label}`);
       const chainRef = fixtureUuid(`chain-${label}`);
       const handleToken = `mgmt-token-${label}-${randomBytes(6).toString("hex")}`;
-      await store.uow.inTenant(T, (tx) =>
+      await seedFixture(() => store.uow.inTenant(T, (tx) =>
         tx.consentDecisionRepo.save({
           consentId,
           tenantId: T,
@@ -128,7 +128,7 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
           stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
           receiptRef: `receipt-${label}`,
         }),
-      );
+      )); // ADR-010 rev. 5 PR-b: fixture crudo (decision GRANTED sembrada): seedFixture
       await store.uow.withTenantTx(T, (tx) => registerTenantHandle(tx, { handle: handleToken, chainRef, revokedDecisionRef: consentId }));
       return { handleToken };
     },

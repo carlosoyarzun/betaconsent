@@ -110,9 +110,12 @@ pgTest("TEST-CNS-1444 pg: app_rw sigue SIN poder insertar el par Invitation:INVI
       (await admin.query<{ x: boolean }>("SELECT has_function_privilege($1, p.oid, 'EXECUTE') AS x FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = 'cancel_invitation_subject_mismatch'", [role])).rows[0]?.x ?? false;
     assert.equal(await ex("app_rw"), true);
     for (const role of ["worker", "platform_rw", "integrity_verifier"]) assert.equal(await ex(role), false, role);
-    const expr = (await admin.query<{ e: string }>("SELECT pg_get_expr(polwithcheck, polrelid) AS e FROM pg_policy WHERE polrelid = 'integrity.audit_event'::regclass AND polname = 'audit_event_tenant_insert'")).rows[0]?.e ?? "";
-    assert.equal(expr.includes("Invitation:INVITATION_CANCELLED"), false);
-    assert.equal([...expr.matchAll(/'([A-Za-z]+:[A-Z_]+)'/g)].length, 10); // ADR-010 rev. 5 PR-b: sin los pares de Invitation (los emite ledger_writer)
+    // ADR-010 rev. 5 PR-b (0049): app_rw no tiene policy de INSERT en el ledger; el unico emisor de Invitation:INVITATION_CANCELLED es transition_owner (policy de 14 pares).
+    assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE polrelid = 'integrity.audit_event'::regclass AND polname = 'audit_event_tenant_insert'")).rowCount, 0);
+    const texpr = (await admin.query<{ e: string }>("SELECT pg_get_expr(polwithcheck, polrelid) AS e FROM pg_policy WHERE polrelid = 'integrity.audit_event'::regclass AND polname = 'audit_event_transition_insert'")).rows[0]?.e ?? "";
+    assert.equal(texpr.includes("Invitation:INVITATION_CANCELLED"), true);
+    const wexpr = (await admin.query<{ e: string }>("SELECT pg_get_expr(polwithcheck, polrelid) AS e FROM pg_policy WHERE polrelid = 'integrity.audit_event'::regclass AND polname = 'audit_event_ledger_insert'")).rows[0]?.e ?? "";
+    assert.equal(wexpr.includes("INVITATION_CANCELLED"), false);
   } finally {
     await pool.end();
   }
