@@ -65,11 +65,12 @@ export class StartupCheckError extends Error {
  * membership de TENANT_ADMIN; platform_rw (equipo de LectorPro) el resto. ADR-010 PR-6b (rev. 5 §2): platform_rw inicia y completa la autorizacion OIDC
  * (begin_oidc_authorization / complete_oidc_callback, sin SELECT ni DML sobre oidc_exchange; reemplazan a enqueue_oidc_exchange), consulta el estado con (ref, state)
  * y registra los limites P-49/P-50; el worker purga las solicitudes vencidas; integrity_verifier toma el canje y registra las aserciones (UNICO que atesta: step-up y login).
- * consume_login_assertion es INTERNA (sin EXECUTE de runtime).
+ * consume_login_assertion es INTERNA (sin EXECUTE de runtime). ADR-010 PR-6c (0053): platform_rw abre, valida y revoca las sesiones PLATFORM y CASE
+ * (open_platform_session / open_case_session / validate_session / revoke_session); revoke_session_internal es INTERNA.
  */
 export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]>> = {
   app_rw: ["request_membership"],
-  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event"],
+  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event", "open_platform_session", "open_case_session", "validate_session", "revoke_session"],
   worker: ["purge_expired_oidc_exchange"],
   integrity_verifier: ["claim_oidc_exchange", "record_assertion", "record_login_assertion"],
 };
@@ -243,10 +244,10 @@ async function checkNoAppGucDefaults(db: Queryable, failures: string[]): Promise
 async function checkNoClientGucOverrides(db: Queryable, failures: string[]): Promise<void> {
   try {
     const r = await db.query<{ name: string }>(
-      // Los placeholders `app.*` fijados por options NO aparecen en pg_settings: se leen por nombre (los unicos app.* del sistema: tenant_id, principal_ref, session_ref).
+      // Los placeholders `app.*` fijados por options NO aparecen en pg_settings: se leen por nombre (los unicos app.* del sistema: tenant_id, principal_ref, session_ref, session_sid).
       `SELECT name FROM pg_catalog.pg_settings WHERE source = 'client' AND (name IN ('role', 'session_authorization') OR name LIKE 'app.%')
        UNION ALL
-       SELECT n FROM pg_catalog.unnest(ARRAY['app.tenant_id', 'app.principal_ref', 'app.session_ref']) AS n WHERE COALESCE(pg_catalog.current_setting(n, true), '') <> ''`,
+       SELECT n FROM pg_catalog.unnest(ARRAY['app.tenant_id', 'app.principal_ref', 'app.session_ref', 'app.session_sid']) AS n WHERE COALESCE(pg_catalog.current_setting(n, true), '') <> ''`,
     );
     for (const row of r.rows) failures.push(`la conexión fija el GUC ${row.name} desde el cliente (options/PGOPTIONS, INV-DBR-02)`);
   } catch {

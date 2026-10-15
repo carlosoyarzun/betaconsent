@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { seedPlatformSession } from "../../helpers/pg-platform-session.ts";
 import { pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
@@ -21,10 +22,12 @@ const SEED_APR = P("seed-approver");
 const PKCE = "B".repeat(64);
 const NOT_LIMITED = { max: 1000, window: 3600 };
 
-async function call<T = Record<string, unknown>>(client: Client, principal: string | null, sql: string, params: unknown[] = []): Promise<T[]> {
+async function call<T = Record<string, unknown>>(client: Client, principal: string | null, sql: string, params: unknown[] = [], sid: string | null = null): Promise<T[]> {
   await client.query("BEGIN");
   try {
     if (principal !== null) await client.query("SELECT set_config('app.principal_ref', $1, true)", [principal]);
+    // PR-6c (F-PR6-36): LOGIN_CASE toma el principal de la platform_session vigente (sid), no de un principal declarado.
+    if (sid !== null) await client.query("SELECT set_config('app.session_sid', $1, true)", [sid]);
     const r = await client.query(sql, params);
     await client.query("COMMIT");
     return r.rows as T[];
@@ -44,14 +47,14 @@ async function seedOperator(admin: Client, principal: string, role = "PLATFORM",
 
 interface Flow { ref: string; state: string; stateHash: string; binding: string; target: string | null }
 
-async function begin(platform: Client, kind: string, principal: string | null, opts: { target?: string | null; maxAwaiting?: number | null; ttl?: number; p51?: { max: number; window: number } } = {}): Promise<Flow | null> {
+async function begin(platform: Client, kind: string, principal: string | null, opts: { target?: string | null; maxAwaiting?: number | null; ttl?: number; p51?: { max: number; window: number }; sid?: string } = {}): Promise<Flow | null> {
   const state = randomBytes(24).toString("base64url");
   const binding = sha(randomUUID());
   const target = opts.target ?? null;
   const p51 = opts.p51 ?? NOT_LIMITED;
   const ref = (await call<{ r: string | null }>(platform, principal, "SELECT platform.begin_oidc_authorization($1, $2, $3, $4, $5, $6, $7, $8, $9) AS r", [
     kind, sha(state), binding, PKCE, target, opts.ttl ?? 300, opts.maxAwaiting ?? null, kind === "STEP_UP" ? p51.max : null, kind === "STEP_UP" ? p51.window : null,
-  ]))[0]?.r;
+  ], opts.sid ?? null))[0]?.r;
   return typeof ref === "string" ? { ref, state, stateHash: sha(state), binding, target } : null;
 }
 
@@ -130,8 +133,10 @@ pgTest("TEST-CNS-1500 pg: begin/complete: state de un solo uso; ajeno, malformad
   assert.equal(await begin(platform, "LOGIN_PLATFORM", A), null);
   assert.equal(await begin(platform, "LOGIN_CASE", null, { target: sha("caso") }), null);
   assert.equal(await begin(platform, "LOGIN_CASE", P("sin-rol"), { target: sha("caso") }), null);
-  assert.equal(await begin(platform, "LOGIN_CASE", A, { target: null }), null, "LOGIN_CASE exige target_ref_hash");
-  assert.ok(await begin(platform, "LOGIN_CASE", A, { target: sha("caso") }));
+  const sessA = await seedPlatformSession(admin, A);
+  assert.equal(await begin(platform, "LOGIN_CASE", A, { target: null, sid: sessA.sid }), null, "LOGIN_CASE exige target_ref_hash");
+  assert.equal(await begin(platform, "LOGIN_CASE", A, { target: sha("caso") }), null, "sin sesion PLATFORM validada por la base (principal declarado) no hay LOGIN_CASE (F-PR6-36)");
+  assert.ok(await begin(platform, "LOGIN_CASE", A, { target: sha("caso"), sid: sessA.sid }));
   assert.equal(await begin(platform, "LOGIN_PLATFORM", null, { target: sha("x") }), null, "target solo en LOGIN_CASE");
   assert.equal(await begin(platform, "NO_EXISTE", null), null);
 
@@ -258,14 +263,15 @@ pgTest("TEST-CNS-1502 pg: LOGIN_CASE exige el mismo principal que oidc_exchange.
   const caseB = sha("case-b");
 
   // B se autentica en el flujo LOGIN_CASE iniciado por la sesion de A: REJECTED PRINCIPAL_MISMATCH + evento con ambos refs.
-  const fm = (await begin(platform, "LOGIN_CASE", A, { target: caseA }))!;
+  const sessA = await seedPlatformSession(admin, A);
+  const fm = (await begin(platform, "LOGIN_CASE", A, { target: caseA, sid: sessA.sid }))!;
   await toClaimed(platform, verifier, fm);
   assert.equal(await recordLogin(verifier, fm.ref, { sub: subB, authTime: new Date() }), false);
   assert.deepEqual((await admin.query("SELECT reason_code, principal_ref FROM platform.login_assertion WHERE exchange_ref = $1", [fm.ref])).rows, [{ reason_code: "PRINCIPAL_MISMATCH", principal_ref: B }]);
   assert.deepEqual(await lastEvents(admin, B), [{ event_type: "LOGIN_PRINCIPAL_MISMATCH", reason_code: "PRINCIPAL_MISMATCH", kind: "LOGIN_CASE", limit_kind: null, window_seconds: null, peer_principal_ref: A }]);
 
   // A en su propio flujo: ATTESTED, ligada a la operacion.
-  const f = (await begin(platform, "LOGIN_CASE", A, { target: caseA }))!;
+  const f = (await begin(platform, "LOGIN_CASE", A, { target: caseA, sid: sessA.sid }))!;
   await toClaimed(platform, verifier, f);
   assert.equal(await recordLogin(verifier, f.ref, { sub: subA, authTime: new Date() }), true);
   assert.equal((await admin.query("SELECT target_ref_hash FROM platform.login_assertion WHERE exchange_ref = $1", [f.ref])).rows[0]?.target_ref_hash, caseA);
