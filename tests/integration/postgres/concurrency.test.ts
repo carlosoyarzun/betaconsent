@@ -21,7 +21,7 @@ import { createPgTenantResolver } from "../../../src/infra/adapters/postgres/ten
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, pgTestRaw } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
@@ -91,7 +91,7 @@ pgTest("TEST-CNS-822 pg: R4 concurrente con R8 (retiro) en dos conexiones: exact
   });
 });
 
-pgTest("TEST-CNS-823 pg: GRD-CD-08: dos GRANTED concurrentes en la misma cadena => una gana y la otra falla con ERR-CD-01; REVOKED libera la cadena", async (ctx) => {
+pgTestRaw("TEST-CNS-823 pg: GRD-CD-08: dos GRANTED concurrentes en la misma cadena => una gana y la otra falla con ERR-CD-01; REVOKED libera la cadena", async (ctx) => {
   const T = fixtureUuid("t823");
   await withEnv(ctx, async ({ uow, outside }) => {
     const chain = fixtureUuid("chain-823");

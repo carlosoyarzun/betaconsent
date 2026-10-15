@@ -30,7 +30,6 @@ import { invitationPortsInTx, markInvitationCompletedTx, markInvitationDeclinedT
 import type { LectorProBetaConfig } from "./lectorpro-beta.config.ts";
 import type { DecisionRelationshipConfig } from "./decision-relationship.config.ts";
 import { deriveChainRef } from "./chain-ref.ts";
-import { lastLedgerSequence, sequencedAppender } from "../common/ledger-append.ts";
 
 export interface ConsentDecisionPorts {
   readonly repo: ConsentDecisionRepositoryPort;
@@ -56,10 +55,6 @@ function inTx<T>(ports: ConsentDecisionPorts, tenantId: TenantId, fn: (txPorts: 
     fn({ ...ports, repo: tx.consentDecisionRepo, ledger: tx.ledger, invitation: invitationPortsInTx(ports.invitation, tx) }),
   );
 }
-
-/** Secuencia vigente de la decision: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P2-E). */
-const decisionSequence = (ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): Promise<number> =>
-  lastLedgerSequence(ports.ledger, tenantId, consentId);
 
 /** Relee la decision CON lock de fila (SEC-CNS-015 P2-E): la transicion se decide sobre el estado bloqueado. */
 async function requireDecision(ports: ConsentDecisionPorts, tenantId: TenantId, consentId: string): Promise<ConsentDecisionRecord> {
@@ -179,7 +174,6 @@ async function recordDecisionStepTx(
   consentId: string,
   step: DecisionStepInput,
 ): Promise<ConsentDecisionRecord> {
-  const base = await decisionSequence(ports, tenantId, consentId);
   const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
   if (found.decisionMakerRef !== decisionMakerRef) {
@@ -202,39 +196,23 @@ async function recordDecisionStepTx(
     throw new DomainError("ERR-CD-04");
   }
 
-  const payload: Record<string, unknown> = { consentId };
-  if (step.stepKind === "CONSENT_VERSION_VIEWED") {
-    // Contrato: consentVersion, consentTextHash y privacyNoticeVersion = lo SERVIDO (GRD-CD-03). El texto legal real
-    // es LEGAL DECISION (LD-06) y vive en served-consent-version.ts como placeholder.
-    const served = getServedConsentVersion();
-    payload.consentVersion = served.consentVersion;
-    payload.consentTextHash = served.consentTextHash;
-    payload.privacyNoticeVersion = served.privacyNoticeVersion;
-  }
-  if (step.stepKind === "DECISION_MAKER_AUTHORITY_DECLARED") {
-    payload.relationshipRef = step.relationshipRef;
-  }
-  if (step.stepKind === "SUBJECT_CONFIRMED") {
-    payload.subjectRef = found.subjectRef;
-  }
-
-  await ports.ledger.append({
-    expectedSequence: base,
-    eventType: step.stepKind,
-    tenantId,
-    aggregateType: "ConsentDecision",
-    aggregateId: consentId,
-    actorType: "HUMAN",
-    actorRole: "DECISION_MAKER",
-    payload,
-    idempotencyKey: `${consentId}:${step.stepKind}`,
-  });
+  // ADR-010 rev. 5 PR-b (LG-1/LG-2 (a), capa 1): el evento del paso lo genera la base desde esta fila (ledger_gen.emit_consent_decision, rol ledger_writer); el dominio ya no llama a
+  // `ledger.append`. El paso escribe en la fila lo que el evento necesita: version/hash del texto servido (GRD-CD-03; LEGAL DECISION LD-06: placeholder) o el relationshipRef.
+  const served = getServedConsentVersion();
+  const stepColumns: Partial<ConsentDecisionRecord> =
+    step.stepKind === "CONSENT_VERSION_VIEWED"
+      ? { consentVersion: served.consentVersion, consentTextHash: served.consentTextHash, privacyNoticeVersion: served.privacyNoticeVersion }
+      : step.stepKind === "DECISION_MAKER_AUTHORITY_DECLARED"
+        ? { relationshipRef: step.relationshipRef }
+        : {};
+  const isNewStep = !found.stepsRecorded.includes(step.stepKind);
 
   const stepsRecorded = found.stepsRecorded.includes(step.stepKind)
     ? found.stepsRecorded
     : [...found.stepsRecorded, step.stepKind];
   const updated: ConsentDecisionRecord = {
     ...found,
+    ...(isNewStep ? stepColumns : {}),
     stepsRecorded,
     priorStepsComplete: isStepsComplete(stepsRecorded),
   };
@@ -323,7 +301,16 @@ async function submitDecisionTx(
   purposes: readonly PurposeDecision[],
   managementHandles: ManagementHandleRegistryPort | undefined,
 ): Promise<SubmitDecisionWithLinkResult> {
-  const base = await decisionSequence(ports, tenantId, consentId);
+  // ORDEN DE LOCKS (ADR-010 rev. 5 LG-6, 0032:20-21): invitacion -> decision -> ledger (el lock de ledger se toma en el AFTER de la ultima fila). Se lee la decision SIN lock solo para conocer su
+  // invitationRef (inmutable), se bloquea la invitacion y despues la decision, con el estado releido bajo ambos locks.
+  const peek = await ports.repo.findByConsentId(tenantId, consentId);
+  if (!peek) {
+    throw new DomainError("ERR-CM-01");
+  }
+  const lockedInvitation = await ports.invitation.invitationRepo.findByRefForUpdate(tenantId, peek.invitationRef);
+  if (!lockedInvitation) {
+    throw new DomainError("ERR-CM-01");
+  }
   const found = await requireDecision(ports, tenantId, consentId);
   assertActorRoleIn(actorRole, DECISION_MAKER_ROLE); // GRD-CM-10
   if (found.decisionMakerRef !== decisionMakerRef) {
@@ -364,86 +351,35 @@ async function submitDecisionTx(
   // ledger-event-payloads.schema.json:415-430 y sin relación con lo que expone la respuesta
   // HTTP).
   const receiptRef = randomUUID();
-  const decided: ConsentDecisionRecord = { ...found, state: nextState, purposes, receiptRef };
-  await ports.repo.save(decided);
-
-  const seq = sequencedAppender(ports.ledger, base);
-  for (const p of purposes) {
-    await seq.append({
-      eventType: "PURPOSE_DECISION_RECORDED",
+  // F-PRB-01 (dictamen de arquitectura 2026-10-15): el handle del enlace de gestion se registra ANTES de pasar la decision a GRANTED, en la misma tx; la base deriva
+  // RECEIPT_CREATED.managementLinkIssued de su existencia (no rotado) en tenant_resolve.handle. Significa "registrado", NO "entregado": la entrega al canal ligado es post-commit y puede
+  // fallar (ops.security_event GUEST_MESSAGE_DELIVERY_FAILED, 0045). Si algo falla despues, TODO revierte (no existe GRANTED sin enlace registrado).
+  const managementHandle = allGranted && managementHandles ? randomBytes(32).toString("base64url") : undefined;
+  if (managementHandle !== undefined && managementHandles) {
+    await managementHandles.register({
       tenantId,
-      aggregateType: "ConsentDecision",
-      aggregateId: consentId,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      payload: { consentId, purpose: p.purpose, choice: p.choice },
-      idempotencyKey: `${consentId}:purpose:${p.purpose}`,
+      handleHash: hashTenantHandle(managementHandle),
+      chainRef: found.chainRef,
+      revokedDecisionRef: consentId,
     });
   }
-
-  // C3 emite el enlace de gestión solo si GRANTED y hay registro en la tx (managementLinkIssued = hecho real).
-  const managementHandle = allGranted && managementHandles ? randomBytes(32).toString("base64url") : undefined;
-
+  // ADR-010 rev. 5 PR-b (LG-1, capa 1): los eventos de C3/C5 (PURPOSE_DECISION_RECORDED por finalidad, CONSENT_GRANTED|DECLINED, RECEIPT_CREATED) los genera la base desde esta fila
+  // (ledger_gen.emit_consent_decision); el dominio ya no llama a `ledger.append`. En in-memory los emite la unidad de trabajo con la misma tabla.
+  const decided: ConsentDecisionRecord = {
+    ...found,
+    state: nextState,
+    purposes,
+    receiptRef,
+    consentVersion: served.consentVersion,
+    consentTextHash: served.consentTextHash,
+    privacyNoticeVersion: served.privacyNoticeVersion,
+    ...(managementHandle !== undefined ? { managementLinkIssued: true } : {}),
+  };
+  await ports.repo.save(decided);
   if (allGranted) {
-    await seq.append({
-      eventType: "CONSENT_GRANTED",
-      tenantId,
-      aggregateType: "ConsentDecision",
-      aggregateId: consentId,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      payload: { consentId, chainRef: found.chainRef, consentVersion: served.consentVersion, consentTextHash: served.consentTextHash },
-      idempotencyKey: `${consentId}:granted`,
-    });
-    await seq.append({
-      eventType: "RECEIPT_CREATED",
-      tenantId,
-      aggregateType: "ConsentDecision",
-      aggregateId: consentId,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      // managementLinkIssued = resultado real: true solo si el handle se registra abajo, en esta misma tx.
-      // SEMANTICA (SEC-CNS-PR94 P2-A): true significa "REGISTRADO" (hay un handle de gestion vigente en la base), NO "entregado". La entrega al canal
-      // ligado es post-commit y puede fallar; ese fallo queda en ops.security_event (GUEST_MESSAGE_DELIVERY_FAILED, db/migrations/0045), no aqui.
-      // La reemision del enlace ante un fallo de entrega queda para DEC-BR-017 (no implementada).
-      payload: { receiptRef, managementLinkIssued: managementHandle !== undefined },
-      idempotencyKey: `${consentId}:receipt`,
-    });
     await markInvitationCompletedTx(ports.invitation, tenantId, found.invitationRef, consentId); // I6
-    if (managementHandle !== undefined && managementHandles) {
-      // Último paso del lote: si falla, TODO revierte (no existe GRANTED sin enlace registrado).
-      await managementHandles.register({
-        tenantId,
-        handleHash: hashTenantHandle(managementHandle),
-        chainRef: found.chainRef,
-        revokedDecisionRef: consentId,
-      });
-    }
   } else {
-    await seq.append({
-      eventType: "CONSENT_DECLINED",
-      tenantId,
-      aggregateType: "ConsentDecision",
-      aggregateId: consentId,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      payload: { consentId, chainRef: found.chainRef, consentVersion: served.consentVersion, consentTextHash: served.consentTextHash },
-      idempotencyKey: `${consentId}:declined`,
-    });
-    await seq.append({
-      eventType: "RECEIPT_CREATED",
-      tenantId,
-      aggregateType: "ConsentDecision",
-      aggregateId: consentId,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      // managementLinkIssued: false es el valor factual de este slice IT0: el
-      // management_token nunca se emite todavía (x-scope-note, consent-flow.handler.ts).
-      payload: { receiptRef, managementLinkIssued: false },
-      idempotencyKey: `${consentId}:receipt`,
-    });
     await markInvitationDeclinedTx(ports.invitation, tenantId, found.invitationRef, consentId); // I7
   }
-
   return { decided, ...(managementHandle !== undefined ? { managementHandle } : {}) };
 }

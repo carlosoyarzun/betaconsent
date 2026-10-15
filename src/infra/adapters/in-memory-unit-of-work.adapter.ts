@@ -28,7 +28,7 @@ import type { TenantCatalogPort } from "../../server/ports/tenant-catalog.port.t
 import type { IdempotencyPort } from "../../server/ports/idempotency.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-work.port.ts";
 import { isTxParticipant, TX_JOURNAL, type TxParticipant, type Undo } from "./in-memory-tx.ts";
-import { deriveEnrollmentEvents, deriveInvitationEvents, deriveOtpEvents, type DerivedLedgerEvent } from "../../server/modules/common/ledger-derivation.ts";
+import { deriveConsentDecisionEvents, deriveEnrollmentEvents, deriveInvitationEvents, deriveOtpEvents, type DerivedLedgerEvent } from "../../server/modules/common/ledger-derivation.ts";
 
 /** Escritura con tenantId distinto del de la unidad de trabajo (equivale a WITH CHECK de RLS). */
 export class TenantScopeViolationError extends Error {
@@ -73,14 +73,16 @@ function scopeRevocationRepo(inner: RevocationRepositoryPort, tenant: TenantId):
   };
 }
 
-function scopeConsentDecisionRepo(inner: ConsentDecisionRepositoryPort, tenant: TenantId): ConsentDecisionRepositoryPort {
+function scopeConsentDecisionRepo(inner: ConsentDecisionRepositoryPort, tenant: TenantId, ledger: LedgerPort): ConsentDecisionRepositoryPort {
   return {
     findByConsentId: async (t, id) => (t === tenant ? inner.findByConsentId(t, id) : null),
     findByConsentIdForUpdate: async (t, id) => (t === tenant ? inner.findByConsentIdForUpdate(t, id) : null),
     findActiveGrantByChain: async (t, chainRef) => (t === tenant ? inner.findActiveGrantByChain(t, chainRef) : null),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("consentDecisionRepo.save");
-      return inner.save(record);
+      const prev = await inner.findByConsentId(record.tenantId, record.consentId);
+      await inner.save(record);
+      await emitDerived(ledger, tenant, deriveConsentDecisionEvents(prev, record));
     },
   };
 }
@@ -272,7 +274,7 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     try {
       return await work({
         revocationRepo: scopeRevocationRepo(ports.revocationRepo, tenantId),
-        consentDecisionRepo: scopeConsentDecisionRepo(ports.consentDecisionRepo, tenantId),
+        consentDecisionRepo: scopeConsentDecisionRepo(ports.consentDecisionRepo, tenantId, ports.ledger),
         recoveryTokenRepo: scopeRecoveryTokenRepo(ports.recoveryTokenRepo, tenantId),
         invitationRepo: scopeInvitationRepo(ports.invitationRepo, tenantId, ports.ledger),
         otpRepo: scopeOtpRepo(ports.otpRepo, tenantId, ports.ledger),

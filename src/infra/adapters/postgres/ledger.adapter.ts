@@ -98,6 +98,18 @@ export function createPgLedgerAdapter(tx: TenantTx): LedgerPort {
     async append(event: LedgerEventInput): Promise<LedgerRecord> {
       assertLedgerEventType(event.eventType);
       assertLedgerPayload(event.eventType, event.payload); // ERR-RV-13 fail-closed, antes de cualquier efecto (X6 P1-A)
+      if (event.actorType === "FIXTURE" && (event.eventType === "TENANT_SEEDED" || event.eventType === "SCHOOL_PARTICIPATION_SEEDED")) {
+        // ADR-010 rev. 5 PR-b (LG-4): las siembras LOCAL pasan por ledger_gen.seed_local_catalog_event (entorno de ops.db_catalog, actor FIXTURE, payload fijo `{}`); app_rw ya no inserta
+        // en integrity.audit_event. Cualquier otro evento por esta via falla con 42501 (sin INSERT): los demas los genera la base desde las filas de estado.
+        await tx.query("SELECT ledger_gen.seed_local_catalog_event($1::text, $2::text)", [event.eventType, event.aggregateId]);
+        const seeded = await tx.query<AuditEventRow>(
+          `SELECT ${COLUMNS} FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = $3 ORDER BY sequence DESC LIMIT 1`,
+          [event.tenantId, event.aggregateId, event.eventType],
+        );
+        const row = seeded.rows[0];
+        if (!row) throw new Error("ledger: la siembra LOCAL no dejo el evento");
+        return toRecord(row);
+      }
       const keyHash = event.idempotencyKey !== undefined ? hashKey(event.idempotencyKey) : null;
       if (keyHash !== null) {
         const existing = await tx.query<AuditEventRow>(

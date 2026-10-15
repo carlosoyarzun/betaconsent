@@ -17,6 +17,8 @@ import { fixtureUuid } from "../uuid-fixture.ts";
 
 export interface TenantReposHarness {
   readonly uow: UnitOfWorkPort;
+  /** Dejar una decision en REVOKED como C6. Ausente: `consentDecisionRepo.save({...state: "REVOKED"})` (in-memory). Postgres (ADR-010 rev. 5 PR-b, F-PRB-02): fixture de la base descartable. */
+  readonly forceRevoke?: (tenantId: string, consentId: string) => Promise<void>;
   readonly resolver: TenantResolverPort;
   /** Siembra el catalogo del tenant (aprovisionamiento; el dominio nunca lo escribe). */
   seedSubject(tenantId: string, subjectRef: string): Promise<void>;
@@ -124,7 +126,8 @@ export function runTenantReposContract(adapterName: string, register: RegisterRe
     await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.save(granted));
     assert.deepEqual(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, granted.consentId)), granted);
     assert.equal((await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findActiveGrantByChain(t, granted.chainRef)))?.consentId, granted.consentId);
-    await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.save({ ...granted, state: "REVOKED" }));
+    if (h.forceRevoke) await h.forceRevoke(t, granted.consentId);
+    else await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.save({ ...granted, state: "REVOKED" }));
     assert.equal(await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findActiveGrantByChain(t, granted.chainRef)), null);
     assert.equal((await h.uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, granted.consentId)))?.state, "REVOKED");
   });

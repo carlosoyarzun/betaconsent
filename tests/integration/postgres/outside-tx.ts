@@ -4,6 +4,7 @@
 // test o para los campos del bag de RevocationPorts que el dominio usa fuera de `inTx`
 // (lecturas del flujo de recuperacion). Todo lo que escribe en varios repos va por `uow.inTenant`.
 
+import { seedFixtureAdmin } from "./harness.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../../src/server/ports/unit-of-work.port.ts";
 
 export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
@@ -21,7 +22,16 @@ export function pgOutsideTxPorts(uow: UnitOfWorkPort): TenantTxPorts {
       findByConsentId: (t, id) => uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentId(t, id)),
       findByConsentIdForUpdate: (t, id) => uow.inTenant(t, (tx) => tx.consentDecisionRepo.findByConsentIdForUpdate(t, id)),
       findActiveGrantByChain: (t, chainRef) => uow.inTenant(t, (tx) => tx.consentDecisionRepo.findActiveGrantByChain(t, chainRef)),
-      save: (record) => uow.inTenant(record.tenantId, (tx) => tx.consentDecisionRepo.save(record)),
+      // ADR-010 rev. 5 PR-b: estas escrituras son FIXTURES (decisiones en estado arbitrario, GRANTED sin pasar por C1..C3). La base solo admite el ciclo legal y REVOKED solo por R4/C6, asi que el
+      // helper de tests siembra con los triggers de ledger_gen deshabilitados SOLO durante el fixture (seedFixtureAdmin). El codigo de producto nunca lo hace.
+      save: (record) =>
+        seedFixtureAdmin(async (admin) => {
+          if (record.state === "REVOKED") {
+            await admin.query("UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = $1 AND consent_id = $2", [record.tenantId, record.consentId]);
+            return;
+          }
+          await uow.inTenant(record.tenantId, (tx) => tx.consentDecisionRepo.save(record));
+        }),
     },
     recoveryTokenRepo: {
       findByRef: (t, ref) => uow.inTenant(t, (tx) => tx.recoveryTokenRepo.findByRef(t, ref)),

@@ -158,7 +158,7 @@ test("TEST-CNS-842: otp V3 (SEC-CNS-021 PR-2): expectedSequence 0 (OTP_* fuera d
   }
 });
 
-test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequencedAppender); si avanza tras la base, LedgerSequenceConflictError y la decision sigue PENDING", async () => {
+test("TEST-CNS-843: decision C2/C3/C5 (ADR-010 rev. 5 PR-b): los eventos los deriva la base de la fila en orden (pasos 0..2; finalidades, CONSENT_GRANTED y RECEIPT_CREATED desde 3) e I6 en la misma tx; un evento ajeno ya no aborta C3 (valla = lock de fila y guarda OLD->NEW)", async () => {
   const setup = async (hooks: Parameters<typeof makeFlow>[1] = {}) => {
     const { ledger, seen } = recordingLedger();
     const flow = makeFlow(ledger, hooks);
@@ -175,7 +175,7 @@ test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequ
     assert.deepEqual(
       seen.filter((e) => e.aggregateId === fixtureUuid("consent-842")).map((e) => e.expectedSequence),
       [0, 1, 2],
-      "C2: cada paso declara la base vigente",
+      "C2: cada paso derivado declara la base vigente",
     );
     seen.length = 0;
     await submitDecision(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), GRANT_ALL);
@@ -192,11 +192,11 @@ test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequ
     function ledger2(): LedgerPort { return flowLedger; }
     const flowLedger = ledger;
     interfere = true;
-    await assert.rejects(() => submitDecision(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), GRANT_ALL), (e: unknown) => e instanceof LedgerSequenceConflictError);
-    assert.equal((await flow.decisionRepo.findByConsentId(T, fixtureUuid("consent-842")))?.state, "PENDING");
-    assert.equal((await flow.invitationRepo.findByRef(T, fixtureUuid("inv-842")))?.state, "VERIFIED");
+    await submitDecision(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), GRANT_ALL);
+    assert.equal((await flow.decisionRepo.findByConsentId(T, fixtureUuid("consent-842")))?.state, "GRANTED");
+    assert.equal((await flow.invitationRepo.findByRef(T, fixtureUuid("inv-842")))?.state, "COMPLETED");
     const types = (await ledger.listByAggregate(T, "ConsentDecision", fixtureUuid("consent-842"))).map((e) => e.eventType);
-    assert.equal(types.includes("CONSENT_GRANTED"), false);
+    assert.equal(types.includes("CONSENT_GRANTED"), true);
   }
 });
 

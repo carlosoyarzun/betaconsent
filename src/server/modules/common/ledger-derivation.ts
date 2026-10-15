@@ -14,6 +14,7 @@
 import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03 } from "./opaque-ref.ts";
 import type { ActorRole, ActorType } from "./types.ts";
 import type { EnrollmentRecord } from "../../ports/enrollment-repository.port.ts";
+import type { ConsentDecisionRecord } from "../../ports/consent-decision-repository.port.ts";
 import type { InvitationRecord } from "../../ports/invitation-repository.port.ts";
 import type { OtpVerificationRecord } from "../../ports/otp-verification-repository.port.ts";
 
@@ -57,7 +58,45 @@ export const LEDGER_DERIVATION_EDGES: readonly DerivationEdge[] = [
   { id: "I9-SENT", aggregate: "Invitation", from: "SENT", to: "CANCELLED", emits: [], emitter: "transition_owner" },
   { id: "I9-OPENED", aggregate: "Invitation", from: "OPENED", to: "CANCELLED", emits: [], emitter: "transition_owner" },
   { id: "I9", aggregate: "Invitation", from: "VERIFIED", to: "CANCELLED", emits: [], emitter: "transition_owner" },
+  // ConsentDecision. C1 (INSERT PENDING) no emite. C6 (GRANTED -> REVOKED) es "permitida sin emision de ledger_writer; emisor transition_owner por apply_revocation" y la guarda la admite solo con
+  // una Revocation CONFIRMED del tenant sobre la decision (F-PR6-10). Sin otra salida: REVOKED, GRANTED y DECLINED son terminales.
+  { id: "C1", aggregate: "ConsentDecision", from: null, to: "PENDING", emits: [], emitter: "none" },
+  { id: "C2", aggregate: "ConsentDecision", from: "PENDING", to: "PENDING", emits: ["ConsentDecision:<stepKind>"], emitter: "ledger_writer" },
+  { id: "C3", aggregate: "ConsentDecision", from: "PENDING", to: "GRANTED", emits: ["ConsentDecision:PURPOSE_DECISION_RECORDED", "ConsentDecision:CONSENT_GRANTED", "ConsentDecision:RECEIPT_CREATED"], emitter: "ledger_writer" },
+  { id: "C5", aggregate: "ConsentDecision", from: "PENDING", to: "DECLINED", emits: ["ConsentDecision:PURPOSE_DECISION_RECORDED", "ConsentDecision:CONSENT_DECLINED", "ConsentDecision:RECEIPT_CREATED"], emitter: "ledger_writer" },
+  { id: "C6", aggregate: "ConsentDecision", from: "GRANTED", to: "REVOKED", emits: [], emitter: "transition_owner" },
 ];
+
+/** ConsentDecision: OLD (null = INSERT) -> NEW. C1 y C6 no emiten aqui. */
+export function deriveConsentDecisionEvents(prev: ConsentDecisionRecord | null, next: ConsentDecisionRecord): readonly DerivedLedgerEvent[] {
+  if (prev === null) return [];
+  const id = next.consentId;
+  const ev = (eventType: string, payload: Record<string, unknown>, key: string): DerivedLedgerEvent => ({
+    eventType, aggregateType: "ConsentDecision", aggregateId: id, actorType: "HUMAN", actorRole: "DECISION_MAKER", payload, idempotencyKey: key,
+  });
+  if (prev.state === "PENDING" && next.state === "PENDING" && next.stepsRecorded.length === prev.stepsRecorded.length + 1) {
+    const step = next.stepsRecorded[next.stepsRecorded.length - 1]!;
+    const payload: Record<string, unknown> = { consentId: id };
+    if (step === "CONSENT_VERSION_VIEWED") {
+      if (next.consentVersion === undefined || next.consentTextHash === undefined || next.privacyNoticeVersion === undefined) return [];
+      Object.assign(payload, { consentVersion: next.consentVersion, consentTextHash: next.consentTextHash, privacyNoticeVersion: next.privacyNoticeVersion });
+    } else if (step === "DECISION_MAKER_AUTHORITY_DECLARED") {
+      if (next.relationshipRef === undefined) return [];
+      payload.relationshipRef = next.relationshipRef;
+    } else if (step === "SUBJECT_CONFIRMED") {
+      payload.subjectRef = next.subjectRef;
+    }
+    return [ev(step, payload, `${id}:${step}`)];
+  }
+  if (prev.state === "PENDING" && (next.state === "GRANTED" || next.state === "DECLINED") && next.receiptRef !== undefined && next.consentVersion !== undefined && next.consentTextHash !== undefined) {
+    const out: DerivedLedgerEvent[] = next.purposes.map((p) => ev("PURPOSE_DECISION_RECORDED", { consentId: id, purpose: p.purpose, choice: p.choice }, `${id}:purpose:${p.purpose}`));
+    const granted = next.state === "GRANTED";
+    out.push(ev(granted ? "CONSENT_GRANTED" : "CONSENT_DECLINED", { consentId: id, chainRef: next.chainRef, consentVersion: next.consentVersion, consentTextHash: next.consentTextHash }, `${id}:${granted ? "granted" : "declined"}`));
+    out.push(ev("RECEIPT_CREATED", { receiptRef: next.receiptRef, managementLinkIssued: granted && next.managementLinkIssued === true }, `${id}:receipt`));
+    return out;
+  }
+  return [];
+}
 
 const iso = (d: Date): string => d.toISOString();
 

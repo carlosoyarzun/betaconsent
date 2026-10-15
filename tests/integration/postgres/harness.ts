@@ -73,6 +73,8 @@ export const LEDGER_GEN_TRIGGERS: ReadonlyArray<readonly [string, string]> = [
   ["app.otp_verification", "otp_verification_ledger_emit"],
   ["app.invitation", "invitation_ledger_guard"],
   ["app.invitation", "invitation_ledger_emit"],
+  ["app.consent_decision", "consent_decision_ledger_guard"],
+  ["app.consent_decision", "consent_decision_ledger_emit"],
 ];
 
 /**
@@ -98,6 +100,13 @@ export async function seedFixture<T>(work: () => Promise<T>): Promise<T> {
   return seedRaw(await currentCtx.connectAsSuperuser(), work);
 }
 
+/** Como `seedFixture` pero entrega la conexion de superusuario al fixture (p. ej. para dejar una decision en REVOKED sin pasar por R4: la base solo lo admite por apply_revocation). Solo tests. */
+export async function seedFixtureAdmin<T>(work: (admin: Client) => Promise<T>): Promise<T> {
+  if (currentCtx === undefined) throw new Error("seedFixtureAdmin solo se usa dentro de un pgTest");
+  const admin = await currentCtx.connectAsSuperuser();
+  return seedRaw(admin, () => work(admin));
+}
+
 /** `pgTest` cuyo cuerpo corre con los triggers de ledger_gen deshabilitados: para tests de ESQUEMA (CHECK, UNIQUE, RLS) que ejercitan SQL crudo y no el ledger. Solo tests. */
 export function pgTestRaw(name: string, fn: (ctx: PgTestContext) => Promise<void>): void {
   pgTest(name, async (ctx) => {
@@ -105,12 +114,17 @@ export function pgTestRaw(name: string, fn: (ctx: PgTestContext) => Promise<void
   });
 }
 
+let seedRawDepth = 0;
+
 export async function seedRaw<T>(admin: Client, work: () => Promise<T>): Promise<T> {
-  for (const [table, trg] of LEDGER_GEN_TRIGGERS) await admin.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trg}`);
+  // Reentrante: un fixture anidado (p. ej. outside-tx dentro de un pgTestRaw) no vuelve a habilitar los triggers a mitad del test exterior.
+  if (seedRawDepth === 0) for (const [table, trg] of LEDGER_GEN_TRIGGERS) await admin.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trg}`);
+  seedRawDepth += 1;
   try {
     return await work();
   } finally {
-    for (const [table, trg] of LEDGER_GEN_TRIGGERS) await admin.query(`ALTER TABLE ${table} ENABLE ALWAYS TRIGGER ${trg}`);
+    seedRawDepth -= 1;
+    if (seedRawDepth === 0) for (const [table, trg] of LEDGER_GEN_TRIGGERS) await admin.query(`ALTER TABLE ${table} ENABLE ALWAYS TRIGGER ${trg}`);
   }
 }
 
