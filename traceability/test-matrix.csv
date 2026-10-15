@@ -828,4 +828,4 @@ TEST-CNS-1556,integration,tests/integration/postgres/adr010-pr6c-sessions.test.t
 TEST-CNS-1557,unit,tests/unit/platform/pr6c-sessions.test.ts,"POST /platform/sessions/platform: Origin, cookies __Host- Strict, borra state y exchange, rota, 404 uniforme","ADR-010 rev.5 §5.2 paso 5;F-PR6-38;G-8",ACTIVE
 TEST-CNS-1558,unit,tests/unit/platform/pr6c-sessions.test.ts,"login kind=CASE con sesion PLATFORM validada, sesion CASE y logout en servidor","ADR-010 rev.5 §5.2 pasos 6-7;F-PR6-36",ACTIVE
 TEST-CNS-1559,unit,tests/unit/platform/pr6c-sessions.test.ts,"P-50 cableado a rutas autenticadas por principal; settings de sesion obligatorias fuera de LOCAL","ADR-010 rev.5 §5.4;G-6",ACTIVE
-TEST-CNS-1560,integration,tests/integration/postgres/adr010-pr6c-e2e.test.ts,"pg e2e login PLATFORM -> sesion -> login CASE -> sesion CASE -> logout en cascada con adaptadores reales","ADR-010 rev.5 §5.2 pasos 1-7",ACTIVE
+TEST-CNS-1560,integration,tests/integration/postgres/adr010-pr6c-sessions.test.ts,"pg e2e login PLATFORM -> sesion -> login CASE -> sesion CASE -> logout en cascada con adaptadores reales","ADR-010 rev.5 §5.2 pasos 1-7",ACTIVE

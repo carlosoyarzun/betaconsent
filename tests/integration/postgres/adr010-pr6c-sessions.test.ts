@@ -6,16 +6,34 @@
 // TEST-CNS-1553: revoke_session (logout en servidor, en cascada PLATFORM -> CASE), eventos, append-only (guard), sin reactivacion.
 // TEST-CNS-1554: begin LOGIN_CASE valida EN LA BASE la platform_session PLATFORM vigente (F-PR6-36): sin sid, revocada, vencida, de otra clase o con principal declarado distinto = DENY.
 // TEST-CNS-1555: privilegios (ACL exacta, sin acceso de tabla), funciones internas sin EXECUTE, ninguna funcion de sesion toca el ledger (compatible con TEST-CNS-1470), sin principal como parametro.
+// TEST-CNS-1560: extremo a extremo con adaptadores reales (platform_rw e integrity_verifier) + IdP sintetico: login PLATFORM -> sesion -> login CASE con esa sesion -> sesion CASE -> logout en cascada; cero sid/state en claro.
 // TEST-CNS-1556: carrera: N open_platform_session concurrentes con la misma asercion abren exactamente una sesion.
 // Requiere Postgres real (harness.ts); skip sin entorno. Solo sinteticos. Los tests de un archivo comparten base: todo se filtra por refs propias.
 
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
+import { createPgOidcAuthorization, createPgOidcExchangeStore, nonceBinding } from "../../../src/infra/adapters/postgres/oidc-exchange.adapter.ts";
+import { createPgPlatformSessionStore } from "../../../src/infra/adapters/postgres/platform-session.adapter.ts";
+import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
+import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";
+import { computeSubHmac } from "../../../src/server/modules/step-up/id-token.ts";
+import { runVerifierCycle } from "../../../src/server/modules/step-up/verifier.ts";
+import type { VerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { loginFlow, seedOperator, sha, call } from "../../helpers/pg-login-flow.ts";
 import type { LoginFlow } from "../../helpers/pg-login-flow.ts";
 import { pgTest } from "./harness.ts";
+import type { PgRole, PgTestContext } from "./harness.ts";
+
+// Una conexion por (base, rol) para TODO el archivo: el service container de CI tiene max_connections=100 y los archivos corren en paralelo.
+const shared = new Map<string, Promise<Client>>();
+const connect = (ctx: PgTestContext, role: PgRole): Promise<Client> => {
+  const key = `${ctx.dbName}|${role}`;
+  let c = shared.get(key);
+  if (c === undefined) { c = ctx.connectAs(role); shared.set(key, c); }
+  return c;
+};
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const P = (label: string): string => fixtureUuid(`pr6c-principal-${label}`);
@@ -67,8 +85,8 @@ async function seedAttested(admin: Client, kind: "LOGIN_PLATFORM" | "LOGIN_CASE"
 
 pgTest("TEST-CNS-1550 pg: open_platform_session consume la asercion en la misma tx; principal de la asercion; rol ACTIVE re-chequeado; sid de la base (solo hash); PLATFORM_LOGIN; rotacion; rangos", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const platform = await ctx.connectAs("platform_rw");
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
   const app = await ctx.connectAs("app_rw");
   const A = P("1550-a");
   const subA = await seedOperator(admin, A, "PLATFORM");
@@ -120,12 +138,14 @@ pgTest("TEST-CNS-1550 pg: open_platform_session consume la asercion en la misma 
   assert.equal(await openPlatform(platform, fr), null);
   // El principal solo puede salir de la asercion: la firma no tiene parametro de principal.
   assert.equal((await admin.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'platform' AND p.proname IN ('open_platform_session', 'open_case_session') AND pg_get_function_arguments(p.oid) ~* 'principal'")).rowCount, 0);
+
+  await app.end();
 });
 
 pgTest("TEST-CNS-1551 pg: open_case_session exige sesion PLATFORM vigente del mismo principal, asercion LOGIN_CASE ligada al caso, RIGHTS_OPERATOR ACTIVE y grant vigente; vida <= grant y <= sesion PLATFORM; CASE_LOGIN", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const platform = await ctx.connectAs("platform_rw");
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
   const clients = { platform, verifier };
   const R = P("1551-r");
   const B = P("1551-b");
@@ -193,8 +213,8 @@ pgTest("TEST-CNS-1551 pg: open_case_session exige sesion PLATFORM vigente del mi
 
 pgTest("TEST-CNS-1552 pg: validate_session revalida rol, grant y sesion PLATFORM en cada llamada; vencimiento absoluto e inactividad; avance de actividad con granularidad", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const platform = await ctx.connectAs("platform_rw");
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
   const app = await ctx.connectAs("app_rw");
   const R = P("1552-r");
   const subR = await seedOperator(admin, R, "RIGHTS_OPERATOR");
@@ -244,12 +264,14 @@ pgTest("TEST-CNS-1552 pg: validate_session revalida rol, grant y sesion PLATFORM
   const fresh = await past("fresh", { issuedAgo: 7200, lastSeenAgo: 20, ttl: 28800, idle: 600 });
   assert.equal((await validate(platform, fresh, "PLATFORM")).length, 1);
   assert.ok((await seen(fresh)) >= 19, "dentro de la granularidad no se escribe");
+
+  await app.end();
 });
 
 pgTest("TEST-CNS-1553 pg: revoke_session revoca en servidor (PLATFORM en cascada a CASE), registra eventos, es idempotente; platform_session es append-only y una sesion revocada no se reactiva", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const platform = await ctx.connectAs("platform_rw");
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
   const worker = await ctx.connectAs("worker");
   const R = P("1553-r");
   const subR = await seedOperator(admin, R, "RIGHTS_OPERATOR");
@@ -291,12 +313,14 @@ pgTest("TEST-CNS-1553 pg: revoke_session revoca en servidor (PLATFORM en cascada
   await assert.rejects(admin.query("DELETE FROM platform.rights_case_grant WHERE operator_principal_ref = $1", [R]), (e) => codeOf(e) === "23000");
   // Ningun otro rol ve las tablas ni revoca.
   await assert.rejects(worker.query("SELECT platform.revoke_session($1, 'PLATFORM')", [sidR]), (e) => codeOf(e) === "42501");
+
+  await worker.end();
 });
 
 pgTest("TEST-CNS-1554 pg: begin LOGIN_CASE valida EN LA BASE la platform_session PLATFORM vigente (F-PR6-36): sin sid, revocada, vencida, de otra clase o con principal declarado distinto = DENY", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const platform = await ctx.connectAs("platform_rw");
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
   const R = P("1554-r");
   const O = P("1554-otro");
   const subR = await seedOperator(admin, R, "RIGHTS_OPERATOR");
@@ -339,10 +363,10 @@ pgTest("TEST-CNS-1554 pg: begin LOGIN_CASE valida EN LA BASE la platform_session
 
 pgTest("TEST-CNS-1555 pg: privilegios de las sesiones: ACL exacta, sin acceso de tabla, funciones internas sin EXECUTE, ninguna funcion toca el ledger (TEST-CNS-1470), sin principal como parametro", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const platform = await ctx.connectAs("platform_rw");
+  const platform = await connect(ctx, "platform_rw");
   const app = await ctx.connectAs("app_rw");
   const worker = await ctx.connectAs("worker");
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const verifier = await connect(ctx, "integrity_verifier");
 
   const exec = async (role: string, sig: string): Promise<boolean> => (await admin.query<{ p: boolean }>("SELECT has_function_privilege($1, to_regprocedure($2), 'EXECUTE') AS p", [role, sig])).rows[0]!.p;
   const SIGS: Record<string, string> = {
@@ -382,13 +406,18 @@ pgTest("TEST-CNS-1555 pg: privilegios de las sesiones: ACL exacta, sin acceso de
   )).rows;
   assert.equal(defs.length, 6);
   for (const d of defs) assert.deepEqual({ o: d.owner, s: d.secdef, c: d.cfg, dyn: d.dyn }, { o: "grant_owner", s: true, c: ["search_path=pg_catalog, pg_temp"], dyn: false }, d.proname);
+
+  await app.end();
+  await worker.end();
 });
 
 pgTest("TEST-CNS-1556 pg carrera: N open_platform_session concurrentes con la misma asercion abren exactamente una sesion", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
-  const verifier = await ctx.connectAs("integrity_verifier");
+  const verifier = await connect(ctx, "integrity_verifier");
   const clients: Client[] = [];
-  for (let i = 0; i < 5; i++) clients.push(await ctx.connectAs("platform_rw"));
+  const pool: Client[] = [await connect(ctx, "platform_rw")];
+  pool.push(await ctx.connectAs("platform_rw"));
+  clients.push(...pool);
   const A = P("1556-a");
   const subA = await seedOperator(admin, A, "PLATFORM");
   const f = (await loginFlow({ platform: clients[0]!, verifier }, "LOGIN_PLATFORM", subA))!;
@@ -396,4 +425,79 @@ pgTest("TEST-CNS-1556 pg carrera: N open_platform_session concurrentes con la mi
   assert.equal(results.filter((r) => r !== null).length, 1, "exactamente una sesion de 5 concurrentes");
   assert.equal((await admin.query("SELECT 1 FROM platform.platform_session WHERE principal_ref = $1", [A])).rowCount, 1);
   assert.equal((await events(admin, A)).filter((e) => e.startsWith("PLATFORM_LOGIN")).length, 1);
+
+  await Promise.all(pool.slice(1).map((c) => c.end()));
+});
+
+const ISSUER = "https://idp.synthetic.invalid";
+const AUDIENCE = "consent-app-synthetic";
+const K_SUB = randomBytes(32);
+const config: VerifierConfig = { issuer: ISSUER, audience: AUDIENCE, allowedAlgs: ["EdDSA"], maxAuthAgeSeconds: 300, environment: "LOCAL", subHmacKey: K_SUB };
+const LIFE = { absoluteSeconds: 3600, idleSeconds: 600 };
+
+pgTest("TEST-CNS-1560 pg e2e: login PLATFORM -> sesion PLATFORM -> login CASE con esa sesion -> sesion CASE (grant) -> logout en cascada; sin sid ni state en claro", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const platformPool = createPool({ connectionString: ctx.urlFor("platform_rw"), max: 1 });
+  const verifierPool = createPool({ connectionString: ctx.urlFor("integrity_verifier"), max: 1 });
+  try {
+    const A = fixtureUuid("pr6c-e2e-a");
+    const SUB = "sub-synthetic-pr6c-a";
+    const CASE = fixtureUuid("pr6c-e2e-case");
+    await admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref) VALUES ($1, 'RIGHTS_OPERATOR', 'PENDING', $2)", [A, fixtureUuid("pr6c-e2e-req")]);
+    await admin.query("UPDATE platform.platform_role_assignment SET status = 'ACTIVE', approved_by_ref = $2, approved_at = now() WHERE principal_ref = $1", [A, fixtureUuid("pr6c-e2e-apr")]);
+    await admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [A, computeSubHmac(K_SUB, ISSUER, SUB)]);
+    await admin.query("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')", [fixtureUuid("pr6c-e2e-tenant"), CASE, A]);
+    const idp = new SyntheticIdpAdapter({ environment: "LOCAL", issuer: ISSUER, audience: AUDIENCE });
+    const authz = createPgOidcAuthorization(platformPool);
+    const store = createPgOidcExchangeStore(verifierPool);
+    const sessions = createPgPlatformSessionStore(platformPool);
+
+    const login = async (input: { kind: "LOGIN_PLATFORM" | "LOGIN_CASE"; sessionSid?: string; targetRefHash?: string }): Promise<{ ref: string; state: string }> => {
+      const state = randomBytes(24).toString("base64url");
+      const nonce = randomBytes(24).toString("base64url");
+      const { code, pkceVerifier } = idp.simulateAuthorization({ sub: SUB, nonce, acr: "urn:synthetic:mfa", amr: ["pwd", "otp"], email: "persona@example.invalid" });
+      const ref = await authz.begin({ ...input, state, bindingHex: nonceBinding(nonce), pkceVerifier, ttlSeconds: 300, maxAwaiting: null });
+      assert.equal(await authz.complete({ state, code }), ref);
+      assert.equal(await runVerifierCycle({ store, idp, config }), "ATTESTED");
+      return { ref, state };
+    };
+
+    const f1 = await login({ kind: "LOGIN_PLATFORM" });
+    // El state ajeno no abre; el correcto abre y la sesion valida con el principal que resolvio la base.
+    assert.equal(await sessions.openPlatformSession({ exchangeRef: f1.ref, state: randomBytes(24).toString("base64url"), lifetime: LIFE }), null);
+    const platformSid = (await sessions.openPlatformSession({ exchangeRef: f1.ref, state: f1.state, lifetime: LIFE }))!;
+    assert.match(platformSid, /^[0-9a-f]{64}$/);
+    assert.equal(await sessions.openPlatformSession({ exchangeRef: f1.ref, state: f1.state, lifetime: LIFE }), null, "un solo uso");
+    const v = (await sessions.validate({ sid: platformSid, kind: "PLATFORM" }))!;
+    assert.deepEqual({ k: v.kind, p: v.principalRef, c: v.caseRef }, { k: "PLATFORM", p: A, c: null });
+    assert.equal(await sessions.validate({ sid: platformSid, kind: "CASE" }), null);
+
+    // LOGIN_CASE: la base valida la sesion (sid); el principal NO se declara.
+    await assert.rejects(authz.begin({ kind: "LOGIN_CASE", principalRef: A, state: "x".repeat(32), bindingHex: nonceBinding("n"), pkceVerifier: "p".repeat(64), targetRefHash: createHash("sha256").update(CASE).digest("hex"), ttlSeconds: 300, maxAwaiting: null }));
+    await assert.rejects(authz.begin({ kind: "LOGIN_CASE", sessionSid: "a".repeat(64), state: randomBytes(24).toString("base64url"), bindingHex: nonceBinding("n2"), pkceVerifier: "p".repeat(64), targetRefHash: createHash("sha256").update(CASE).digest("hex"), ttlSeconds: 300, maxAwaiting: null }), "sid ajeno");
+    const target = createHash("sha256").update(CASE).digest("hex");
+    const f2 = await login({ kind: "LOGIN_CASE", sessionSid: platformSid, targetRefHash: target });
+    assert.equal(await sessions.openCaseSession({ exchangeRef: f2.ref, state: f2.state, caseRef: fixtureUuid("pr6c-e2e-otro-caso"), platformSid, lifetime: LIFE }), null, "la asercion no sirve para otro caso");
+    const caseSid = (await sessions.openCaseSession({ exchangeRef: f2.ref, state: f2.state, caseRef: CASE, platformSid, lifetime: LIFE }))!;
+    assert.match(caseSid, /^[0-9a-f]{64}$/);
+    const vc = (await sessions.validate({ sid: caseSid, kind: "CASE" }))!;
+    assert.deepEqual({ k: vc.kind, p: vc.principalRef, c: vc.caseRef }, { k: "CASE", p: A, c: CASE });
+
+    // Logout PLATFORM: cae tambien la sesion CASE.
+    assert.equal(await sessions.revoke({ sid: platformSid, kind: "PLATFORM" }), true);
+    assert.equal(await sessions.validate({ sid: platformSid, kind: "PLATFORM" }), null);
+    assert.equal(await sessions.validate({ sid: caseSid, kind: "CASE" }), null);
+    assert.equal(await sessions.revoke({ sid: platformSid, kind: "PLATFORM" }), false);
+
+    // Cero secretos/PII en claro.
+    for (const t of ["platform_session", "session_event", "login_assertion", "oidc_exchange"]) {
+      for (const needle of [platformSid, caseSid, f1.state, f2.state, SUB, "example.invalid", CASE.replace(/-/g, "").slice(0, 0) + "persona@"]) {
+        assert.equal((await admin.query(`SELECT 1 FROM platform.${t} x WHERE strpos(x::text, $1) > 0`, [needle])).rowCount, 0, `${t} contiene ${needle.slice(0, 8)}`);
+      }
+    }
+    assert.equal((await admin.query("SELECT 1 FROM platform.oidc_exchange x WHERE strpos(x::text, $1) > 0", [CASE])).rowCount, 0, "el case_ref en claro no esta en oidc_exchange (solo su hash)");
+  } finally {
+    await platformPool.end();
+    await verifierPool.end();
+  }
 });
