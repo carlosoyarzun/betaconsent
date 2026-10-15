@@ -39,7 +39,7 @@ info:
     - "Canje del code, ATTESTED/REJECTED, checkpoints y alertas de break-glass: proceso verifier, sin HTTP."
     - "Bootstrap y re-bootstrap de principals PLATFORM (Q10): LOCAL = fixture sintetico (db/fixtures/local/0002_platform_bootstrap.sql, decision de Carlos 2026-10-11 (3)); STAGING y datos reales = ceremonia de break-glass de PR-7, no implementada."
     - "Vinculo principal_ref <-> sub_hmac (platform.principal_identity): sin operacion HTTP; fuera de LOCAL queda pendiente (OI-DBR-09 de specs/db-roles.spec.yaml)."
-    - "platform.record_assertion, claim_oidc_exchange y purge_expired_oidc_exchange: las ejecutan el verifier y el worker; platform solo encola con platform.enqueue_oidc_exchange (sin SELECT sobre la cola)."
+    - "platform.record_assertion, platform.record_login_assertion, claim_oidc_exchange y purge_expired_oidc_exchange: las ejecutan el verifier y el worker; platform solo inicia y completa con platform.begin_oidc_authorization / complete_oidc_callback (sin SELECT sobre la cola; enqueue_oidc_exchange se retiro en 0051)."
     - "Funciones SYSTEM (R4-R7, R9+RC1, RC2+RV0): las ejecuta worker."
     - "R8h y RC1c: deshabilitadas (LEGAL DECISION LD-03/LD-04)."
   x-stays-in-it0: "/i/, /m/, /r/, /invitation/open, /otp/*, /decision/*, /manage/revocation*, /manage/recovery-link, /recovery/revoke, /rights-case/*, y toda la consola STAFF (/staff/*; staffSession, RLS por tenant). Solicitud de membership de un TENANT_ADMIN: ruta nueva POST /staff/membership-requests en consent-it0 (fuera de este PR); la aprobacion es siempre la operacion approveMembership."
@@ -54,12 +54,19 @@ paths:
       operationId: platformAuthLogin
       x-api-id: API-CNS-TBD-P01
       tags: [platform]
-      summary: "platformAuthLogin - Query kind={CASE|PLATFORM}. 302 al IdP (code + PKCE, scope openid)."
+      summary: "platformAuthLogin - Query kind={CASE|PLATFORM} (+ caseRef si kind=CASE). 302 al IdP (code + PKCE S256, scope openid, max_age=0 y prompt=login: reautenticacion obligatoria, G-5) y cookie `state` (SameSite=Lax)."
+      description: |
+        ADR-010 rev. 5 §5.2 (PR-6b). Sin sesion previa (kind=PLATFORM): el principal NO existe todavia; la base lo resuelve por sub_hmac en el callback.
+        kind=CASE exige sesion PLATFORM vigente y `caseRef` destino (se envia solo su sha256 como target_ref_hash; F-PR6-27, G-7). kind=CASE se entrega en PR-6c.
+        Limite P-49 (por IP truncada, en memoria, sin persistir) y tope global P-53. Excedidos: 404 uniforme.
       x-roles: "none"
       x-step-up: "LOGIN_<kind>"
       x-db-role: "platform_rw"
-      x-db-function: "platform.issue_action_nonce"
-      x-delivery: "PR-4"
+      x-db-function: "platform.begin_oidc_authorization"
+      x-delivery: "PR-6b (kind=PLATFORM); PR-6c (kind=CASE)"
+      parameters:
+        - {name: kind, in: query, required: true, schema: {type: string, enum: [PLATFORM, CASE]}}
+        - {name: caseRef, in: query, required: false, description: "Solo kind=CASE (PR-6c): case_ref destino; la base guarda sha256(caseRef) como target_ref_hash.", schema: {type: string, format: uuid}}
       responses:
         '200':
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
@@ -70,34 +77,40 @@ paths:
       operationId: platformAuthCallback
       x-api-id: API-CNS-TBD-P02
       tags: [platform]
-      summary: "platformAuthCallback - Solo INSERT; 303 a una ruta sin code."
+      summary: "platformAuthCallback - Compara la cookie `state` con el query en tiempo constante; platform.complete_oidc_callback (AWAITING_CALLBACK a PENDING); 303 a una ruta sin code ni ref y Referrer-Policy no-referrer."
+      description: |
+        G-8 (Carlos, 2026-10-15): el `exchangeRef` NUNCA va en la URL. Se entrega solo en la cookie `__Host-` (HttpOnly, Secure, SameSite=Strict) `oidcExchange`. No se acepta en cuerpo, headers ni parametros.
+        Si `state` falta, es ajeno, esta reusado o vencido: no se encola nada y se responde 404 uniforme (cuenta para P-49).
       x-session: oidcState
       x-roles: "none"
       x-step-up: "none"
       x-db-role: "platform_rw"
-      x-db-function: "platform.enqueue_oidc_exchange"
-      x-delivery: "PR-4"
+      x-db-function: "platform.complete_oidc_callback"
+      x-delivery: "PR-6b"
+      parameters:
+        - {name: code, in: query, required: true, schema: {type: string}}
+        - {name: state, in: query, required: true, schema: {type: string}}
       security: [{oidcState: []}]
       responses:
         '200':
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
-  /platform/auth/exchanges/{exchangeRef}:
+  /platform/auth/exchange:
     get:
       operationId: platformAuthExchangeStatus
       x-api-id: API-CNS-TBD-P03
       tags: [platform]
-      summary: "platformAuthExchangeStatus"
+      summary: "platformAuthExchangeStatus - Estado de la solicitud (AWAITING_CALLBACK/PENDING/ATTESTED/REJECTED), sin code ni claims. Sin parametros: el exchangeRef sale SOLO de la cookie `oidcExchange` (G-8)."
+      description: |
+        Cambio de contrato (G-8): antes `/platform/auth/exchanges/{exchangeRef}`. Ahora la ruta no lleva la ref en la URL; se exigen ambas cookies (`oidcState` y `oidcExchange`) y la base verifica sha256(state) = state_hash.
       x-session: oidcState
       x-roles: "none"
       x-step-up: "none"
       x-db-role: "platform_rw"
-      x-db-function: "(lectura de estado PENDING/ATTESTED/REJECTED, sin code ni claims)"
-      x-delivery: "PR-4"
-      security: [{oidcState: []}]
-      parameters:
-        - {name: exchangeRef, in: path, required: true, schema: {type: string, format: uuid}}
+      x-db-function: "platform.exchange_status"
+      x-delivery: "PR-6b"
+      security: [{oidcState: [], oidcExchange: []}]
       responses:
         '200':
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
@@ -510,4 +523,9 @@ components:
       type: apiKey
       in: cookie
       name: __Host-cns-oidc
-      description: Nuevo. Estado PKCE con vida de minutos. Nombre de cookie ilustrativo (P-26).
+      description: Nuevo. `state` del flujo OIDC con vida de minutos (HttpOnly, Secure, SameSite=Lax: necesario para el retorno top-level desde el IdP). Nombre de cookie ilustrativo (P-26).
+    oidcExchange:
+      type: apiKey
+      in: cookie
+      name: __Host-cns-oidc-ex
+      description: G-8. Unico portador del exchangeRef (HttpOnly, Secure, SameSite=Strict). Nunca en URL, cuerpo ni headers. Nombre de cookie ilustrativo (P-26).
