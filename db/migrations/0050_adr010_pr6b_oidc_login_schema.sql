@@ -288,9 +288,12 @@ BEGIN
     RAISE EXCEPTION 'triggers de login_assertion/session_event: no son exactamente los cuatro ENABLE ALWAYS';
   END IF;
   -- Policies: solo grant_owner.
-  IF (SELECT pg_catalog.string_agg(c.relname::pg_catalog.text || '/' || p.polname::pg_catalog.text || ':' || p.polcmd::pg_catalog.text || ':' || pg_catalog.pg_get_userbyid(p.polroles[1])::pg_catalog.text, ' ' ORDER BY c.relname::pg_catalog.text COLLATE "C", p.polname::pg_catalog.text COLLATE "C")
+  -- Incluye TODAS las policies de las dos tablas, tambien las de varios roles o de PUBLIC (polroles = {0}): el texto lista cada rol y una policy ajena rompe la igualdad.
+  IF (SELECT pg_catalog.string_agg(c.relname::pg_catalog.text || '/' || p.polname::pg_catalog.text || ':' || p.polcmd::pg_catalog.text || ':'
+                                   || (SELECT pg_catalog.string_agg(CASE WHEN r.oid = 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(r.oid)::pg_catalog.text END, ',' ORDER BY r.oid)
+                                         FROM pg_catalog.unnest(p.polroles) AS r(oid)), ' ' ORDER BY c.relname::pg_catalog.text COLLATE "C", p.polname::pg_catalog.text COLLATE "C")
         FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace s ON s.oid = c.relnamespace
-       WHERE s.nspname = 'platform' AND c.relname IN ('login_assertion', 'session_event') AND pg_catalog.array_length(p.polroles, 1) = 1)
+       WHERE s.nspname = 'platform' AND c.relname IN ('login_assertion', 'session_event'))
      IS DISTINCT FROM 'login_assertion/login_assertion_owner_insert:a:grant_owner login_assertion/login_assertion_owner_select:r:grant_owner login_assertion/login_assertion_owner_update:w:grant_owner session_event/session_event_owner_insert:a:grant_owner session_event/session_event_owner_select:r:grant_owner' THEN
     RAISE EXCEPTION 'policies de login_assertion/session_event no son exactamente las esperadas (solo grant_owner)';
   END IF;

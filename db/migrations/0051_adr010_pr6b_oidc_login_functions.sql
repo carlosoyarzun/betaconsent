@@ -74,8 +74,13 @@ BEGIN
       IF v_principal IS NULL OR v_principal !~ c_principal THEN v_reason := 'NO_PRINCIPAL'; EXIT decide; END IF;
       IF NOT EXISTS (SELECT 1 FROM platform.platform_role_assignment a WHERE a.principal_ref = v_principal AND a.status = 'ACTIVE') THEN v_reason := 'NO_ROLE'; EXIT decide; END IF;
     END IF;
-    -- P-53: tope global de filas AWAITING_CALLBACK vigentes (sin valor aprobado: NULL = sin tope solo en LOCAL, lo impone el startup-check de platform).
-    IF p_max_awaiting IS NOT NULL
+    -- P-53: tope global de filas AWAITING_CALLBACK vigentes SOLO para LOGIN_PLATFORM (el unico inicio sin sesion; LOGIN_CASE y STEP_UP exigen principal con rol y no deben quedar bloqueados por un
+    -- flood anonimo). Sin valor aprobado: NULL = sin tope solo en LOCAL, lo impone el startup-check de platform. Lock global transaccional ANTES de contar: dos inicios concurrentes no pueden pasar
+    -- ambos por el ultimo cupo (la fila se inserta en esta misma transaccion, con el lock tomado).
+    IF p_kind = 'LOGIN_PLATFORM' AND p_max_awaiting IS NOT NULL THEN
+      PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('platform.p53.awaiting', 0));
+    END IF;
+    IF p_kind = 'LOGIN_PLATFORM' AND p_max_awaiting IS NOT NULL
        AND (SELECT pg_catalog.count(*) FROM platform.oidc_exchange e WHERE e.status = 'AWAITING_CALLBACK' AND e.expires_at > pg_catalog.now()) >= p_max_awaiting THEN
       v_reason := 'AWAITING_CAP'; v_limit := 'P-53'; EXIT decide;
     END IF;
@@ -91,6 +96,8 @@ BEGIN
       IF p_p51_max IS NULL OR p_p51_max < 1 OR p_p51_max > 1000 OR p_p51_window_seconds IS NULL OR p_p51_window_seconds < 60 OR p_p51_window_seconds > 86400 THEN
         v_reason := 'INVALID_INPUT'; EXIT decide;
       END IF;
+      -- Lock por principal ANTES de contar (carrera: N inicios concurrentes del mismo operador no pueden superar P-51).
+      PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('platform.p51.' || v_principal, 0));
       IF (SELECT pg_catalog.count(*) FROM platform.session_event s
            WHERE s.event_type = 'STEP_UP_BEGIN' AND s.principal_ref = v_principal AND s.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p51_window_seconds)) >= p_p51_max THEN
         v_reason := 'RATE_LIMITED'; v_limit := 'P-51'; v_window := p_p51_window_seconds; EXIT decide;
@@ -108,8 +115,13 @@ BEGIN
 
   IF v_valid_kind AND v_reason IS NOT NULL AND v_reason <> 'CALLER_ROLE' THEN
     IF v_limit IS NOT NULL THEN
-      INSERT INTO platform.session_event (event_type, kind, principal_ref, limit_kind, window_seconds)
-      VALUES ('LIMIT_EXCEEDED', p_kind, CASE WHEN v_principal ~ c_principal THEN v_principal END, v_limit, v_window);
+      -- UN solo evento de limite por (limite, principal) y ventana (no uno por rechazo: un flood no puede inflar session_event). P-53 no tiene ventana: se usa 900 s.
+      IF NOT EXISTS (SELECT 1 FROM platform.session_event e
+                      WHERE e.event_type = 'LIMIT_EXCEEDED' AND e.limit_kind = v_limit AND e.principal_ref IS NOT DISTINCT FROM (CASE WHEN v_principal ~ c_principal THEN v_principal END)
+                        AND e.at > pg_catalog.now() - pg_catalog.make_interval(secs => COALESCE(v_window, 900))) THEN
+        INSERT INTO platform.session_event (event_type, kind, principal_ref, limit_kind, window_seconds)
+        VALUES ('LIMIT_EXCEEDED', p_kind, CASE WHEN v_principal ~ c_principal THEN v_principal END, v_limit, v_window);
+      END IF;
     ELSIF p_kind <> 'STEP_UP' THEN
       INSERT INTO platform.session_event (event_type, reason_code, kind, principal_ref)
       VALUES ('LOGIN_REJECTED', v_reason, p_kind, CASE WHEN v_principal ~ c_principal THEN v_principal END);
@@ -294,7 +306,14 @@ BEGIN
       AND (p_decision = 'REJECTED' OR (p_sub_hmac IS NOT NULL AND p_key_version BETWEEN 1 AND 1000 AND p_assertion_hash IS NOT NULL AND p_auth_time IS NOT NULL))
       AND (p_decision = 'ATTESTED' OR p_reason IN ('INVALID_CLAIMS', 'EXCHANGE_FAILED')), false);
     IF NOT v_input_ok THEN v_reason := 'INVALID_CLAIMS'; EXIT decide; END IF;
-    IF p_decision = 'REJECTED' THEN v_reason := p_reason; EXIT decide; END IF;
+    IF p_decision = 'REJECTED' THEN
+      v_reason := p_reason;
+      -- F-PR6-33: un fallo con firma VALIDA (acr/auth_time invalidos) puede traer el sub_hmac, solo para resolver el principal y contar P-48. El sub_hmac NO se persiste (la fila guarda el principal, no el hmac).
+      IF p_sub_hmac IS NOT NULL AND p_key_version BETWEEN 1 AND 1000 THEN
+        SELECT i.principal_ref INTO v_principal FROM platform.principal_identity i WHERE i.key_version = p_key_version AND i.sub_hmac = p_sub_hmac;
+      END IF;
+      EXIT decide;
+    END IF;
 
     -- Fail-closed (G-6/G-7): P-48 y P-52 vienen por configuracion; NULL o fuera de rango => rechazo. P-52 no puede superar los 5 min aprobados.
     IF p_p52_seconds IS NULL OR p_p52_seconds < 1 OR p_p52_seconds > 300
@@ -307,7 +326,7 @@ BEGIN
     IF v_principal IS NULL THEN v_reason := 'NO_MAPPING'; EXIT decide; END IF;
     -- P-48: solo los intentos FALLIDOS del principal resuelto en la ventana (los ATTESTED legitimos no cuentan: con prompt=login en cada sesion bloquearian al operador).
     IF (SELECT pg_catalog.count(*) FROM platform.login_assertion a
-         WHERE a.principal_ref = v_principal AND a.decision = 'REJECTED' AND a.reason_code IN ('ROLE_INACTIVE', 'AUTH_TIME_INVALID', 'PRINCIPAL_MISMATCH')
+         WHERE a.principal_ref = v_principal AND a.decision = 'REJECTED' AND a.reason_code IN ('ROLE_INACTIVE', 'AUTH_TIME_INVALID', 'PRINCIPAL_MISMATCH', 'INVALID_CLAIMS')
            AND a.recorded_at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p48_window_seconds)) >= p_p48_max THEN
       v_reason := 'RATE_LIMITED'; EXIT decide;
     END IF;
@@ -337,8 +356,12 @@ BEGIN
     IF v_decision = 'REJECTED' THEN
       -- Evento sin sub_hmac ni IP (P2(f), F-PR6-31). El principal solo si la base lo resolvio.
       IF v_reason = 'RATE_LIMITED' THEN
-        INSERT INTO platform.session_event (event_type, kind, principal_ref, limit_kind, window_seconds)
-        VALUES ('LIMIT_EXCEEDED', v_ex.kind, v_principal, 'P-48', p_p48_window_seconds);
+        IF NOT EXISTS (SELECT 1 FROM platform.session_event e
+                        WHERE e.event_type = 'LIMIT_EXCEEDED' AND e.limit_kind = 'P-48' AND e.principal_ref = v_principal
+                          AND e.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p48_window_seconds)) THEN
+          INSERT INTO platform.session_event (event_type, kind, principal_ref, limit_kind, window_seconds)
+          VALUES ('LIMIT_EXCEEDED', v_ex.kind, v_principal, 'P-48', p_p48_window_seconds);
+        END IF;
       ELSIF v_reason = 'PRINCIPAL_MISMATCH' THEN
         INSERT INTO platform.session_event (event_type, reason_code, kind, principal_ref, peer_principal_ref)
         VALUES ('LOGIN_PRINCIPAL_MISMATCH', v_reason, v_ex.kind, v_principal, v_ex.principal_ref);
@@ -400,7 +423,11 @@ BEGIN
   IF p_limit_kind IS NULL OR p_limit_kind NOT IN ('P-49', 'P-50') OR p_window_seconds IS NULL OR p_window_seconds < 1 OR p_window_seconds > 86400 THEN RETURN; END IF;
   IF v_principal IS NOT NULL AND v_principal !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN RETURN; END IF;
   -- Sin IP (ni completa ni truncada): el origen de un intento anonimo no es necesariamente del equipo (F-PR6-31, LEGAL DECISION si se quisiera persistir).
-  INSERT INTO platform.session_event (event_type, principal_ref, limit_kind, window_seconds) VALUES ('LIMIT_EXCEEDED', v_principal, p_limit_kind, p_window_seconds);
+  IF NOT EXISTS (SELECT 1 FROM platform.session_event e
+                  WHERE e.event_type = 'LIMIT_EXCEEDED' AND e.limit_kind = p_limit_kind AND e.principal_ref IS NOT DISTINCT FROM v_principal
+                    AND e.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_window_seconds)) THEN
+    INSERT INTO platform.session_event (event_type, principal_ref, limit_kind, window_seconds) VALUES ('LIMIT_EXCEEDED', v_principal, p_limit_kind, p_window_seconds);
+  END IF;
 END
 $$;
 

@@ -150,7 +150,15 @@ export async function runVerifierCycle(deps: VerifierDeps): Promise<VerifierCycl
     if (error instanceof VerifierConfigError) throw error; // despliegue roto: se aborta, no se "rechaza" al titular
     // Cualquier fallo del canje o de la verificacion cierra la solicitud como REJECTED (sin detalle). Si ni eso se puede registrar, la solicitud vence por TTL.
     if (claimed.kind !== "STEP_UP") {
-      await store.recordLoginAssertion({ decision: "REJECTED", exchangeRef: claimed.exchangeRef, reason: rejectionFor(error) === "INVALID_CLAIMS" ? "INVALID_CLAIMS" : "EXCHANGE_FAILED" });
+      const identity = error instanceof IdTokenRejected && error.verifiedSub !== undefined
+        ? { subHmac: computeSubHmac(config.subHmacKey, config.issuer, error.verifiedSub), keyVersion: config.subKeyVersion ?? 1 }
+        : undefined;
+      await store.recordLoginAssertion({
+        decision: "REJECTED",
+        exchangeRef: claimed.exchangeRef,
+        reason: rejectionFor(error) === "INVALID_CLAIMS" ? "INVALID_CLAIMS" : "EXCHANGE_FAILED",
+        ...(identity === undefined ? {} : { identity }),
+      });
     } else {
       await store.recordAssertion({ decision: "REJECTED", exchangeRef: claimed.exchangeRef, reason: rejectionFor(error) });
     }

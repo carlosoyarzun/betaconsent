@@ -96,7 +96,13 @@ export type LoginAssertionRecord =
       amr: readonly string[] | null;
       limits: LoginLimits;
     }
-  | { decision: "REJECTED"; exchangeRef: string; reason: LoginRejectionReason };
+  | {
+      decision: "REJECTED";
+      exchangeRef: string;
+      reason: LoginRejectionReason;
+      /** F-PR6-33: solo en fallos con firma valida (acr/auth_time): la base resuelve el principal para contar P-48 y NO persiste el sub_hmac. */
+      identity?: { subHmac: string; keyVersion: number };
+    };
 
 export interface OidcExchangeStorePort {
   /** Toma una solicitud PENDING vigente (lease en la base) o null. */
