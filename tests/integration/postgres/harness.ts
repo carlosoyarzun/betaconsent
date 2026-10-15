@@ -116,6 +116,16 @@ export function pgTestRaw(name: string, fn: (ctx: PgTestContext) => Promise<void
   });
 }
 
+/** Revierte `enableLedgerMechanicsAppend` (DROP POLICY + REVOKE INSERT de app_rw): para tests que lo activan y comparten base con tests que afirman "app_rw no inserta". Solo tests. */
+export async function disableLedgerMechanicsAppend(ctx: PgTestContext): Promise<void> {
+  const admin = await ctx.fixtureAdmin();
+  await admin.query("DROP POLICY IF EXISTS test_mechanics_app_rw_insert ON integrity.audit_event");
+  await admin.query(
+    `REVOKE INSERT (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
+                    chain_seq, payload_hash, previous_event_hash, event_hash, occurred_at, environment) ON integrity.audit_event FROM app_rw`,
+  );
+}
+
 let seedRawDepth = 0;
 
 export async function seedRaw<T>(admin: Client, work: () => Promise<T>): Promise<T> {

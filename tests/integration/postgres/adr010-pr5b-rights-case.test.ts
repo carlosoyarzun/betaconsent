@@ -14,7 +14,7 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
 import { closeCase } from "../../../src/server/modules/rights-case/rights-case.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
-import { enableLedgerMechanicsAppend, pgTest, seedFixture } from "./harness.ts";
+import { disableLedgerMechanicsAppend, enableLedgerMechanicsAppend, pgTest, seedFixture } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
@@ -408,6 +408,7 @@ pgTest("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation de
 
 pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit; INSERT de mecanica del harness) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
   const T = fixtureUuid("t1391");
+  try {
   await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: app_rw ya no inserta en produccion; este test ejercita el trigger/lock del ledger
   const admin = await ctx.connectAsSuperuser();
   const D = fixtureUuid("d1391");
@@ -470,5 +471,8 @@ pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggr
     assert.equal(await pending, "RV409");
     await rc.query("ROLLBACK");
     assert.deepEqual(await types(X), ["Invitation"]);
+  }
+  } finally {
+    await disableLedgerMechanicsAppend(ctx); // el grant/policy de mecanica no persiste en la base del archivo (1384/1387 afirman que app_rw no inserta)
   }
 });
