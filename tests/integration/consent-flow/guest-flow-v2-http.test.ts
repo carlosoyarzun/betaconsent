@@ -198,6 +198,25 @@ test("TEST-CNS-1401: GET /decision no preselecciona nada (chips, casilla ni sele
   }
 });
 
+test("TEST-CNS-1451: la casilla de autoridad de /decision tiene como nombre accesible el texto de la declaracion (label for/id y aria-labelledby al mismo texto), no 'on' (UX-CNS-003, accesibilidad)", async () => {
+  const subjectRef = fixtureUuid("subject-1451");
+  const h = await startServer(subjectRef);
+  try {
+    const { session } = await bringToVerified(h, fixtureUuid("inv-1451"), subjectRef);
+    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
+    const input = html.match(/<input[^>]*id="authority-declared"[^>]*>/)?.[0] ?? "";
+    assert.match(input, /type="checkbox"/);
+    assert.doesNotMatch(input, /\bvalue=/, "sin value: el arbol de accesibilidad no debe caer en 'on'");
+    assert.match(input, /aria-labelledby="authority-declared-label"/);
+    assert.match(html, /<label[^>]*for="authority-declared"/);
+    const label = html.match(/<span id="authority-declared-label">([^<]*)<\/span>/)?.[1] ?? "";
+    assert.match(label, /Declaro que tengo la autoridad/);
+    assert.equal((html.match(/id="authority-declared-label"/g) ?? []).length, 1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("TEST-CNS-1402: las páginas del invitado (welcome, verify, decision, manage) no cargan recursos remotos, ni <style> ni style= inline, y app.css no importa nada remoto (D-01, F-STITCH-17)", async () => {
   const subjectRef = fixtureUuid("subject-1402");
   const h = await startServer(subjectRef);
