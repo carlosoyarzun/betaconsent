@@ -73,6 +73,8 @@ export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]
   platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event", "open_platform_session", "open_case_session", "validate_session", "revoke_session"],
   worker: ["purge_expired_oidc_exchange"],
   integrity_verifier: ["claim_oidc_exchange", "record_assertion", "record_login_assertion"],
+  // ADR-010 rev. 5 PR-6e (G-9, P2(e)): el reconciler solo lee (SELECT por columnas); sin EXECUTE en platform ni acceso a sus tablas.
+  integrity_reconciler: [],
 };
 
 const ALLOWED_ENVIRONMENTS = new Set(["LOCAL", "DEV", "STAGING"]);
