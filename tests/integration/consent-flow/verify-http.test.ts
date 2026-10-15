@@ -17,7 +17,7 @@ import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/cons
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
@@ -42,7 +42,7 @@ interface Harness {
 
 function startServer(): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -302,13 +302,13 @@ test("TEST-CNS-560: reenviar el código (POST /otp/resend) desde /verify reempla
   }
 });
 
-test("TEST-CNS-561: app.css fija min-height 44px (tap target) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", async () => {
+test("TEST-CNS-561: app.css fija min-height 48px (tap target, D-05 Carlos 2026-10-14) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", async () => {
   const harness = await startServer();
   try {
     const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
-    assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*44px/);
-    assert.match(css, /\.lp-verify-cta\s*\{[^}]*min-height:\s*44px/);
-    assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*44px/);
+    assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*48px/);
+    assert.match(css, /\.lp-verify-cta[^{]*\{[^}]*min-height:\s*48px/);
+    assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*52px/);
   } finally {
     await harness.close();
   }
@@ -333,12 +333,12 @@ test("TEST-CNS-563: verify.js limpia el error previo y anuncia feedback neutro e
   const harness = await startServer();
   try {
     const js = await (await fetch(`${harness.baseUrl}/assets/verify.js`)).text();
-    assert.match(js, /showResendFeedback\("Te enviamos un nuevo código\."\)/);
-    assert.match(js, /showResendFeedback\("Alcanzaste el límite de reenvíos disponible por ahora\."\)/);
+    assert.match(js, /showResendFeedback\("Te enviamos un nuevo código\.", "ok"\)/);
+    assert.match(js, /showResendFeedback\("Alcanzaste el límite de reenvíos disponible por ahora\.", "limit"\)/);
     // showResendFeedback llama hideStates() primero: limpia code-error/aria-invalid antes de
     // mostrar el mensaje nuevo (fix: la UI ya no dejaba visible "El código ingresado no es
     // correcto…" tras un reenvío exitoso).
-    assert.match(js, /function showResendFeedback\(message\) \{\s*hideStates\(\);/);
+    assert.match(js, /function showResendFeedback\(message, kind\) \{\s*hideStates\(\);/);
     assert.doesNotMatch(js, /\d+\s*(reenvíos|intentos)/i); // P-06 sin valor aprobado: sin cifra
   } finally {
     await harness.close();

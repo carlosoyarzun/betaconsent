@@ -15,11 +15,20 @@
 // revisión en navegador con dev.ts: no puede ir dentro de un comentario HTML `<!-- -->`, porque
 // el usuario nunca lo vería): no se redacta aquí (CLAUDE.md, copy legal de producción).
 
-const HEAD = `<meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tu consentimiento · Consent App</title>
-  <link rel="stylesheet" href="/assets/design-system/index.css">
-  <link rel="stylesheet" href="/assets/app.css">`;
+import { alertHead, GUEST_HELP_LINK, guestHead, guestHeader } from "./guest-layout.ts";
+
+const HEAD = guestHead("Tu consentimiento");
+
+/** Alertas de red/uniforme compartidas por las pantallas de gestión (UX-CNS-004, kit v2). */
+const NETWORK_ALERT = `<div role="alert" aria-live="polite" class="lp-alert-warning" id="error-network" hidden>
+      ${alertHead("warning", "No pudimos conectar.")}
+      <p>Revisa tu conexión e inténtalo nuevamente.</p>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="retry-btn">Reintentar</button>
+    </div>`;
+const UNIFORM_ALERT = `<div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
+      ${alertHead("error", "No pudimos continuar.")}
+      <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
+    </div>`;
 
 /** GET /manage sin sesión MANAGE verificada (33:2 manage/entrada). */
 export function renderManageEntryPage(): string {
@@ -28,23 +37,19 @@ export function renderManageEntryPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
     <h1 id="manage-h1">Tu consentimiento</h1>
-    <p>Antes de mostrarte cualquier información, necesitamos verificar tu identidad con un código.</p>
-    <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="start-verify-btn" aria-disabled="false" aria-busy="false">Verificar mi identidad</button>
-    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
+    <section class="lp-card lp-card-default">
+      <p>Antes de mostrarte cualquier información, necesitamos verificar tu identidad con un código.</p>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="start-verify-btn" aria-disabled="false" aria-busy="false">Verificar mi identidad</button>
+    </section>
+    ${GUEST_HELP_LINK}
 
-    <div role="alert" aria-live="polite" id="error-network" hidden>
-      <p>No pudimos conectar.</p>
-      <p>Revisa tu conexión e inténtalo nuevamente.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
-    </div>
+    ${NETWORK_ALERT}
 
-    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
-      <p>No pudimos continuar.</p>
-      <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
-    </div>
+    ${UNIFORM_ALERT}
   </main>
   <script src="/assets/manage.js" defer></script>
 </body>
@@ -59,28 +64,31 @@ export function renderManageStatusPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
     <h1 id="manage-h1">Tu consentimiento</h1>
     <section class="lp-card-default lp-manage-status" role="status" aria-live="polite">
-      <p>Colegio Ejemplo — Estudio Beta de LectorPro. Estado actual: consentimiento otorgado (GRANTED).</p>
-      <p>Finalidades otorgadas: Participar en el Estudio Beta, Grabación de audio, Análisis automatizado, Revisión humana.</p>
+      <p><span class="lp-badge lp-badge-success">Consentimiento otorgado</span></p>
+      <p>Colegio Ejemplo — Estudio Beta de LectorPro.</p>
+      <p>Finalidades otorgadas:</p>
+      <ul class="lp-purpose-list">
+        <li><span aria-hidden="true">✓ </span>Participar en el Estudio Beta</li>
+        <li><span aria-hidden="true">✓ </span>Grabación de audio</li>
+        <li><span aria-hidden="true">✓ </span>Análisis automatizado</li>
+        <li><span aria-hidden="true">✓ </span>Revisión humana</li>
+      </ul>
       <p>Puedes retirar tu consentimiento en cualquier momento.</p>
-      <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial), protocolo l.423]</p>
+      <p class="lp-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial), protocolo l.423]</p>
     </section>
-    <button type="button" class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="start-revocation-btn" aria-disabled="false" aria-busy="false">Retirar mi consentimiento</button>
-    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
-
-    <div role="alert" aria-live="polite" id="error-network" hidden>
-      <p>No pudimos conectar.</p>
-      <p>Revisa tu conexión e inténtalo nuevamente.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
+    <div class="lp-actions-stack">
+      <button type="button" class="lp-btn lp-btn-danger lp-cta lp-revocation-cta lp-verify-tap-target" id="start-revocation-btn" aria-disabled="false" aria-busy="false">Retirar mi consentimiento</button>
     </div>
+    ${GUEST_HELP_LINK}
 
-    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
-      <p>No pudimos continuar.</p>
-      <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
-    </div>
+    ${NETWORK_ALERT}
+
+    ${UNIFORM_ALERT}
   </main>
   <script src="/assets/manage.js" defer></script>
 </body>
@@ -99,16 +107,19 @@ export function renderManageRevokedPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
     <h1 id="manage-h1">Tu consentimiento</h1>
     <section class="lp-card-default lp-manage-status" role="status" aria-live="polite" id="manage-revoked">
       <p><strong>Tu consentimiento ya fue retirado.</strong></p>
       <p>No necesitas hacer nada más. Ya no hay una acción de retiro pendiente en este enlace.</p>
-      <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
+      <p class="lp-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
     </section>
-    <a href="mailto:ayuda@example.invalid" class="lp-btn lp-btn-primary lp-verify-tap-target" id="contact-support-btn">Contactar a soporte</a>
-    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
+    <div class="lp-actions-stack">
+      <a href="mailto:ayuda@example.invalid" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="contact-support-btn">Contactar a soporte</a>
+    </div>
+    ${GUEST_HELP_LINK}
   </main>
 </body>
 </html>
@@ -126,15 +137,18 @@ export function renderManageUniformErrorPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-manage-page" aria-labelledby="manage-h1">
     <h1 id="manage-h1">Gestiona tu consentimiento</h1>
     <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
-      <p>Este enlace ya no está disponible.</p>
+      ${alertHead("error", "Este enlace ya no está disponible.")}
       <p>Puede que ya no sea válido. Esto no significa que se haya perdido tu posibilidad de gestionar tu consentimiento.</p>
     </div>
-    <a href="mailto:ayuda@example.invalid" class="lp-btn lp-btn-primary lp-verify-tap-target" id="contact-support-btn">Contactar a soporte</a>
-    <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
+    <div class="lp-actions-stack">
+      <a href="mailto:ayuda@example.invalid" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="contact-support-btn">Contactar a soporte</a>
+    </div>
+    ${GUEST_HELP_LINK}
   </main>
 </body>
 </html>

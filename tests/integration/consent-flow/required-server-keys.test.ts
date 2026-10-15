@@ -10,7 +10,7 @@ import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../.
 import { encodeSession } from "../../../src/server/entrypoints/http/consent-session.ts";
 import { loadStaffRosterCursorSecret } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
 import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "../../../src/server/entrypoints/http/server-secrets.config.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const OTP = { codeLength: 6, maxAttempts: 3, ttlMs: 60_000 };
 const REL = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
@@ -23,7 +23,7 @@ function ports(otpSecret: Buffer = TEST_OTP_SECRET) {
 }
 // `over` admite claves ausentes/invalidas a proposito (el tipo ya las exige; aqui se prueba el runtime).
 function make(over: Record<string, unknown> = {}): Server {
-  return createConsentFlowHttpServer({
+  return createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports: ports(),
     environment: "LOCAL",
@@ -42,7 +42,7 @@ test("TEST-CNS-1249: sin sessionSecret, otpSecret o staffRosterCursorKey el serv
   assert.throws(() => createDefaultConsentFlowPorts(OTP, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, undefined as unknown as Buffer), (e: Error) => /otpSecret es obligatoria \(CNS_OTP_SECRET\)/.test(e.message));
   // Sin `ports`: el otpSecret faltante tambien aborta el arranque.
   assert.throws(
-    () => createConsentFlowHttpServer({ config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, chainRefKey: TEST_CHAIN_REF_KEY, decisionMakerRefKey: TEST_DECISION_MAKER_REF_KEY, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY } as never),
+    () => createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, chainRefKey: TEST_CHAIN_REF_KEY, decisionMakerRefKey: TEST_DECISION_MAKER_REF_KEY, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY } as never),
     (e: Error) => /otpSecret es obligatoria/.test(e.message) && !leaks(e, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY),
   );
   // Material demasiado corto: tambien aborta, sin volcarlo.

@@ -41,7 +41,7 @@ import { SCAN_ORIGIN, assertNonVacuous, describeStats, newCorpus, runAllFlows, s
 import type { ScanEnv } from "../consent-flow/pii-scan-driver.ts";
 import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import { pgTest } from "./harness.ts";
-import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const T = LOCAL_ONLY_DEV_TENANT_ID;
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
@@ -72,7 +72,7 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
   const { ports, revocationPorts, staffConsole, caseSessions } = bundle;
-  const server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: SCAN_ORIGIN },
     ports,
     revocationPorts,

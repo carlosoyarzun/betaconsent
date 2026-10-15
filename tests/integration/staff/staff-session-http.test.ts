@@ -33,7 +33,7 @@ import { loadInvitationIssuancePolicyConfig } from "../../../src/server/modules/
 import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-roster/roster-cursor.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff-session.test.localhost";
 const STAFF_COOKIE = "__Host-cns-staff";
@@ -85,7 +85,7 @@ async function start(opts: { environment?: "LOCAL" | "DEV"; subjectCount?: numbe
   }
   const directory = createInMemorySubjectDirectory("LOCAL", subjects.map((s) => ({ tenantId: TENANT_A, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })));
   const clock = { now: Date.now() };
-  const server: Server = createConsentFlowHttpServer({
+  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports,
     sessionSecret: SECRET,

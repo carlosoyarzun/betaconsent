@@ -20,7 +20,7 @@ import { deriveStaffSessionKey, issueStaffSession, staffCsrfTokenFor } from "../
 import { parseYaml, type YamlValue } from "../../../tools/spec-checks/yaml-lite.ts";
 import { validateCommon } from "../schema-lite.ts";
 import { fixtureUuid } from "../uuid-fixture.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 type Rec = Record<string, YamlValue>;
@@ -44,7 +44,7 @@ async function start(): Promise<{ baseUrl: string; staffSessions: ReturnType<typ
   const staffSessions = createInMemoryStaffSessionStore();
   const caseSessions = createInMemoryCaseSessionStore();
   const staffConsole = { sessions: staffSessions } as unknown as NonNullable<NonNullable<Parameters<typeof createConsentFlowHttpServer>[0]>["staffConsole"]>;
-  const server: Server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN }, ports, revocationPorts, sessionSecret: SECRET, environment: "LOCAL", staffIdentity, staffConsole, caseSessions,
   });
   const baseUrl = await new Promise<string>((r) => server.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));

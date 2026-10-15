@@ -22,7 +22,7 @@ import type { RevocationFlowPorts } from "../../../src/server/entrypoints/http/r
 import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
@@ -130,7 +130,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     revokedDecisionRef: consentId,
   });
 
-  const server = createConsentFlowHttpServer({ sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   const baseUrl = await new Promise<string>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -378,7 +378,7 @@ test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma 
 
     const manageEntry = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     const entryHtml = await manageEntry.text();
-    assert.match(entryHtml, /id="start-verify-btn"[^<]*<\/button>\s*<p><a href="mailto:ayuda@example\.invalid"/);
+    assert.match(entryHtml, /id="start-verify-btn"[^<]*<\/button>\s*<\/section>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
 
     const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
     sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
@@ -389,14 +389,14 @@ test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma 
 
     const manageStatus = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     const statusHtml = await manageStatus.text();
-    assert.match(statusHtml, /id="start-revocation-btn"[^<]*<\/button>\s*<p><a href="mailto:ayuda@example\.invalid"/);
+    assert.match(statusHtml, /id="start-revocation-btn"[^<]*<\/button>\s*<\/div>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
 
     const confirmSessionCookie = await bringToRevocationConfirmSession(baseUrl, ports, "mgmt-token-588");
     const confirmPage = await fetch(`${baseUrl}/manage/revocation/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${confirmSessionCookie}` } });
     const confirmHtml = await confirmPage.text();
     // La ayuda faltaba por completo en confirmar-retiro; ahora está presente y apilada bajo
     // "Cancelar solicitud de retiro" (no en la misma línea que ningún botón).
-    assert.match(confirmHtml, /id="withdraw-btn"[^<]*<\/button>\s*<p><a href="mailto:ayuda@example\.invalid"/);
+    assert.match(confirmHtml, /id="withdraw-btn"[^<]*<\/button>\s*<\/div>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }

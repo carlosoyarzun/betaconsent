@@ -29,6 +29,7 @@ import { deriveDecisionMakerRef as deriveKeyedDecisionMakerRef, type DecisionMak
 import { DomainError } from "../../modules/common/errors.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import {
+  cancelInvitationSubjectMismatch,
   openInvitationByRef,
   resolveInvitationForRedeemByHash,
   type InvitationPorts,
@@ -44,7 +45,7 @@ import {
 import {
   recordDecisionStep,
   startDecision,
-  submitDecision,
+  submitDecisionIssuingLink,
   type ConsentDecisionPorts,
   type DecisionStepInput,
 } from "../../modules/consent-decision/consent-decision.ts";
@@ -61,8 +62,30 @@ import {
   type LinkHandleType,
 } from "./link-handle.ts";
 import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
+import type { InMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
+import type { GuestMessageChannelPort, GuestMessageKind } from "../../ports/guest-message-channel.port.ts";
+import { SUBJECT_LABEL_PATTERN, type SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
+import { renderManagementLinkMessage, renderReceiptMessage } from "./guest-messages.ts";
+
+/** Flujo del invitado v2 (UX-CNS-003/006/006b, D-02/D-03): etiqueta sintética del estudiante y
+ * mensajes al canal verificado. Opcional: sin él el flujo funciona igual (sin etiqueta ni mensajes). */
+export interface GuestFlowPorts {
+  readonly messageChannel: GuestMessageChannelPort;
+  /** D-02: directorio sintético (solo LOCAL/CI) que da "Alumno de prueba N". Nunca PII real. */
+  readonly subjectDirectory?: SubjectDirectoryPort;
+  /** Rastro obligatorio si la entrega post-commit falla (nunca silencio): el handle ya quedó registrado en la tx de C3 y la decisión sigue
+   * vigente, pero el mensaje no salió. Solo el tipo de mensaje; cero PII y cero token. */
+  readonly recordDeliveryFailure: (kind: GuestMessageKind) => void;
+  /** Origen público del enlace de gestión (sintético: https://consent.example.invalid por defecto). */
+  readonly publicBaseUrl: string;
+  readonly now?: () => Date;
+}
 
 export interface ConsentFlowPorts {
+  readonly guest?: GuestFlowPorts;
+  /** Solo los puertos in-memory por defecto: el TenantHandle donde C3 registra el handle de gestión; el servidor lo comparte con GET /m/{token} y
+   * /manage (createDefaultRevocationFlowPorts). En Postgres lo resuelve tenant_resolve.handle. */
+  readonly managementHandleStore?: InMemoryTenantHandleAdapter;
   readonly invitation: InvitationPorts;
   readonly otp: OtpChallengePorts;
   readonly decision: ConsentDecisionPorts;
@@ -555,6 +578,8 @@ export async function handleRecordDecisionStep(
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.verificationRef || !session.decisionMakerRef || !session.invitationRef) return uniformNotFound();
 
+  if (!(await isInvitationVerifiedForSession(ports, session))) return uniformNotFound(); // P-30
+
   const step = parseDecisionStepInput(request.body);
   if (!step) return problem(422, "ERR-CD-04");
 
@@ -583,6 +608,8 @@ export async function handleRecordDecisionStep(
     // CONSENT_VERSION_VIEWED (if/then/else del schema).
     const body: Record<string, unknown> = { stepKind: step.stepKind, state: "PENDING" };
     if (step.stepKind === "CONSENT_VERSION_VIEWED") body.servedVersion = getServedConsentVersion();
+    const stepLabel = await resolveSubjectLabel(ports, session).catch(() => undefined);
+    if (stepLabel) body.subjectLabel = stepLabel; // D-02: solo lectura, sintético
     return { status: 200, body, setSessionCookie: sessionCookieValue };
   } catch (err) {
     if (err instanceof DomainError) {
@@ -617,6 +644,8 @@ export async function handleSubmitDecision(
   const session = readSession(request, config, sessionSecret);
   if (!session || !session.verificationRef || !session.decisionMakerRef || !session.consentId) return uniformNotFound();
 
+  if (!(await isInvitationVerifiedForSession(ports, session))) return uniformNotFound(); // P-30
+
   const body = (request.body ?? {}) as SubmitDecisionBody;
   const rawPurposes = Array.isArray(body.purposes) ? body.purposes : [];
   const purposes = rawPurposes
@@ -624,7 +653,7 @@ export async function handleSubmitDecision(
     .map((p) => ({ purpose: p.purpose as string, choice: p.choice as PurposeChoice }));
 
   try {
-    const decided = await submitDecision(
+    const { decided, managementHandle } = await submitDecisionIssuingLink(
       ports.decision,
       session.tenantId,
       "DECISION_MAKER",
@@ -632,9 +661,21 @@ export async function handleSubmitDecision(
       session.consentId,
       purposes,
     );
+    // D-02/D-03: etiqueta sintética de solo lectura y mensajes al canal ligado. Un fallo de
+    // entrega no revierte la decisión ya registrada.
+    const subjectLabel = await resolveSubjectLabel(ports, session).catch(() => undefined);
+    try {
+      await deliverDecisionMessages(ports, session, decided, managementHandle);
+    } catch {
+      // Fallo previo al envío (lectura de la invitación): rastro explícito, nunca silencio ni detalle (cero PII/token).
+      ports.guest?.recordDeliveryFailure("RECEIPT");
+    }
     // DecisionRecorded (contracts/api-payloads.schema.json $defs/DecisionRecorded): receiptRef
     // es requerido (P1: faltaba); nunca incluye el management_token (va solo al canal ligado).
-    return { status: 200, body: { consentId: decided.consentId, state: decided.state, receiptRef: decided.receiptRef } };
+    return {
+      status: 200,
+      body: { consentId: decided.consentId, state: decided.state, receiptRef: decided.receiptRef, ...(subjectLabel ? { subjectLabel } : {}) },
+    };
   } catch (err) {
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01" || err.code === "ERR-CD-07") return uniformNotFound();
@@ -643,4 +684,112 @@ export async function handleSubmitDecision(
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// P-30 (invitation.spec I9: "invalida handles/sesiones"): una cookie de sesión vieja no sigue operando sobre una invitación que ya no está
+// VERIFIED (CANCELLED, COMPLETED, DECLINED...) ni sobre un DecisionMaker distinto del ligado en I5. Lo usan GET /decision, /decision/steps
+// y /decision/submit (solo lectura; el estado de la invitación se lee bajo el tenant de la sesión).
+// ---------------------------------------------------------------------------
+export async function isInvitationVerifiedForSession(
+  ports: Pick<ConsentFlowPorts, "invitation">,
+  session: Pick<ConsentSessionPayload, "tenantId" | "invitationRef" | "decisionMakerRef">,
+): Promise<boolean> {
+  const invitationRef = session.invitationRef;
+  if (!invitationRef || !session.decisionMakerRef) return false;
+  const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  return invitation?.state === "VERIFIED" && invitation.boundDecisionMakerRef === session.decisionMakerRef;
+}
+
+// ---------------------------------------------------------------------------
+// D-02: etiqueta sintética del estudiante (solo lectura). Lee el directorio sintético por
+// (tenantId, subjectRef de la invitación de la sesión); si no hay directorio, entrada o la
+// etiqueta no cumple el patrón, devuelve undefined (nunca PII real, nunca RUT).
+// ---------------------------------------------------------------------------
+export async function resolveSubjectLabel(
+  ports: Pick<ConsentFlowPorts, "invitation" | "guest">,
+  session: Pick<ConsentSessionPayload, "tenantId" | "invitationRef">,
+): Promise<string | undefined> {
+  const directory = ports.guest?.subjectDirectory;
+  const invitationRef = session.invitationRef;
+  if (!directory || !invitationRef) return undefined;
+  const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  if (!invitation) return undefined;
+  const entry = await directory.lookup(session.tenantId, invitation.subjectRef);
+  return entry && SUBJECT_LABEL_PATTERN.test(entry.label) ? entry.label : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// D-03/D-07: tras C3/C5 se entregan al canal ligado (sink IT0) (a) el comprobante, SIN enlace, y
+// solo si GRANTED (b) el mensaje aparte con el enlace de gestión. consent-decision.spec C3 emite
+// el enlace de gestión; C5 (DECLINED) no (y DECLINED -> REVOKED está rechazado, spec :392).
+// Un fallo de entrega NO revierte la decisión ya registrada (el e-mail no es evidencia).
+// ---------------------------------------------------------------------------
+async function deliverDecisionMessages(
+  ports: ConsentFlowPorts,
+  session: ConsentSessionPayload,
+  decided: { readonly consentId: string; readonly state: string; readonly receiptRef?: string; readonly chainRef: string; readonly purposes: ReadonlyArray<{ readonly purpose: string; readonly choice: PurposeChoice }> },
+  managementHandle: string | undefined,
+): Promise<void> {
+  const guest = ports.guest;
+  if (!guest || !session.invitationRef || !decided.receiptRef) return;
+  if (decided.state !== "GRANTED" && decided.state !== "DECLINED") return;
+  const invitationRef = session.invitationRef;
+  const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
+  if (!invitation?.recipientChannelRef) return;
+  const subjectLabel = await resolveSubjectLabel(ports, session);
+  const served = getServedConsentVersion();
+  // Post-commit (C3/C5 ya confirmaron): un fallo de entrega NO revierte la decisión, pero deja rastro y no impide el segundo mensaje.
+  try {
+    await guest.messageChannel.send(
+    renderReceiptMessage({
+      recipientChannelRef: invitation.recipientChannelRef,
+      subjectLabel,
+      consentVersion: served.consentVersion,
+      privacyNoticeVersion: served.privacyNoticeVersion,
+      purposes: decided.purposes.map((p) => ({ purpose: p.purpose, choice: p.choice })),
+      decidedAt: (guest.now ?? (() => new Date()))(),
+      receiptRef: decided.receiptRef,
+      state: decided.state,
+    }),
+    );
+  } catch {
+    guest.recordDeliveryFailure("RECEIPT");
+  }
+  // El handle lo registró C3 dentro de su tx (submitDecisionIssuingLink); aquí solo se entrega el mensaje aparte.
+  if (decided.state !== "GRANTED" || managementHandle === undefined) return;
+  try {
+    await guest.messageChannel.send(
+      renderManagementLinkMessage({ recipientChannelRef: invitation.recipientChannelRef, managementPath: `/m/${managementHandle}`, publicBaseUrl: guest.publicBaseUrl }),
+    );
+  } catch {
+    guest.recordDeliveryFailure("MANAGEMENT_LINK");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /decision/subject-mismatch (I9 SUBJECT_MISMATCH_REPORTED). API-CNS-128, D-06. EmptyCommand;
+// actor y decisionMakerRef SIEMPRE de la sesión verificada. Tras cancelar, la sesión pierde el
+// decisionMakerRef (ya no se puede decidir) y la invitación deja de resolver. 404 uniforme para
+// cualquier fallo (contrato: 200/403/404).
+// ---------------------------------------------------------------------------
+export async function handleReportSubjectMismatch(
+  request: RawConsentRequest,
+  ports: Pick<ConsentFlowPorts, "invitation">,
+  config: RightsCaseHttpConfig,
+  sessionSecret: Buffer,
+): Promise<HttpResult> {
+  const csrfFailure = checkCsrf(request, config);
+  if (csrfFailure) return csrfFailure;
+
+  const session = readSession(request, config, sessionSecret);
+  if (!session || !session.verificationRef || !session.decisionMakerRef || !session.invitationRef) return uniformNotFound();
+  try {
+    await cancelInvitationSubjectMismatch(ports.invitation, session.tenantId, session.invitationRef, session.decisionMakerRef);
+  } catch (err) {
+    if (err instanceof DomainError) return uniformNotFound();
+    throw err;
+  }
+  const cancelledSession: ConsentSessionPayload = { tenantId: session.tenantId, invitationRef: session.invitationRef };
+  return { status: 200, body: { result: "INVITATION_CANCELLED" }, setSessionCookie: encodeSession(sessionSecret, cancelledSession) };
 }

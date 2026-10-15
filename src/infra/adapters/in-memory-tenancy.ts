@@ -53,6 +53,7 @@ export function createInMemoryTenancy(ports: InMemoryTenancySources): InMemoryTe
     accessLog: ports.accessLog ?? createInMemoryAccessLogAdapter(),
     securityEvents: ports.securityEvents ?? createInMemorySecurityEventLog(),
     otpBudget: ports.otpBudget ?? createInMemoryOtpBudget(),
+    ...(ports.managementHandles ? { managementHandles: ports.managementHandles } : {}),
   };
   return {
     uow: createInMemoryUnitOfWork(full),

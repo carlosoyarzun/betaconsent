@@ -68,7 +68,7 @@
       hideStates();
       form.hidden = true;
       var el = document.getElementById("applied-receipt");
-      if (el) el.textContent = "Comprobante: " + revocationRef;
+      if (el) el.textContent = revocationRef;
       if (stateApplied) {
         stateApplied.hidden = false;
         var heading = document.getElementById("applied-heading");

@@ -55,7 +55,7 @@ invitation,I7u,GRD-CM-10,guards,TEST-CNS-498;TEST-CNS-549;TEST-CNS-716,
 invitation,I8,GRD-IV-12,guards,TEST-CNS-713,
 invitation,I8,GRD-CM-12,guards,UNCOVERED,sin test que cite GRD-CM-12 / I8 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 invitation,I9,GRD-CM-07,guards,TEST-CNS-475;TEST-CNS-477;TEST-CNS-715;TEST-CNS-718;TEST-CNS-725,
-invitation,I9,GRD-IV-10,guards,UNCOVERED,sin test que cite GRD-IV-10 / I9 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
+invitation,I9,GRD-IV-10,guards,TEST-CNS-1405,
 invitation,I9,GRD-CM-01,bySource:HUMAN,TEST-CNS-714;TEST-CNS-715;TEST-CNS-717,
 invitation,I9,GRD-CM-02,bySource:HUMAN,TEST-CNS-715;TEST-CNS-717,
 invitation,I9,GRD-CM-10,bySource:HUMAN,TEST-CNS-498;TEST-CNS-549;TEST-CNS-716,

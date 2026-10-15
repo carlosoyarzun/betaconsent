@@ -535,6 +535,11 @@
         },
         "servedVersion": {
           "$ref": "#/$defs/ServedConsentVersion"
+        },
+        "subjectLabel": {
+          "type": "string",
+          "pattern": "^Alumno de prueba [0-9]{1,4}$",
+          "description": "D-02 (Carlos, 2026-10-14): referencia sintética de solo lectura del estudiante (misma etiqueta que StaffRosterRow.subjectLabel). Opcional: ausente si no hay directorio sintético. Nunca PII real ni RUT."
         }
       },
       "required": [
@@ -628,6 +633,11 @@
         },
         "receiptRef": {
           "$ref": "common.schema.json#/$defs/Ref"
+        },
+        "subjectLabel": {
+          "type": "string",
+          "pattern": "^Alumno de prueba [0-9]{1,4}$",
+          "description": "D-02 (Carlos, 2026-10-14): referencia sintética de solo lectura del estudiante (misma etiqueta que StaffRosterRow.subjectLabel). Opcional: ausente si no hay directorio sintético. Nunca PII real ni RUT."
         }
       },
       "required": [

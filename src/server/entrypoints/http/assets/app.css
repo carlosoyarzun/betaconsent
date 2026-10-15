@@ -1,182 +1,327 @@
-/* CSS propio de la app (no del design system, design-system/ no se edita en esta tarea).
-   Gobierna: CLAUDE.md UX-CNS-001 (/welcome), handoff ravena-ux P1 (DS<->accesibilidad: .lp-btn
-   no define min-height) y decisión de Carlos, 2026-09-27: el CTA principal del flujo de
-   invitación lleva una altura mínima de 44px (WCAG 2.5.8, tap target ideal), fijada aquí en el
-   CSS de la app y no en el design system porque .lp-btn/components.css es genérico para todo
-   LectorPro y esta decisión es específica de Consent App. Sin token `--lp-*` de 44px en
-   design-system/css/tokens.css (handoff §7, P1); valor literal citando esta decisión. */
+/* CSS propio de la app (no del design system: design-system/ no se edita desde esta tarea).
+   Flujo del invitado v2 (UX-CNS-001/002/003/004; handoff de diseño Stitch->DS, D-01: estructura de
+   pantallas Stitch con clases lp-* y tokens --lp-* del DS; nada de CDN, fuentes ni imágenes remotas).
+   D-05 (Carlos, 2026-10-14): objetivo táctil mínimo 48px en CTAs, chips, filas de casilla y campo de
+   código (supera los 44px de la decisión de 2026-09-27, WCAG 2.5.8). El DS no define un token de
+   48px: valor literal citando esta decisión. Sin sombras: borde de 1px. Sin cabecera sticky (2.4.11). */
 
-.lp-welcome-cta {
-  min-height: 44px; /* Carlos, 2026-09-27: tap target ideal del CTA, en CSS de app, no en DS */
+.lp-guest-body {
+  margin: 0;
+  background: var(--lp-bg-page);
+  color: var(--lp-text-primary);
+  font-family: var(--lp-font-family);
+  font-size: var(--lp-font-size-md);
+  line-height: var(--lp-line-height-normal);
 }
 
-/* /verify (UX-CNS-002, handoff §5/§7): Carlos, 2026-09-27 extiende la misma decisión (CTA a
-   44px) al CTA de esta pantalla y, además, al campo de código (el otro control interactivo
-   crítico del formulario) — ambos en el CSS de la app, nunca en design-system/. */
-.lp-verify-cta {
-  min-height: 44px;
+/* Cabecera de marca (sin navegación). */
+.lp-guest-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lp-spacing-8) var(--lp-spacing-16);
+  padding: var(--lp-spacing-12) var(--lp-spacing-16);
+  background: var(--lp-surface-default);
+  border-bottom: 1px solid var(--lp-border-default);
 }
-
-.lp-verify-code-input {
-  min-height: 44px;
+.lp-guest-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--lp-spacing-12);
+  font-weight: var(--lp-font-weight-bold);
+  color: var(--lp-text-primary);
 }
+.lp-guest-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--lp-radius-md);
+  background: var(--lp-action-primary);
+  color: var(--lp-action-primary-text);
+  font-size: var(--lp-font-size-xs);
+  font-weight: var(--lp-font-weight-bold);
+}
+.lp-guest-env-long { display: none; }
 
-/* Fix (Carlos, 2026-09-27 decisión original; probado en navegador con dev.ts): "Reenviar
-   código" y los botones .lp-link/.lp-btn secundarios de /verify ("Solicitar nuevo código",
-   "Reintentar") medían 21px de alto (getBoundingClientRect), por debajo del tap target de
-   44px decidido para el CTA. .lp-link no tiene regla propia en design-system/ (sin chrome de
-   botón); esta clase utilitaria solo agranda el área táctil, sin cambiar el estilo visual de
-   .lp-link/.lp-btn, y vive en el CSS de la app por el mismo motivo que .lp-verify-cta. */
+/* Contenedores de pantalla: columna única 480 en móvil; ensanchan en escritorio (1.4.10 reflow). */
+.lp-welcome-page,
+.lp-verify-page,
+.lp-decision-page,
+.lp-manage-page,
+.lp-revocation-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: var(--lp-spacing-24, 24px) var(--lp-spacing-16, 16px);
+  box-sizing: border-box;
+}
+.lp-welcome-page h1,
+.lp-verify-page h1,
+.lp-decision-page h1,
+.lp-manage-page h1,
+.lp-revocation-page h1 {
+  margin: 0 0 var(--lp-spacing-12);
+  font-size: var(--lp-font-size-xxl);
+  line-height: var(--lp-line-height-tight);
+}
+.lp-guest-body h2 { margin: 0 0 var(--lp-spacing-8); font-size: var(--lp-font-size-lg); }
+.lp-guest-body h3 { margin: 0 0 var(--lp-spacing-8); font-size: var(--lp-font-size-md); }
+.lp-guest-body p { margin: 0 0 var(--lp-spacing-12); }
+.lp-guest-body .lp-card-default { padding: var(--lp-spacing-16); box-sizing: border-box; }
+
+/* Stepper "Paso n de 3": el texto es la información; las barras son decorativas (aria-hidden). */
+.lp-stepper { margin: 0 0 var(--lp-spacing-16); }
+.lp-stepper-bars { display: flex; gap: var(--lp-spacing-8); }
+.lp-stepper-bars .lp-progress-bar { flex: 1; max-width: none; }
+.lp-stepper-fill-full { width: 100%; }
+.lp-stepper-fill-none { width: 0; }
+.lp-stepper-label { margin: var(--lp-spacing-8) 0 0; font-size: var(--lp-font-size-sm); font-weight: var(--lp-font-weight-medium); color: var(--lp-text-secondary); }
+
+/* Botones: 48px (D-05). aria-disabled en vez de disabled (patrón de la app). */
+.lp-cta,
+.lp-welcome-cta,
+.lp-verify-cta,
+.lp-decision-cta,
+.lp-revocation-cta {
+  min-height: 48px;
+  min-width: 48px;
+  font-size: var(--lp-font-size-md);
+}
+.lp-cta { width: 100%; box-sizing: border-box; }
+.lp-btn[aria-disabled="true"] { opacity: 0.6; cursor: not-allowed; }
+
+/* Fix (Carlos, 2026-09-27; objetivo ahora 48px, D-05): .lp-link no tiene chrome de botón; esta clase
+   solo agranda el área táctil de enlaces/botones secundarios sin cambiar su estilo visual. */
 .lp-verify-tap-target {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  min-width: 44px;
-  padding-left: 8px;
-  padding-right: 8px;
+  min-height: 48px;
+  min-width: 48px;
+  padding-left: var(--lp-spacing-8);
+  padding-right: var(--lp-spacing-8);
+  box-sizing: border-box;
+}
+.lp-btn.lp-verify-tap-target { padding-left: var(--lp-spacing-16); padding-right: var(--lp-spacing-16); }
+
+/* Foco visible (2.4.7) en todo control de la app y en los h1 enfocables tras cambio de estado. */
+.lp-guest-body .lp-btn:focus-visible,
+.lp-guest-body .lp-link:focus-visible,
+.lp-guest-body a:focus-visible,
+.lp-guest-body button:focus-visible,
+.lp-guest-body select:focus-visible,
+.lp-guest-body input:focus-visible,
+.lp-guest-body [tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--lp-text-primary);
+  outline-offset: 2px;
 }
 
-.lp-verify-page {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: var(--lp-spacing-24, 24px);
-}
+/* Alertas: icono decorativo (aria-hidden) + título + cuerpo; el color nunca es el único portador. */
+.lp-alert-head { display: flex; align-items: center; gap: var(--lp-spacing-8); margin-bottom: var(--lp-spacing-8); font-weight: var(--lp-font-weight-semibold); }
+.lp-alert-icon { flex: none; width: 22px; height: 22px; text-align: center; line-height: 22px; font-weight: var(--lp-font-weight-bold); }
+.lp-guest-body .lp-alert-error,
+.lp-guest-body .lp-alert-warning,
+.lp-guest-body .lp-alert-success,
+.lp-guest-body .lp-alert-info { margin-top: var(--lp-spacing-16); }
+.lp-guest-body .lp-alert-error p:last-child,
+.lp-guest-body .lp-alert-warning p:last-child,
+.lp-guest-body .lp-alert-success p:last-child,
+.lp-guest-body .lp-alert-info p:last-child { margin-bottom: 0; }
+.lp-guest-body .lp-alert-error .lp-btn,
+.lp-guest-body .lp-alert-warning .lp-btn { margin-top: var(--lp-spacing-8); }
 
-.lp-verify-resend {
-  margin-top: var(--lp-spacing-16, 16px);
-}
-
-.lp-welcome-page {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: var(--lp-spacing-24, 24px);
-}
-
-.lp-welcome-help {
-  display: block;
-  margin-top: var(--lp-spacing-16, 16px);
+/* Marcador legal visible: texto literal [LEGAL DECISION ...], sin redactar copy legal. */
+.lp-legal-note,
+.lp-decision-legal-note,
+.lp-revocation-legal-note {
+  margin: var(--lp-spacing-8) 0;
+  padding: var(--lp-spacing-8) var(--lp-spacing-12);
+  border: 1px dashed var(--lp-text-warning);
+  border-radius: var(--lp-radius-md);
+  background: var(--lp-color-feedback-warning-bg);
+  color: var(--lp-text-warning);
+  font-size: var(--lp-font-size-xs);
 }
 
 [hidden] {
-  display: none;
+  display: none !important;
 }
 
-/* .lp-alert-error vive en design-system/css/components.css (alertas de pagina con texto
-   --lp-text-error, WCAG 1.4.3); aplica a todo #error-uniform de /welcome, /manage y /recovery. */
-
-/* /decision (UX-CNS-003, handoff decision-handoff.md §2/§7): no existen .lp-checkbox/.lp-radio
-   en design-system/css/components.css (P1 del handoff); estas utilidades nuevas viven en el CSS
-   de la app, mismo criterio que .lp-verify-cta. Carlos, 2026-09-27: CTA a 44px (misma decisión
-   que /welcome y /verify); chips "Acepto/No acepto" y "Sí/No" y la fila del checkbox de
-   autoridad también a 44px de tap target (handoff §6 checklist de accesibilidad). */
-.lp-decision-page {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: var(--lp-spacing-24, 24px);
-}
-
-.lp-decision-section {
+.lp-welcome-help,
+.lp-guest-help {
+  display: block;
   margin-top: var(--lp-spacing-16, 16px);
+  font-size: var(--lp-font-size-sm);
 }
 
+/* /welcome (UX-CNS-001): tarjeta "Cómo funciona" con pasos numerados decorativos. */
+.lp-howto { list-style: none; margin: var(--lp-spacing-12) 0 0; padding: 0; counter-reset: lp-step; }
+.lp-howto li { position: relative; min-height: 32px; margin: 0 0 var(--lp-spacing-12); padding-left: 44px; counter-increment: lp-step; }
+.lp-howto li::before {
+  content: counter(lp-step);
+  content: counter(lp-step) / "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--lp-radius-full);
+  background: var(--lp-action-secondary);
+  color: var(--lp-action-secondary-text);
+  text-align: center;
+  line-height: 32px;
+  font-weight: var(--lp-font-weight-bold);
+}
+.lp-howto strong { display: block; }
+.lp-welcome-action { margin-top: var(--lp-spacing-16); }
+.lp-welcome-aside { display: none; }
+
+/* /verify (UX-CNS-002): campo único (autofill y lectores), 52px; error con borde 2px + texto. */
+.lp-verify-code-input {
+  min-height: 52px;
+  font-size: var(--lp-font-size-lg);
+  letter-spacing: 0.2em;
+  box-sizing: border-box;
+}
+.lp-guest-body .lp-input[aria-invalid="true"],
+.lp-guest-body select.lp-input[aria-invalid="true"] { border: 2px solid var(--lp-text-error); }
+.lp-guest-body .lp-input-error-msg { font-size: var(--lp-font-size-sm); margin-top: var(--lp-spacing-4); font-weight: var(--lp-font-weight-medium); }
+.lp-guest-body .lp-input-help { font-size: var(--lp-font-size-sm); }
+.lp-verify-resend { margin-top: var(--lp-spacing-16, 16px); }
+.lp-verify-actions { margin-top: var(--lp-spacing-16); }
+
+/* /decision (UX-CNS-003). Sin .lp-checkbox/.lp-radio en el DS (hueco P1 ya reportado): utilidades de la app. */
+.lp-decision-section { margin-top: var(--lp-spacing-16); }
 .lp-decision-legal-box {
   border: 1px solid var(--lp-border-default);
   border-radius: var(--lp-radius-md, 8px);
   padding: var(--lp-spacing-16, 16px);
+  background: var(--lp-bg-subtle);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-
-.lp-decision-chip-pair {
-  display: flex;
-  gap: 8px;
-  margin-top: var(--lp-spacing-8, 8px);
+.lp-decision-purpose {
+  margin-top: var(--lp-spacing-12);
+  padding: var(--lp-spacing-16);
+  border: 1px solid var(--lp-border-default);
+  border-radius: var(--lp-radius-md);
+  background: var(--lp-surface-default);
 }
+.lp-decision-purpose[data-invalid="true"] { border: 2px solid var(--lp-text-error); }
+.lp-decision-subject-ref { margin: 0 0 var(--lp-spacing-12); font-weight: var(--lp-font-weight-semibold); }
+.lp-decision-chip-pair { display: flex; flex-wrap: wrap; gap: var(--lp-spacing-8); margin-top: var(--lp-spacing-8); }
 
+/* Chips simétricos (F-STITCH-19): Acepto/No acepto y Sí/No con el MISMO tratamiento; seleccionado =
+   borde 2px + tinte + prefijo ✓/✕ (decorativo). Sin verde/rojo: el color no codifica "bueno/malo". */
 .lp-decision-chip {
-  flex: 1;
-  min-height: 44px;
+  flex: 1 1 140px;
+  min-height: 48px;
+  padding: 0 var(--lp-spacing-12);
   border-radius: var(--lp-radius-md, 8px);
-  border: 1px solid var(--lp-border-control); /* control interactivo: 3:1 (WCAG 1.4.11) */
-  background: transparent;
+  border: 2px solid var(--lp-border-control); /* control interactivo: 3:1 (WCAG 1.4.11) */
+  background: var(--lp-surface-default);
+  color: var(--lp-text-primary);
+  font-family: var(--lp-font-family);
+  font-size: var(--lp-font-size-md);
   cursor: pointer;
+  box-sizing: border-box;
 }
-
-.lp-decision-chip[aria-checked="true"][data-choice="GRANT"],
-.lp-decision-chip[aria-checked="true"][data-value="yes"] {
-  border-color: var(--lp-color-feedback-success, #10b981);
-  background: var(--lp-color-feedback-success-bg, #ecfdf5);
-  color: var(--lp-text-success);
+.lp-decision-chip[aria-checked="true"] {
+  border-color: var(--lp-action-primary);
+  background: var(--lp-action-secondary);
+  color: var(--lp-action-secondary-text);
+  font-weight: var(--lp-font-weight-bold);
 }
-
-.lp-decision-chip[aria-checked="true"][data-choice="DECLINE"],
-.lp-decision-chip[aria-checked="true"][data-value="no"] {
-  border-color: var(--lp-color-feedback-error, #ef4444);
-  background: var(--lp-color-feedback-error-bg, #fef2f2);
-  color: var(--lp-text-error);
+.lp-decision-chip[aria-checked="true"][data-choice="GRANT"]::before,
+.lp-decision-chip[aria-checked="true"][data-value="yes"]::before {
+  content: "✓ ";
+  content: "✓ " / "";
 }
+.lp-decision-chip[aria-checked="true"][data-choice="DECLINE"]::before,
+.lp-decision-chip[aria-checked="true"][data-value="no"]::before {
+  content: "✕ ";
+  content: "✕ " / "";
+}
+.lp-decision-group[data-invalid="true"] .lp-decision-chip { border-color: var(--lp-text-error); }
 
+/* Casilla de autoridad: caja visual 24px dentro de un área táctil de 48px (la fila entera es el label). */
 .lp-decision-checkbox-row {
   display: flex;
-  gap: 12px;
-  min-height: 44px;
+  gap: var(--lp-spacing-12);
+  min-height: 48px;
   align-items: center;
+  margin-top: var(--lp-spacing-12);
 }
-
-/* Fix (Carlos, revisión en navegador con dev.ts): el checkbox nativo mide ~13px (tamaño por
-   defecto del control), muy por debajo del tap target de 44px de la decisión de Carlos,
-   2026-09-27 (misma decisión que .lp-welcome-cta/.lp-verify-cta/.lp-decision-cta). El contenedor
-   .lp-decision-checkbox-row ya mide >=44px de alto, pero el control clicable en sí debía
-   agrandarse también: se fija min-width/min-height 44px directamente en el input. */
 .lp-decision-checkbox-row .lp-decision-checkbox {
-  min-width: 44px;
-  min-height: 44px;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
   margin: 0;
 }
+.lp-decision-relationship-select { min-height: 48px; box-sizing: border-box; }
+.lp-field-error { margin-top: var(--lp-spacing-4); font-size: var(--lp-font-size-sm); font-weight: var(--lp-font-weight-medium); color: var(--lp-text-error); }
+.lp-error-list { margin: var(--lp-spacing-8) 0 0; padding-left: var(--lp-spacing-20); }
+.lp-error-list a { color: var(--lp-text-error); font-weight: var(--lp-font-weight-medium); }
+.lp-decision-submit-row { margin-top: var(--lp-spacing-16); }
 
-.lp-decision-cta {
-  min-height: 44px; /* Carlos, 2026-09-27: misma decisión de tap target que /welcome y /verify */
+/* Pantalla de registro (paso 3): icono decorativo, tarjeta de comprobante y "Qué pasa ahora". */
+.lp-hero-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--lp-spacing-12);
+  border-radius: var(--lp-radius-full);
+  background: var(--lp-action-secondary);
+  color: var(--lp-action-secondary-text);
+  font-size: var(--lp-font-size-xxl);
+  font-weight: var(--lp-font-weight-bold);
 }
+.lp-receipt-ref { margin: var(--lp-spacing-8) 0; font-weight: var(--lp-font-weight-semibold); overflow-wrap: anywhere; }
+.lp-badge-row { display: flex; flex-wrap: wrap; gap: var(--lp-spacing-8); margin-top: var(--lp-spacing-8); }
+.lp-next-steps { list-style: none; margin: var(--lp-spacing-8) 0 0; padding: 0; }
+.lp-next-steps li { margin: 0 0 var(--lp-spacing-12); padding-left: var(--lp-spacing-12); border-left: 3px solid var(--lp-action-primary); }
+.lp-next-steps strong { display: block; }
 
-.lp-decision-relationship-select {
-  min-height: 44px;
-}
-
-/* /manage, /manage/revocation/confirm (UX-CNS-004, revocation-handoff.md §2/§7): mismo criterio
-   de tokens que /decision para acciones destructivas (.lp-btn-danger, retiro de consentimiento).
-   .lp-btn-secondary no existe en design-system/css/components.css (mismo hueco P1 ya reportado
-   en el handoff de /decision para .lp-checkbox/.lp-radio): utilidad mínima aquí, mismo criterio
-   que .lp-decision-chip para no bloquear la implementación en un cambio de design-system/. */
+/* /manage, /manage/revocation/confirm (UX-CNS-004): mismo kit; sin stepper (flujo de derechos). */
 .lp-btn-secondary {
   background: transparent;
   color: var(--lp-text-primary);
   border: 1px solid var(--lp-border-control);
 }
-
-.lp-manage-page,
-.lp-revocation-page {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: var(--lp-spacing-24, 24px);
-}
-
 .lp-manage-status,
 .lp-revocation-section {
   margin-top: var(--lp-spacing-16, 16px);
   padding: var(--lp-spacing-16, 16px);
   border: 1px solid var(--lp-border-default, #d1d5db);
-  border-radius: var(--lp-radius-md, 8px);
+  border-radius: var(--lp-radius-lg, 12px);
+  background: var(--lp-surface-default);
 }
+.lp-purpose-list { list-style: none; margin: var(--lp-spacing-8) 0 var(--lp-spacing-12); padding: 0; }
+.lp-purpose-list li { margin: 0 0 var(--lp-spacing-4); }
+.lp-actions-stack { display: flex; flex-direction: column; gap: var(--lp-spacing-12); margin-top: var(--lp-spacing-16); }
 
-.lp-revocation-cta {
-  min-height: 44px; /* Carlos, 2026-09-27: misma decisión de tap target que /welcome/verify/decision */
+/* Escritorio: columnas más anchas sin scroll horizontal (1.4.10). */
+@media (min-width: 1024px) {
+  .lp-guest-header { padding: var(--lp-spacing-12) var(--lp-spacing-32); }
+  .lp-guest-env-short { display: none; }
+  .lp-guest-env-long { display: inline-flex; }
+  .lp-welcome-page { max-width: 960px; }
+  .lp-welcome-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--lp-spacing-24); align-items: start; }
+  .lp-welcome-aside { display: block; }
+  .lp-welcome-action-mobile { display: none; }
+  .lp-verify-page { max-width: 560px; }
+  .lp-decision-page { max-width: 640px; }
+  .lp-manage-page,
+  .lp-revocation-page { max-width: 560px; }
+  .lp-cta { width: auto; min-width: 240px; }
+  .lp-welcome-aside .lp-cta { width: 100%; }
 }
-
-/* Decisión de Carlos, 2026-09-27 (tap target ideal, extendida por Carlos el 2026-09-27 a todo
-   control interactivo, incluidos los botones con estilo de enlace): #withdraw-btn, "Enviar
-   enlace de recuperación" y "Abrir caso con soporte humano" son botones .lp-link (sin chrome de
-   botón) y necesitan el mismo agrandado de área táctil que .lp-verify-tap-target; se reutiliza
-   esa clase directamente en el HTML (manage-page.ts, revocation-page.ts, verify-page.ts) en vez
-   de duplicar la regla. */
 
 /* ==========================================================================
    Consola del colegio (REQ-CNS-036 / UX-CNS-005, Carlos 2026-10-02; Figma 90:2; handoff staff-ui-handoff.md).

@@ -41,6 +41,16 @@ export async function registerTenantHandle(tx: TenantTx, seed: TenantHandleSeed)
   ]);
 }
 
+/** Puerto ManagementHandleRegistryPort sobre la tx del tenant: tenant_resolve.register_handle (SECURITY DEFINER, tenant desde app.current_tenant_id();
+ * EXECUTE app_rw). Recibe solo el HASH (el token en claro nunca llega a la base). */
+export function createPgManagementHandleRegistry(tx: TenantTx): { register(input: { readonly handleHash: string; readonly chainRef: string; readonly revokedDecisionRef: string }): Promise<void> } {
+  return {
+    async register(input) {
+      await tx.query("SELECT tenant_resolve.register_handle($1, $2, $3)", [input.handleHash, input.chainRef, input.revokedDecisionRef]);
+    },
+  };
+}
+
 /** Rota (invalida) el handle del tenant de la tx; un handle de otro tenant o inexistente no cambia. */
 export async function rotateTenantHandle(tx: TenantTx, handle: string): Promise<void> {
   await tx.query("SELECT tenant_resolve.rotate_handle($1)", [hashTenantHandle(handle)]);

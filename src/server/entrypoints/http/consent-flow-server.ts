@@ -22,6 +22,10 @@ import type { InMemoryRecoveryLinkChannelSink } from "../../../infra/adapters/in
 import { createInMemoryRecoveryTokenRepository } from "../../../infra/adapters/in-memory-recovery-token-repository.adapter.ts";
 import { createInMemoryRevocationRepository } from "../../../infra/adapters/in-memory-revocation-repository.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../infra/adapters/in-memory-rights-case-repository.adapter.ts";
+import { createInMemoryManagementHandleRegistry } from "../../../infra/adapters/in-memory-management-handle-registry.adapter.ts";
+import { createInMemoryGuestMessageSink, type InMemoryGuestMessageSink } from "../../../infra/adapters/in-memory-guest-message-sink.adapter.ts";
+import type { GuestMessageChannelPort } from "../../ports/guest-message-channel.port.ts";
+import type { InMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import { createInMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { InvitationListing } from "../../../infra/adapters/in-memory-invitation-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -59,6 +63,10 @@ import {
   handleSubmitOtp,
   resolveWelcomeLandingSession,
   type ConsentFlowPorts,
+  type GuestFlowPorts,
+  handleReportSubjectMismatch,
+  resolveSubjectLabel,
+  isInvitationVerifiedForSession,
   type HttpResult,
   type RawConsentRequest,
 } from "./consent-flow.handler.ts";
@@ -201,6 +209,10 @@ interface ConsentFlowHttpServerBaseOptions {
   /** CA-139: registro servidor de sesiones CASE (app.case_session en Postgres, RLS FORCE por tenant). Por defecto in-memory solo con
    * storeMode=memory; con storeMode=postgres es OBLIGATORIO (fail-closed: nunca una sesion CASE en memoria sobre una base real). */
   readonly caseSessions?: CaseSessionStorePort;
+  /** Flujo del invitado v2 (D-03): canal de mensajes al canal verificado. Por defecto un sink in-memory (sin red). */
+  readonly guestMessageChannel?: GuestMessageChannelPort;
+  /** Origen público del enlace de gestión en el mensaje (sintético; por defecto https://consent.example.invalid). */
+  readonly publicBaseUrl?: string;
   /** CA-139: reloj de la sesion CASE (expiracion absoluta, inactividad). Solo tests; por defecto Date.now. */
   readonly caseNowMs?: () => number;
 }
@@ -275,7 +287,9 @@ export function createDefaultConsentFlowPorts(
   const otpRepo = createInMemoryOtpVerificationRepository();
   const decisionRepo = createInMemoryConsentDecisionRepository();
   // CA-124: UoW + resolver in-memory sobre los MISMOS adaptadores del flujo de consentimiento.
-  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo, consentDecisionRepo: decisionRepo });
+  // C3: el handle del enlace de gestión se registra en la MISMA tx; el TenantHandle in-memory es el que luego resuelve GET /m/{token}.
+  const managementHandleStore = createInMemoryTenantHandleAdapter();
+  const tenancy = createInMemoryTenancy({ ledger, invitationRepo, otpRepo, consentDecisionRepo: decisionRepo, managementHandles: createInMemoryManagementHandleRegistry(managementHandleStore) });
   const invitation: InvitationPorts = {
     invitationRepo,
     eligibility: createInMemoryEligibilityAdapter(),
@@ -300,7 +314,7 @@ export function createDefaultConsentFlowPorts(
     relationships: relationshipConfig,
     chainRefKey,
   };
-  return { invitation, otp, decision, decisionMakerRefKey };
+  return { invitation, otp, decision, decisionMakerRefKey, managementHandleStore };
 }
 
 /** Convenience LOCAL/test-only (nunca de producción real: esta función entera solo construye
@@ -344,8 +358,8 @@ export function createDefaultRevocationFlowPorts(
   recoveryTokenPolicy: RecoveryTokenPolicy = DEFAULT_TEST_RECOVERY_TOKEN_POLICY,
   ledger: LedgerPort = createInMemoryLedgerAdapter(),
   consentDecisionRepo: ConsentDecisionRepositoryPort = createInMemoryConsentDecisionRepository(),
+  tenantHandle: InMemoryTenantHandleAdapter = createInMemoryTenantHandleAdapter(),
 ): RevocationFlowPorts {
-  const tenantHandle = createInMemoryTenantHandleAdapter();
   const revocationRepo = createInMemoryRevocationRepository();
   const outbox = createInMemoryOutboxAdapter();
   const recoveryTokenRepo = createInMemoryRecoveryTokenRepository();
@@ -635,7 +649,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   assertKeyMaterial(sessionSecret, "sessionSecret", "CNS_SESSION_SECRET");
   const staffRosterCursorKey = options.staffRosterCursorKey;
   assertKeyMaterial(staffRosterCursorKey, "staffRosterCursorKey", "CNS_STAFF_ROSTER_CURSOR_SECRET");
-  const ports =
+  const basePorts =
     options.ports ??
     (() => {
       if (!options.otpPolicy || !options.relationshipConfig) {
@@ -646,6 +660,27 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       return createDefaultConsentFlowPorts(options.otpPolicy, options.relationshipConfig, options.chainRefKey as Buffer, options.decisionMakerRefKey as DecisionMakerRefKey, options.otpSecret as Buffer);
     })();
+  // P2-1 (fail-closed, como caseSessions): con store Postgres o un entorno que no es LOCAL, el canal de mensajes del invitado es OBLIGATORIO y
+  // explícito; nunca se cae al sink en memoria (un comprobante o enlace de gestión "entregado" a un sink que nadie lee). `environment`
+  // ausente (solo tests con store en memoria) conserva el sink en memoria.
+  const guestChannelRequired = options.storeMode === "postgres" || (options.environment !== undefined && options.environment !== "LOCAL");
+  if (!basePorts.guest && !options.guestMessageChannel && guestChannelRequired) {
+    throw new Error("createConsentFlowHttpServer: storeMode=postgres o un entorno distinto de LOCAL requiere `guestMessageChannel` explícito (UX-CNS-006/006b); no hay sink en memoria por defecto.");
+  }
+  const guestMessageSink = createInMemoryGuestMessageSink();
+  const guestDeliveryFailures: string[] = [];
+  const guestWiring = (): GuestFlowPorts => ({
+    messageChannel: options.guestMessageChannel ?? guestMessageSink,
+    ...(options.staffConsole?.subjectDirectory ? { subjectDirectory: options.staffConsole.subjectDirectory } : {}),
+    recordDeliveryFailure: (kind) => {
+      guestDeliveryFailures.push(kind);
+      // Alerta sin PII ni token: solo el tipo de mensaje.
+      console.error(`guest_message_delivery_failed kind=${kind}`);
+    },
+    publicBaseUrl: options.publicBaseUrl ?? "https://consent.example.invalid",
+  });
+  // Object.create (no spread): la resolución de propiedades sigue siendo perezosa sobre basePorts.
+  const ports: ConsentFlowPorts = basePorts.guest ? basePorts : Object.create(basePorts, { guest: { value: guestWiring(), enumerable: true } });
   // P2-6 (C1): tambien con `ports` inyectados el secreto OTP debe ser material de clave valido (>= 32 bytes).
   assertKeyMaterial(ports.otp?.secret, "otpSecret", "CNS_OTP_SECRET");
   // P2-6: separacion de claves: el secreto OTP no puede ser el de sesion ni el del cursor.
@@ -657,7 +692,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     throw new Error("createConsentFlowHttpServer: ports.decisionMakerRefKey es obligatoria (INV-CM-09); no hay clave por defecto.");
   }
   const revocationPorts =
-    options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
+    options.revocationPorts ?? createDefaultRevocationFlowPorts(options.recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo, ports.managementHandleStore);
   const recoveryHandlePolicy = options.recoveryHandlePolicy ?? DEFAULT_TEST_RECOVERY_HANDLE_POLICY;
   const invitationHandlePolicy = options.invitationHandlePolicy ?? DEFAULT_TEST_INVITATION_HANDLE_POLICY;
   const manageHandlePolicy = options.manageHandlePolicy ?? DEFAULT_TEST_MANAGE_HANDLE_POLICY;
@@ -764,14 +799,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const cookies = parseCookies(headerValue(req.headers.cookie));
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
-      if (!session || !session.verificationRef || !session.decisionMakerRef) {
+      if (!session || !session.verificationRef || !session.decisionMakerRef || !(await isInvitationVerifiedForSession(ports, session))) {
         res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
         res.end(renderDecisionUniformErrorPage());
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion()));
+      res.end(renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion(), await resolveSubjectLabel(ports, session)));
       return;
     }
 
@@ -960,6 +995,35 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const sink = ports.otp.channel as InMemoryOtpChannelSink;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ sent: sink.sent }));
+      return;
+    }
+
+    if (req.method === "GET" && path === "/__dev/message-sink") {
+      // D-03: mismo guard fail-closed que /__dev/otp-sink (GRD-CM-13). Único lugar donde el mensaje con el
+      // enlace de gestión (token en claro) es legible en LOCAL; sin SMTP ni salida de red. `?view=N` sirve el
+      // HTML del mensaje N (solo para previsualizarlo en el navegador de desarrollo).
+      if (options.environment !== "LOCAL") {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: 404 }));
+        return;
+      }
+      const sink = (options.guestMessageChannel ?? guestMessageSink) as InMemoryGuestMessageSink;
+      const view = new URL(url, "http://local.invalid").searchParams.get("view");
+      if (view !== null) {
+        const message = sink.sent[Number(view)];
+        if (!message) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ status: 404 }));
+          return;
+        }
+        res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
+        res.setHeader("Referrer-Policy", "no-referrer");
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(message.html);
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ sent: sink.sent, deliveryFailures: guestDeliveryFailures }));
       return;
     }
 
@@ -1273,6 +1337,9 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         break;
       case "/decision/submit":
         result = await handleSubmitDecision(request, ports, config, sessionSecret);
+        break;
+      case "/decision/subject-mismatch":
+        result = await handleReportSubjectMismatch(request, ports, config, sessionSecret);
         break;
       case "/manage/revocation":
         result = await handleRequestRevocation(request, revocationPorts, config, sessionSecret);

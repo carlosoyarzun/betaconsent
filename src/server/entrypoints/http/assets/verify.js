@@ -92,14 +92,21 @@
       if (resendFeedback) {
         resendFeedback.hidden = true;
         resendFeedback.textContent = "";
+        resendFeedback.className = "";
       }
       codeInput.setAttribute("aria-invalid", "false");
     }
 
-    function showResendFeedback(message) {
+    function showResendFeedback(message, kind) {
       hideStates();
       if (resendFeedback) {
-        resendFeedback.textContent = message;
+        // Frames 105:102 (reenvío OK, éxito) y 105:140 (límite, aviso): icono + texto, nunca solo color.
+        resendFeedback.className = kind === "limit" ? "lp-alert-warning" : "lp-alert-success";
+        var glyph = document.createElement("span");
+        glyph.setAttribute("aria-hidden", "true");
+        glyph.textContent = kind === "limit" ? "! " : "✓ ";
+        resendFeedback.appendChild(glyph);
+        resendFeedback.appendChild(document.createTextNode(message));
         resendFeedback.hidden = false;
       }
     }
@@ -223,11 +230,11 @@
       postJson("/otp/resend")
         .then(function (res) {
           if (res.status === 202) {
-            showResendFeedback("Te enviamos un nuevo código.");
+            showResendFeedback("Te enviamos un nuevo código.", "ok");
             return;
           }
           if (res.status === 409) {
-            showResendFeedback("Alcanzaste el límite de reenvíos disponible por ahora.");
+            showResendFeedback("Alcanzaste el límite de reenvíos disponible por ahora.", "limit");
             return;
           }
           if (res.status === 404) {

@@ -46,11 +46,13 @@ import {
   LOCAL_ONLY_DEV_STAFF_ROSTER,
   LOCAL_ONLY_DEV_TENANT_ID,
   LOCAL_ONLY_DEV_SUBJECT_REF,
+  devSubjectDirectoryEntries,
 } from "./dev-local-config.ts";
 import { createInMemorySubjectDirectory } from "../../infra/adapters/in-memory-subject-directory.adapter.ts";
 import { deriveStaffRosterCursorKey, loadStaffRosterCursorSecret } from "../modules/staff-roster/roster-cursor.ts";
 import { openPostgresStore, type PostgresStore } from "../../infra/adapters/postgres/store.ts";
 import { listOutboxEnvelopes } from "../../infra/adapters/postgres/outbox.adapter.ts";
+import { createInMemoryGuestMessageSink } from "../../infra/adapters/in-memory-guest-message-sink.adapter.ts";
 import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handle.adapter.ts";
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
 import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
@@ -124,10 +126,10 @@ const staffRosterCursorKey = deriveStaffRosterCursorKey(loadStaffRosterCursorSec
 const otpSecret = loadOtpSecret(process.env, environment, () => Buffer.from("LOCAL_ONLY_DEV_OTP_SECRET_SYNTHETIC_DATA_ONLY"));
 // P2-6 (C2): los secretos crudos CNS_*_SECRET presentes deben ser distintos entre si (sesion, OTP, cursor, chainRef, dmref).
 assertDistinctServerSecrets(process.env);
-const subjectDirectory = createInMemorySubjectDirectory(
-  environment,
-  LOCAL_ONLY_DEV_STAFF_STUDENTS.map((s) => ({ tenantId: LOCAL_ONLY_DEV_TENANT_ID, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })),
-);
+// En Postgres el seed persiste entre arranques: sujeto nuevo por proceso (GRD-IV-01), sintético y sin PII.
+const SEEDED_SUBJECT_REF = pgStore ? randomUUID() : LOCAL_ONLY_DEV_SUBJECT_REF;
+// D-02: el directorio incluye el sujeto de la invitación sembrada (GET /decision muestra "Alumno de prueba N").
+const subjectDirectory = createInMemorySubjectDirectory(environment, devSubjectDirectoryEntries(SEEDED_SUBJECT_REF));
 let ports: ConsentFlowPorts;
 let pgBundle: ReturnType<typeof createPostgresFlowPorts> | undefined;
 if (pgStore) {
@@ -156,7 +158,7 @@ const TENANT_ID = LOCAL_ONLY_DEV_TENANT_ID;
 // En Postgres el seed persiste entre arranques: ref y sujeto nuevos por proceso (GRD-IV-01: una sola
 // invitación no terminal por sujeto), sintéticos y sin PII.
 const INVITATION_REF = pgStore ? randomUUID() : "7e1d0c52-8d4e-4a7b-9c21-0e5a7d3b9f77";
-const SUBJECT_REF = pgStore ? randomUUID() : LOCAL_ONLY_DEV_SUBJECT_REF;
+const SUBJECT_REF = SEEDED_SUBJECT_REF;
 const CHANNEL_REF = "dev-decision-maker@example.invalid";
 
 await createInvitation(ports.invitation, TENANT_ID, "INVITER", {
@@ -210,9 +212,10 @@ const recoveryHandlePolicy = loadRecoveryHandlePolicyConfig(LOCAL_ONLY_DEV_RECOV
 // __Host-cns-m-handle que fijan GET /i/{token} y GET /m/{token} sin leer la BD.
 const invitationHandlePolicy = loadInvitationHandlePolicyConfig(LOCAL_ONLY_DEV_INVITATION_HANDLE_POLICY);
 const manageHandlePolicy = loadManageHandlePolicyConfig(LOCAL_ONLY_DEV_MANAGE_HANDLE_POLICY);
+const guestMessageSink = createInMemoryGuestMessageSink();
 const revocationPorts: RevocationFlowPorts = pgBundle
   ? pgBundle.revocationPorts
-  : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo);
+  : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo, ports.managementHandleStore);
 if (pgStore) {
   // Siembra del handle por la función SECURITY DEFINER tenant_resolve.register_handle (idempotente; el
   // tenant sale de app.current_tenant_id(); nunca BYPASSRLS).
@@ -285,6 +288,12 @@ const server = createConsentFlowHttpServer({
   // REQ-CNS-036 / UX-CNS-005: pantallas del colegio bajo /staff (contexto y version de consentimiento los fija el servidor).
   staffUi: { contextRef: LECTORPRO_BETA_CONFIG.contextRef, consentVersion: "v1-dev" },
   ...(pgStore ? { devOutboxSink: () => pgStore.uow.withTenantTx(TENANT_ID, (tx) => listOutboxEnvelopes(tx)) } : {}),
+  // UX-CNS-006/006b (D-03, Carlos 2026-10-14): el enlace de gestión que emite C3 se registra en el almacén de handles del
+  // modo activo; los dos mensajes (comprobante y enlace) quedan en el sink LOCAL GET /__dev/message-sink (sin SMTP ni red).
+  // El enlace del mensaje apunta a este mismo servidor local para poder abrirlo a mano.
+  publicBaseUrl: `http://127.0.0.1:${port}`,
+  // P2-1: canal explícito (fail-closed fuera de LOCAL y con Postgres). LOCAL: sink en memoria, legible en /__dev/message-sink.
+  guestMessageChannel: guestMessageSink,
 });
 
 server.listen(port, "127.0.0.1", () => {
@@ -307,6 +316,8 @@ server.listen(port, "127.0.0.1", () => {
   // aquí (nunca en la respuesta HTTP ni en logs de producción: solo en LOCAL).
   console.log(`Leer el enlace de recuperación emitido: GET ${baseUrl}/__dev/recovery-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-127: R4 encola consent.revoked en el outbox in-memory; se lee aquí (solo LOCAL, sin entrega: R5).
+  // D-03: comprobante (sin enlace) y mensaje aparte con el enlace de gestión, tras enviar una decisión.
+  console.log(`Leer los mensajes al canal verificado (comprobante y enlace de gestión): GET ${baseUrl}/__dev/message-sink (y ?view=N para ver el HTML del mensaje N; solo LOCAL).`);
   console.log(`Leer los eventos del outbox: GET ${baseUrl}/__dev/outbox-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
   // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
   // (RH3_CASE_REF). Cuatro ojos: registra 7647258d-b4b5-41c0-b8f1-34030bb08f80 y co-firma otro RIGHTS_OPERATOR

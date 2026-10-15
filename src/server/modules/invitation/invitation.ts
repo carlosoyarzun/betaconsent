@@ -375,6 +375,8 @@ export async function resolveInvitationForRedeemByHash(ports: InvitationPorts, t
   // Defensa en profundidad (SEC-CNS-015 P2-A): la ref resuelta debe corresponder al hash pedido.
   if (!found || found.tokenHash !== tokenHash) return null;
   if (found.expiresAt && found.expiresAt.getTime() <= Date.now()) return null;
+  // I9 (invitation.spec "El token deja de resolver"): una invitación CANCELLED ya no abre sesión.
+  if (found.state === "CANCELLED") return null;
   return found;
 }
 
@@ -494,4 +496,55 @@ export async function markInvitationDeclinedTx(
     idempotencyKey: `${invitationRef}:declined`,
   });
   return declined;
+}
+
+/**
+ * I9 (CancelInvitation, reasonCode SUBJECT_MISMATCH_REPORTED): VERIFIED -> CANCELLED por el
+ * DecisionMaker verificado que informa "no es mi estudiante" (POST /decision/subject-mismatch,
+ * API-CNS-128, D-06). Guards: GRD-CM-02 (tenant), GRD-CM-07 (actor DECISION_MAKER fijo por la
+ * spec; el ref viene de la sesión), GRD-IV-10 (reasonCode habilitado, invitación no terminal).
+ * Sin GRD-CM-05 (I9 no incluye elegibilidad). Idempotente por (invitationRef, reasonCode):
+ * repetirlo sobre una CANCELLED no vuelve a emitir. No toca ninguna ConsentDecision.
+ */
+export function cancelInvitationSubjectMismatch(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  invitationRef: string,
+  decisionMakerRef: string,
+): Promise<InvitationRecord> {
+  return inTx(ports, tenantId, (p) => cancelInvitationSubjectMismatchTx(p, tenantId, invitationRef, decisionMakerRef));
+}
+
+export async function cancelInvitationSubjectMismatchTx(
+  ports: InvitationPorts,
+  tenantId: TenantId,
+  invitationRef: string,
+  decisionMakerRef: string,
+): Promise<InvitationRecord> {
+  const base = await invitationSequence(ports, tenantId, invitationRef);
+  const found = await requireInvitation(ports, tenantId, invitationRef);
+  // GRD-IV-10 (cancel_reason_and_actor, onFail ERR-IV-09): el actor debe ser el DecisionMaker ligado en I5. Se comprueba ANTES de la rama
+  // idempotente: otro decisionMakerRef nunca obtiene el acuse de una invitación ya cancelada.
+  if (found.boundDecisionMakerRef !== decisionMakerRef) {
+    throw new DomainError("ERR-IV-09");
+  }
+  if (found.state === "CANCELLED") return found; // idempotente por (invitationRef, reasonCode)
+  if (found.state !== "VERIFIED") {
+    // EXT-C: precondición "verificado"; cualquier otro estado (incluidos los terminales) no es cancelable.
+    throw new DomainError("ERR-IV-09");
+  }
+  const cancelled: InvitationRecord = { ...found, state: "CANCELLED" };
+  await ports.invitationRepo.save(cancelled);
+  await ports.ledger.append({
+    expectedSequence: base,
+    eventType: "INVITATION_CANCELLED",
+    tenantId,
+    aggregateType: "Invitation",
+    aggregateId: invitationRef,
+    actorType: "HUMAN",
+    actorRole: "DECISION_MAKER",
+    payload: { invitationRef, reasonCode: "SUBJECT_MISMATCH_REPORTED" },
+    idempotencyKey: `${invitationRef}:cancelled:SUBJECT_MISMATCH_REPORTED`,
+  });
+  return cancelled;
 }

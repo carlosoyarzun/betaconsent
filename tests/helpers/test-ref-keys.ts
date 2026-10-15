@@ -12,3 +12,8 @@ export const TEST_DECISION_MAKER_REF_KEY = deriveDecisionMakerRefKey(Buffer.allo
 export const TEST_SESSION_SECRET = Buffer.alloc(32, 7);
 export const TEST_OTP_SECRET = Buffer.alloc(32, 6);
 export const TEST_STAFF_ROSTER_CURSOR_KEY = Buffer.alloc(32, 5);
+
+/** P2-1 (fail-closed): con store Postgres o un entorno distinto de LOCAL, createConsentFlowHttpServer exige un canal de mensajes del invitado
+ * explícito. Los tests que no ejercen esos mensajes pasan este sink en memoria (solo tests; nunca un default del servidor). */
+import { createInMemoryGuestMessageSink } from "../../src/infra/adapters/in-memory-guest-message-sink.adapter.ts";
+export const TEST_GUEST_CHANNEL = createInMemoryGuestMessageSink();

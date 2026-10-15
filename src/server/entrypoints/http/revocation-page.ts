@@ -16,11 +16,10 @@
 // l.522, en confirmar-retiro y en el comprobante). Ninguno se redacta aquí (CLAUDE.md, copy
 // legal de producción).
 
-const HEAD = `<meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Confirmar retiro · Consent App</title>
-  <link rel="stylesheet" href="/assets/design-system/index.css">
-  <link rel="stylesheet" href="/assets/app.css">`;
+import { alertHead, GUEST_HELP_LINK, guestHead, guestHeader } from "./guest-layout.ts";
+import { RECEIPT_WATERMARK } from "./guest-messages.ts";
+
+const HEAD = guestHead("Confirmar retiro");
 
 export function renderRevocationConfirmPage(): string {
   return `<!doctype html>
@@ -28,7 +27,8 @@ export function renderRevocationConfirmPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-revocation-page" aria-labelledby="revocation-h1">
     <h1 id="revocation-h1">Confirmar retiro</h1>
 
@@ -36,34 +36,41 @@ export function renderRevocationConfirmPage(): string {
       <section class="lp-card-default lp-revocation-section" aria-labelledby="confirm-h2">
         <h2 id="confirm-h2">Vas a retirar tu consentimiento</h2>
         <p>Vas a retirar tu consentimiento para el Estudio Beta de LectorPro.</p>
-        <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
-        <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial) e irreversibilidad desde esta pantalla (protocolo l.423)]</p>
+        <p class="lp-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
+        <p class="lp-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial) e irreversibilidad desde esta pantalla (protocolo l.423)]</p>
       </section>
-      <button type="button" class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="confirm-revocation-btn" aria-disabled="false" aria-busy="false">Confirmar retiro total</button>
-      <button type="button" class="lp-link lp-verify-tap-target" id="withdraw-btn">Cancelar solicitud de retiro</button>
-      <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
+      <div class="lp-actions-stack">
+        <button type="button" class="lp-btn lp-btn-danger lp-cta lp-revocation-cta lp-verify-tap-target" id="confirm-revocation-btn" aria-disabled="false" aria-busy="false">Confirmar retiro total</button>
+        <button type="button" class="lp-btn lp-btn-outline lp-cta lp-revocation-cta lp-verify-tap-target" id="withdraw-btn">Cancelar solicitud de retiro</button>
+      </div>
+      ${GUEST_HELP_LINK}
     </div>
 
     <div role="status" aria-live="polite" id="state-applied" hidden>
-      <h2 id="applied-heading" tabindex="-1">Retiramos tu consentimiento</h2>
-      <p id="applied-receipt"></p>
-      <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
+      <span class="lp-hero-icon" aria-hidden="true">✓</span>
+      <h1 id="applied-heading" tabindex="-1">Retiramos tu consentimiento</h1>
+      <p class="lp-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
+      <section class="lp-card lp-card-default" aria-labelledby="applied-receipt-h2">
+        <h2 id="applied-receipt-h2">Comprobante</h2>
+        <p class="lp-receipt-ref" id="applied-receipt"></p>
+        <div class="lp-badge-row"><span class="lp-badge lp-badge-warning">${RECEIPT_WATERMARK}</span></div>
+      </section>
       <p>Nunca te mostraremos aquí el enlace de gestión: lo enviamos solo a la vía de contacto ya verificada.</p>
     </div>
 
     <div role="status" aria-live="polite" id="state-withdrawn" hidden>
-      <h2 id="withdrawn-heading" tabindex="-1">Cancelamos tu solicitud de retiro</h2>
+      <h1 id="withdrawn-heading" tabindex="-1">Cancelamos tu solicitud de retiro</h1>
       <p>Tu consentimiento sigue vigente. Puedes volver a solicitar el retiro cuando quieras.</p>
     </div>
 
-    <div role="alert" aria-live="polite" id="error-network" hidden>
-      <p>No pudimos conectar.</p>
+    <div role="alert" aria-live="polite" class="lp-alert-warning" id="error-network" hidden>
+      ${alertHead("warning", "No pudimos conectar.")}
       <p>Revisa tu conexión e inténtalo nuevamente.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
-    <div role="alert" aria-live="assertive" id="error-uniform" hidden>
-      <p>No pudimos continuar con este retiro.</p>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
+      ${alertHead("error", "No pudimos continuar con este retiro.")}
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
   </main>
@@ -81,13 +88,15 @@ export function renderRevocationUniformErrorPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-revocation-page" aria-labelledby="revocation-h1">
     <h1 id="revocation-h1">Confirmar retiro</h1>
-    <div role="alert" aria-live="assertive" id="error-uniform">
-      <p>No pudimos continuar con este retiro.</p>
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">
+      ${alertHead("error", "No pudimos continuar con este retiro.")}
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
     </div>
+    ${GUEST_HELP_LINK}
   </main>
 </body>
 </html>

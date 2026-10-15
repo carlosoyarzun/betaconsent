@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 
 import { encodeSession } from "../../../src/server/entrypoints/http/consent-session.ts";
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
@@ -29,7 +29,7 @@ test("TEST-CNS-877: un throw con detail de pg responde 500 uniforme sin message/
   const logs: string[] = [];
   const origError = console.error;
   console.error = (...a: unknown[]) => void logs.push(a.join(" "));
-  const server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: "http://consola-consent.test.localhost" }, ports, environment: "LOCAL", sessionSecret: SESSION_SECRET });
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: "http://consola-consent.test.localhost" }, ports, environment: "LOCAL", sessionSecret: SESSION_SECRET });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   armed = true;
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

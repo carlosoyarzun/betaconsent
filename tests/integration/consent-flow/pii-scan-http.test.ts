@@ -43,7 +43,7 @@ import { loadRecoveryTokenPolicyConfig } from "../../../src/server/modules/revoc
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { SCAN_ORIGIN, assertNonVacuous, describeStats, newCorpus, runAllFlows, scanForLeaks, startCapture } from "./pii-scan-driver.ts";
 import type { ScanEnv } from "./pii-scan-driver.ts";
-import { TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const T = LOCAL_ONLY_DEV_TENANT_ID;
 const GRANT_ALL = LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const }));
@@ -63,7 +63,7 @@ test("TEST-CNS-952 PII scan e2e (memoria): /i -> OTP -> decision, /m -> retiro, 
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     status: "ACTIVE",
   });
-  const server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: SCAN_ORIGIN },
     ports,
     revocationPorts,

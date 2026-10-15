@@ -43,7 +43,7 @@ import { isReservedEmail } from "../../../src/server/modules/common/synthetic-re
 import { RESERVED_BAD, RESERVED_OK } from "../../unit/common/synthetic-recipient-vectors.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
-import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-consent.test.localhost";
 const CSRF = { origin: ORIGIN, csrf: "csrf-token-abcdefgh" };
@@ -86,7 +86,7 @@ async function boot(ctx: PgTestContext) {
     decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
-  const server = createConsentFlowHttpServer({ staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN },
     ports: bundle.ports,
     revocationPorts: bundle.revocationPorts,
@@ -573,6 +573,76 @@ pgTest("TEST-CNS-1174 e2e pg: sesion CASE en app.case_session (solo hash del sid
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND sid_hash = $2 AND revoked_at IS NOT NULL", [T, sidHash]), 1, "logout revoca en la BD");
     assert.equal((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, {})).status, 404, "cookie robada tras logout");
     assert.equal((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true })).status, 404);
+  } finally {
+    await env.close();
+  }
+});
+
+/** Invitación -> OTP -> pasos de C2 hasta dejar la sesión lista para /decision/submit (o para /decision/subject-mismatch). */
+async function pgVerifiedSession(env: Env, label: string): Promise<{ inv: string; session: string }> {
+  const { ports } = env.bundle;
+  const inv = fixtureUuid(`inv-${label}`);
+  await createInvitation(ports.invitation, T, "INVITER", { enrollmentRef: fixtureUuid("enr-fixture"), participationRef: fixtureUuid("part-fixture"),
+    invitationRef: inv,
+    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+    productRef: LECTORPRO_BETA_CONFIG.productRef,
+    subjectRef: fixtureUuid(`subj-${label}`),
+  });
+  await markInvitationReady(ports.invitation, T, "INVITER", inv, { consentVersion: "v1-dev", expiresAt: new Date(Date.now() + 3_600_000), recipientChannelRef: `e2e-${label}@example.invalid` });
+  const { token } = await sendInvitation(ports.invitation, T, "INVITER", inv, { deliveryChannel: "CONSENT_APP_EMAIL" });
+  const redeemed = await fetch(`${env.baseUrl}/i/${token}`, { redirect: "manual" });
+  const handle = cookiesOf(redeemed)["__Host-cns-i-handle"]!;
+  const welcome = await fetch(`${env.baseUrl}/welcome`, { headers: { cookie: `__Host-cns-i-handle=${handle}` } });
+  let session = cookiesOf(welcome)["__Host-cns-session"]!;
+  const step = (res: Response): Response => {
+    session = cookiesOf(res)["__Host-cns-session"] ?? session;
+    return res;
+  };
+  assert.equal(step(await post(env, "/invitation/open", { "__Host-cns-session": session })).status, 200);
+  assert.equal(step(await post(env, "/otp/request", { "__Host-cns-session": session })).status, 202);
+  const code = env.otpSink.sent[env.otpSink.sent.length - 1]?.code ?? "";
+  assert.equal(step(await post(env, "/otp/submit", { "__Host-cns-session": session }, { code })).status, 200);
+  for (const body of [
+    { stepKind: "CONTEXT_INFORMATION_VIEWED" },
+    { stepKind: "CONSENT_VERSION_VIEWED" },
+    { stepKind: "DECISION_MAKER_AUTHORITY_DECLARED", relationshipRef: "SYNTHETIC_GUARDIAN", authorityDeclared: true },
+    { stepKind: "SUBJECT_CONFIRMED", subjectConfirmed: true },
+  ]) {
+    assert.equal(step(await post(env, "/decision/steps", { "__Host-cns-session": session }, body)).status, 200);
+  }
+  return { inv, session };
+}
+
+pgTest("TEST-CNS-1417 e2e pg (app_rw): C3 registra el handle de gestion en la MISMA tx (RECEIPT_CREATED.managementLinkIssued=true, un handle nuevo, el enlace entregado resuelve /m); I9 persiste CANCELLED con exactamente un INVITATION_CANCELLED y una cookie vieja ya no opera (P1-1, P2-2, P2-3)", async (ctx) => {
+  const env = await boot(ctx);
+  try {
+    const handlesBefore = await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]);
+    const g = await pgVerifiedSession(env, "1417g");
+    const decided = await post(env, "/decision/submit", { "__Host-cns-session": g.session }, { purposes: GRANT_ALL });
+    assert.equal(decided.status, 200);
+    const { consentId } = (await decided.json()) as { consentId: string };
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'RECEIPT_CREATED' AND (payload->>'managementLinkIssued')::boolean IS TRUE", [T, consentId]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]), handlesBefore + 1);
+    const linkMsg = [...TEST_GUEST_CHANNEL.sent].reverse().find((m) => m.kind === "MANAGEMENT_LINK");
+    const path = linkMsg?.text.match(/(\/m\/[A-Za-z0-9_-]{20,})/)?.[1];
+    assert.ok(path, "el mensaje de gestión lleva /m/<token>");
+    const redeemed = await fetch(`${env.baseUrl}${path}`, { redirect: "manual" });
+    assert.equal(redeemed.status, 303);
+    const manage = await fetch(`${env.baseUrl}/manage`, { headers: { cookie: `__Host-cns-m-handle=${cookiesOf(redeemed)["__Host-cns-m-handle"]}` } });
+    assert.equal(manage.status, 200);
+    // COMPLETED: una cookie vieja ya no abre /decision (P-30).
+    assert.equal((await fetch(`${env.baseUrl}/decision`, { headers: { cookie: `__Host-cns-session=${g.session}` } })).status, 404);
+
+    // I9 contra la base bajo app_rw (CHECK 0043 + allowlist del ledger).
+    const m = await pgVerifiedSession(env, "1417m");
+    const first = await post(env, "/decision/subject-mismatch", { "__Host-cns-session": m.session });
+    assert.equal(first.status, 200);
+    assert.deepEqual(await first.json(), { result: "INVITATION_CANCELLED" });
+    assert.equal((await post(env, "/decision/subject-mismatch", { "__Host-cns-session": m.session })).status, 200);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'CANCELLED'", [T, m.inv]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'INVITATION_CANCELLED' AND payload->>'reasonCode' = 'SUBJECT_MISMATCH_REPORTED'", [T, m.inv]), 1);
+    assert.equal((await fetch(`${env.baseUrl}/decision`, { headers: { cookie: `__Host-cns-session=${m.session}` } })).status, 404);
+    assert.equal((await post(env, "/decision/steps", { "__Host-cns-session": m.session }, { stepKind: "CONTEXT_INFORMATION_VIEWED" })).status, 404);
   } finally {
     await env.close();
   }

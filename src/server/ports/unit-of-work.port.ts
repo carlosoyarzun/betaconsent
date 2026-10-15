@@ -14,6 +14,7 @@ import type { EnrollmentRepositoryPort } from "./enrollment-repository.port.ts";
 import type { IdempotencyPort } from "./idempotency.port.ts";
 import type { InvitationRepositoryPort } from "./invitation-repository.port.ts";
 import type { LedgerPort } from "./ledger.port.ts";
+import type { ManagementHandleRegistryPort } from "./management-handle.port.ts";
 import type { OtpBudgetPort } from "./otp-budget.port.ts";
 import type { OtpVerificationRepositoryPort } from "./otp-verification-repository.port.ts";
 import type { OutboxPort } from "./outbox.port.ts";
@@ -58,6 +59,9 @@ export interface TenantTxPorts {
   /** SEC-CNS-021 PR-4 (DF-10, GRD-OT-03): presupuesto de fallos de OTP por clave (ops.otp_budget), en la MISMA tx que el challenge:
    * la reserva, su reversion en el acierto y el rechazo (V6/V6r) confirman o revierten junto con el estado del challenge. */
   readonly otpBudget: OtpBudgetPort;
+  /** C3: registro del handle del enlace de gestión en la MISMA tx que la decisión (revocation.spec managementLink). Opcional: sin él, C3 no emite
+   * enlace y el ledger registra managementLinkIssued=false (verdad factual). */
+  readonly managementHandles?: ManagementHandleRegistryPort;
 }
 
 export interface UnitOfWorkPort {

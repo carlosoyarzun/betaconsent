@@ -18,7 +18,7 @@ import { createInvitation, markInvitationReady, sendInvitation } from "../../../
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import { deriveDecisionMakerRef } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
-import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY } from "../../helpers/test-ref-keys.ts";
+import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ALLOWED_ORIGIN = "http://consola-consent.test.localhost";
 const CSRF_COOKIE_NAME = "__Host-cns-csrf";
@@ -42,7 +42,7 @@ interface Harness {
 
 function startServer(): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -342,18 +342,19 @@ test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL D
     const html = await res.text();
     assert.match(
       html,
-      /<p class="lp-decision-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
+      /<p class="lp-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
     );
   } finally {
     await harness.close();
   }
 });
 
-test("TEST-CNS-569: app.css da un tap target >=44px al checkbox de autoridad (#authority-declared), no solo a la fila que lo contiene (Carlos, 2026-09-27, misma decisión que /welcome y /verify)", async () => {
+test("TEST-CNS-569: app.css da un área táctil >=48px a la casilla de autoridad (#authority-declared): caja visual de 24px dentro de una fila-label de 48px (D-05, Carlos 2026-10-14)", async () => {
   const harness = await startServer();
   try {
     const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
-    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s);
+    assert.match(css, /\.lp-decision-checkbox-row\s*\{[^}]*min-height:\s*48px/s);
+    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/s);
   } finally {
     await harness.close();
   }
@@ -388,7 +389,7 @@ test("TEST-CNS-584: los marcadores [LEGAL DECISION] de /decision (finalidad, enu
     const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
     const html = await res.text();
     const visible = stripHtmlComments(html);
-    assert.match(visible, /\[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos, handoff §3\.3\]/);
+    assert.match(visible, /\[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos\]/);
     assert.match(visible, /\[LEGAL DECISION — enum de relación pendiente de DEC-BR-003 \/ EXT-A \/ LD-01; opción \(b\) de Carlos: lista de valores por configuración\]/);
     assert.match(visible, /\[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 \/ EXT-A \/ LD-01\]/);
   } finally {
