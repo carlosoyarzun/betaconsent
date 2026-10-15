@@ -98,3 +98,14 @@ export const APPROVED_P51_STEP_UP_MAX_ATTEMPTS = 5;
 export const APPROVED_P51_STEP_UP_WINDOW_SECONDS = 10 * 60;
 /** P-52: vida de la asercion LOGIN contada DESDE auth_time = 5 min; un solo uso; la base no admite mas de 300 s. */
 export const APPROVED_P52_LOGIN_ASSERTION_SECONDS = 5 * 60;
+
+// ADR-010 rev. 5 PR-6c (SEC-CNS-006 rev. 5 §1, ACCEPTED 2026-09-26; ADR-010 rev. 5 remite a estos valores): sesiones de operador del proceso platform.
+
+/** P-36: vida ABSOLUTA de la sesion PLATFORM = 4 h. P-25: la de la sesion CASE = min(valid_until del grant, 4 h). */
+export const APPROVED_PLATFORM_SESSION_ABSOLUTE_SECONDS = 4 * 60 * 60;
+/** P-36 / P-25: expiracion por INACTIVIDAD de las sesiones PLATFORM y CASE = 15 min. */
+export const APPROVED_PLATFORM_SESSION_IDLE_SECONDS = 15 * 60;
+/** P-23: vida maxima de un rights_case_grant = 4 h (por defecto 2 h; renovar = nueva doble aprobacion). P-37: grant_request pendiente expira a 1 h. */
+export const APPROVED_P23_GRANT_MAX_SECONDS = 4 * 60 * 60;
+export const APPROVED_P23_GRANT_DEFAULT_SECONDS = 2 * 60 * 60;
+export const APPROVED_P37_GRANT_REQUEST_EXPIRY_SECONDS = 60 * 60;

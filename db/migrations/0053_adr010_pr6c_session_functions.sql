@@ -15,8 +15,7 @@
 --   platform.revoke_session_internal (INTERNA, sin EXECUTE de runtime)   logica comun de revocacion y rotacion.
 -- Una asercion consumida y luego rechazada (rol inactivo, sin sesion PLATFORM, sin grant) queda quemada: no se puede reintentar con la misma. Un fallo ANTES de consumir (state ajeno, vencido, ya usado) no
 -- escribe evento: no hay principal confiable y un INSERT por request seria un vector de DoS de escritura (R-SE-07). Los eventos de rechazo posteriores llevan el principal y NUNCA IP ni sub_hmac.
--- Los valores de vida (absoluta/inactividad) los pasa el proceso platform por configuracion (sin default fuera de LOCAL); la base solo acota rangos (techos de 8 h y 30 min = valores aprobados de las
--- sesiones hermanas STAFF/CASE; el valor de PLATFORM esta PENDIENTE de aprobacion, F-PR6-41).
+-- Los valores de vida (absoluta/inactividad) los pasa el proceso platform por configuracion (sin default fuera de LOCAL); la base solo acota rangos (techos de 4 h y 15 min = P-36 PLATFORM y P-25 CASE, SEC-CNS-006 rev. 5 §1, ACCEPTED 2026-09-26).
 
 -- 0. CREATE temporal para grant_owner (se revoca al final).
 SET LOCAL ROLE platform_schema_owner;
@@ -72,8 +71,8 @@ DECLARE
 BEGIN
   IF session_user <> 'platform_rw' THEN RETURN NULL; END IF;
   IF p_exchange_ref IS NULL OR p_state IS NULL OR p_state !~ '^[A-Za-z0-9_-]{22,128}$'
-     OR p_absolute_seconds IS NULL OR p_absolute_seconds < 60 OR p_absolute_seconds > 28800
-     OR p_idle_seconds IS NULL OR p_idle_seconds < 60 OR p_idle_seconds > 1800 OR p_idle_seconds > p_absolute_seconds
+     OR p_absolute_seconds IS NULL OR p_absolute_seconds < 60 OR p_absolute_seconds > 14400
+     OR p_idle_seconds IS NULL OR p_idle_seconds < 60 OR p_idle_seconds > 900 OR p_idle_seconds > p_absolute_seconds
      OR (p_previous_sid IS NOT NULL AND p_previous_sid !~ c_hex) THEN
     RETURN NULL;
   END IF;
@@ -123,8 +122,8 @@ BEGIN
   IF p_exchange_ref IS NULL OR p_state IS NULL OR p_state !~ '^[A-Za-z0-9_-]{22,128}$'
      OR p_case_ref IS NULL OR p_case_ref !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
      OR p_platform_sid IS NULL OR p_platform_sid !~ c_hex
-     OR p_absolute_seconds IS NULL OR p_absolute_seconds < 60 OR p_absolute_seconds > 28800
-     OR p_idle_seconds IS NULL OR p_idle_seconds < 60 OR p_idle_seconds > 1800 OR p_idle_seconds > p_absolute_seconds
+     OR p_absolute_seconds IS NULL OR p_absolute_seconds < 60 OR p_absolute_seconds > 14400
+     OR p_idle_seconds IS NULL OR p_idle_seconds < 60 OR p_idle_seconds > 900 OR p_idle_seconds > p_absolute_seconds
      OR (p_previous_case_sid IS NOT NULL AND p_previous_case_sid !~ c_hex) THEN
     RETURN NULL;
   END IF;

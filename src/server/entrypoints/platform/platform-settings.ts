@@ -5,14 +5,14 @@
 
 import { isIP } from "node:net";
 import {
-  APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS,
-  APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS,
   APPROVED_P49_AUTH_MAX_PER_IP,
   APPROVED_P49_AUTH_WINDOW_SECONDS,
   APPROVED_P50_REQUESTS_MAX_PER_MINUTE,
   APPROVED_P50_WINDOW_SECONDS,
   APPROVED_P51_STEP_UP_MAX_ATTEMPTS,
   APPROVED_P51_STEP_UP_WINDOW_SECONDS,
+  APPROVED_PLATFORM_SESSION_ABSOLUTE_SECONDS,
+  APPROVED_PLATFORM_SESSION_IDLE_SECONDS,
 } from "../../modules/common/approved-parameters.ts";
 import type { IdpRedirectConfig } from "./auth-routes.ts";
 import { parseCidr } from "./rate-limit.ts";
@@ -35,8 +35,8 @@ export interface PlatformSettings {
   readonly maxAwaiting: number | null;
   readonly idp?: IdpRedirectConfig;
   /**
-   * Vida de las sesiones PLATFORM y CASE (PR-6c). El valor de PLATFORM NO esta aprobado (F-PR6-41): en LOCAL se usan como valor de trabajo los aprobados para las sesiones hermanas STAFF/CASE
-   * (8 h absoluta, 30 min de inactividad); fuera de LOCAL son obligatorios (sin default) y la base acota los techos (8 h / 30 min).
+   * Vida de las sesiones PLATFORM y CASE (PR-6c): P-36 / P-25 (SEC-CNS-006 rev. 5 §1, ACCEPTED 2026-09-26) = 4 h absoluta y 15 min de inactividad. Son el TECHO: en LOCAL son el default; fuera de LOCAL
+   * la configuracion es obligatoria (sin default) y se rechaza cualquier valor por encima del techo (la base tambien lo acota).
    */
   readonly session: { readonly absoluteSeconds: number; readonly idleSeconds: number };
   /** Origen publico de la plataforma = origen de CNS_PLATFORM_REDIRECT_URI. Las rutas POST exigen `Origin` exactamente igual (mismo origen). Ausente si el login no esta configurado. */
@@ -129,8 +129,8 @@ export function loadPlatformSettings(env: Env, environment: string): PlatformSet
     if (r.username !== "" || r.password !== "" || r.hash !== "") throw new PlatformConfigError("CNS_PLATFORM_REDIRECT_URI sin credenciales ni fragmento");
     idp = { authorizationEndpoint: endpoint, clientId, redirectUri };
   }
-  const sessionAbsolute = need("CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", int(env, "CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", 60, 28_800), APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS / 1000);
-  const sessionIdle = need("CNS_PLATFORM_SESSION_IDLE_SECONDS", int(env, "CNS_PLATFORM_SESSION_IDLE_SECONDS", 60, 1_800), APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS / 1000);
+  const sessionAbsolute = need("CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", int(env, "CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", 60, APPROVED_PLATFORM_SESSION_ABSOLUTE_SECONDS), APPROVED_PLATFORM_SESSION_ABSOLUTE_SECONDS);
+  const sessionIdle = need("CNS_PLATFORM_SESSION_IDLE_SECONDS", int(env, "CNS_PLATFORM_SESSION_IDLE_SECONDS", 60, APPROVED_PLATFORM_SESSION_IDLE_SECONDS), APPROVED_PLATFORM_SESSION_IDLE_SECONDS);
   if (sessionIdle > sessionAbsolute) throw new PlatformConfigError("CNS_PLATFORM_SESSION_IDLE_SECONDS no puede exceder CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS");
   return {
     bindAddress,

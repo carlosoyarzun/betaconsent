@@ -829,3 +829,4 @@ TEST-CNS-1557,unit,tests/unit/platform/pr6c-sessions.test.ts,"POST /platform/ses
 TEST-CNS-1558,unit,tests/unit/platform/pr6c-sessions.test.ts,"login kind=CASE con sesion PLATFORM validada, sesion CASE y logout en servidor","ADR-010 rev.5 §5.2 pasos 6-7;F-PR6-36",ACTIVE
 TEST-CNS-1559,unit,tests/unit/platform/pr6c-sessions.test.ts,"P-50 cableado a rutas autenticadas por principal; settings de sesion obligatorias fuera de LOCAL","ADR-010 rev.5 §5.4;G-6",ACTIVE
 TEST-CNS-1560,integration,tests/integration/postgres/adr010-pr6c-sessions.test.ts,"pg e2e login PLATFORM -> sesion -> login CASE -> sesion CASE -> logout en cascada con adaptadores reales","ADR-010 rev.5 §5.2 pasos 1-7",ACTIVE
+TEST-CNS-1561,integration,tests/integration/postgres/adr010-pr6c-sessions.test.ts,"pg P-23 (grant <= 4 h), P-37 (grant_request 1 h, vencida no aprobable), P-36/P-25 (sesiones <= 4 h, inactividad <= 15 min)","SEC-CNS-006 rev.5 §1;P-23;P-25;P-36;P-37;ADR-010 rev.5 §6",ACTIVE

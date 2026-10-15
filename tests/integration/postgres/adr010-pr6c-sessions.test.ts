@@ -98,7 +98,7 @@ pgTest("TEST-CNS-1550 pg: open_platform_session consume la asercion en la misma 
   assert.equal(await openPlatform(platform, { ref: randomUUID(), state: f.state }), null, "ref ajeno");
   assert.equal((await admin.query("SELECT consumed_at FROM platform.login_assertion WHERE exchange_ref = $1", [f.ref])).rows[0]?.consumed_at, null, "un fallo antes de consumir no quema la asercion");
   // Rangos: fuera de rango no abre ni consume.
-  for (const o of [{ abs: 59 }, { abs: 28801 }, { idle: 59 }, { idle: 1801 }, { abs: 100, idle: 200 }]) assert.equal(await openPlatform(platform, f, o), null, JSON.stringify(o));
+  for (const o of [{ abs: 59 }, { abs: 14401 }, { idle: 59 }, { idle: 901 }, { abs: 100, idle: 200 }]) assert.equal(await openPlatform(platform, f, o), null, JSON.stringify(o));
   assert.equal((await admin.query("SELECT consumed_at FROM platform.login_assertion WHERE exchange_ref = $1", [f.ref])).rows[0]?.consumed_at, null);
   // app_rw no ejecuta la funcion.
   await assert.rejects(app.query("SELECT platform.open_platform_session($1::uuid, $2, 3600, 600, NULL)", [f.ref, f.state]), (e) => codeOf(e) === "42501");
@@ -256,12 +256,12 @@ pgTest("TEST-CNS-1552 pg: validate_session revalida rol, grant y sesion PLATFORM
     return sid;
   };
   assert.equal((await validate(platform, await past("abs", { issuedAgo: 7200, lastSeenAgo: 10, ttl: 3600, idle: 600 }), "PLATFORM")).length, 0, "vencida (absoluta)");
-  assert.equal((await validate(platform, await past("idle", { issuedAgo: 7200, lastSeenAgo: 3600, ttl: 28800, idle: 600 }), "PLATFORM")).length, 0, "vencida (inactividad)");
-  const stale = await past("touch", { issuedAgo: 7200, lastSeenAgo: 120, ttl: 28800, idle: 600 });
+  assert.equal((await validate(platform, await past("idle", { issuedAgo: 7200, lastSeenAgo: 3600, ttl: 14400, idle: 600 }), "PLATFORM")).length, 0, "vencida (inactividad)");
+  const stale = await past("touch", { issuedAgo: 7200, lastSeenAgo: 120, ttl: 14400, idle: 600 });
   assert.equal((await validate(platform, stale, "PLATFORM")).length, 1);
   const seen = async (sid: string): Promise<number> => Number((await admin.query<{ a: string }>("SELECT extract(epoch FROM now() - last_seen_at)::int::text AS a FROM platform.platform_session WHERE sid_hash = $1", [sha(sid)])).rows[0]!.a);
   assert.ok((await seen(stale)) < 5, "la actividad atrasada mas de 60 s se avanza");
-  const fresh = await past("fresh", { issuedAgo: 7200, lastSeenAgo: 20, ttl: 28800, idle: 600 });
+  const fresh = await past("fresh", { issuedAgo: 7200, lastSeenAgo: 20, ttl: 14400, idle: 600 });
   assert.equal((await validate(platform, fresh, "PLATFORM")).length, 1);
   assert.ok((await seen(fresh)) >= 19, "dentro de la granularidad no se escribe");
 
@@ -386,7 +386,7 @@ pgTest("TEST-CNS-1555 pg: privilegios de las sesiones: ACL exacta, sin acceso de
   }
   // Sin acceso de tabla para ningun rol de runtime.
   for (const c of [platform, app, worker, verifier]) {
-    for (const t of ["platform_session", "rights_case_grant", "session_event", "login_assertion"]) {
+    for (const t of ["platform_session", "rights_case_grant", "grant_request", "session_event", "login_assertion"]) {
       await assert.rejects(c.query(`SELECT 1 FROM platform.${t}`), (e) => codeOf(e) === "42501", t);
     }
   }
@@ -500,4 +500,40 @@ pgTest("TEST-CNS-1560 pg e2e: login PLATFORM -> sesion PLATFORM -> login CASE co
     await platformPool.end();
     await verifierPool.end();
   }
+});
+
+pgTest("TEST-CNS-1561 pg: P-23/P-37/P-36/P-25 (SEC-CNS-006 rev. 5 §1): grant <= 4 h, grant_request expira a 1 h y vencida no es aprobable, sesiones <= 4 h", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const R = P("1561-r");
+  const ins = (secs: number): Promise<unknown> =>
+    admin.query("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + make_interval(secs => $4))", [TENANT, CASE_A, R, secs]);
+  await ins(4 * 3600); // P-23: valid_until - valid_from <= 4 h
+  await assert.rejects(ins(4 * 3600 + 60), (e) => codeOf(e) === "23514", "grant > 4 h");
+  await assert.rejects(ins(-5), (e) => codeOf(e) === "23514", "grant sin vida");
+  const req = async (extra: string, secs: number, by = R, approver: string | null = null, approvedAgo: number | null = null): Promise<string> =>
+    (await admin.query<{ request_ref: string }>(
+      `INSERT INTO platform.grant_request (tenant_id, case_ref, operator_principal_ref, requested_by_ref, requested_at, expires_at, status, approved_by_ref, approved_at)
+       VALUES ($1, $2, $3, $4, now() - interval '30 minutes', now() - interval '30 minutes' + make_interval(secs => $5), $6, $7, CASE WHEN $8::int IS NULL THEN NULL ELSE now() - make_interval(secs => $8::int) END) RETURNING request_ref`,
+      [TENANT, CASE_A, R, by, secs, extra, approver, approvedAgo],
+    )).rows[0]!.request_ref;
+  const ref = await req("PENDING", 3600);
+  await assert.rejects(req("PENDING", 3601), (e) => codeOf(e) === "23514", "P-37: expira a 1 h como maximo");
+  await assert.rejects(req("APPROVED", 3600, R, R, 60), (e) => codeOf(e) === "23514", "aprobador distinto del solicitante");
+  await assert.rejects(req("APPROVED", 600, R, P("1561-apr"), 60), (e) => codeOf(e) === "23514", "vencida (a los 10 min) no es aprobable");
+  // PENDING -> APPROVED una vez; no se borra ni se edita otra cosa.
+  await admin.query("UPDATE platform.grant_request SET status = 'APPROVED', approved_by_ref = $2, approved_at = now() WHERE request_ref = $1", [ref, P("1561-apr")]);
+  await assert.rejects(admin.query("UPDATE platform.grant_request SET expires_at = expires_at + interval '1 minute' WHERE request_ref = $1", [ref]), (e) => codeOf(e) === "23000");
+  await assert.rejects(admin.query("DELETE FROM platform.grant_request WHERE request_ref = $1", [ref]), (e) => codeOf(e) === "23000");
+  // P-36/P-25: ninguna sesion vive mas de 4 h ni tiene inactividad > 15 min.
+  const NR = P("1561-s");
+  const assertion = async (n: string): Promise<string> => {
+    const r = randomUUID();
+    await admin.query("INSERT INTO platform.login_assertion (exchange_ref, kind, state_hash, principal_ref, decision, assertion_hash, auth_time, expires_at, consumed_at) VALUES ($1, 'LOGIN_PLATFORM', $2, $3, 'ATTESTED', $4, now(), now() + interval '5 minutes', now())", [r, sha(`s-${n}`), NR, sha(`a-${n}`)]);
+    return (await admin.query<{ assertion_ref: string }>("SELECT assertion_ref FROM platform.login_assertion WHERE exchange_ref = $1", [r])).rows[0]!.assertion_ref;
+  };
+  const sess = async (n: string, ttl: number, idle: number): Promise<unknown> =>
+    admin.query("INSERT INTO platform.platform_session (sid_hash, session_kind, principal_ref, assertion_ref, expires_at, idle_seconds) VALUES ($1, 'PLATFORM', $2, $3, now() + make_interval(secs => $4), $5)", [sha(`sid-${n}`), NR, await assertion(n), ttl, idle]);
+  await sess("ok", 14400, 900);
+  await assert.rejects(sess("abs", 14401, 900), (e) => codeOf(e) === "23514", "absoluta > 4 h");
+  await assert.rejects(sess("idle", 3600, 901), (e) => codeOf(e) === "23514", "inactividad > 15 min");
 });

@@ -157,7 +157,7 @@ paths:
       tags: [platform]
       summary: "openCaseSession - Body {caseRef}. Requiere sesion PLATFORM vigente del mismo principal, asercion LOGIN_CASE ligada al caso, RIGHTS_OPERATOR y grant atestado vigente. Origin = mismo origen. Set-Cookie caseSession (Strict). P-50."
       x-session: platformSession
-      x-roles: "RIGHTS_OPERATOR, APPROVER"
+      x-roles: "RIGHTS_OPERATOR"
       x-step-up: "LOGIN_CASE"
       x-db-role: "platform_rw"
       x-db-function: "platform.open_case_session"

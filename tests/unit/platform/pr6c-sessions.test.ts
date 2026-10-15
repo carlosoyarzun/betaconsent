@@ -86,7 +86,7 @@ test("TEST-CNS-1557 POST /platform/sessions/platform: mismo origen, cookies stat
     const ok = await post({ origin: ORIGIN });
     assert.equal(ok.status, 200);
     const sess = find(ok.setCookie, PLATFORM_SESSION_COOKIE);
-    assert.match(sess, new RegExp(`^${PLATFORM_SESSION_COOKIE}=[0-9a-f]{64}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=28800$`));
+    assert.match(sess, new RegExp(`^${PLATFORM_SESSION_COOKIE}=[0-9a-f]{64}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=14400$`));
     for (const [name, site] of [[OIDC_STATE_COOKIE, "Lax"], [OIDC_EXCHANGE_COOKIE, "Strict"], [CASE_SESSION_COOKIE, "Strict"]] as const) {
       assert.equal(find(ok.setCookie, name), `${name}=; Path=/; Secure; HttpOnly; SameSite=${site}; Max-Age=0`, `se borra ${name} (F-PR6-38)`);
     }
@@ -152,7 +152,7 @@ test("TEST-CNS-1558 login kind=CASE y sesion CASE: exige sesion PLATFORM validad
     const ok = await postCase({ ...flow, [PLATFORM_SESSION_COOKIE]: platformSid });
     assert.equal(ok.status, 200);
     const caseCookie = find(ok.setCookie, CASE_SESSION_COOKIE);
-    assert.match(caseCookie, new RegExp(`^${CASE_SESSION_COOKIE}=[0-9a-f]{64}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=28800$`));
+    assert.match(caseCookie, new RegExp(`^${CASE_SESSION_COOKIE}=[0-9a-f]{64}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=14400$`));
     assert.equal(find(ok.setCookie, OIDC_STATE_COOKIE), `${OIDC_STATE_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`);
     assert.equal(find(ok.setCookie, OIDC_EXCHANGE_COOKIE), `${OIDC_EXCHANGE_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0`);
     const caseSid = caseCookie.split("=")[1]!.split(";")[0]!;
@@ -198,15 +198,16 @@ test("TEST-CNS-1559 P-50 cableado a las rutas autenticadas: por principal de la 
   const full = {
     CNS_PLATFORM_BIND_ADDRESS: "10.8.0.5", CNS_PLATFORM_ALLOWED_CIDRS: "10.8.0.0/16", CNS_PLATFORM_P53_MAX_AWAITING: "500",
     CNS_PLATFORM_P49_MAX: "20", CNS_PLATFORM_P49_WINDOW_SECONDS: "900", CNS_PLATFORM_P49_IPV4_PREFIX: "32", CNS_PLATFORM_P50_MAX: "30", CNS_PLATFORM_P50_WINDOW_SECONDS: "60",
-    CNS_PLATFORM_P51_MAX: "5", CNS_PLATFORM_P51_WINDOW_SECONDS: "600", CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "28800", CNS_PLATFORM_SESSION_IDLE_SECONDS: "1800",
+    CNS_PLATFORM_P51_MAX: "5", CNS_PLATFORM_P51_WINDOW_SECONDS: "600", CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "14400", CNS_PLATFORM_SESSION_IDLE_SECONDS: "900",
   };
-  assert.deepEqual(loadPlatformSettings(full, "STAGING").session, { absoluteSeconds: 28800, idleSeconds: 1800 });
+  assert.deepEqual(loadPlatformSettings(full, "STAGING").session, { absoluteSeconds: 14400, idleSeconds: 900 });
   for (const missing of ["CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", "CNS_PLATFORM_SESSION_IDLE_SECONDS"]) {
     const env: Record<string, string | undefined> = { ...full };
     delete env[missing];
     assert.throws(() => loadPlatformSettings(env, "STAGING"), PlatformConfigError, missing);
   }
   assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "600", CNS_PLATFORM_SESSION_IDLE_SECONDS: "900" }, "STAGING"), PlatformConfigError, "idle <= absoluta");
-  assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "28801" }, "STAGING"), PlatformConfigError, "techo 8 h");
-  assert.deepEqual(loadPlatformSettings({}, "LOCAL").session, { absoluteSeconds: 28800, idleSeconds: 1800 });
+  assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "14401" }, "STAGING"), PlatformConfigError, "techo P-36/P-25 (4 h)");
+  assert.throws(() => loadPlatformSettings({ ...full, CNS_PLATFORM_SESSION_IDLE_SECONDS: "901" }, "STAGING"), PlatformConfigError, "techo P-36/P-25 (15 min)");
+  assert.deepEqual(loadPlatformSettings({}, "LOCAL").session, { absoluteSeconds: 14400, idleSeconds: 900 });
 });
