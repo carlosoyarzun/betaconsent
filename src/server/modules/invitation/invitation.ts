@@ -17,6 +17,7 @@ import { assertActorRoleIn, assertRouteEligible, assertTenantConsistency } from 
 import type { ActorRole, TenantId } from "../common/types.ts";
 import type { EligibilityPort } from "../../ports/eligibility.port.ts";
 import type { InvitationRecord, InvitationRepositoryPort } from "../../ports/invitation-repository.port.ts";
+import type { InvitationTransitionsPort } from "../../ports/invitation-transitions.port.ts";
 import type { LedgerPort } from "../../ports/ledger.port.ts";
 import type { TenantResolverPort } from "../../ports/tenant-resolver.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
@@ -31,6 +32,8 @@ export interface InvitationPorts {
   readonly uow: UnitOfWorkPort;
   /** CA-124 §3/§5: lookup SIN tenant por hash del token de invitación (GRD-IV-07, GRD-CM-01). */
   readonly tenantResolver: TenantResolverPort;
+  /** I9 por funcion SECURITY DEFINER (solo Postgres, la fija la tx). */
+  readonly invitationTransitions?: InvitationTransitionsPort;
 }
 
 const INVITER_ROLES: readonly ActorRole[] = ["INVITER"];
@@ -39,13 +42,13 @@ const INVITER_ROLES: readonly ActorRole[] = ["INVITER"];
  * sustituyen por los puertos de la tx. Las funciones `...Tx` solo llaman a otras `...Tx`
  * (inTenant no se anida). */
 function inTx<T>(ports: InvitationPorts, tenantId: TenantId, fn: (txPorts: InvitationPorts) => Promise<T>): Promise<T> {
-  return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, invitationRepo: tx.invitationRepo, ledger: tx.ledger }));
+  return ports.uow.inTenant(tenantId, (tx) => fn({ ...ports, invitationRepo: tx.invitationRepo, ledger: tx.ledger, ...(tx.invitationTransitions ? { invitationTransitions: tx.invitationTransitions } : {}) }));
 }
 
 /** Ejecuta `fn` con los puertos de una tx ya abierta por OTRO módulo (otp-challenge, consent-decision):
  * sustituye repo y ledger del bag por los de esa tx, sin abrir una unidad nueva. */
-export function invitationPortsInTx(ports: InvitationPorts, tx: Pick<TenantTxPorts, "invitationRepo" | "ledger">): InvitationPorts {
-  return { ...ports, invitationRepo: tx.invitationRepo, ledger: tx.ledger };
+export function invitationPortsInTx(ports: InvitationPorts, tx: Pick<TenantTxPorts, "invitationRepo" | "ledger" | "invitationTransitions">): InvitationPorts {
+  return { ...ports, invitationRepo: tx.invitationRepo, ledger: tx.ledger, ...(tx.invitationTransitions ? { invitationTransitions: tx.invitationTransitions } : {}) };
 }
 
 /** Secuencia vigente de la Invitation: se lee ANTES de bloquear/leer el estado (SEC-CNS-015 P2-E). */
@@ -522,6 +525,14 @@ export async function cancelInvitationSubjectMismatchTx(
   decisionMakerRef: string,
 ): Promise<InvitationRecord> {
   const base = await invitationSequence(ports, tenantId, invitationRef);
+  // Rama idempotente SIN lock: en Postgres app_rw ya no ve una fila CANCELLED para FOR UPDATE (0044: policy de UPDATE con state <> 'CANCELLED'),
+  // y una CANCELLED no vuelve a cambiar. El decisionMakerRef se comprueba igual (GRD-IV-10) antes de devolver el acuse.
+  const peek = await ports.invitationRepo.findByRef(tenantId, invitationRef);
+  if (peek?.state === "CANCELLED") {
+    assertTenantConsistency(peek.tenantId, tenantId);
+    if (peek.boundDecisionMakerRef !== decisionMakerRef) throw new DomainError("ERR-IV-09");
+    return peek;
+  }
   const found = await requireInvitation(ports, tenantId, invitationRef);
   // GRD-IV-10 (cancel_reason_and_actor, onFail ERR-IV-09): el actor debe ser el DecisionMaker ligado en I5. Se comprueba ANTES de la rama
   // idempotente: otro decisionMakerRef nunca obtiene el acuse de una invitación ya cancelada.
@@ -534,6 +545,12 @@ export async function cancelInvitationSubjectMismatchTx(
     throw new DomainError("ERR-IV-09");
   }
   const cancelled: InvitationRecord = { ...found, state: "CANCELLED" };
+  if (ports.invitationTransitions) {
+    // Postgres (ADR-010 rev. 5, 0044): UPDATE + INVITATION_CANCELLED por case_state.cancel_invitation_subject_mismatch (SECURITY DEFINER);
+    // app_rw ya no tiene el par en la allowlist del ledger ni puede dejar CANCELLED. La base repite los guards (tenant, VERIFIED, DM ligado).
+    await ports.invitationTransitions.cancelSubjectMismatch({ invitationRef, decisionMakerRef, expectedSequence: base });
+    return cancelled;
+  }
   await ports.invitationRepo.save(cancelled);
   await ports.ledger.append({
     expectedSequence: base,

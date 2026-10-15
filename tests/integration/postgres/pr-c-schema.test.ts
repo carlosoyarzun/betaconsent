@@ -89,6 +89,8 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
   )).rows.map((r) => `${r.t}.${r.p}:${r.c}`);
   assert.deepEqual(transitionPolicies, [
     "consent_decision.consent_decision_transition_select:SELECT", "consent_decision.consent_decision_transition_update:UPDATE",
+    "invitation.invitation_transition_select:SELECT",
+    "invitation.invitation_transition_update:UPDATE",
     "outbox.outbox_transition_insert:INSERT", "outbox.outbox_transition_select:SELECT",
     "recovery_token.recovery_token_transition_select:SELECT", "recovery_token.recovery_token_transition_update:UPDATE",
     "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",

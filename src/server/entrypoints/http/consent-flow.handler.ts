@@ -62,6 +62,7 @@ import {
   type LinkHandleType,
 } from "./link-handle.ts";
 import type { InvitationHandlePolicy } from "../../modules/invitation/invitation-handle-policy.config.ts";
+import { LedgerSequenceConflictError } from "../../ports/ledger.port.ts";
 import type { InMemoryTenantHandleAdapter } from "../../../infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { GuestMessageChannelPort, GuestMessageKind } from "../../ports/guest-message-channel.port.ts";
 import { SUBJECT_LABEL_PATTERN, type SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
@@ -787,7 +788,9 @@ export async function handleReportSubjectMismatch(
   try {
     await cancelInvitationSubjectMismatch(ports.invitation, session.tenantId, session.invitationRef, session.decisionMakerRef);
   } catch (err) {
-    if (err instanceof DomainError) return uniformNotFound();
+    // Contrato API-CNS-128: solo 200/403/404. Un conflicto de secuencia que agota los reintentos del UoW (carrera con otra tx sobre la misma
+    // invitacion) no es un 500: respuesta uniforme 404, igual que cualquier otro fallo; el cliente puede reintentar.
+    if (err instanceof DomainError || err instanceof LedgerSequenceConflictError) return uniformNotFound();
     throw err;
   }
   const cancelledSession: ConsentSessionPayload = { tenantId: session.tenantId, invitationRef: session.invitationRef };
