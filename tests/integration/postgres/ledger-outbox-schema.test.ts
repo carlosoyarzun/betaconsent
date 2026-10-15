@@ -127,8 +127,13 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     [...PLATFORM_OWNER_POLICIES].sort((a, b) => a[0].localeCompare(b[0])),
     "las policies de platform son exactamente las de 0035 y cada una es de UN solo owner",
   );
+  // ADR-010 rev. 5 PR-6e (0057/0058, G-9): lectura cross-tenant EXPLICITA del reconciler (NOBYPASSRLS). Lista EXACTA y cerrada: solo SELECT, solo TO integrity_reconciler, USING (true).
+  const RECONCILER_POLICIES = ["app.consent_decision/consent_decision_reconciler_select", "app.invitation/invitation_reconciler_select", "integrity.audit_event/audit_event_reconciler_select"];
+  const reconcilerPolicies = all.filter((p) => p.roles.includes("integrity_reconciler"));
+  assert.deepEqual(reconcilerPolicies.map((p) => p.k).sort(), RECONCILER_POLICIES);
+  for (const p of reconcilerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_reconciler"], "true", null], p.k);
   for (const p of all) {
-    if (ownerOnly.includes(p) || platformPolicies.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);
