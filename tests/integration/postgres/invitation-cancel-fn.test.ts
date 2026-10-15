@@ -28,6 +28,7 @@ pgTest("TEST-CNS-1443 pg (app_rw): case_state.cancel_invitation_subject_mismatch
     await admin.query(SEED_INV("v1443", "VERIFIED", DM), [A]);
     await admin.query(SEED_INV("s1443", "SENT", null), [A]);
     await admin.query(SEED_INV("c1443", "COMPLETED", DM), [A]);
+    await admin.query(SEED_INV("n1443", "VERIFIED", null), [A]); // sin DM ligado: NULL no es "el ligado"
     const call = (tenant: string, ref: string, dm: string, seq = 0): Promise<unknown> =>
       uow.withTenantTx(tenant, (tx) => tx.query("SELECT case_state.cancel_invitation_subject_mismatch($1, $2, $3)", [ref, dm, seq]));
     const events = async (ref: string): Promise<number> =>
@@ -39,6 +40,11 @@ pgTest("TEST-CNS-1443 pg (app_rw): case_state.cancel_invitation_subject_mismatch
     await assert.rejects(() => call(A, "v1443", "otro-dm"), (e: unknown) => codeOf(e) === "IV009");
     await assert.rejects(() => call(A, "s1443", DM), (e: unknown) => codeOf(e) === "IV009");
     await assert.rejects(() => call(A, "c1443", DM), (e: unknown) => codeOf(e) === "IV009");
+    await assert.rejects(
+      () => uow.withTenantTx(A, (tx) => tx.query("SELECT case_state.cancel_invitation_subject_mismatch('n1443', NULL, 0)")),
+      (e: unknown) => codeOf(e) === "IV009",
+    );
+    assert.equal(await stateOf("n1443"), "VERIFIED");
     await assert.rejects(() => call(B, "v1443", DM), (e: unknown) => codeOf(e) === "RV001");
     await assert.rejects(() => call(A, "no-existe", DM), (e: unknown) => codeOf(e) === "RV001");
     assert.equal(await stateOf("v1443"), "VERIFIED");

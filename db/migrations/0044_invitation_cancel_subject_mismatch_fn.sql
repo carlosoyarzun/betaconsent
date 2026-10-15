@@ -11,7 +11,7 @@
 --    con state <> 'CANCELLED', USING incluido: tampoco puede des-cancelar): el unico camino a CANCELLED es la funcion de abajo.
 -- 2) case_state.cancel_invitation_subject_mismatch(p_invitation_ref, p_decision_maker_ref, p_expected_sequence) RETURNS jsonb {sequence}:
 --    tenant SIEMPRE de app.current_tenant_id() (nunca un parametro); FOR UPDATE de la fila; assert_sequence (RV409) ANTES de los guards de estado;
---    guard GRD-IV-10: el decision_maker_ref pasado debe ser el ligado en I5 (IV009 -> ERR-IV-09) y se comprueba ANTES de la rama idempotente;
+--    guard GRD-IV-10: el decision_maker_ref pasado debe ser el ligado en I5 (IV009 -> ERR-IV-09; NULL se rechaza siempre) y se comprueba ANTES de la rama idempotente;
 --    ya CANCELLED con el mismo DM -> idempotente (no escribe); estado distinto de VERIFIED -> IV009; VERIFIED -> CANCELLED + INVITATION_CANCELLED
 --    por case_state.ledger_append (dedupe estricto RV002 de 0041 respetado: clave `<ref>:cancelled:SUBJECT_MISMATCH_REPORTED`). Invitacion inexistente o
 --    de otro tenant -> RV001 (404 uniforme). Sin SQL dinamico. Dueno transition_owner, EXECUTE solo app_rw.
@@ -66,7 +66,8 @@ BEGIN
   END IF;
   PERFORM case_state.assert_sequence(p_invitation_ref, p_expected_sequence);
   -- GRD-IV-10 (cancel_reason_and_actor): el actor es el DecisionMaker ligado en I5; va ANTES de la rama idempotente.
-  IF v_bound IS DISTINCT FROM p_decision_maker_ref THEN RAISE EXCEPTION 'decisionMakerRef no es el ligado a la invitacion' USING ERRCODE = 'IV009'; END IF;
+  -- Un p_decision_maker_ref NULL nunca es el ligado (aunque la fila tampoco lo tenga): IS DISTINCT FROM trataria NULL = NULL como igual.
+  IF p_decision_maker_ref IS NULL OR v_bound IS DISTINCT FROM p_decision_maker_ref THEN RAISE EXCEPTION 'decisionMakerRef no es el ligado a la invitacion' USING ERRCODE = 'IV009'; END IF;
   IF v_state = 'CANCELLED' THEN
     RETURN pg_catalog.jsonb_build_object('sequence', p_expected_sequence); -- idempotente: sin escribir
   END IF;
