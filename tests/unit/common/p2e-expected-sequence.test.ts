@@ -112,7 +112,7 @@ async function openedWithOtp(flow: ReturnType<typeof makeFlow>): Promise<string>
   return sink.sent[sink.sent.length - 1]!.code;
 }
 
-test("TEST-CNS-842: otp V3 (SEC-CNS-021 PR-2): expectedSequence 0 (OTP_* fuera del ledger; valla = lock de fila de app.otp_verification) e Invitation I5 con su base; V3 ∥ V3 deja exactamente un VERIFIED; un append ajeno al agregado sigue abortando con LedgerSequenceConflictError", async () => {
+test("TEST-CNS-842: otp V3 (SEC-CNS-021 PR-2): expectedSequence 0 (OTP_* fuera del ledger; valla = lock de fila de app.otp_verification) e Invitation I5 con su base; V3 ∥ V3 deja exactamente un VERIFIED; ADR-010 rev. 5 PR-b: el evento lo deriva la base de la fila y un append ajeno al agregado ya no aborta V3 (la valla es el lock de fila y la guarda OLD->NEW)", async () => {
   // Camino feliz: base declarada.
   {
     const { ledger, seen } = recordingLedger();
@@ -141,24 +141,24 @@ test("TEST-CNS-842: otp V3 (SEC-CNS-021 PR-2): expectedSequence 0 (OTP_* fuera d
     const types = (await ledger.listByAggregate(T, "DecisionMakerVerification", fixtureUuid("ver-842"))).map((e) => e.eventType);
     assert.deepEqual(types, ["DECISION_MAKER_CHANNEL_VERIFIED"]);
   }
-  // Defensa en profundidad: un append ajeno al agregado (no hay unidad real que lo haga) aun aborta; el estado no cambia.
+  // ADR-010 rev. 5 PR-b (D-6, LG-6): el ledger de otp_verification lo genera la base desde la fila (no hay expectedSequence en V3); la valla de concurrencia es el lock de fila y la guarda
+  // OLD->NEW. Un evento ajeno al agregado (no hay unidad real que lo haga) ya no aborta V3: el evento derivado toma max+1 bajo el mismo lock por tenant, como en la base.
   {
     const { ledger } = recordingLedger();
     let interfere = false;
     const flow = makeFlow(ledger, { otpLock: async () => { if (interfere) { interfere = false; await advanceAggregate(ledger, fixtureUuid("ver-842"), "DecisionMakerVerification"); } } });
     const code = await openedWithOtp(flow);
     interfere = true;
-    await assert.rejects(() => submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2), (e: unknown) => e instanceof LedgerSequenceConflictError);
+    await submitOtp(flow.otp, T, fixtureUuid("ver-842"), code, fixtureUuid("dm-842"), 2);
     const rec = await flow.otpRepo.findByRef(T, fixtureUuid("ver-842"));
-    assert.equal(rec?.state, "CODE_SENT");
-    assert.equal(rec?.attempts, 0);
-    assert.equal((await flow.invitationRepo.findByRef(T, fixtureUuid("inv-842")))?.state, "OPENED");
-    const types = (await ledger.listByAggregate(T, "DecisionMakerVerification", fixtureUuid("ver-842"))).map((e) => e.eventType);
-    assert.equal(types.includes("DECISION_MAKER_CHANNEL_VERIFIED"), false);
+    assert.equal(rec?.state, "VERIFIED");
+    assert.equal((await flow.invitationRepo.findByRef(T, fixtureUuid("inv-842")))?.state, "VERIFIED");
+    const events = await ledger.listByAggregate(T, "DecisionMakerVerification", fixtureUuid("ver-842"));
+    assert.deepEqual(events.map((e) => [e.eventType, e.sequence]), [["TENANT_STATUS_CHANGED", 1], ["DECISION_MAKER_CHANNEL_VERIFIED", 2]]);
   }
 });
 
-test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequencedAppender); si avanza tras la base, LedgerSequenceConflictError y la decision sigue PENDING", async () => {
+test("TEST-CNS-843: decision C2/C3/C5 (ADR-010 rev. 5 PR-b): los eventos los deriva la base de la fila en orden (pasos 0..2; finalidades, CONSENT_GRANTED y RECEIPT_CREATED desde 3) e I6 en la misma tx; un evento ajeno ya no aborta C3 (valla = lock de fila y guarda OLD->NEW)", async () => {
   const setup = async (hooks: Parameters<typeof makeFlow>[1] = {}) => {
     const { ledger, seen } = recordingLedger();
     const flow = makeFlow(ledger, hooks);
@@ -175,7 +175,7 @@ test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequ
     assert.deepEqual(
       seen.filter((e) => e.aggregateId === fixtureUuid("consent-842")).map((e) => e.expectedSequence),
       [0, 1, 2],
-      "C2: cada paso declara la base vigente",
+      "C2: cada paso derivado declara la base vigente",
     );
     seen.length = 0;
     await submitDecision(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), GRANT_ALL);
@@ -192,11 +192,11 @@ test("TEST-CNS-843: decision C3/C5: eventos del agregado declaran base + k (sequ
     function ledger2(): LedgerPort { return flowLedger; }
     const flowLedger = ledger;
     interfere = true;
-    await assert.rejects(() => submitDecision(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), GRANT_ALL), (e: unknown) => e instanceof LedgerSequenceConflictError);
-    assert.equal((await flow.decisionRepo.findByConsentId(T, fixtureUuid("consent-842")))?.state, "PENDING");
-    assert.equal((await flow.invitationRepo.findByRef(T, fixtureUuid("inv-842")))?.state, "VERIFIED");
+    await submitDecision(flow.decision, T, "DECISION_MAKER", fixtureUuid("dm-842"), fixtureUuid("consent-842"), GRANT_ALL);
+    assert.equal((await flow.decisionRepo.findByConsentId(T, fixtureUuid("consent-842")))?.state, "GRANTED");
+    assert.equal((await flow.invitationRepo.findByRef(T, fixtureUuid("inv-842")))?.state, "COMPLETED");
     const types = (await ledger.listByAggregate(T, "ConsentDecision", fixtureUuid("consent-842"))).map((e) => e.eventType);
-    assert.equal(types.includes("CONSENT_GRANTED"), false);
+    assert.equal(types.includes("CONSENT_GRANTED"), true);
   }
 });
 

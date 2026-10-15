@@ -212,7 +212,6 @@ const INTERIM_EXECUTE_FUNCTIONS: readonly string[] = [
   "record_case_confirmation",
   "cosign_case_confirmation",
   "seed_local_revocation",
-  "seed_local_revoke_decision",
   // ADR-010 PR-5b (0038): cierre del caso (FN-RC-06, operador) y siembra LOCAL del contrato `save` de rights_case.
   "close_case",
   "seed_local_rights_case",

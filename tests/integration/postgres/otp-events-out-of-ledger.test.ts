@@ -24,7 +24,7 @@ import { requestOtp, resendOtp, submitOtp, type OtpChallengePorts } from "../../
 import { issueRecoveryLinkBearer, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest, type PgTestContext } from "./harness.ts";
+import { pgTest, seedFixture, type PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
 const CHANNEL = "test+channel-1300@example.invalid";
@@ -82,7 +82,7 @@ const secByVerification = (count: Count, tenant: string, verificationRef: string
   count("SELECT count(*)::int AS n FROM ops.security_event WHERE tenant_id = $1 AND verification_ref = $2 AND event_type = $3", [tenant, verificationRef, type]);
 
 async function seedOpenedInvitation(outside: ReturnType<typeof pgOutsideTxPorts>, tenant: string, invitationRef: string, subject: string): Promise<void> {
-  await outside.invitationRepo.save({
+  await seedFixture(() => outside.invitationRepo.save({
     invitationRef,
     tenantId: tenant,
     contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -90,7 +90,7 @@ async function seedOpenedInvitation(outside: ReturnType<typeof pgOutsideTxPorts>
     subjectRef: subject,
     state: "OPENED",
     recipientChannelRef: CHANNEL,
-  });
+  })); // ADR-010 rev. 5 PR-b: fixture crudo (seedFixture), no el ciclo completo
 }
 
 pgTest("TEST-CNS-1300 pg: integrity.audit_event rechaza OTP_* / RECOVERY_TOKEN_ISSUED / MANAGEMENT_TOKEN_ROTATED con 23514 (lista blanca sin los transitorios, 0030) y conserva los tipos del ledger (INV-21-01)", async (ctx) => {

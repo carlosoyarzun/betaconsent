@@ -32,10 +32,12 @@ interface OtpRow {
   last_sent_at: Date | null;
   sends_window_start: Date | null;
   sends_in_window: number;
+  decision_maker_ref: string | null;
+  dm_ref_key_version: number | null;
 }
 
 const COLUMNS =
-  "tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count, last_sent_at, sends_window_start, sends_in_window";
+  "tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count, last_sent_at, sends_window_start, sends_in_window, decision_maker_ref, dm_ref_key_version";
 
 function toRecord(row: OtpRow): OtpVerificationRecord {
   return {
@@ -53,6 +55,8 @@ function toRecord(row: OtpRow): OtpVerificationRecord {
     ...(row.last_sent_at !== null ? { lastSentAt: row.last_sent_at } : {}),
     ...(row.sends_window_start !== null ? { sendsWindowStart: row.sends_window_start } : {}),
     ...(row.sends_in_window > 0 ? { sendsInWindow: row.sends_in_window } : {}),
+    ...(row.decision_maker_ref !== null ? { decisionMakerRef: row.decision_maker_ref } : {}),
+    ...(row.dm_ref_key_version !== null ? { dmRefKeyVersion: row.dm_ref_key_version } : {}),
   };
 }
 
@@ -94,22 +98,36 @@ export function createPgOtpVerificationRepository(tx: TenantTx): OtpVerification
       return Number(r.rows[0]?.n ?? 0);
     },
     async save(record) {
-      // Upsert. scope, padre y canal se fijan al emitir y no son actualizables (sin grant de columna).
+      // ADR-010 rev. 5 PR-b: UPDATE y, si la fila no existe, INSERT (no `ON CONFLICT DO UPDATE`: el BEFORE INSERT de la guarda del ledger ve la tupla propuesta aunque haya conflicto y
+      // la rechazaria si trae un estado que no es el inicial). scope, padre y canal se fijan al emitir y no son actualizables (sin grant de columna).
+      const updated = await tx.query(
+        `UPDATE app.otp_verification SET
+           code_hash = $3, attempts = $4, expires_at = $5::timestamptz, consumed_at = $6::timestamptz, state = $7, resend_count = $8,
+           last_sent_at = $9::timestamptz, sends_window_start = $10::timestamptz, sends_in_window = $11,
+           decision_maker_ref = $12, dm_ref_key_version = $13
+         WHERE tenant_id = $1 AND verification_ref = $2`,
+        [
+          record.tenantId,
+          record.verificationRef,
+          record.codeHash,
+          record.attempts,
+          record.expiresAt.toISOString(),
+          record.consumedAt?.toISOString() ?? null,
+          record.state,
+          record.resendCount,
+          record.lastSentAt?.toISOString() ?? null,
+          record.sendsWindowStart?.toISOString() ?? null,
+          record.sendsInWindow ?? 0,
+          record.decisionMakerRef ?? null,
+          record.dmRefKeyVersion ?? null,
+        ],
+      );
+      if ((updated.rowCount ?? 0) > 0) return;
       await tx.query(
         `INSERT INTO app.otp_verification
            (tenant_id, verification_ref, scope, parent_ref, channel_ref, code_hash, attempts, expires_at, consumed_at, state, resend_count,
             last_sent_at, sends_window_start, sends_in_window)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10, $11, $12::timestamptz, $13::timestamptz, $14)
-         ON CONFLICT (tenant_id, verification_ref) DO UPDATE SET
-           code_hash = EXCLUDED.code_hash,
-           attempts = EXCLUDED.attempts,
-           expires_at = EXCLUDED.expires_at,
-           consumed_at = EXCLUDED.consumed_at,
-           state = EXCLUDED.state,
-           resend_count = EXCLUDED.resend_count,
-           last_sent_at = EXCLUDED.last_sent_at,
-           sends_window_start = EXCLUDED.sends_window_start,
-           sends_in_window = EXCLUDED.sends_in_window`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10, $11, $12::timestamptz, $13::timestamptz, $14)`,
         [
           record.tenantId,
           record.verificationRef,

@@ -21,7 +21,7 @@ import { requestOtp, requestRightsOtp, resendOtp, submitOtp, submitRightsOtp, ty
 import type { OtpBudgetKey } from "../../../src/server/ports/otp-budget.port.ts";
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest, type PgTestContext } from "./harness.ts";
+import { pgTest, pgTestRaw, seedFixture, type PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
@@ -58,10 +58,11 @@ async function withEnv<T>(ctx: PgTestContext, policy: Partial<OtpPolicy>, body: 
 }
 
 async function seedInvitation(outside: Env["outside"], tenant: string, ref: string, channel: string): Promise<void> {
-  await outside.invitationRepo.save({
+  // ADR-010 rev. 5 PR-b: fixture de una invitacion OPENED sin pasar por el ciclo completo (seedFixture: triggers de ledger_gen fuera solo durante la siembra).
+  await seedFixture(() => outside.invitationRepo.save({
     invitationRef: ref, tenantId: tenant, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef,
     subjectRef: fixtureUuid(`subj-${ref}`), state: "OPENED", recipientChannelRef: channel,
-  });
+  }));
 }
 
 const dom = (r: PromiseSettledResult<unknown>): string => (r.status === "fulfilled" ? "ok" : r.reason instanceof DomainError ? r.reason.code : `?${codeOf(r.reason) ?? String(r.reason)}`);
@@ -230,7 +231,7 @@ pgTest("TEST-CNS-1318 pg: mismo canal en dos tenants, 10+10 concurrentes, no se 
   );
 });
 
-pgTest("TEST-CNS-1329 pg: round-trip de las marcas de envio P-06 (lastSentAt, sendsWindowStart, sendsInWindow) y countLockedByParent", async (ctx) => {
+pgTestRaw("TEST-CNS-1329 pg: round-trip de las marcas de envio P-06 (lastSentAt, sendsWindowStart, sendsInWindow) y countLockedByParent", async (ctx) => {
   const T = fixtureUuid("t1329");
   await withEnv(ctx, {}, async ({ outside }) => {
     const base = {
@@ -293,7 +294,7 @@ pgTest("TEST-CNS-1331 pg: catalogo y grants de ops.otp_budget (dueno, FORCE RLS,
   assert.equal((await admin.query<{ p: boolean }>("SELECT has_table_privilege('app_rw', 'app.invitation', 'DELETE') AS p")).rows[0]?.p, false);
 });
 
-pgTest("TEST-CNS-1332 pg: app.invitation.otp_exhausted es monotona: trigger ENABLE ALWAYS y UPDATE a false -> 23000 (GRD-OT-09)", async (ctx) => {
+pgTestRaw("TEST-CNS-1332 pg: app.invitation.otp_exhausted es monotona: trigger ENABLE ALWAYS y UPDATE a false -> 23000 (GRD-OT-09)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const T = fixtureUuid("t1332");
   const trg = (await admin.query<{ tgenabled: string }>("SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'app.invitation'::regclass AND tgname = 'invitation_otp_exhausted_monotonic'")).rows[0];
@@ -305,7 +306,7 @@ pgTest("TEST-CNS-1332 pg: app.invitation.otp_exhausted es monotona: trigger ENAB
   await admin.query("UPDATE app.invitation SET otp_exhausted = true WHERE tenant_id = $1 AND invitation_ref = 'inv-1332'", [T]); // true -> true es no-op valido
 });
 
-pgTest("TEST-CNS-1333 pg: CHECK otp_send_marks_shape: marcas incoherentes se rechazan con 23514 (se acepta la lista de constraints: el orden de CHECK no esta garantizado)", async (ctx) => {
+pgTestRaw("TEST-CNS-1333 pg: CHECK otp_send_marks_shape: marcas incoherentes se rechazan con 23514 (se acepta la lista de constraints: el orden de CHECK no esta garantizado)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const T = fixtureUuid("t1333");
   const insert = (n: string, lastSent: string | null, windowStart: string | null, sends: number): Promise<unknown> =>

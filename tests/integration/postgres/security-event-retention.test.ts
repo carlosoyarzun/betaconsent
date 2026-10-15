@@ -13,7 +13,7 @@ import { executeRetentionPurge } from "../../../src/infra/adapters/postgres/rete
 import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
 import { PLACEHOLDER_P34_RETENTION_DAYS } from "../../../src/server/modules/common/approved-parameters.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, pgTestRaw } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const DAYS = PLACEHOLDER_P34_RETENTION_DAYS;
@@ -301,7 +301,7 @@ pgTest("TEST-CNS-1313 pg: el CLI retention-purge-cli purga como worker e imprime
   assert.equal(noConfig.ok, true, "LOCAL sin configuracion: arranca (purga deshabilitada)");
 });
 
-pgTest("TEST-CNS-1322 pg: la purga de app.otp_verification borra solo filas con expires_at anterior al corte, nunca un challenge activo; security_event_owner no lee code_hash ni channel_ref (INV-21-18)", async (ctx) => {
+pgTestRaw("TEST-CNS-1322 pg: la purga de app.otp_verification borra solo filas con expires_at anterior al corte, nunca un challenge activo; security_event_owner no lee code_hash ni channel_ref (INV-21-18)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const t = fixtureUuid("t-1322");
   const insertOtp = (ref: string, parent: string, state: string, expiresSql: string): Promise<unknown> =>

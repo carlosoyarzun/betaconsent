@@ -22,7 +22,7 @@ import {
   LOCAL_ONLY_DEV_STAFF_ROSTER,
   LOCAL_ONLY_DEV_TENANT_ID,
 } from "../../../src/server/entrypoints/dev-local-config.ts";
-import { RH3_DEV_CASE_REF, RH3_DEV_REVOCATION_REF, seedRh3DevCase } from "../../../src/server/entrypoints/dev-rh3-seed.ts";
+import { RH3_DEV_CASE_REF, RH3_DEV_CHAIN_REF, RH3_DEV_REVOCATION_REF, seedRh3DevCase } from "../../../src/server/entrypoints/dev-rh3-seed.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import type { InMemoryOtpChannelSink } from "../../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import type { InMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
@@ -41,7 +41,7 @@ import { LOCAL_ONLY_DEV_PARTICIPATION_REF, LOCAL_ONLY_DEV_STAFF_CHANNEL_REF, LOC
 import { listOutboxEnvelopes } from "../../../src/infra/adapters/postgres/outbox.adapter.ts";
 import { isReservedEmail } from "../../../src/server/modules/common/synthetic-recipient.ts";
 import { RESERVED_BAD, RESERVED_OK } from "../../unit/common/synthetic-recipient-vectors.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, seedFixture } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { TEST_OTP_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
@@ -192,7 +192,7 @@ async function seedManage(env: Env, label: string): Promise<{ handleToken: strin
   const consentId = fixtureUuid(`consent-${label}`);
   const chain = fixtureUuid(`chain-${label}`);
   const handleToken = `mgmt-token-${label}`;
-  await env.store.uow.inTenant(T, (tx) =>
+  await seedFixture(() => env.store.uow.inTenant(T, (tx) =>
     tx.consentDecisionRepo.save({
       consentId,
       tenantId: T,
@@ -209,7 +209,7 @@ async function seedManage(env: Env, label: string): Promise<{ handleToken: strin
       stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
       receiptRef: `receipt-${label}`,
     }),
-  );
+  )); // ADR-010 rev. 5 PR-b: fixture crudo (decision GRANTED sembrada): seedFixture
   await env.store.uow.withTenantTx(T, (tx) => registerTenantHandle(tx, { handle: handleToken, chainRef: chain, revokedDecisionRef: consentId }));
   return { handleToken, consentId, chain };
 }
@@ -440,7 +440,7 @@ pgTest("TEST-CNS-882 e2e pg: seed RH3 atomico (una tx: si falla no queda nada) e
       revocation: { ...rp.revocation, uow: { ...realUow, inTenant: async <R>(t: string, work: (tx: never) => Promise<R>): Promise<R> => realUow.inTenant(t, async (tx) => { await work(tx as never); throw new Error("boom"); }) } },
     } as typeof rp;
     await assert.rejects(() => seedRh3DevCase(env.bundle.ports, failing, T2), /boom/);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND chain_ref = 'chain-dev-rh3'", [T2]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND chain_ref = $2", [T2, RH3_DEV_CHAIN_REF]), 0);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T2, RH3_DEV_CASE_REF]), 0);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [T2, RH3_DEV_REVOCATION_REF]), 0);
     assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), true);

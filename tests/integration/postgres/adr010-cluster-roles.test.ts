@@ -60,8 +60,8 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
     "SELECT (SELECT count(*) FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE r.rolname = ANY($1)) AS n",
     [["case_state_owner", "transition_owner", "rights_operator", "integrity_verifier"]],
   )).rows[0];
-  // ADR-010 PR-5a/5b (0037, 0038): case_state_owner es dueno del esquema case_state (1) y transition_owner de sus 30 funciones (0044 suma cancel_invitation_subject_mismatch); nada mas.
-  assert.equal(Number(owned?.n), 31);
+  // ADR-010 PR-5a/5b (0037, 0038): case_state_owner es dueno del esquema case_state (1) y transition_owner de sus 29 funciones (0044 suma cancel_invitation_subject_mismatch; 0049 retira seed_local_revoke_decision, F-PRB-02); nada mas.
+  assert.equal(Number(owned?.n), 30);
 
   // 0034 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const before = await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]);
@@ -108,7 +108,7 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
 pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coincide con el catalogo; detecta fila extra/faltante; REAL_DATA falla cerrado; el arranque de app_rw sigue pasando", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
-  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 12);
+  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 14); // ADR-010 rev. 5 PR-b: ledger_gen_owner y ledger_writer (doce owners)
   assert.equal((await checkRoleMemberships(admin, "REAL_DATA")).length, 1, "REAL_DATA no esta activado hasta PR-7");
 
   // Fila extra (rolled back: las membresias son transaccionales y no se tocan para otros archivos de test).

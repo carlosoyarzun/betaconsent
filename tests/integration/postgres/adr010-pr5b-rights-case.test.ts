@@ -14,7 +14,7 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
 import { closeCase } from "../../../src/server/modules/rights-case/rights-case.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
-import { pgTest } from "./harness.ts";
+import { disableLedgerMechanicsAppend, enableLedgerMechanicsAppend, pgTest, seedFixture } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
@@ -22,11 +22,11 @@ const SEED_RC = "SELECT set_config('case_state.effect', 'seed_local_rights_case'
 const SEED_RV = "SELECT set_config('case_state.effect', 'seed_local_revocation', false)";
 
 async function seedDecision(admin: import("pg").Client, tenant: string, consent: string, chain: string): Promise<void> {
-  await admin.query(
+  await seedFixture(() => admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, $2, 'x', 'x', 'x', 'x', 'x', 'x', $3, 'GRANTED', '[]', true)`,
     [tenant, consent, chain],
-  );
+  ));
 }
 
 pgTest("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-RC-01 exige transition_owner y el efecto; DELETE/TRUNCATE rechazados; un terminal no se revierte (INV-RC-07)", async (ctx) => {
@@ -218,7 +218,7 @@ pgTest("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de Righ
   assert.equal(await snapshot(), before);
 });
 
-pgTest("TEST-CNS-1384 pg: INV-DBR-07: app_rw no inserta en el ledger eventos de aggregate Revocation/RightsCase ni CONSENT_REVOKED; los demas tipos siguen permitidos (F-A10-01, F-A10-30)", async (ctx) => {
+pgTest("TEST-CNS-1384 pg: INV-DBR-07 (PR-b): app_rw no inserta NINGUN evento en el ledger (ni Revocation/RightsCase/CONSENT_REVOKED ni los derivados): 42501 por falta de INSERT (F-A10-01, F-A10-30)", async (ctx) => {
   const T = fixtureUuid("t1384");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   const H = "a".repeat(64);
@@ -237,12 +237,10 @@ pgTest("TEST-CNS-1384 pg: INV-DBR-07: app_rw no inserta en el ledger eventos de 
     ] as const) {
       await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(insert(agg, type, 1, 1))), (e: unknown) => codeOf(e) === "42501", `${agg}/${type}`);
     }
-    // Control positivo: un tipo sin restriccion (Invitation) lo sigue escribiendo app_rw bajo RLS por tenant; con otro tenant, RLS lo rechaza.
-    await uow.withTenantTx(T, (tx) => tx.query(insert("Invitation", "INVITATION_OPENED", 1, 1)));
-    await assert.rejects(
-      () => uow.withTenantTx(fixtureUuid("t1384-b"), (tx) => tx.query(insert("Invitation", "INVITATION_OPENED", 1, 2).replace("current_setting('app.tenant_id')::uuid", `'${T}'::uuid`))),
-      (e: unknown) => codeOf(e) === "42501",
-    );
+    // ADR-010 rev. 5 PR-b (0049): tampoco los tipos derivados (Invitation, ConsentDecision, Enrollment, DMV): los emite ledger_writer desde las filas de estado.
+    for (const [agg, type] of [["Invitation", "INVITATION_OPENED"], ["ConsentDecision", "CONSENT_GRANTED"], ["Enrollment", "ENROLLMENT_STATUS_CHANGED"], ["DecisionMakerVerification", "DECISION_MAKER_CHANNEL_VERIFIED"]] as const) {
+      await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(insert(agg, type, 1, 2))), (e: unknown) => codeOf(e) === "42501", `${agg}/${type}`);
+    }
   } finally {
     await pool.end();
   }
@@ -306,57 +304,43 @@ pgTest("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREAC
   }
 });
 
-pgTest("TEST-CNS-1387 pg: INV-DBR-07 como allowlist (D5): pares (aggregate_type, event_type) explicitos, CHECK enum de aggregate_type, un solo aggregate_type por aggregate_id y sin eventos para aggregate_id de filas de revocation/rights_case; una sola policy de INSERT alcanza a app_rw", async (ctx) => {
+pgTest("TEST-CNS-1387 pg: INV-DBR-07 como particion de pares (PR-b): app_rw sin policy de INSERT; ledger_writer solo sus 19 pares y transition_owner solo sus 14 (disjuntos); CHECK enum de aggregate_type y un solo aggregate_type por aggregate_id", async (ctx) => {
   const T = fixtureUuid("t1387");
   const admin = await ctx.connectAsSuperuser();
   const H = "a".repeat(64);
   const row = (agg: string, id: string, type: string, chainSeq: number, tenant = "current_setting('app.tenant_id')::uuid", seq = 1): string =>
     `INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, chain_seq, payload_hash, previous_event_hash, event_hash)
      VALUES (${tenant}, '${agg}', '${id}', ${seq}, '${type}', 'HUMAN', '${JSON.stringify(invitationRefPayload("1387"))}'::jsonb, ${chainSeq}, '${H}', '${String(chainSeq).padStart(64, "d")}', '${String(chainSeq).padStart(64, "c")}')`;
-  // Una sola policy de INSERT alcanza a app_rw (ni ALL ni PUBLIC).
+  // Ninguna policy de INSERT/ALL alcanza a app_rw (0049).
   const reach = await admin.query<{ n: number }>(
     `SELECT count(*)::int AS n FROM pg_policy p WHERE p.polrelid = 'integrity.audit_event'::regclass AND p.polcmd IN ('a', '*')
         AND (0::oid = ANY (p.polroles) OR (SELECT oid FROM pg_roles WHERE rolname = 'app_rw') = ANY (p.polroles))`);
-  assert.equal(reach.rows[0]?.n, 1);
-  // Filas de revocation / rights_case del tenant (siembra LOCAL): sus aggregate_id no se pueden usar para eventos de app_rw.
-  await admin.query(SEED_RV);
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'rv-1387', 'c', 'd', 'REQUESTED')", [T]);
-  await admin.query(SEED_RC);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'cs-1387', 'c2', 'd2', 'OPEN', 'LIMIT_REACHED')", [T]);
-  await admin.query("RESET ALL");
-  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
-  try {
-    const uow = new PgUnitOfWork(pool);
-    const denied = async (sql: string, label: string): Promise<void> => {
-      await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === "42501", label);
-    };
-    // Pares fuera de la allowlist: otro tipo para el agregado, tipos de Revocation/RightsCase/CONSENT_REVOKED y agregados desconocidos (42501 exacto).
-    await denied(row("Invitation", "i1", "CONSENT_GRANTED", 1), "Invitation:CONSENT_GRANTED");
-    await denied(row("ConsentDecision", "d1", "INVITATION_OPENED", 2), "ConsentDecision:INVITATION_OPENED");
-    await denied(row("Tenant", "t1", "REVOCATION_REQUESTED", 3), "Tenant:REVOCATION_REQUESTED");
-    await denied(row("Invitation", "i2", "RIGHTS_CASE_CLOSED", 4), "Invitation:RIGHTS_CASE_CLOSED");
-    await denied(row("Invitation", "i3", "CONSENT_REVOKED", 5), "Invitation:CONSENT_REVOKED");
-    await denied(row("Revocation", "r9", "REVOCATION_REQUESTED", 6), "Revocation:REVOCATION_REQUESTED");
-    await denied(row("RightsCase", "c9", "RIGHTS_CASE_OPENED", 7), "RightsCase:RIGHTS_CASE_OPENED");
-    await denied(row("Foo", "f1", "INVITATION_OPENED", 8), "agregado desconocido");
-    // NOT EXISTS: un par permitido, pero con el aggregate_id de una fila de revocation o rights_case del tenant.
-    await denied(row("Invitation", "rv-1387", "INVITATION_OPENED", 9), "aggregate_id de una Revocation");
-    await denied(row("Invitation", "cs-1387", "INVITATION_OPENED", 10), "aggregate_id de un RightsCase");
-    // Otro tenant: RLS.
-    await assert.rejects(
-      () => uow.withTenantTx(fixtureUuid("t1387-b"), (tx) => tx.query(row("Invitation", "i4", "INVITATION_OPENED", 11, `'${T}'::uuid`))),
-      (e: unknown) => codeOf(e) === "42501",
-    );
-    // Control positivo: pares permitidos.
-    await uow.withTenantTx(T, (tx) => tx.query(row("Invitation", "ok-i", "INVITATION_OPENED", 12)));
-    await uow.withTenantTx(T, (tx) => tx.query(row("ConsentDecision", "ok-c", "CONSENT_GRANTED", 13)));
-    // Trigger ejecutado como app_rw (no superusuario): el mismo aggregate_id con otro aggregate_type (par permitido) da 23000 exacto.
-    await assert.rejects(
-      () => uow.withTenantTx(T, (tx) => tx.query(row("ConsentDecision", "ok-i", "CONSENT_GRANTED", 17, "current_setting('app.tenant_id')::uuid", 2))),
-      (e: unknown) => codeOf(e) === "23000",
-    );
-  } finally {
-    await pool.end();
+  assert.equal(reach.rows[0]?.n, 0);
+  const asRole = async (role: "ledger_writer" | "transition_owner", sql: string): Promise<string> => {
+    await admin.query("BEGIN");
+    try {
+      await admin.query(role === "ledger_writer" ? "SET LOCAL ROLE ledger_writer" : "SET LOCAL ROLE transition_owner");
+      await admin.query("SELECT set_config('app.tenant_id', $1, true)", [T]);
+      await admin.query(sql);
+      return "ok";
+    } catch (e) {
+      return codeOf(e) ?? "?";
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  };
+  let n = 1;
+  // ledger_writer: sus pares si; Revocation/RightsCase/CONSENT_REVOKED/INVITATION_CANCELLED no (policy: 42501).
+  assert.equal(await asRole("ledger_writer", row("Invitation", "ok-i", "INVITATION_OPENED", n++)), "ok");
+  assert.equal(await asRole("ledger_writer", row("ConsentDecision", "ok-c", "CONSENT_GRANTED", n++)), "ok");
+  for (const [agg, type] of [["Revocation", "REVOCATION_REQUESTED"], ["RightsCase", "RIGHTS_CASE_OPENED"], ["Revocation", "CONSENT_REVOKED"], ["Invitation", "INVITATION_CANCELLED"], ["Invitation", "CONSENT_GRANTED"], ["Tenant", "TENANT_STATUS_CHANGED"]] as const) {
+    assert.equal(await asRole("ledger_writer", row(agg, `lw-${type}`, type, n++)), "42501", `ledger_writer ${agg}:${type}`);
+  }
+  // transition_owner: sus 14 pares si; los de ledger_writer no (la policy ahora restringe el WITH CHECK, 0037:90-91).
+  assert.equal(await asRole("transition_owner", row("Revocation", "to-r", "REVOCATION_REQUESTED", n++)), "ok");
+  assert.equal(await asRole("transition_owner", row("Invitation", "to-c", "INVITATION_CANCELLED", n++)), "ok");
+  for (const [agg, type] of [["Invitation", "INVITATION_OPENED"], ["ConsentDecision", "CONSENT_GRANTED"], ["Enrollment", "ENROLLMENT_STATUS_CHANGED"], ["Tenant", "TENANT_SEEDED"]] as const) {
+    assert.equal(await asRole("transition_owner", row(agg, `to-${type}`, type, n++)), "42501", `transition_owner ${agg}:${type}`);
   }
   // CHECK enum de aggregate_type (superusuario salta RLS: exacto 23514 y nombre de la restriccion).
   await assert.rejects(
@@ -364,12 +348,13 @@ pgTest("TEST-CNS-1387 pg: INV-DBR-07 como allowlist (D5): pares (aggregate_type,
     (e: unknown) => codeOf(e) === "23514" && (e as { constraint?: string }).constraint === "audit_event_aggregate_type_enum",
   );
   // Trigger: un aggregate_id ya usado por 'Invitation' no se reutiliza con otro aggregate_type (23000 exacto), tampoco para el superusuario.
+  await admin.query(row("Invitation", "ok-i", "INVITATION_OPENED", 16, `'${T}'::uuid`));
   await assert.rejects(
     () => admin.query(row("ConsentDecision", "ok-i", "CONSENT_GRANTED", 15, `'${T}'::uuid`, 2)),
     (e: unknown) => codeOf(e) === "23000",
   );
   // Mismo aggregate_type y mismo aggregate_id: sigue permitido (misma secuencia de un agregado).
-  await admin.query(row("Invitation", "ok-i", "INVITATION_OPENED", 16, `'${T}'::uuid`, 2));
+  await admin.query(row("Invitation", "ok-i", "INVITATION_OPENED", 17, `'${T}'::uuid`, 2));
 });
 
 pgTest("TEST-CNS-1388 pg: D6: close_case solo acepta como cierre una Revocation creada en o despues de la apertura del caso (no la de un ciclo anterior)", async (ctx) => {
@@ -421,8 +406,10 @@ pgTest("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation de
   }
 });
 
-pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
+pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit; INSERT de mecanica del harness) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
   const T = fixtureUuid("t1391");
+  try {
+  await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: app_rw ya no inserta en produccion; este test ejercita el trigger/lock del ledger
   const admin = await ctx.connectAsSuperuser();
   const D = fixtureUuid("d1391");
   await seedDecision(admin, T, D, "ch1391");
@@ -484,5 +471,8 @@ pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggr
     assert.equal(await pending, "RV409");
     await rc.query("ROLLBACK");
     assert.deepEqual(await types(X), ["Invitation"]);
+  }
+  } finally {
+    await disableLedgerMechanicsAppend(ctx); // el grant/policy de mecanica no persiste en la base del archivo (1384/1387 afirman que app_rw no inserta)
   }
 });

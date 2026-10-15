@@ -18,7 +18,7 @@ import type { RevocationPorts } from "../../../src/server/modules/revocation/rev
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
 import { runFA1029Scenarios } from "../../contract/f-a10-29-scenarios.ts";
-import { pgTest } from "./harness.ts";
+import { pgTest, seedFixture } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 import { completeDownstreamAsWorker } from "./worker-env.ts";
 
@@ -34,11 +34,11 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
     const uow = new PgUnitOfWork(pool);
     await admin.query(SEED);
     await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'r1373', 'c1373', 'd1373', 'REQUESTED')", [T]);
-    await admin.query(
+    await seedFixture(() => admin.query(
       `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
        VALUES ($1, 'd1373', 'x', 'x', 'x', 'x', 'x', 'x', 'c1373', 'GRANTED', '[]', true)`,
       [T],
-    );
+    ));
     // app_rw: ni INSERT ni UPDATE de ninguna columna (incluidos attested_*), ni REVOKED en consent_decision (policy), ni EXECUTE de auxiliares.
     for (const sql of [
       "UPDATE app.revocation SET attested_revocation_ref = 'r1373', attested_case_ref = 'x' WHERE revocation_ref = 'r1373'",
@@ -67,12 +67,12 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
       (e: unknown) => codeOf(e) === "RV002",
     );
     // B1: des-revocar (REVOKED -> GRANTED) como app_rw no cambia nada (USING de la policy excluye REVOKED): 0 filas o 42501.
-    await admin.query(
+    await seedFixture(() => admin.query(
       `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
        VALUES ($1, 'd1373-rev', 'x', 'x', 'x', 'x', 'x', 'x', 'c1373b', 'GRANTED', '[]', true)`,
       [T],
-    );
-    await admin.query("UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T]);
+    ));
+    await seedFixture(() => admin.query("UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T]));
     const unrevoke = await uow.withTenantTx(T, (tx) => tx.query("UPDATE app.consent_decision SET state = 'GRANTED' WHERE consent_id = 'd1373-rev' AND state = 'REVOKED'")).then((r) => r.rowCount, (e: unknown) => codeOf(e));
     assert.ok(unrevoke === 0 || unrevoke === "42501", `des-revocar: ${String(unrevoke)}`);
     assert.equal((await admin.query<{ state: string }>("SELECT state FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T])).rows[0]?.state, "REVOKED");
@@ -196,7 +196,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "cancel_invitation_subject_mismatch", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
     "cosign_case_confirmation", "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
     "propose_case_verification", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
-    "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_revoke_decision", "seed_local_rights_case", "verify_revocation_otp",
+    "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_rights_case", "verify_revocation_otp",
     "withdraw_case_verification_proposal", "withdraw_revocation",
   ]); // ADR-010 PR-5b (0038) agrega las funciones de RightsCase
   assert.ok(fns.every((f) => f.o === "transition_owner"));
@@ -222,11 +222,11 @@ pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el
   await admin.query(SEED);
   await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'rA', 'cA', 'dA', 'CONFIRMED', 'OTP')", [A]);
   await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref) VALUES ($1, 'rA2', 'cA2', 'dA2', 'REQUESTED', 'caseA')", [A]);
-  await admin.query(
+  await seedFixture(() => admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'dA', 'x', 'x', 'x', 'x', 'x', 'x', 'cA', 'GRANTED', '[]', true)`,
     [A],
-  );
+  ));
   await admin.query("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'recA', $2, 'cA', 'dA', now() + interval '1 day')", [A, "a".repeat(64)]);
   const snapshot = async (): Promise<string> =>
     JSON.stringify([
@@ -269,7 +269,7 @@ pgTest("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no conf
       tenantResolver: createPgTenantResolver(pool),
       downstreamStub: createInMemoryDownstreamStub(),
     };
-    await runFA1029Scenarios({ ports, seedDecision: (d) => uow.inTenant(T, (tx) => tx.consentDecisionRepo.save(d)) }, T, "pg");
+    await runFA1029Scenarios({ ports, seedDecision: (d) => seedFixture(() => uow.inTenant(T, (tx) => tx.consentDecisionRepo.save(d))) }, T, "pg");
     // La base lo impone aunque el dominio se saltara: request_revocation con decision ausente o de otra cadena (RV003).
     await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.request_revocation('x1380', 'c1380', 'no-existe')")), (e: unknown) => codeOf(e) === "RV003");
     await assert.rejects(

@@ -52,10 +52,13 @@ export function createPgEnrollmentRepository(tx: TenantTx): EnrollmentRepository
       return row ? toRecord(row) : null;
     },
     async save(record) {
+      // ADR-010 rev. 5 PR-b: UPDATE y, si la fila no existe, INSERT (no `ON CONFLICT DO UPDATE`: el BEFORE INSERT de la guarda del ledger ve la tupla propuesta aunque haya
+      // conflicto). EN0 solo inserta ACTIVE; ACTIVE -> CLOSED no es una arista de la derivacion (F-PRB-03) y la base lo rechaza con 42501.
+      const updated = await tx.query("UPDATE app.enrollment SET state = $3 WHERE tenant_id = $1 AND enrollment_ref = $2", [record.tenantId, record.enrollmentRef, record.state]);
+      if ((updated.rowCount ?? 0) > 0) return;
       await tx.query(
         `INSERT INTO app.enrollment (tenant_id, enrollment_ref, subject_ref, participation_ref, state)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (tenant_id, enrollment_ref) DO UPDATE SET state = EXCLUDED.state`,
+         VALUES ($1, $2, $3, $4, $5)`,
         [record.tenantId, record.enrollmentRef, record.subjectRef, record.participationRef, record.state],
       );
     },

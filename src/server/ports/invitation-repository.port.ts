@@ -41,6 +41,13 @@ export interface InvitationRecord {
   /** V6a (SEC-CNS-021 PR-4, GRD-OT-09/14, P-07): el 3.er challenge DECISION de esta invitacion quedo LOCKED. Monotona (solo false -> true) y SOLO la
    * escribe `markOtpExhausted`: `save` no la modifica. Ausente = false. La via es reemitir la invitacion (I1 con reissueOfRef). */
   readonly otpExhausted?: boolean;
+  /** ADR-010 rev. 5 PR-b (capa 1): datos de los que la base deriva el ledger (INVITATION_SENT/VERIFIED/COMPLETED|DECLINED). Los escribe el dominio en la transicion que corresponde. */
+  readonly deliveryChannel?: "SCHOOL_CHANNEL" | "CONSENT_APP_EMAIL";
+  /** I5: verificationRef del OTP que verifico al apoderado y version de la clave del seudonimo `boundDecisionMakerRef` (dato personal; LEGAL DECISION LG-9). */
+  readonly verifiedByRef?: string;
+  readonly dmRefKeyVersion?: number;
+  /** I6/I7: consentId de la decision terminal que cerro la invitacion. */
+  readonly closedByConsentId?: string;
 }
 
 export interface InvitationRepositoryPort {

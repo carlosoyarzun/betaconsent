@@ -41,7 +41,7 @@ import { deriveStaffRosterCursorKey } from "../../../src/server/modules/staff-ro
 import type { StaffSessionStorePort } from "../../../src/server/ports/staff-session-store.port.ts";
 import type { StaffPrincipal } from "../../../src/server/ports/staff-identity.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest, type PgTestContext } from "./harness.ts";
+import { pgTest, seedRaw, type PgTestContext } from "./harness.ts";
 import { TEST_OTP_SECRET, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
 
 const ORIGIN = "http://consola-staff-ui-pg.test.localhost";
@@ -170,11 +170,12 @@ async function seedDecision(admin: Client, tenantId: string, tag: string, state:
   const participationRef = fixtureUuid(`ui-pg-part-${tag}`);
   await admin.query("INSERT INTO app.subject (tenant_id, subject_ref) VALUES ($1, $2)", [tenantId, subjectRef]);
   await admin.query("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, $2, 'CTX_PG', 'LECTORPRO', 'ACTIVE')", [tenantId, participationRef]);
-  await admin.query(
+  // ADR-010 rev. 5 PR-b: fixture crudo (invitacion COMPLETED/DECLINED sin decision): triggers de ledger_gen deshabilitados solo durante la siembra.
+  await seedRaw(admin, () => admin.query(
     `INSERT INTO app.invitation (tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state, expires_at, created_at)
      VALUES ($1, $2, 'CTX_PG', 'LECTORPRO', $3, $4, NULL, now() - interval '1 day')`,
     [tenantId, fixtureUuid(`ui-pg-inv-${tag}`), subjectRef, state],
-  );
+  ));
   return { subjectRef, participationRef };
 }
 

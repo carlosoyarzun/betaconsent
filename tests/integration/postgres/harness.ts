@@ -44,6 +44,8 @@ export interface PgTestContext {
   connectAs(role: PgRole): Promise<Client>;
   /** Conexión de superusuario a la base de este archivo (solo para preparar/inspeccionar). */
   connectAsSuperuser(): Promise<Client>;
+  /** Conexion de superusuario COMPARTIDA (una por archivo) para los helpers de fixtures: connectAsSuperuser abre una conexion nueva por llamada y el service container de CI tiene max_connections=100. */
+  fixtureAdmin(): Promise<Client>;
   /**
    * Ejecuta `fn` con el lock de cluster de mutaciones del catalogo de roles (el mismo de migrate.ts). OBLIGATORIO para todo test que haga
    * CREATE/ALTER/GRANT/REVOKE sobre roles: el catalogo es global al cluster y los archivos de test corren en paralelo; sin el lock otro
@@ -53,6 +55,89 @@ export interface PgTestContext {
   withRoleCatalogLock<T>(fn: () => Promise<T>): Promise<T>;
   /** URL de conexión del rol (para createPool). */
   urlFor(role: PgRole): string;
+  /**
+   * URL del superusuario del service container sobre la base de este archivo. ADR-010 rev. 5 PR-b: app_rw ya NO inserta en integrity.audit_event (los eventos los generan los triggers de
+   * ledger_gen); los tests de MECANICA del ledger (cadena, idempotencia, lista blanca, locks) que necesitan un append arbitrario lo hacen con esta conexion, nunca con app_rw.
+   * Solo tests: ningun codigo de producto usa esta URL.
+   */
+  superuserUrl: string;
+}
+
+/**
+ * ADR-010 rev. 5 PR-b: triggers de guarda y emision del ledger derivado (esquema ledger_gen) de las tablas de estado. Son ENABLE ALWAYS: tambien rigen para el superusuario.
+ * Los FIXTURES de tests que necesitan filas en un estado arbitrario (p. ej. una invitacion COMPLETED sin decision) y NO prueban el ledger las siembran con `seedRaw`, que los
+ * deshabilita SOLO durante el fixture y los vuelve a dejar ENABLE ALWAYS. Es un helper de tests: el codigo de producto nunca deshabilita triggers.
+ */
+export const LEDGER_GEN_TRIGGERS: ReadonlyArray<readonly [string, string]> = [
+  ["app.enrollment", "enrollment_ledger_guard"],
+  ["app.enrollment", "enrollment_ledger_emit"],
+  ["app.otp_verification", "otp_verification_ledger_guard"],
+  ["app.otp_verification", "otp_verification_ledger_emit"],
+  ["app.invitation", "invitation_ledger_guard"],
+  ["app.invitation", "invitation_ledger_emit"],
+  ["app.consent_decision", "consent_decision_ledger_guard"],
+  ["app.consent_decision", "consent_decision_ledger_emit"],
+];
+
+/**
+ * ADR-010 rev. 5 PR-b: tras 0049 app_rw ya no puede insertar en integrity.audit_event. Los tests de MECANICA del ledger (cadena SHA-256, idempotencia, lista blanca de tipos, locks, contrato de
+ * LedgerPort) necesitan un append arbitrario dentro de una unidad de trabajo de tenant con RLS. Este helper recrea, SOLO en la base descartable de ESE archivo de test (nunca en una migracion),
+ * el INSERT por columnas y una policy por tenant para app_rw, para poder ejercitar esa mecanica. Los archivos que prueban "app_rw no inserta" NO lo llaman. Helper de tests, nunca de producto.
+ */
+export async function enableLedgerMechanicsAppend(ctx: PgTestContext): Promise<void> {
+  const admin = await ctx.fixtureAdmin();
+  await admin.query(
+    `GRANT INSERT (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
+                   chain_seq, payload_hash, previous_event_hash, event_hash, occurred_at, environment) ON integrity.audit_event TO app_rw`,
+  );
+  await admin.query("DROP POLICY IF EXISTS test_mechanics_app_rw_insert ON integrity.audit_event");
+  await admin.query("CREATE POLICY test_mechanics_app_rw_insert ON integrity.audit_event FOR INSERT TO app_rw WITH CHECK (tenant_id = app.current_tenant_id())");
+}
+
+let currentCtx: PgTestContext | undefined;
+
+/** Como `seedRaw` sobre la base del test en curso (para helpers de siembra que no reciben `ctx`). Solo tests. */
+export async function seedFixture<T>(work: () => Promise<T>): Promise<T> {
+  if (currentCtx === undefined) throw new Error("seedFixture solo se usa dentro de un pgTest");
+  return seedRaw(await currentCtx.fixtureAdmin(), work);
+}
+
+/** Como `seedFixture` pero entrega la conexion de superusuario al fixture (p. ej. para dejar una decision en REVOKED sin pasar por R4: la base solo lo admite por apply_revocation). Solo tests. */
+export async function seedFixtureAdmin<T>(work: (admin: Client) => Promise<T>): Promise<T> {
+  if (currentCtx === undefined) throw new Error("seedFixtureAdmin solo se usa dentro de un pgTest");
+  const admin = await currentCtx.fixtureAdmin();
+  return seedRaw(admin, () => work(admin));
+}
+
+/** `pgTest` cuyo cuerpo corre con los triggers de ledger_gen deshabilitados: para tests de ESQUEMA (CHECK, UNIQUE, RLS) que ejercitan SQL crudo y no el ledger. Solo tests. */
+export function pgTestRaw(name: string, fn: (ctx: PgTestContext) => Promise<void>): void {
+  pgTest(name, async (ctx) => {
+    await seedRaw(await ctx.fixtureAdmin(), () => fn(ctx));
+  });
+}
+
+/** Revierte `enableLedgerMechanicsAppend` (DROP POLICY + REVOKE INSERT de app_rw): para tests que lo activan y comparten base con tests que afirman "app_rw no inserta". Solo tests. */
+export async function disableLedgerMechanicsAppend(ctx: PgTestContext): Promise<void> {
+  const admin = await ctx.fixtureAdmin();
+  await admin.query("DROP POLICY IF EXISTS test_mechanics_app_rw_insert ON integrity.audit_event");
+  await admin.query(
+    `REVOKE INSERT (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, payload, idempotency_key_hash,
+                    chain_seq, payload_hash, previous_event_hash, event_hash, occurred_at, environment) ON integrity.audit_event FROM app_rw`,
+  );
+}
+
+let seedRawDepth = 0;
+
+export async function seedRaw<T>(admin: Client, work: () => Promise<T>): Promise<T> {
+  // Reentrante: un fixture anidado (p. ej. outside-tx dentro de un pgTestRaw) no vuelve a habilitar los triggers a mitad del test exterior.
+  if (seedRawDepth === 0) for (const [table, trg] of LEDGER_GEN_TRIGGERS) await admin.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trg}`);
+  seedRawDepth += 1;
+  try {
+    return await work();
+  } finally {
+    seedRawDepth -= 1;
+    if (seedRawDepth === 0) for (const [table, trg] of LEDGER_GEN_TRIGGERS) await admin.query(`ALTER TABLE ${table} ENABLE ALWAYS TRIGGER ${trg}`);
+  }
 }
 
 interface Config {
@@ -122,6 +207,7 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
   await admin.connect();
   const dbName = `t_${randomBytes(6).toString("hex")}`;
   const clients: Client[] = [];
+  let fixtureClient: Promise<Client> | undefined;
   try {
     await admin.query("SELECT pg_advisory_lock($1)", [HARNESS_LOCK_KEY]);
     try {
@@ -139,6 +225,11 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
   const ctx: PgTestContext = {
     dbName,
     urlFor: (role) => urlWith(config.url, role, passwordFor(role), dbName),
+    superuserUrl: ((): string => {
+      const u = new URL(config.url);
+      u.pathname = `/${dbName}`;
+      return u.toString();
+    })(),
     async connectAs(role) {
       const client = new pg.Client({ connectionString: urlWith(config.url, role, passwordFor(role), dbName) });
       await client.connect();
@@ -153,6 +244,17 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
       } finally {
         await locker.end();
       }
+    },
+    fixtureAdmin() {
+      fixtureClient ??= (async () => {
+        const u = new URL(config.url);
+        u.pathname = `/${dbName}`;
+        const client = new pg.Client({ connectionString: u.toString() });
+        await client.connect();
+        clients.push(client);
+        return client;
+      })();
+      return fixtureClient;
     },
     async connectAsSuperuser() {
       const u = new URL(config.url);
@@ -202,6 +304,7 @@ export function pgTest(name: string, fn: (ctx: PgTestContext) => Promise<void>):
   }
   test(name, async () => {
     const s = await (shared as NonNullable<typeof shared>);
+    currentCtx = s.ctx;
     await fn(s.ctx);
   });
 }

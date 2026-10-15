@@ -6,8 +6,11 @@
 // del roster sintético LOCAL; verifiedAuthPath=RECOVERY, verifiedRecoveryMethod=HUMAN_ASSISTED), nunca se guarda ya
 // "atestada" a mano. La aserción de step-up es un stub LOCAL-only (APR-IDP PENDING): aquí se da por ATTESTED.
 
+import type { ConsentDecisionRecord } from "../ports/consent-decision-repository.port.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+import { getServedConsentVersion } from "../modules/consent-decision/served-consent-version.ts";
 
 import { approveCaseVerificationTx, proposeCaseVerificationTx } from "../modules/revocation/revocation.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -16,7 +19,7 @@ import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
 
 /** Refs opacas UUIDv4 (common.schema.json Ref) para que los eventos del ledger validen. */
-export const RH3_DEV_CHAIN_REF = "chain-dev-rh3";
+export const RH3_DEV_CHAIN_REF = "7a3e9c1b-5d2f-4e68-9a40-1b3d5f7a9c2e";
 export const RH3_DEV_CONSENT_ID = "3d9b7c1e-2a4f-4b6d-8e10-5f7a9c3b1d20";
 export const RH3_DEV_CASE_REF = "4b1d7e9a-2c3f-4a68-8d5e-6f0a1b2c3d4e";
 export const RH3_DEV_REVOCATION_REF = "8e2c4a6b-1d3f-4a5c-9b7e-0f2d4c6a8b10";
@@ -29,22 +32,74 @@ export async function seedRh3DevCase(_ports: ConsentFlowPorts, revocationPorts: 
   const rv = revocationPorts.revocation;
   return rv.uow.inTenant(tenantId, async (tx) => {
     if (await tx.rightsCaseRepo.findByRef(tenantId, RH3_DEV_CASE_REF)) return false;
-    await tx.consentDecisionRepo.save({
+    // ADR-010 rev. 5 PR-b: la base solo admite el ciclo legal (estado inicial fijo, grafo, cruces entre filas) y deriva el ledger de las filas; la decision GRANTED sembrada recorre el MISMO
+    // camino que el flujo real: invitacion DRAFT->READY->SENT->OPENED, OTP CODE_SENT->VERIFIED, invitacion VERIFIED, decision PENDING + 4 pasos + GRANTED, invitacion COMPLETED.
+    const subjectRef = "6b1f0c2a-7d3e-4a58-9b41-2c8e5f0a7d13"; // Ref opaca UUIDv4: viaja en el sobre de consent.revoked (CA-127), nunca email/PII
+    const invitationRef = "9c4d2e6a-1b3f-4c58-8e70-3a5b7c9d1e2f";
+    const verificationRef = "2e6a8c0b-4d1f-4b39-9c52-7d9f1b3a5c7e";
+    const dmRef = "5b7d9f1a-3c2e-4d46-8a60-0c2e4a6b8d1f";
+    const enrollmentRef = "1f3b5d7a-9c2e-4a48-8b60-2d4f6a8c0e1b";
+    const participationRef = "8d0f2b4c-6e1a-4c37-9d59-1a3c5e7b9d2f";
+    const served = getServedConsentVersion();
+    const channel = "dev-rh3@example.invalid";
+    const invBase = {
+      invitationRef, tenantId, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef, subjectRef, enrollmentRef, participationRef,
+    } as const;
+    const expiresAt = new Date(Date.now() + 24 * 3_600_000);
+    const tokenHash = createHash("sha256").update(randomUUID()).digest("hex");
+    await tx.invitationRepo.save({ ...invBase, state: "DRAFT" });
+    const ready = { ...invBase, state: "READY" as const, consentVersion: served.consentVersion, expiresAt, recipientBinding: "RECIPIENT_CHANNEL" as const, recipientChannelRef: channel };
+    await tx.invitationRepo.save(ready);
+    const sent = { ...ready, state: "SENT" as const, tokenHash, deliveryChannel: "CONSENT_APP_EMAIL" as const };
+    await tx.invitationRepo.save(sent);
+    const opened = { ...sent, state: "OPENED" as const };
+    await tx.invitationRepo.save(opened);
+    const otp = {
+      verificationRef, tenantId, scope: "DECISION" as const, parentRef: invitationRef, channelRef: channel, codeHash: "0".repeat(64), attempts: 0, expiresAt,
+      state: "CODE_SENT" as const, resendCount: 0,
+    };
+    await tx.otpRepo.save(otp);
+    await tx.otpRepo.save({ ...otp, attempts: 1, state: "VERIFIED", consumedAt: new Date(), decisionMakerRef: dmRef, dmRefKeyVersion: 2 });
+    const verified = { ...opened, state: "VERIFIED" as const, boundDecisionMakerRef: dmRef, verifiedByRef: verificationRef, dmRefKeyVersion: 2 };
+    await tx.invitationRepo.save(verified);
+    const pending = {
       consentId: RH3_DEV_CONSENT_ID,
       tenantId,
       contextRef: LECTORPRO_BETA_CONFIG.contextRef,
       productRef: LECTORPRO_BETA_CONFIG.productRef,
-      subjectRef: "6b1f0c2a-7d3e-4a58-9b41-2c8e5f0a7d13", // Ref opaca UUIDv4: viaja en el sobre de consent.revoked (CA-127), nunca email/PII
-      decisionMakerRef: "dm:dev-rh3",
-      invitationRef: "inv-dev-rh3-seed",
-      verificationRef: "ver-dev-rh3-seed",
+      subjectRef,
+      decisionMakerRef: dmRef,
+      invitationRef,
+      verificationRef,
       chainRef: RH3_DEV_CHAIN_REF,
+      state: "PENDING" as const,
+      purposes: [],
+      priorStepsComplete: false,
+      stepsRecorded: [] as string[],
+    };
+    await tx.consentDecisionRepo.save(pending);
+    const stepsAll = ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"];
+    let current: ConsentDecisionRecord = pending;
+    for (const step of stepsAll) {
+      current = {
+        ...current,
+        stepsRecorded: [...current.stepsRecorded, step],
+        priorStepsComplete: ["CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"].every((k) => [...current.stepsRecorded, step].includes(k)),
+        ...(step === "CONSENT_VERSION_VIEWED" ? { consentVersion: served.consentVersion, consentTextHash: served.consentTextHash, privacyNoticeVersion: served.privacyNoticeVersion } : {}),
+        ...(step === "DECISION_MAKER_AUTHORITY_DECLARED" ? { relationshipRef: "SYNTHETIC_GUARDIAN" } : {}),
+      };
+      await tx.consentDecisionRepo.save(current);
+    }
+    await tx.consentDecisionRepo.save({
+      ...current,
       state: "GRANTED",
       purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
-      priorStepsComplete: true,
-      stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
-      receiptRef: "receipt-dev-rh3-001",
+      receiptRef: "0b2d4f6a-8c1e-4a37-9d52-3e5a7c9b1d4f",
+      consentVersion: served.consentVersion,
+      consentTextHash: served.consentTextHash,
+      privacyNoticeVersion: served.privacyNoticeVersion,
     });
+    await tx.invitationRepo.save({ ...verified, state: "COMPLETED", closedByConsentId: RH3_DEV_CONSENT_ID });
     await tx.rightsCaseRepo.save({
       caseRef: RH3_DEV_CASE_REF,
       tenantId,

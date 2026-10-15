@@ -35,11 +35,15 @@ interface InvitationRow {
   reissue_of_ref: string | null;
   recipient_binding: "RECIPIENT_CHANNEL" | "UNBOUND" | null;
   otp_exhausted: boolean;
+  delivery_channel: "SCHOOL_CHANNEL" | "CONSENT_APP_EMAIL" | null;
+  verified_by_ref: string | null;
+  dm_ref_key_version: number | null;
+  closed_by_consent_id: string | null;
 }
 
 const COLUMNS =
   "tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state, consent_version, expires_at, " +
-  "recipient_channel_ref, token_hash, bound_decision_maker_ref, enrollment_ref, participation_ref, reissue_of_ref, recipient_binding, otp_exhausted";
+  "recipient_channel_ref, token_hash, bound_decision_maker_ref, enrollment_ref, participation_ref, reissue_of_ref, recipient_binding, otp_exhausted, delivery_channel, verified_by_ref, dm_ref_key_version, closed_by_consent_id";
 
 function toRecord(row: InvitationRow): InvitationRecord {
   return {
@@ -59,6 +63,10 @@ function toRecord(row: InvitationRow): InvitationRecord {
     ...(row.reissue_of_ref !== null ? { reissueOfRef: row.reissue_of_ref } : {}),
     ...(row.recipient_binding !== null ? { recipientBinding: row.recipient_binding } : {}),
     ...(row.otp_exhausted ? { otpExhausted: true } : {}),
+    ...(row.delivery_channel !== null ? { deliveryChannel: row.delivery_channel } : {}),
+    ...(row.verified_by_ref !== null ? { verifiedByRef: row.verified_by_ref } : {}),
+    ...(row.dm_ref_key_version !== null ? { dmRefKeyVersion: row.dm_ref_key_version } : {}),
+    ...(row.closed_by_consent_id !== null ? { closedByConsentId: row.closed_by_consent_id } : {}),
   };
 }
 
@@ -109,38 +117,56 @@ export function createPgInvitationRepository(tx: TenantTx): InvitationRepository
       // Upsert. La identidad (contexto, producto, sujeto, enrollment, participacion, reemision) se
       // fija al crear y no es actualizable (sin grant de columna).
       try {
-        await tx.query(
-        `INSERT INTO app.invitation
-           (tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state, consent_version, expires_at,
-            recipient_channel_ref, token_hash, bound_decision_maker_ref, enrollment_ref, participation_ref,
-            reissue_of_ref, recipient_binding)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15)
-         ON CONFLICT (tenant_id, invitation_ref) DO UPDATE SET
-           state = EXCLUDED.state,
-           consent_version = EXCLUDED.consent_version,
-           expires_at = EXCLUDED.expires_at,
-           recipient_channel_ref = EXCLUDED.recipient_channel_ref,
-           token_hash = EXCLUDED.token_hash,
-           bound_decision_maker_ref = EXCLUDED.bound_decision_maker_ref,
-           recipient_binding = EXCLUDED.recipient_binding`,
-        [
-          record.tenantId,
-          record.invitationRef,
-          record.contextRef,
-          record.productRef,
-          record.subjectRef,
-          record.state,
-          record.consentVersion ?? null,
-          record.expiresAt?.toISOString() ?? null,
-          record.recipientChannelRef ?? null,
-          record.tokenHash ?? null,
-          record.boundDecisionMakerRef ?? null,
-          record.enrollmentRef ?? null,
-          record.participationRef ?? null,
-          record.reissueOfRef ?? null,
-          record.recipientBinding ?? null,
-        ],
+        // ADR-010 rev. 5 PR-b: UPDATE y, si la fila no existe, INSERT (no `ON CONFLICT DO UPDATE`: el BEFORE INSERT de la guarda del ledger ve la tupla propuesta aunque haya
+        // conflicto y la rechazaria si no es DRAFT). Las columnas de identidad no se actualizan.
+        const updated = await tx.query(
+          `UPDATE app.invitation SET
+             state = $3, consent_version = $4, expires_at = $5::timestamptz, recipient_channel_ref = $6, token_hash = $7,
+             bound_decision_maker_ref = $8, recipient_binding = $9, delivery_channel = $10, verified_by_ref = $11,
+             dm_ref_key_version = $12, closed_by_consent_id = $13
+           WHERE tenant_id = $1 AND invitation_ref = $2`,
+          [
+            record.tenantId,
+            record.invitationRef,
+            record.state,
+            record.consentVersion ?? null,
+            record.expiresAt?.toISOString() ?? null,
+            record.recipientChannelRef ?? null,
+            record.tokenHash ?? null,
+            record.boundDecisionMakerRef ?? null,
+            record.recipientBinding ?? null,
+            record.deliveryChannel ?? null,
+            record.verifiedByRef ?? null,
+            record.dmRefKeyVersion ?? null,
+            record.closedByConsentId ?? null,
+          ],
         );
+        if ((updated.rowCount ?? 0) === 0) {
+          await tx.query(
+            `INSERT INTO app.invitation
+               (tenant_id, invitation_ref, context_ref, product_ref, subject_ref, state, consent_version, expires_at,
+                recipient_channel_ref, token_hash, bound_decision_maker_ref, enrollment_ref, participation_ref,
+                reissue_of_ref, recipient_binding)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15)`,
+            [
+              record.tenantId,
+              record.invitationRef,
+              record.contextRef,
+              record.productRef,
+              record.subjectRef,
+              record.state,
+              record.consentVersion ?? null,
+              record.expiresAt?.toISOString() ?? null,
+              record.recipientChannelRef ?? null,
+              record.tokenHash ?? null,
+              record.boundDecisionMakerRef ?? null,
+              record.enrollmentRef ?? null,
+              record.participationRef ?? null,
+              record.reissueOfRef ?? null,
+              record.recipientBinding ?? null,
+            ],
+          );
+        }
       } catch (error) {
         // 23514 del CHECK de recipient_channel_ref: valor no admitido por la BD -> error tipado (el borde HTTP da 422).
         const e = error as { code?: unknown; constraint?: unknown } | null;

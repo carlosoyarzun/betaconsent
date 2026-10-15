@@ -14,7 +14,7 @@ import { verifyLedgerChain } from "../../../src/server/modules/common/ledger-cha
 import { LEDGER_EVENT_TYPES } from "../../../src/server/modules/common/ledger-event-types.ts";
 import type { LedgerEventInput } from "../../../src/server/ports/ledger.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { pgTest, type PgTestContext } from "./harness.ts";
+import { pgTest, type PgTestContext, enableLedgerMechanicsAppend } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const H = "a".repeat(64);
@@ -34,6 +34,7 @@ function ev(tenantId: string, aggregateId: string, extra: Partial<LedgerEventInp
 }
 
 async function withUow<T>(ctx: PgTestContext, work: (uow: PgUnitOfWork) => Promise<T>, max = 4): Promise<T> {
+  await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: mecanica del ledger (app_rw ya no inserta en produccion)
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max });
   try {
     return await work(new PgUnitOfWork(pool));

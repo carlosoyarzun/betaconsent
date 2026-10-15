@@ -35,6 +35,14 @@ export interface ConsentDecisionRecord {
   /** Ref opaca del recibo (contracts/api-payloads.schema.json DecisionRecorded.receiptRef, Ref
    * UUID); solo se fija al terminar en GRANTED o DECLINED (C3/C5). Ausente en PENDING. */
   readonly receiptRef?: string;
+  /** ADR-010 rev. 5 PR-b (LG-2 (a), capa 1): relationshipRef declarado en C2 (DECISION_MAKER_AUTHORITY_DECLARED); de el y de las columnas de version deriva la base el ledger. */
+  readonly relationshipRef?: string;
+  /** Version/hash del texto servido (LD-06: placeholder); las escribe web en CONSENT_VERSION_VIEWED y al decidir (semantica de hoy; la opcion (c) "version vista en el paso" NO se implementa). */
+  readonly consentVersion?: string;
+  readonly consentTextHash?: string;
+  readonly privacyNoticeVersion?: string;
+  /** SOLO in-memory (no es columna): "registrado, no entregado" (F-PRB-01). El adaptador Postgres lo ignora: la base lo deriva de la existencia de un handle no rotado en tenant_resolve.handle. */
+  readonly managementLinkIssued?: boolean;
 }
 
 export interface ConsentDecisionRepositoryPort {

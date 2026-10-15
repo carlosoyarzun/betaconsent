@@ -28,6 +28,7 @@ import type { TenantCatalogPort } from "../../server/ports/tenant-catalog.port.t
 import type { IdempotencyPort } from "../../server/ports/idempotency.port.ts";
 import type { TenantTxPorts, UnitOfWorkPort } from "../../server/ports/unit-of-work.port.ts";
 import { isTxParticipant, TX_JOURNAL, type TxParticipant, type Undo } from "./in-memory-tx.ts";
+import { deriveConsentDecisionEvents, deriveEnrollmentEvents, deriveInvitationEvents, deriveOtpEvents, type DerivedLedgerEvent } from "../../server/modules/common/ledger-derivation.ts";
 
 /** Escritura con tenantId distinto del de la unidad de trabajo (equivale a WITH CHECK de RLS). */
 export class TenantScopeViolationError extends Error {
@@ -41,6 +42,19 @@ export class NestedUnitOfWorkError extends Error {
   constructor() {
     super("inTenant no admite anidamiento: reutiliza los puertos de la unidad de trabajo activa");
     this.name = "NestedUnitOfWorkError";
+  }
+}
+
+/**
+ * ADR-010 rev. 5 PR-b (LG-1, capa 1): en Postgres los eventos de ledger de Enrollment, otp_verification, Invitation y ConsentDecision los genera la base desde OLD -> NEW (esquema
+ * ledger_gen, rol ledger_writer); el dominio ya no llama a `ledger.append` para ellos. Aqui, en memoria, la unidad de trabajo emite los MISMOS eventos con la funcion pura
+ * `ledger-derivation.ts` (misma tabla OLD->NEW) justo despues de cada `save` del agregado, dentro de la misma tx (journal).
+ */
+async function emitDerived(ledger: LedgerPort, tenant: TenantId, events: readonly DerivedLedgerEvent[]): Promise<void> {
+  for (const event of events) {
+    const { aggregateId, idempotencyKey, ...rest } = event;
+    const base = await ledger.currentSequence(tenant, aggregateId);
+    await ledger.append({ ...rest, aggregateId, idempotencyKey, tenantId: tenant, expectedSequence: base });
   }
 }
 
@@ -59,14 +73,16 @@ function scopeRevocationRepo(inner: RevocationRepositoryPort, tenant: TenantId):
   };
 }
 
-function scopeConsentDecisionRepo(inner: ConsentDecisionRepositoryPort, tenant: TenantId): ConsentDecisionRepositoryPort {
+function scopeConsentDecisionRepo(inner: ConsentDecisionRepositoryPort, tenant: TenantId, ledger: LedgerPort): ConsentDecisionRepositoryPort {
   return {
     findByConsentId: async (t, id) => (t === tenant ? inner.findByConsentId(t, id) : null),
     findByConsentIdForUpdate: async (t, id) => (t === tenant ? inner.findByConsentIdForUpdate(t, id) : null),
     findActiveGrantByChain: async (t, chainRef) => (t === tenant ? inner.findActiveGrantByChain(t, chainRef) : null),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("consentDecisionRepo.save");
-      return inner.save(record);
+      const prev = await inner.findByConsentId(record.tenantId, record.consentId);
+      await inner.save(record);
+      await emitDerived(ledger, tenant, deriveConsentDecisionEvents(prev, record));
     },
   };
 }
@@ -85,7 +101,7 @@ function scopeRecoveryTokenRepo(inner: RecoveryTokenRepositoryPort, tenant: Tena
   };
 }
 
-function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId): InvitationRepositoryPort {
+function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId, ledger: LedgerPort): InvitationRepositoryPort {
   return {
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
@@ -94,12 +110,14 @@ function scopeInvitationRepo(inner: InvitationRepositoryPort, tenant: TenantId):
     markOtpExhausted: async (t, ref) => (t === tenant ? inner.markOtpExhausted(t, ref) : undefined),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("invitationRepo.save");
-      return inner.save(record);
+      const prev = await inner.findByRef(record.tenantId, record.invitationRef);
+      await inner.save(record);
+      await emitDerived(ledger, tenant, deriveInvitationEvents(prev, record));
     },
   };
 }
 
-function scopeOtpRepo(inner: OtpVerificationRepositoryPort, tenant: TenantId): OtpVerificationRepositoryPort {
+function scopeOtpRepo(inner: OtpVerificationRepositoryPort, tenant: TenantId, ledger: LedgerPort): OtpVerificationRepositoryPort {
   return {
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
     findByRefForUpdate: async (t, ref) => (t === tenant ? inner.findByRefForUpdate(t, ref) : null),
@@ -107,7 +125,9 @@ function scopeOtpRepo(inner: OtpVerificationRepositoryPort, tenant: TenantId): O
     countLockedByParent: async (t, parentRef, scope) => (t === tenant ? inner.countLockedByParent(t, parentRef, scope) : 0),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("otpRepo.save");
-      return inner.save(record);
+      const prev = await inner.findByRef(record.tenantId, record.verificationRef);
+      await inner.save(record);
+      await emitDerived(ledger, tenant, deriveOtpEvents(prev, record));
     },
   };
 }
@@ -124,13 +144,15 @@ function scopeRightsCaseRepo(inner: RightsCaseRepositoryPort, tenant: TenantId):
   };
 }
 
-function scopeEnrollmentRepo(inner: EnrollmentRepositoryPort, tenant: TenantId): EnrollmentRepositoryPort {
+function scopeEnrollmentRepo(inner: EnrollmentRepositoryPort, tenant: TenantId, ledger: LedgerPort): EnrollmentRepositoryPort {
   return {
     findByRef: async (t, ref) => (t === tenant ? inner.findByRef(t, ref) : null),
     findActive: async (t, subjectRef, participationRef) => (t === tenant ? inner.findActive(t, subjectRef, participationRef) : null),
     save: async (record) => {
       if (record.tenantId !== tenant) throw new TenantScopeViolationError("enrollmentRepo.save");
-      return inner.save(record);
+      const prev = await inner.findByRef(record.tenantId, record.enrollmentRef);
+      await inner.save(record);
+      await emitDerived(ledger, tenant, deriveEnrollmentEvents(prev, record));
     },
   };
 }
@@ -252,12 +274,12 @@ export function createInMemoryUnitOfWork(ports: TenantTxPorts): UnitOfWorkPort {
     try {
       return await work({
         revocationRepo: scopeRevocationRepo(ports.revocationRepo, tenantId),
-        consentDecisionRepo: scopeConsentDecisionRepo(ports.consentDecisionRepo, tenantId),
+        consentDecisionRepo: scopeConsentDecisionRepo(ports.consentDecisionRepo, tenantId, ports.ledger),
         recoveryTokenRepo: scopeRecoveryTokenRepo(ports.recoveryTokenRepo, tenantId),
-        invitationRepo: scopeInvitationRepo(ports.invitationRepo, tenantId),
-        otpRepo: scopeOtpRepo(ports.otpRepo, tenantId),
+        invitationRepo: scopeInvitationRepo(ports.invitationRepo, tenantId, ports.ledger),
+        otpRepo: scopeOtpRepo(ports.otpRepo, tenantId, ports.ledger),
         rightsCaseRepo: scopeRightsCaseRepo(ports.rightsCaseRepo, tenantId),
-        enrollmentRepo: scopeEnrollmentRepo(ports.enrollmentRepo, tenantId),
+        enrollmentRepo: scopeEnrollmentRepo(ports.enrollmentRepo, tenantId, ports.ledger),
         ledger: scopeLedger(ports.ledger, tenantId),
         outbox: scopeOutbox(ports.outbox, tenantId),
         tenantCatalog: scopeTenantCatalog(ports.tenantCatalog, tenantId),
