@@ -281,7 +281,17 @@ invariants:
 # ADR-010 rev. 5 PR-6b (aceptada por Carlos el 2026-10-15; G-5, G-6, G-7, G-8): login de operador del proceso `platform` (equipo de LectorPro). Es DISTINTO de las sesiones STAFF y CASE de arriba:
 # las sesiones PLATFORM/CASE y open_platform_session/open_case_session son PR-6c (F-PR6-32); aqui solo el login hasta la aserción LOGIN y su consumo atómico.
 operatorLogin:
-  status: "PR-6b (implementado hasta la aserción LOGIN); sesiones PLATFORM/CASE: PR-6c"
+  status: "PR-6b (login hasta la aserción LOGIN) + PR-6c (sesiones PLATFORM/CASE de operador, login kind=CASE, P-50 cableado)"
+  sessions:
+    storage: "platform.platform_session (0052; dueño grant_owner): el sid (256 bits aprox.) lo genera la BASE y solo se persiste su sha256; el principal sale de la aserción LOGIN consumida (nunca de la request); una aserción abre a lo sumo una sesión (UNIQUE)."
+    openPlatform: "POST /platform/sessions/platform: Origin exacto (mismo origen; Sec-Fetch-Site presente debe ser same-origin), exchangeRef y state SOLO de las cookies __Host-; open_platform_session consume la aserción en la MISMA tx, re-chequea rol ACTIVE (F-PR6-37), escribe PLATFORM_LOGIN. Rota: revoca la sesión previa del navegador. Respuesta 200 sin sid en el cuerpo; Set-Cookie de la sesión (__Host-cns-platform, Secure, HttpOnly, SameSite=Strict) y BORRA las cookies state y exchange (F-PR6-38)."
+    loginCase: "GET /platform/auth/login?kind=CASE&caseRef: exige sesión PLATFORM vigente validada EN LA BASE (validate_session y begin con app.session_sid; F-PR6-36); a la base solo viaja sha256(caseRef) como target_ref_hash; P-50 aplica."
+    openCase: "POST /platform/sessions/case {caseRef}: sesión PLATFORM vigente del MISMO principal que la aserción LOGIN_CASE (ligada a sha256(caseRef), consumida en la misma tx), RIGHTS_OPERATOR ACTIVE (F-PR6-34) y rights_case_grant vigente; la sesión CASE vence a lo sumo con el grant y con su sesión PLATFORM; escribe CASE_LOGIN. Cookie __Host-cns-case Strict."
+    revalidation: "validate_session revalida en cada llamada rol ACTIVE y, en CASE, grant vigente y sesión PLATFORM de la que cuelga; vencimiento absoluto e inactividad (granularidad 60 s)."
+    logout: "POST /platform/logout y /platform/case-session/logout (Origin exacto): revocan en el servidor (PLATFORM en cascada a CASE) y borran la cookie; eventos PLATFORM_LOGOUT / CASE_LOGOUT."
+    lifetime: "Configuración CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS / CNS_PLATFORM_SESSION_IDLE_SECONDS (obligatorias fuera de LOCAL; en LOCAL 8 h / 30 min como valor de trabajo = los aprobados para STAFF/CASE). El valor de PLATFORM NO está aprobado (F-PR6-41); la base acota techos de 8 h y 30 min."
+    events: "platform.session_event (sin IP, sin sub_hmac): PLATFORM_LOGIN/LOGOUT, CASE_LOGIN/LOGOUT, SESSION_ROTATED, LOGIN_REJECTED (ROLE_INACTIVE, NO_SESSION, PRINCIPAL_MISMATCH, NO_GRANT). Un fallo antes de consumir la aserción no escribe evento (sin principal confiable; R-SE-07)."
+    deferred: "dev-login CASE del proceso web, REVOKE de app.case_session a app_rw, require_*_actor, aprobador RH2 PLATFORM, membresía platform_rw -> rights_operator, request_grant/approve_grant (P-23/P-37): ver F-PR6-39/40 (6d)."
   flow:
     - "GET /platform/auth/login?kind=PLATFORM (sin sesión): P-49 en memoria; begin_oidc_authorization(AWAITING_CALLBACK, state_hash, PKCE, binding = sha256(nonce)); 302 al IdP con scope openid, state, nonce, code_challenge S256, max_age=0 y prompt=login (G-5); cookie __Host- con state (HttpOnly, Secure, SameSite=Lax)."
     - "GET /platform/auth/callback: state de la cookie == state del query (tiempo constante); complete_oidc_callback (un solo uso, vigente); 303 a una URL SIN code ni ref con Referrer-Policy no-referrer; 404 uniforme si state falta, es ajeno, reusado o vencido (cuenta para P-49)."
@@ -295,7 +305,7 @@ operatorLogin:
   limits:
     - {id: P-48, value: "5 intentos FALLIDOS / 15 min por principal resuelto (los ATTESTED legítimos no cuentan); aplica la base (record_login_assertion)", approved: "Carlos, 2026-10-15 (G-6)"}
     - {id: P-49, value: "20 / 15 min por IP truncada, EN MEMORIA, sin persistir; detrás de NAT/VPN el contador es compartido (limitación documentada; con IP interna por cliente usar prefijo 32)", approved: "Carlos, 2026-10-15 (G-6)"}
-    - {id: P-50, value: "30 solicitudes autenticadas / min por operador; limitador implementado, cableado a rutas autenticadas en 6c", approved: "Carlos, 2026-10-15 (G-6)"}
+    - {id: P-50, value: "30 solicitudes autenticadas / min por operador (principal de la sesión validada en la base); cableado en 6c a login kind=CASE, sesión CASE y logout; 429 uniforme y un evento por ventana", approved: "Carlos, 2026-10-15 (G-6)"}
     - {id: P-51, value: "5 intentos de confirmación de acciones sensibles / 10 min por operador; aplica la base al INICIAR step-up; el consumo del nonce es 6d", approved: "Carlos, 2026-10-15 (G-6)"}
     - {id: P-52, value: "5 min desde auth_time, un solo uso", approved: "Carlos, 2026-10-15 (G-7)"}
     - {id: P-53, value: "tope global de filas AWAITING_CALLBACK; SIN valor aprobado: obligatorio fuera de LOCAL (el proceso platform no arranca sin él)", approved: "PENDIENTE"}
@@ -303,7 +313,7 @@ operatorLogin:
   configuration: "Valores por configuración (CNS_PLATFORM_P49_*, P50_*, P51_*, P53_*; CNS_VERIFIER_P48_*, P52_*); en LOCAL, valores iniciales aprobados; fuera de LOCAL sin defaults y sin arranque si faltan (platform-settings.ts, verifier-process.ts)."
   network: "G-6: en staging la plataforma solo es accesible por red privada o VPN. Es una restricción de INFRAESTRUCTURA (firewall del host, IPAddressAllow; infra/README.md): NO está implementada ni verificada en el repo. El proceso exige fuera de LOCAL un bind explícito (IP concreta) y una allowlist CIDR como defensa en profundidad."
   idp: "Adaptador real apagado (src/infra/adapters/oidc-idp.adapter.ts): issuer, token_endpoint y jwks_uri fijados por configuración, sin discovery ni jku, cliente HTTP inyectado (sin red en LOCAL/CI), se niega en LOCAL y sin egress aprobado (P-45). Activación: IT0b (APR-IDP, P-45, TP-02)."
-  tests: [TEST-CNS-1500, TEST-CNS-1501, TEST-CNS-1502, TEST-CNS-1503, TEST-CNS-1504, TEST-CNS-1505, TEST-CNS-1506, TEST-CNS-1507, TEST-CNS-1508, TEST-CNS-1509, TEST-CNS-1510]
+  tests: [TEST-CNS-1500, TEST-CNS-1501, TEST-CNS-1502, TEST-CNS-1503, TEST-CNS-1504, TEST-CNS-1505, TEST-CNS-1506, TEST-CNS-1507, TEST-CNS-1508, TEST-CNS-1509, TEST-CNS-1510, TEST-CNS-1550, TEST-CNS-1551, TEST-CNS-1552, TEST-CNS-1553, TEST-CNS-1554, TEST-CNS-1555, TEST-CNS-1556, TEST-CNS-1557, TEST-CNS-1558, TEST-CNS-1559, TEST-CNS-1560]
 
 residuals:
   - id: R-SE-01

@@ -57,13 +57,13 @@ paths:
       summary: "platformAuthLogin - Query kind={CASE|PLATFORM} (+ caseRef si kind=CASE). 302 al IdP (code + PKCE S256, scope openid, max_age=0 y prompt=login: reautenticacion obligatoria, G-5) y cookie `state` (SameSite=Lax)."
       description: |
         ADR-010 rev. 5 §5.2 (PR-6b). Sin sesion previa (kind=PLATFORM): el principal NO existe todavia; la base lo resuelve por sub_hmac en el callback.
-        kind=CASE exige sesion PLATFORM vigente y `caseRef` destino (se envia solo su sha256 como target_ref_hash; F-PR6-27, G-7). kind=CASE se entrega en PR-6c.
+        kind=CASE exige sesion PLATFORM vigente (cookie `platformSession`, validada EN LA BASE; F-PR6-36) y `caseRef` destino (se envia solo su sha256 como target_ref_hash; F-PR6-27, G-7). Entregado en PR-6c. Aplica P-50.
         Limite P-49 (por IP truncada, en memoria, sin persistir) y tope global P-53. Excedidos: 404 uniforme.
       x-roles: "none"
       x-step-up: "LOGIN_<kind>"
       x-db-role: "platform_rw"
       x-db-function: "platform.begin_oidc_authorization"
-      x-delivery: "PR-6b (kind=PLATFORM); PR-6c (kind=CASE)"
+      x-delivery: "PR-6b (kind=PLATFORM); PR-6c (kind=CASE, entregado)"
       parameters:
         - {name: kind, in: query, required: true, schema: {type: string, enum: [PLATFORM, CASE]}}
         - {name: caseRef, in: query, required: false, description: "Solo kind=CASE (PR-6c): case_ref destino; la base guarda sha256(caseRef) como target_ref_hash.", schema: {type: string, format: uuid}}
@@ -137,13 +137,13 @@ paths:
       operationId: openPlatformSession
       x-api-id: API-CNS-TBD-P04
       tags: [platform]
-      summary: "openPlatformSession - Requiere asercion ATTESTED."
+      summary: "openPlatformSession - Consume la asercion LOGIN_PLATFORM (cookies oidcState + oidcExchange) en la misma tx que crea la sesion. Origin = mismo origen. 200 sin sid en el cuerpo; Set-Cookie platformSession (Strict) y borra oidcState y oidcExchange."
       x-session: oidcState
       x-roles: "PRIVACY_LEGAL, SECURITY, CONTEXT_OWNER, RIGHTS_OPERATOR (OPEN-TC-06, OI-DBR-06)"
       x-step-up: "LOGIN_PLATFORM"
       x-db-role: "platform_rw"
       x-db-function: "platform.open_platform_session"
-      x-delivery: "PR-5"
+      x-delivery: "PR-6c"
       security: [{oidcState: []}]
       responses:
         '200':
@@ -155,13 +155,13 @@ paths:
       operationId: openCaseSession
       x-api-id: API-CNS-TBD-P05
       tags: [platform]
-      summary: "openCaseSession - Requiere grant atestado del caso."
+      summary: "openCaseSession - Body {caseRef}. Requiere sesion PLATFORM vigente del mismo principal, asercion LOGIN_CASE ligada al caso, RIGHTS_OPERATOR y grant atestado vigente. Origin = mismo origen. Set-Cookie caseSession (Strict). P-50."
       x-session: platformSession
       x-roles: "RIGHTS_OPERATOR, APPROVER"
       x-step-up: "LOGIN_CASE"
       x-db-role: "platform_rw"
       x-db-function: "platform.open_case_session"
-      x-delivery: "PR-5"
+      x-delivery: "PR-6c (F-PR6-40: sin grants no abre sesion)"
       security: [{platformSession: []}]
       responses:
         '200':
