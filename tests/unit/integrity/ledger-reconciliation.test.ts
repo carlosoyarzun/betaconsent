@@ -145,6 +145,9 @@ test("TEST-CNS-1605: estado <-> ledger en ambos sentidos: CANCELLED <-> INVITATI
   assert.deepEqual(kinds(reconcileTenant(input(revoked, [], [["d1", "REVOKED"]], []))), ["EVENT_WITHOUT_ROW:CONSENT_REVOKED", "STATE_EVENT_MISMATCH:MISSING:CONSENT_REVOKED"]);
   const ghost = chain(T, [{ type: "Revocation:CONSENT_REVOKED", id: "r2", seq: 1 }]);
   assert.deepEqual(kinds(reconcileTenant(input(ghost, [], [], [["r2", "d-fantasma"]]))), ["EVENT_WITHOUT_ROW:CONSENT_REVOKED"]);
+  // CONSENT_REVOKED cuya Revocation tiene revoked_decision_ref NULL: no se puede vincular a ninguna decision.
+  const nullRef = chain(T, [{ type: "Revocation:CONSENT_REVOKED", id: "r3", seq: 1 }]);
+  assert.deepEqual(kinds(reconcileTenant(input(nullRef, [], [], [["r3", null]]))), ["STATE_EVENT_MISMATCH:MISSING:REVOKED_DECISION_REF"]);
   const mixed = chain(T, [
     { type: "ConsentDecision:PURPOSE_DECISION_RECORDED", id: "d2", seq: 1 },
     { type: "ConsentDecision:CONSENT_DECLINED", id: "d2", seq: 2 },

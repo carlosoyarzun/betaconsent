@@ -213,7 +213,8 @@ function checkDecisions(input: TenantReconciliationInput, out: Divergence[]): vo
     if (e.aggregateType !== "Revocation" || e.eventType !== "CONSENT_REVOKED") continue;
     const dec = decisionOfRevocation.get(e.aggregateId);
     if (dec === undefined) out.push({ kind: "EVENT_WITHOUT_ROW", tenantId, aggregateType: "Revocation", aggregateId: e.aggregateId, detail: "CONSENT_REVOKED" });
-    else if (dec !== null) revokedCount.set(dec, (revokedCount.get(dec) ?? 0) + 1);
+    else if (dec === null) out.push({ kind: "STATE_EVENT_MISMATCH", tenantId, aggregateType: "Revocation", aggregateId: e.aggregateId, detail: "MISSING:REVOKED_DECISION_REF" });
+    else revokedCount.set(dec, (revokedCount.get(dec) ?? 0) + 1);
   }
   for (const row of input.decisions) {
     const counts = countTypes(byAgg.get(row.consentId) ?? []);
