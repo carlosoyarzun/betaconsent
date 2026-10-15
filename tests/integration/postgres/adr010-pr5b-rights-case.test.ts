@@ -14,7 +14,7 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
 import { closeCase } from "../../../src/server/modules/rights-case/rights-case.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
-import { enableLedgerMechanicsAppend, pgTest, pgTestRaw } from "./harness.ts";
+import { enableLedgerMechanicsAppend, pgTest, seedFixture } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
@@ -22,14 +22,14 @@ const SEED_RC = "SELECT set_config('case_state.effect', 'seed_local_rights_case'
 const SEED_RV = "SELECT set_config('case_state.effect', 'seed_local_revocation', false)";
 
 async function seedDecision(admin: import("pg").Client, tenant: string, consent: string, chain: string): Promise<void> {
-  await admin.query(
+  await seedFixture(() => admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, $2, 'x', 'x', 'x', 'x', 'x', 'x', $3, 'GRANTED', '[]', true)`,
     [tenant, consent, chain],
-  );
+  ));
 }
 
-pgTestRaw("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-RC-01 exige transition_owner y el efecto; DELETE/TRUNCATE rechazados; un terminal no se revierte (INV-RC-07)", async (ctx) => {
+pgTest("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-RC-01 exige transition_owner y el efecto; DELETE/TRUNCATE rechazados; un terminal no se revierte (INV-RC-07)", async (ctx) => {
   const T = fixtureUuid("t1381");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED_RC);
@@ -98,7 +98,7 @@ pgTestRaw("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-R
 
 });
 
-pgTestRaw("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED con ledger encadenado y codigos de error exactos (RC001/RC002/RC003/RC009/RV001/RV002/RV409)", async (ctx) => {
+pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED con ledger encadenado y codigos de error exactos (RC001/RC002/RC003/RC009/RV001/RV002/RV409)", async (ctx) => {
   const T = fixtureUuid("t1382");
   const admin = await ctx.connectAsSuperuser();
   const D = fixtureUuid("d1382");
@@ -178,7 +178,7 @@ pgTestRaw("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVE
   }
 });
 
-pgTestRaw("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de RightsCase: con el tenant B, open/confirm/close/express sobre refs de A fallan sin cambiar la fila ni el ledger de A", async (ctx) => {
+pgTest("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de RightsCase: con el tenant B, open/confirm/close/express sobre refs de A fallan sin cambiar la fila ni el ledger de A", async (ctx) => {
   const A = fixtureUuid("t1383-a");
   const B = fixtureUuid("t1383-b");
   const admin = await ctx.connectAsSuperuser();
@@ -267,7 +267,7 @@ pgTest("TEST-CNS-1385 pg: seed_local_rights_case falla (42501) sobre un caso ter
   }
 });
 
-pgTestRaw("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREACHABLE y el evento caseRef:contacting; secuencia vieja y otro origin dan codigos exactos; close_case exige la ref del operador; RC3 con el caso ya IN_VERIFICATION da RV409 (converge por R12)", async (ctx) => {
+pgTest("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREACHABLE y el evento caseRef:contacting; secuencia vieja y otro origin dan codigos exactos; close_case exige la ref del operador; RC3 con el caso ya IN_VERIFICATION da RV409 (converge por R12)", async (ctx) => {
   const T = fixtureUuid("t1386");
   const admin = await ctx.connectAsSuperuser();
   const D = fixtureUuid("d1386");
@@ -357,7 +357,7 @@ pgTest("TEST-CNS-1387 pg: INV-DBR-07 como particion de pares (PR-b): app_rw sin 
   await admin.query(row("Invitation", "ok-i", "INVITATION_OPENED", 17, `'${T}'::uuid`, 2));
 });
 
-pgTestRaw("TEST-CNS-1388 pg: D6: close_case solo acepta como cierre una Revocation creada en o despues de la apertura del caso (no la de un ciclo anterior)", async (ctx) => {
+pgTest("TEST-CNS-1388 pg: D6: close_case solo acepta como cierre una Revocation creada en o despues de la apertura del caso (no la de un ciclo anterior)", async (ctx) => {
   const T = fixtureUuid("t1388");
   const admin = await ctx.connectAsSuperuser();
   // Caso 1: la Revocation APPLIED es ANTERIOR al caso (mismo chain/decision, ciclo previo) -> RC003.
@@ -383,7 +383,7 @@ pgTestRaw("TEST-CNS-1388 pg: D6: close_case solo acepta como cierre una Revocati
   }
 });
 
-pgTestRaw("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation del ciclo da ERR-RC-03, sin ref de operador ERR-CM-10, y con la Revocation APPLIED cierra y escribe RIGHTS_CASE_CLOSED con recorded_by_ref (D1)", async (ctx) => {
+pgTest("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation del ciclo da ERR-RC-03, sin ref de operador ERR-CM-10, y con la Revocation APPLIED cierra y escribe RIGHTS_CASE_CLOSED con recorded_by_ref (D1)", async (ctx) => {
   const T = fixtureUuid("t1390");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED_RC);
@@ -406,7 +406,7 @@ pgTestRaw("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation
   }
 });
 
-pgTestRaw("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit; INSERT de mecanica del harness) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
+pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit; INSERT de mecanica del harness) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
   const T = fixtureUuid("t1391");
   await enableLedgerMechanicsAppend(ctx); // ADR-010 rev. 5 PR-b: app_rw ya no inserta en produccion; este test ejercita el trigger/lock del ledger
   const admin = await ctx.connectAsSuperuser();

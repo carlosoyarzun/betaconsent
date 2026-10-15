@@ -12,6 +12,7 @@
 --     3 pasos de GRD-CD-05, purposes no vacio y sin finalidades duplicadas; GRANTED exige todas GRANT, DECLINED al menos un DECLINE; recibo y version obligatorios. C6 (GRANTED->REVOKED) NO emite
 --     (la emite transition_owner por apply_revocation, F-PR6-10) y la guarda la admite SOLO si existe en el tenant una app.revocation CONFIRMED con revoked_decision_ref = consent_id; sin otra salida:
 --     REVOKED/GRANTED/DECLINED son terminales (sin exencion por rol ni por GUC; F-PRB-02). El privilegio cierra la via: policies de 0037 (app_rw nunca deja REVOKED).
+--     purpose ~ ^[A-Z_]{1,64}$ (el catalogo de finalidades requeridas en la base, LG-10, sigue pendiente antes de datos reales). C2/C3/C5 exigen ademas la invitacion VERIFIED del mismo seudonimo.
 --  3) emit_consent_decision (AFTER, SECURITY DEFINER de ledger_writer): un evento por paso nuevo; en C3/C5 PURPOSE_DECISION_RECORDED por finalidad (en orden), CONSENT_GRANTED|DECLINED y
 --     RECEIPT_CREATED. managementLinkIssued (F-PRB-01) NO lo escribe web: lo deriva la base de la existencia en tenant_resolve.handle de una fila NO rotada con el mismo tenant y
 --     revoked_decision_ref = consent_id (el dominio registra el handle ANTES del UPDATE a GRANTED, en la misma tx). Significa "registrado", no "entregado". ledger_writer recibe SELECT SOLO de
@@ -92,6 +93,13 @@ BEGIN
   END IF;
   IF NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
   v_pair := OLD.state || '>' || NEW.state;
+  -- Toda arista que sale de PENDING (C2/C3/C5) exige que la invitacion de la decision siga VERIFIED en el tenant (P2 de seguridad de PR #98): tras I9 (CANCELLED) o un cierre, la decision
+  -- queda congelada y ni los pasos ni GRANTED/DECLINED avanzan (ni emiten).
+  IF OLD.state = 'PENDING' AND NOT EXISTS (SELECT 1 FROM app.invitation i
+                                            WHERE i.tenant_id = NEW.tenant_id AND i.invitation_ref = NEW.invitation_ref AND i.state = 'VERIFIED'
+                                              AND i.bound_decision_maker_ref = NEW.decision_maker_ref) THEN
+    RAISE EXCEPTION '%', v_deny USING ERRCODE = '42501';
+  END IF;
   IF v_pair = 'PENDING>PENDING' THEN
     -- C2: un paso nuevo y conocido; purposes y recibo no cambian.
     v_n := pg_catalog.cardinality(OLD.steps_recorded);
@@ -117,7 +125,7 @@ BEGIN
        OR NEW.receipt_ref IS NULL OR NEW.consent_version IS NULL OR NEW.consent_text_hash IS NULL OR NEW.privacy_notice_version IS NULL
        OR pg_catalog.jsonb_typeof(NEW.purposes) <> 'array' OR pg_catalog.jsonb_array_length(NEW.purposes) = 0
        OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(NEW.purposes) e
-                   WHERE pg_catalog.jsonb_typeof(e) <> 'object' OR NOT (e ? 'purpose') OR NOT (e ? 'choice') OR pg_catalog.jsonb_typeof(e -> 'purpose') <> 'string'
+                   WHERE pg_catalog.jsonb_typeof(e) <> 'object' OR NOT (e ? 'purpose') OR NOT (e ? 'choice') OR pg_catalog.jsonb_typeof(e -> 'purpose') <> 'string' OR (e ->> 'purpose') !~ '^[A-Z_]{1,64}$'
                       OR (e ->> 'choice') NOT IN ('GRANT', 'DECLINE')
                       OR CASE WHEN pg_catalog.jsonb_typeof(e) = 'object' THEN (e - 'purpose' - 'choice') <> '{}'::jsonb ELSE true END)
        OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_array_elements(NEW.purposes)) <> (SELECT pg_catalog.count(DISTINCT e ->> 'purpose') FROM pg_catalog.jsonb_array_elements(NEW.purposes) e)

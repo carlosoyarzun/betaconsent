@@ -94,6 +94,8 @@ const T_PRA = "tests/integration/postgres/adr010-ledger-pr-a.test.ts";
 const T_PRB = "tests/integration/postgres/adr010-ledger-pr-b-invitation.test.ts";
 /** ADR-010 rev. 5 PR-b: TEST-CNS-1460 asume transition_owner (SET LOCAL ROLE) para probar que la guarda de C6 no admite exenciones por rol ni por GUC. */
 const T_PRB2 = "tests/integration/postgres/adr010-ledger-pr-b-decision.test.ts";
+/** ADR-010 rev. 5 PR-b: TEST-CNS-1469 asume ledger_writer y transition_owner (SET LOCAL ROLE) para probar el aislamiento por tenant de sus policies de INSERT en el ledger. */
+const T_PRB3 = "tests/integration/postgres/adr010-ledger-pr-b-hardening.test.ts";
 /** ADR-010 PR-4: fixture LOCAL sintetico del bootstrap del primer PLATFORM (membership_owner), patron TEST-CNS-879. Solo LOCAL; STAFF/datos reales: ceremonia PR-7. */
 const FIX_PLATFORM = "db/fixtures/local/0002_platform_bootstrap.sql";
 export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Record<string, readonly UsageKind[]>>>> = {
@@ -109,11 +111,11 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // de transicion (SET LOCAL ROLE). Sin otros caminos: PR-5b y PR-7 amplian esta allowlist con revision (CODEOWNERS).
   // 0038 (PR-5b): mismo patron (CREATE temporal de transition_owner sobre case_state; funciones de RightsCase como transition_owner).
   case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0044]: ["set-role"] }, // 0044: CREATE temporal para cancel_invitation_subject_mismatch; 0041: CREATE temporal para ledger_append con dedupe estricto; 0039: CREATE temporal para close_case (D6)
-  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [M0044]: ["set-role"], [M0049]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"], [T_PRB]: ["set-role"], [T_PRB2]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
+  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [M0044]: ["set-role"], [M0049]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"], [T_PRB]: ["set-role"], [T_PRB2]: ["set-role"], [T_PRB3]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
   // 0046 (PR-b): GRANT de ambos roles a consent_owner WITH INHERIT FALSE, SET TRUE (F-PR6-11; solo IT0B_SYNTHETIC). 0047/0048/0049: ledger_gen_owner crea el esquema ledger_gen y reparte USAGE/CREATE temporal;
   // ledger_writer crea sus funciones guard_*/emit_*/ledger_append/seed_local_catalog_event (SET LOCAL ROLE, patron 0037). Los tests de PR-b asumen ledger_writer para sus vectores y asserts.
   ledger_gen_owner: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"] },
-  ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"], [T5B]: ["set-role"] },
+  ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"], [T5B]: ["set-role"], [T_PRB3]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

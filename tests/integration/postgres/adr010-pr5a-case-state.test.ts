@@ -18,7 +18,7 @@ import type { RevocationPorts } from "../../../src/server/modules/revocation/rev
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { revokeVia, type X6Env } from "../../contract/x6-revocation-scenarios.ts";
 import { runFA1029Scenarios } from "../../contract/f-a10-29-scenarios.ts";
-import { pgTest, pgTestRaw } from "./harness.ts";
+import { pgTest, seedFixture } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
 import { completeDownstreamAsWorker } from "./worker-env.ts";
 
@@ -26,7 +26,7 @@ const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code
 const constraintOf = (e: unknown): string | undefined => (e as { constraint?: string }).constraint;
 const SEED = "SELECT set_config('case_state.effect', 'seed_local_revocation', false)";
 
-pgTestRaw("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision REVOKED; el trigger exige transition_owner y el efecto de la funcion (INV-RV-12, F-A10-01/06)", async (ctx) => {
+pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision REVOKED; el trigger exige transition_owner y el efecto de la funcion (INV-RV-12, F-A10-01/06)", async (ctx) => {
   const T = fixtureUuid("t1373");
   const admin = await ctx.connectAsSuperuser();
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
@@ -34,11 +34,11 @@ pgTestRaw("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decisi
     const uow = new PgUnitOfWork(pool);
     await admin.query(SEED);
     await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'r1373', 'c1373', 'd1373', 'REQUESTED')", [T]);
-    await admin.query(
+    await seedFixture(() => admin.query(
       `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
        VALUES ($1, 'd1373', 'x', 'x', 'x', 'x', 'x', 'x', 'c1373', 'GRANTED', '[]', true)`,
       [T],
-    );
+    ));
     // app_rw: ni INSERT ni UPDATE de ninguna columna (incluidos attested_*), ni REVOKED en consent_decision (policy), ni EXECUTE de auxiliares.
     for (const sql of [
       "UPDATE app.revocation SET attested_revocation_ref = 'r1373', attested_case_ref = 'x' WHERE revocation_ref = 'r1373'",
@@ -67,12 +67,12 @@ pgTestRaw("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decisi
       (e: unknown) => codeOf(e) === "RV002",
     );
     // B1: des-revocar (REVOKED -> GRANTED) como app_rw no cambia nada (USING de la policy excluye REVOKED): 0 filas o 42501.
-    await admin.query(
+    await seedFixture(() => admin.query(
       `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
        VALUES ($1, 'd1373-rev', 'x', 'x', 'x', 'x', 'x', 'x', 'c1373b', 'GRANTED', '[]', true)`,
       [T],
-    );
-    await admin.query("UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T]);
+    ));
+    await seedFixture(() => admin.query("UPDATE app.consent_decision SET state = 'REVOKED' WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T]));
     const unrevoke = await uow.withTenantTx(T, (tx) => tx.query("UPDATE app.consent_decision SET state = 'GRANTED' WHERE consent_id = 'd1373-rev' AND state = 'REVOKED'")).then((r) => r.rowCount, (e: unknown) => codeOf(e));
     assert.ok(unrevoke === 0 || unrevoke === "42501", `des-revocar: ${String(unrevoke)}`);
     assert.equal((await admin.query<{ state: string }>("SELECT state FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T])).rows[0]?.state, "REVOKED");
@@ -132,7 +132,7 @@ pgTest("TEST-CNS-1374 pg: CHECKs nuevos GRD-RV-26 (cosigned <> recorded), GRD-RV
   await ins(B, "v1", "verified_auth_path, verification_ref", "'VERIFIED', 'OTP', 'ver-1374'");
 });
 
-pgTestRaw("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json = canonicalJson de ledger-chain.ts y la cadena que escriben las funciones (hash en SQL) verifica en TS, sin huecos y con cada via", async (ctx) => {
+pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json = canonicalJson de ledger-chain.ts y la cadena que escriben las funciones (hash en SQL) verifica en TS, sin huecos y con cada via", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const vectors: unknown[] = [
     { b: 1, a: "x" },
@@ -169,7 +169,7 @@ pgTestRaw("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_jso
   }
 });
 
-pgTestRaw("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSISTED (solo RH3 con cuatro ojos) y case_state tiene exactamente las funciones declaradas, de transition_owner", async (ctx) => {
+pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSISTED (solo RH3 con cuatro ojos) y case_state tiene exactamente las funciones declaradas, de transition_owner", async (ctx) => {
   const T = fixtureUuid("t1376");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED);
@@ -215,18 +215,18 @@ pgTestRaw("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_A
   for (const role of ["platform_rw", "integrity_verifier"]) assert.equal(await ex(role, "apply_revocation"), false, role);
 });
 
-pgTestRaw("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el tenant B, withdraw/apply/revoke_with_recovery_link/propose sobre refs de A fallan (RV001/RV007) sin cambiar la fila, el token ni el ledger de A", async (ctx) => {
+pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el tenant B, withdraw/apply/revoke_with_recovery_link/propose sobre refs de A fallan (RV001/RV007) sin cambiar la fila, el token ni el ledger de A", async (ctx) => {
   const A = fixtureUuid("t1378-a");
   const B = fixtureUuid("t1378-b");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED);
   await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'rA', 'cA', 'dA', 'CONFIRMED', 'OTP')", [A]);
   await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref) VALUES ($1, 'rA2', 'cA2', 'dA2', 'REQUESTED', 'caseA')", [A]);
-  await admin.query(
+  await seedFixture(() => admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'dA', 'x', 'x', 'x', 'x', 'x', 'x', 'cA', 'GRANTED', '[]', true)`,
     [A],
-  );
+  ));
   await admin.query("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'recA', $2, 'cA', 'dA', now() + interval '1 day')", [A, "a".repeat(64)]);
   const snapshot = async (): Promise<string> =>
     JSON.stringify([
@@ -255,7 +255,7 @@ pgTestRaw("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con
   assert.equal(await snapshot(), before, "la fila, el token, la decision, el ledger y el outbox de A quedan intactos");
 });
 
-pgTestRaw("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no confirma HUMAN_ASSISTED y R1 exige decision GRANTED de la misma cadena (F-A10-29), igual que in-memory; la base tambien lo impone", async (ctx) => {
+pgTest("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no confirma HUMAN_ASSISTED y R1 exige decision GRANTED de la misma cadena (F-A10-29), igual que in-memory; la base tambien lo impone", async (ctx) => {
   const T = fixtureUuid("t1380");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
   try {
@@ -269,7 +269,7 @@ pgTestRaw("TEST-CNS-1380 pg: R8 solo desde REQUESTED/VERIFIED/CONFIRMED, R3 no c
       tenantResolver: createPgTenantResolver(pool),
       downstreamStub: createInMemoryDownstreamStub(),
     };
-    await runFA1029Scenarios({ ports, seedDecision: (d) => uow.inTenant(T, (tx) => tx.consentDecisionRepo.save(d)) }, T, "pg");
+    await runFA1029Scenarios({ ports, seedDecision: (d) => seedFixture(() => uow.inTenant(T, (tx) => tx.consentDecisionRepo.save(d))) }, T, "pg");
     // La base lo impone aunque el dominio se saltara: request_revocation con decision ausente o de otra cadena (RV003).
     await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.request_revocation('x1380', 'c1380', 'no-existe')")), (e: unknown) => codeOf(e) === "RV003");
     await assert.rejects(
