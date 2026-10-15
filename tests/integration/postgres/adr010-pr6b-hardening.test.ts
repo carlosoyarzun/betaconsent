@@ -8,16 +8,18 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { seedPlatformSession } from "../../helpers/pg-platform-session.ts";
 import { pgTest } from "./harness.ts";
 
 const sha = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 const P = (label: string): string => fixtureUuid(`pr6b-hard-${label}`);
 const PKCE = "C".repeat(64);
 
-async function call<T = Record<string, unknown>>(client: Client, principal: string | null, sql: string, params: unknown[] = []): Promise<T[]> {
+async function call<T = Record<string, unknown>>(client: Client, principal: string | null, sql: string, params: unknown[] = [], sid: string | null = null): Promise<T[]> {
   await client.query("BEGIN");
   try {
     if (principal !== null) await client.query("SELECT set_config('app.principal_ref', $1, true)", [principal]);
+    if (sid !== null) await client.query("SELECT set_config('app.session_sid', $1, true)", [sid]);
     const r = await client.query(sql, params);
     await client.query("COMMIT");
     return r.rows as T[];
@@ -35,8 +37,8 @@ async function seedOperator(admin: Client, principal: string, role = "PLATFORM")
   return sub;
 }
 
-const beginLogin = async (c: Client, kind: string, principal: string | null, maxAwaiting: number | null, target: string | null = null): Promise<string | null> =>
-  (await call<{ r: string | null }>(c, principal, "SELECT platform.begin_oidc_authorization($1, $2, $3, $4, $5, 300, $6, NULL, NULL) AS r", [kind, sha(randomUUID()), sha(randomUUID()), PKCE, target, maxAwaiting]))[0]?.r ?? null;
+const beginLogin = async (c: Client, kind: string, principal: string | null, maxAwaiting: number | null, target: string | null = null, sid: string | null = null): Promise<string | null> =>
+  (await call<{ r: string | null }>(c, principal, "SELECT platform.begin_oidc_authorization($1, $2, $3, $4, $5, 300, $6, NULL, NULL) AS r", [kind, sha(randomUUID()), sha(randomUUID()), PKCE, target, maxAwaiting], sid))[0]?.r ?? null;
 
 pgTest("TEST-CNS-1512 pg carrera: N inicios concurrentes no superan P-51 (por operador) ni P-53 (global); P-53 solo frena LOGIN_PLATFORM", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
@@ -67,7 +69,8 @@ pgTest("TEST-CNS-1512 pg carrera: N inicios concurrentes no superan P-51 (por op
   assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM platform.session_event WHERE event_type = 'LIMIT_EXCEEDED' AND limit_kind = 'P-53'")).rows[0]!.n), 1);
 
   // P-53 NO aplica a LOGIN_CASE ni a STEP_UP (exigen principal con rol; un flood anonimo no debe bloquearlos).
-  assert.ok(await beginLogin(clients[0]!, "LOGIN_CASE", B, 1, sha("caso")), "LOGIN_CASE entra aun con P-53 excedido");
+  const sessB = await seedPlatformSession(admin, B);
+  assert.ok(await beginLogin(clients[0]!, "LOGIN_CASE", null, 1, sha("caso"), sessB.sid), "LOGIN_CASE entra aun con P-53 excedido");
   const n7 = (await call<{ n: string }>(clients[0]!, A, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 300) AS n", [`${P("t-x")}:CONTEXT_OWNER`]))[0]!.n;
   const other = P("1512-c");
   await seedOperator(admin, other);

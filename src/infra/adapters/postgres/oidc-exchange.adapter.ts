@@ -38,10 +38,11 @@ const KINDS: ReadonlySet<string> = new Set(["LOGIN_PLATFORM", "LOGIN_CASE", "STE
 export function createPgOidcAuthorization(pool: PoolLike): OidcAuthorizationPort {
   return {
     async begin(input: BeginAuthorizationInput): Promise<string> {
-      if (input.kind === "LOGIN_PLATFORM" && (input.principalRef ?? null) !== null) throw new PlatformDeniedError();
-      if (input.kind !== "LOGIN_PLATFORM" && (input.principalRef ?? null) === null) throw new PlatformDeniedError();
-      if (input.kind === "STEP_UP" && input.stepUpLimit === undefined) throw new PlatformDeniedError();
-      const principal = input.kind === "LOGIN_PLATFORM" ? null : (input.principalRef ?? null);
+      // LOGIN_PLATFORM: sin principal ni sesion. LOGIN_CASE: solo la sesion PLATFORM (la base resuelve el principal, F-PR6-36). STEP_UP: principal y limite P-51.
+      if (input.kind === "LOGIN_PLATFORM" && ((input.principalRef ?? null) !== null || (input.sessionSid ?? null) !== null)) throw new PlatformDeniedError();
+      if (input.kind === "LOGIN_CASE" && ((input.principalRef ?? null) !== null || (input.sessionSid ?? null) === null)) throw new PlatformDeniedError();
+      if (input.kind === "STEP_UP" && ((input.principalRef ?? null) === null || (input.sessionSid ?? null) !== null || input.stepUpLimit === undefined)) throw new PlatformDeniedError();
+      const principal = input.kind === "STEP_UP" ? (input.principalRef ?? null) : null;
       const rows = await withPlatformTransaction(pool, principal, async (tx) =>
         (await tx.query<{ exchange_ref: string | null }>("SELECT platform.begin_oidc_authorization($1, $2, $3, $4, $5, $6, $7, $8, $9) AS exchange_ref", [
           input.kind,
@@ -54,6 +55,7 @@ export function createPgOidcAuthorization(pool: PoolLike): OidcAuthorizationPort
           input.stepUpLimit?.max ?? null,
           input.stepUpLimit?.windowSeconds ?? null,
         ])).rows,
+        { sessionSid: input.kind === "LOGIN_CASE" ? (input.sessionSid ?? null) : null },
       );
       const ref = rows[0]?.exchange_ref;
       if (typeof ref !== "string") throw new PlatformDeniedError(); // DENY: la evidencia ya se confirmo

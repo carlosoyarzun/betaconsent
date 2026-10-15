@@ -125,8 +125,10 @@ export interface BeginAuthorizationInput {
   pkceVerifier: string;
   /** Solo LOGIN_CASE: sha256 hex del case_ref destino (G-7, F-PR6-27). */
   targetRefHash?: string | null;
-  /** LOGIN_CASE y STEP_UP: principal de la sesion validada (nunca de la request). LOGIN_PLATFORM: no se envia. */
+  /** STEP_UP: principal de la sesion validada (nunca de la request; 6d lo liga a la sesion). LOGIN_PLATFORM y LOGIN_CASE: no se envia (en LOGIN_CASE sale de la sesion PLATFORM que valida la base). */
   principalRef?: string | null;
+  /** LOGIN_CASE (PR-6c, F-PR6-36): sid (64 hex) de la sesion PLATFORM vigente; la BASE lo resuelve y toma el principal de ESA fila. Obligatorio en LOGIN_CASE y prohibido en los demas. */
+  sessionSid?: string | null;
   ttlSeconds: number;
   /** P-53 (sin valor aprobado): tope global de filas AWAITING_CALLBACK; null = sin tope (solo LOCAL, lo exige el startup-check de platform). */
   maxAwaiting: number | null;

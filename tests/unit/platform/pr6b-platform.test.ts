@@ -4,6 +4,7 @@
 // TEST-CNS-1507: rutas HTTP de login: 302 con max_age=0 y prompt=login, cookie state Lax, callback con comparacion de state, 303 sin code ni ref, ref solo en cookie Strict, 404 uniforme, P-49 y allowlist.
 // TEST-CNS-1508: ciclo del verifier para LOGIN_*: entrega sub_hmac + key_version + limites a la base, nunca un principal; rechazos sin sub; limites de login obligatorios fuera de LOCAL.
 
+import { DENY_ALL_SESSIONS } from "../../helpers/fake-platform-sessions.ts";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
@@ -66,7 +67,7 @@ test("TEST-CNS-1506 platform-settings: fuera de LOCAL no hay defaults (P-49..P-5
   assert.equal(local.maxAwaiting, null);
   assert.equal(local.idp, undefined);
   const full = {
-    CNS_PLATFORM_BIND_ADDRESS: "10.8.0.5", CNS_PLATFORM_ALLOWED_CIDRS: "10.8.0.0/16", CNS_PLATFORM_P53_MAX_AWAITING: "500",
+    CNS_PLATFORM_BIND_ADDRESS: "10.8.0.5", CNS_PLATFORM_ALLOWED_CIDRS: "10.8.0.0/16", CNS_PLATFORM_P53_MAX_AWAITING: "500", CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS: "14400", CNS_PLATFORM_SESSION_IDLE_SECONDS: "900",
     CNS_PLATFORM_P49_MAX: "20", CNS_PLATFORM_P49_WINDOW_SECONDS: "900", CNS_PLATFORM_P49_IPV4_PREFIX: "32", CNS_PLATFORM_P50_MAX: "30", CNS_PLATFORM_P50_WINDOW_SECONDS: "60", CNS_PLATFORM_P51_MAX: "5", CNS_PLATFORM_P51_WINDOW_SECONDS: "600",
   };
   const ok = loadPlatformSettings(full, "STAGING");
@@ -116,7 +117,7 @@ class FakeAuthorization implements OidcAuthorizationPort {
 async function withServer(env: Record<string, string>, fn: (base: string, auth: FakeAuthorization) => Promise<void>): Promise<void> {
   const auth = new FakeAuthorization();
   const settings = loadPlatformSettings(env, "LOCAL");
-  const server = createServer(platformRequestHandler({ authorization: auth, settings }));
+  const server = createServer(platformRequestHandler({ authorization: auth, sessions: DENY_ALL_SESSIONS, settings }));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   try {
     await fn(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, auth);
@@ -153,7 +154,7 @@ test("TEST-CNS-1507 rutas de login: 302 al IdP con max_age=0, prompt=login, PKCE
     const sc = r.headers.get("set-cookie")!;
     assert.match(sc, new RegExp(`^${OIDC_STATE_COOKIE}=${state}; Path=/; Secure; HttpOnly; SameSite=Lax`));
     assert.equal(begin.state, state);
-    // kind=CASE (PR-6c) y kind ajeno: 404.
+    // kind=CASE sin sesion PLATFORM (PR-6c) y kind ajeno: 404.
     for (const k of ["CASE", "OTRO", ""]) assert.equal((await rawFetch(`${base}/platform/auth/login?kind=${k}`, { redirect: "manual", headers: NAV })).status, 404, k);
 
     // Callback: sin cookie, con cookie distinta o con state ajeno => 404 uniforme y no completa.

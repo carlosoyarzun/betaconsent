@@ -114,6 +114,15 @@ const EXPECTED_EXECUTE: Record<string, string[]> = {
   record_login_assertion: ["integrity_verifier"],
   consume_login_assertion: [],
   login_assertion_guard: [],
+  // ADR-010 PR-6c (0052/0053): sesiones PLATFORM/CASE y grants minimos.
+  open_platform_session: ["platform_rw"],
+  open_case_session: ["platform_rw"],
+  validate_session: ["platform_rw"],
+  revoke_session: ["platform_rw"],
+  revoke_session_internal: [],
+  platform_session_guard: [],
+  rights_case_grant_guard: [],
+  grant_request_guard: [],
 };
 const FUNCTION_OWNERS: Record<string, string> = {
   request_membership: "membership_owner", approve_membership: "membership_owner", request_role_assignment: "membership_owner", approve_role_assignment: "membership_owner",
@@ -123,14 +132,16 @@ const FUNCTION_OWNERS: Record<string, string> = {
   record_assertion: "grant_owner", purge_expired_oidc_exchange: "grant_owner",
   begin_oidc_authorization: "grant_owner", complete_oidc_callback: "grant_owner", exchange_status: "grant_owner", record_limit_event: "grant_owner",
   record_login_assertion: "grant_owner", consume_login_assertion: "grant_owner", login_assertion_guard: "grant_owner",
+  open_platform_session: "grant_owner", open_case_session: "grant_owner", validate_session: "grant_owner", revoke_session: "grant_owner", revoke_session_internal: "grant_owner",
+  platform_session_guard: "grant_owner", rights_case_grant_guard: "grant_owner", grant_request_guard: "grant_owner",
 };
 const TABLE_OWNERS: Record<string, string> = {
   tenant_membership: "membership_owner", platform_role_assignment: "membership_owner", principal_identity: "membership_owner",
   action_nonce: "grant_owner", authorization_check: "grant_owner", oidc_exchange: "grant_owner", grant_assertion: "grant_owner",
-  login_assertion: "grant_owner", session_event: "grant_owner",
+  login_assertion: "grant_owner", session_event: "grant_owner", platform_session: "grant_owner", rights_case_grant: "grant_owner", grant_request: "grant_owner",
 };
 
-pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 9 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 24 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
+pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 12 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 32 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
 
   const ns = (await admin.query<{ owner: string }>("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'platform'")).rows;
@@ -201,15 +212,16 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 9 tablas de
     }
   }
 
-  // Triggers: 18 (14 + 4 de PR-6b), BEFORE, ENABLE ALWAYS.
+  // Triggers: 24 (14 + 4 de PR-6b + 6 de PR-6c), BEFORE, ENABLE ALWAYS.
   const triggers = (await admin.query<{ tgname: string; tgenabled: string; tgtype: number }>(
     `SELECT g.tgname, g.tgenabled, g.tgtype FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'platform' AND NOT g.tgisinternal ORDER BY g.tgname`,
   )).rows;
   assert.deepEqual(triggers.map((t) => t.tgname), [
     "action_nonce_guard", "action_nonce_no_truncate", "authorization_check_append_only", "authorization_check_no_truncate",
-    "grant_assertion_immutable", "grant_assertion_no_truncate", "login_assertion_guard", "login_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
-    "platform_role_assignment_guard", "platform_role_assignment_no_truncate", "principal_identity_guard", "principal_identity_no_truncate",
+    "grant_assertion_immutable", "grant_assertion_no_truncate", "grant_request_guard", "grant_request_no_truncate", "login_assertion_guard", "login_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
+    "platform_role_assignment_guard", "platform_role_assignment_no_truncate", "platform_session_guard", "platform_session_no_truncate",
+    "principal_identity_guard", "principal_identity_no_truncate", "rights_case_grant_guard", "rights_case_grant_no_truncate",
     "session_event_immutable", "session_event_no_truncate", "tenant_membership_guard", "tenant_membership_no_truncate",
   ]);
   for (const t of triggers) {
