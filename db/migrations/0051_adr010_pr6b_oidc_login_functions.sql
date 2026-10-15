@@ -333,7 +333,7 @@ BEGIN
     VALUES (v_ex.exchange_ref, v_ex.kind, v_ex.state_hash, v_ex.target_ref_hash, v_principal, v_decision,
             CASE WHEN v_decision = 'REJECTED' THEN COALESCE(v_reason, 'INVALID_CLAIMS') END,
             CASE WHEN v_decision = 'ATTESTED' THEN p_assertion_hash END, CASE WHEN v_decision = 'ATTESTED' THEN p_auth_time END,
-            CASE WHEN v_decision = 'ATTESTED' THEN p_acr END, CASE WHEN v_decision = 'ATTESTED' THEN p_amr END, v_expires);
+            CASE WHEN v_decision = 'ATTESTED' THEN p_acr END, CASE WHEN v_decision = 'ATTESTED' THEN p_amr END, CASE WHEN v_decision = 'ATTESTED' THEN v_expires END);
     IF v_decision = 'REJECTED' THEN
       -- Evento sin sub_hmac ni IP (P2(f), F-PR6-31). El principal solo si la base lo resolvio.
       IF v_reason = 'RATE_LIMITED' THEN
