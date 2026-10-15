@@ -563,6 +563,65 @@ test("TEST-CNS-1447: si tampoco se puede persistir el evento de fallo de entrega
   }
 });
 
+/** Tras confirmar C3 (la decision ya esta registrada), la lectura de la invitacion que hace la entrega post-commit falla (`throws`) o devuelve la invitacion sin canal ligado. */
+function breakDeliveryLookup(h: Harness, mode: "throws" | "no-channel"): void {
+  let armed = false;
+  const decision = h.ports.decision;
+  (h.ports as { decision: unknown }).decision = {
+    ...decision,
+    uow: { inTenant: async <T>(tenantId: never, work: (tx: never) => Promise<T>) => { const r = await decision.uow.inTenant(tenantId, work as never); armed = true; return r as T; } },
+  };
+  const base = h.ports.invitation.uow;
+  (h.ports as { invitation: unknown }).invitation = {
+    ...h.ports.invitation,
+    uow: {
+      inTenant: <T>(tenantId: never, work: (tx: never) => Promise<T>) =>
+        base.inTenant(tenantId, (tx) =>
+          work({
+            ...tx,
+            invitationRepo: {
+              ...tx.invitationRepo,
+              findByRef: async (t: never, ref: string) => {
+                const found = await tx.invitationRepo.findByRef(t, ref);
+                if (!armed) return found;
+                if (mode === "throws") throw new Error("lectura caida");
+                return found ? { ...found, recipientChannelRef: undefined } : found;
+              },
+            },
+          } as never),
+        ),
+    },
+  };
+}
+
+for (const mode of ["throws", "no-channel"] as const) {
+  test(`TEST-CNS-${mode === "throws" ? "1453" : "1454"}: GRANTED con la entrega rota antes de enviar (${mode === "throws" ? "falla la lectura de la invitacion" : "invitacion sin canal ligado"}) registra RECEIPT y MANAGEMENT_LINK como no entregados (SEC-CNS-PR96 P2-1)`, async () => {
+    const subjectRef = fixtureUuid(`subject-${mode}-1453`);
+    const h = await startServer(subjectRef);
+    const origError = console.error;
+    console.error = () => undefined;
+    try {
+      const events = spyOnSecurityEvents(h);
+      const { session } = await bringToVerified(h, fixtureUuid(`inv-${mode}-1453`), subjectRef);
+      const afterSteps = await completeSteps(h, session);
+      breakDeliveryLookup(h, mode);
+      const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { state: string; receiptRef: string };
+      assert.equal(body.state, "GRANTED");
+      assert.deepEqual(h.failures, ["RECEIPT", "MANAGEMENT_LINK"]);
+      assert.deepEqual(events, [
+        { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "RECEIPT", receiptRef: body.receiptRef },
+        { tenantId: TENANT_ID, eventType: "GUEST_MESSAGE_DELIVERY_FAILED", messageKind: "MANAGEMENT_LINK", receiptRef: body.receiptRef },
+      ]);
+      assert.equal(h.sink.sent.length, 0);
+    } finally {
+      console.error = origError;
+      await h.close();
+    }
+  });
+}
+
 test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registro del handle de gestion falla dentro de C3, la decision sigue PENDING, el ledger no tiene RECEIPT_CREATED ni CONSENT_GRANTED ni INVITATION_COMPLETED, la invitacion sigue VERIFIED y no sale ningun mensaje; un reintento sano concluye (SEC-CNS-PR94 P2-B)", async () => {
   const subjectRef = fixtureUuid("subject-1448");
   const h = await startServer(subjectRef);
@@ -577,6 +636,7 @@ test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registr
     // Inyeccion: el registro del handle de gestion (ultimo paso del lote C3) falla. Se captura el consentId que recibe (revokedDecisionRef).
     const healthyDecision = h.ports.decision;
     let consentId = "";
+    let handleHash = "";
     (h.ports as { decision: unknown }).decision = {
       ...healthyDecision,
       uow: {
@@ -585,15 +645,18 @@ test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registr
             work({
               ...tx,
               managementHandles: {
-                register: async (input: { revokedDecisionRef: string }) => {
+                register: async (input: { revokedDecisionRef: string; handleHash: string }) => {
                   consentId = input.revokedDecisionRef;
-                  throw new Error("fallo inyectado del registro del handle");
+                  handleHash = input.handleHash;
+                  await (tx as { managementHandles?: { register(i: unknown): Promise<void> } }).managementHandles?.register(input); // el registro REAL ocurre y luego falla
+                  throw new Error("fallo inyectado tras el registro del handle");
                 },
               },
             } as never),
           ),
       },
     };
+    const ledgerBefore = (await healthyDecision.uow.inTenant(TENANT_ID as never, (tx) => tx.ledger.readChain(TENANT_ID as never))).length;
     const failed = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
     assert.equal(failed.status, 500, "el fallo no se traga: el invitado no recibe un 200 de una decision no registrada");
     assert.ok(consentId, "el registro del handle se alcanzo (ultimo paso del lote C3)");
@@ -611,6 +674,9 @@ test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registr
     assert.ok(!state.invitationEvents.includes("INVITATION_COMPLETED"), "no debe haber INVITATION_COMPLETED");
     assert.equal(h.sink.sent.length, 0, "ningun mensaje salio");
     assert.deepEqual(h.failures, []);
+    assert.equal((await healthyDecision.uow.inTenant(TENANT_ID as never, (tx) => tx.ledger.readChain(TENANT_ID as never))).length, ledgerBefore, "el ledger del tenant no cambio");
+    // El handle que el registro REAL escribio antes del fallo se deshizo con la tx: no resuelve.
+    assert.equal(await h.ports.managementHandleStore?.resolveByHash(handleHash), null, "ningun handle quedo registrado");
 
     // Sin residuo: restaurado el registro sano, el reintento de la misma decision concluye.
     (h.ports as { decision: unknown }).decision = healthyDecision;

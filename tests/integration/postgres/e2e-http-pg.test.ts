@@ -694,6 +694,7 @@ pgTest("TEST-CNS-1450 e2e pg (app_rw): rollback con inyeccion de fallo: si el re
   try {
     const g = await pgVerifiedSession(env, "1450");
     const handlesBefore = await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]);
+    const ledgerBefore = await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [T]);
     const healthy = env.bundle.ports.decision;
     let consentId = "";
     (env.bundle.ports as { decision: unknown }).decision = {
@@ -706,7 +707,8 @@ pgTest("TEST-CNS-1450 e2e pg (app_rw): rollback con inyeccion de fallo: si el re
               managementHandles: {
                 register: async (input: { revokedDecisionRef: string }) => {
                   consentId = input.revokedDecisionRef;
-                  throw new Error("fallo inyectado del registro del handle");
+                  await (tx as { managementHandles: { register(i: unknown): Promise<void> } }).managementHandles.register(input); // el registro REAL ocurre y luego falla
+                  throw new Error("fallo inyectado tras el registro del handle");
                 },
               },
             } as never),
@@ -722,7 +724,8 @@ pgTest("TEST-CNS-1450 e2e pg (app_rw): rollback con inyeccion de fallo: si el re
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type IN ('CONSENT_GRANTED', 'RECEIPT_CREATED', 'CONSENT_DECLINED')", [T, consentId]), 0);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type = 'INVITATION_COMPLETED'", [T, g.inv]), 0);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'VERIFIED'", [T, g.inv]), 1);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]), handlesBefore);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM tenant_resolve.handle WHERE tenant_id = $1", [T]), handlesBefore, "el INSERT real del handle se revirtio");
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [T]), ledgerBefore, "el ledger del tenant no cambio");
 
     // Sin residuo: con el registro sano el reintento concluye y deja RECEIPT_CREATED (managementLinkIssued=true) e INVITATION_COMPLETED.
     (env.bundle.ports as { decision: unknown }).decision = healthy;

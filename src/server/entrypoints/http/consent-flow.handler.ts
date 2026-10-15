@@ -670,7 +670,7 @@ export async function handleSubmitDecision(
       await deliverDecisionMessages(ports, session, decided, managementHandle);
     } catch {
       // Fallo previo al envío (lectura de la invitación): rastro explícito, nunca silencio ni detalle (cero PII/token).
-      await reportDeliveryFailure(ports, session.tenantId, "RECEIPT", decided.receiptRef);
+      await reportUndelivered(ports, session.tenantId, decided, managementHandle);
     }
     // DecisionRecorded (contracts/api-payloads.schema.json $defs/DecisionRecorded): receiptRef
     // es requerido (P1: faltaba); nunca incluye el management_token (va solo al canal ligado).
@@ -738,7 +738,11 @@ async function deliverDecisionMessages(
   if (decided.state !== "GRANTED" && decided.state !== "DECLINED") return;
   const invitationRef = session.invitationRef;
   const invitation = await ports.invitation.uow.inTenant(session.tenantId, (tx) => tx.invitationRepo.findByRef(session.tenantId, invitationRef));
-  if (!invitation?.recipientChannelRef) return;
+  if (!invitation?.recipientChannelRef) {
+    // Sin canal ligado no sale ningun mensaje: es un fallo de entrega (nunca silencio) de todo lo que debia salir.
+    await reportUndelivered(ports, session.tenantId, decided, managementHandle);
+    return;
+  }
   const subjectLabel = await resolveSubjectLabel(ports, session);
   const served = getServedConsentVersion();
   // Post-commit (C3/C5 ya confirmaron): un fallo de entrega NO revierte la decisión, pero deja rastro y no impide el segundo mensaje.
@@ -767,6 +771,17 @@ async function deliverDecisionMessages(
   } catch {
     await reportDeliveryFailure(ports, session.tenantId, "MANAGEMENT_LINK", decided.receiptRef);
   }
+}
+
+/** Ningun mensaje llego a enviarse: reporta RECEIPT y, si la decision es GRANTED y hay handle registrado, tambien MANAGEMENT_LINK (SEC-CNS-PR96 P2-1). */
+async function reportUndelivered(
+  ports: ConsentFlowPorts,
+  tenantId: string,
+  decided: { readonly state: string; readonly receiptRef?: string },
+  managementHandle: string | undefined,
+): Promise<void> {
+  await reportDeliveryFailure(ports, tenantId, "RECEIPT", decided.receiptRef);
+  if (decided.state === "GRANTED" && managementHandle !== undefined) await reportDeliveryFailure(ports, tenantId, "MANAGEMENT_LINK", decided.receiptRef);
 }
 
 /** SEC-CNS-PR94 P2-A: fallo de entrega POST-COMMIT (la decision ya confirmo y NO se revierte). Deja (1) la alerta/rastro inmediato de `guest.recordDeliveryFailure`

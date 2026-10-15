@@ -142,8 +142,9 @@ BEGIN
     RAISE EXCEPTION '0045: las policies de ops.security_event no son exactamente las declaradas';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = tbl AND p.polname = 'security_event_app_rw_insert'
-                   AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%GUEST_MESSAGE_DELIVERY_FAILED%') THEN
-    RAISE EXCEPTION '0045: la policy de INSERT de app_rw no admite el tipo nuevo';
+                   AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%GUEST_MESSAGE_DELIVERY_FAILED%'
+                   AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) LIKE '%tenant_id = app.current_tenant_id()%') THEN
+    RAISE EXCEPTION '0045: la policy de INSERT de app_rw no admite el tipo nuevo o perdio el aislamiento por tenant';
   END IF;
   -- Privilegios: app_rw solo INSERT en las columnas nuevas; ningun otro rol de runtime recibe nada.
   IF NOT pg_catalog.has_column_privilege('app_rw', tbl, 'delivery_kind', 'INSERT') OR NOT pg_catalog.has_column_privilege('app_rw', tbl, 'receipt_ref', 'INSERT')
