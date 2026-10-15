@@ -54,7 +54,7 @@ export function openEnrollment(
   input: OpenEnrollmentInput,
 ): Promise<OpenEnrollmentResult> {
   // CA-124 PR-D (SEC-CNS-015 P2-E): una tx; dentro, repo y ledger son los de la tx. Agregado nuevo:
-  // expectedSequence 0 explicito; la carrera por (sujeto, participacion) la resuelve el UNIQUE parcial
+  // la carrera por (sujeto, participacion) la resuelve el UNIQUE parcial
   // GRD-TC-03 y el reintento del UoW (la perdedora ve al Enrollment ganador y falla con ERR-TC-03).
   return ports.uow.inTenant(tenantId, (tx) => openEnrollmentTx(enrollmentPortsInTx(ports, tx), tenantId, actorRole, input));
 }
@@ -90,22 +90,9 @@ export async function openEnrollmentTx(
     participationRef: input.participationRef,
     state: "ACTIVE",
   };
+  // ADR-010 rev. 5 PR-b (LG-1, capa 1): el ledger de Enrollment lo genera la base (ledger_gen.emit_enrollment, rol ledger_writer) desde la fila: este modulo ya no llama a
+  // `ledger.append`. En in-memory lo emite la unidad de trabajo con la misma tabla (ledger-derivation.ts). La secuencia se lee DESPUES de guardar.
   await ports.enrollmentRepo.save(record);
-  const event = await ports.ledger.append({
-    expectedSequence: 0, // agregado nuevo
-    eventType: "ENROLLMENT_STATUS_CHANGED",
-    tenantId,
-    aggregateType: "Enrollment",
-    aggregateId: record.enrollmentRef,
-    actorType: "HUMAN",
-    actorRole: "INVITER",
-    payload: {
-      enrollmentRef: record.enrollmentRef,
-      participationRef: record.participationRef,
-      subjectRef: record.subjectRef,
-      toStatus: "ACTIVE",
-    },
-    idempotencyKey: `${tenantId}:${record.subjectRef}:${record.participationRef}:en0`,
-  });
-  return { record, sequence: event.sequence };
+  const sequence = await ports.ledger.currentSequence(tenantId, record.enrollmentRef);
+  return { record, sequence };
 }

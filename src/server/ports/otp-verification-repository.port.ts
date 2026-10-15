@@ -34,6 +34,10 @@ export interface OtpVerificationRecord {
   readonly sendsWindowStart?: Date;
   /** P-06: envios dentro de la ventana, el inicial incluido. Ausente = 0. */
   readonly sendsInWindow?: number;
+  /** ADR-010 rev. 5 PR-b (LG-9, capa 1): seudonimo del apoderado (HMAC; DATO PERSONAL, su encuadre es LEGAL DECISION) y version de la clave con que se derivo. Se fijan en la
+   * transicion a VERIFIED (V3) y la base los exige ahi: de ellos deriva DECISION_MAKER_CHANNEL_VERIFIED. Ausentes mientras no este VERIFIED. */
+  readonly decisionMakerRef?: string;
+  readonly dmRefKeyVersion?: number;
 }
 
 export interface OtpVerificationRepositoryPort {

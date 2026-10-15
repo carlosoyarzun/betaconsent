@@ -35,8 +35,10 @@ test("TEST-CNS-1343 la lista exacta de IT0B_SYNTHETIC cubre Q-19 y no incluye lo
   for (const role of ["platform_schema_owner", "grant_owner", "membership_owner", "case_state_owner", "transition_owner", "integrity_owner"]) {
     assert.ok(CONSENT_OWNER_SET_ROLES.includes(role), role);
   }
-  // 1 (migrator->consent_owner) + 1 (migrator->outbox_claimer) + 9 (consent_owner -> owners) + 1 (app_rw -> reader).
-  assert.equal(it0b.length, 12);
+  // ADR-010 rev. 5 PR-b (LG-8, F-PR6-11): ledger_gen_owner y ledger_writer suman dos owners con SET sin INHERIT.
+  for (const role of ["ledger_gen_owner", "ledger_writer"]) assert.ok(CONSENT_OWNER_SET_ROLES.includes(role) && OWNER_ROLES.includes(role), role);
+  // 1 (migrator->consent_owner) + 1 (migrator->outbox_claimer) + 11 (consent_owner -> owners, doce owners cubiertos con consent_owner) + 1 (app_rw -> reader).
+  assert.equal(it0b.length, 14);
   // Aun no existen: platform_rw -> rights_operator (PR-5) y ddl_breakglass (PR-7).
   assert.ok(!it0b.some((e) => e.member === "platform_rw" || e.member === "ddl_breakglass" || e.role === "rights_operator"));
   // Ninguna membresía de runtime en un owner.

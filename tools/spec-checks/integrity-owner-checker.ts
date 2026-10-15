@@ -31,6 +31,9 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0042_adr010_worker_downstream_only.sql": ["set-role"],
   // 0041 (ADR-010 rev. 5, F-A10-30): ALTER POLICY de INSERT de app_rw sobre integrity.audit_event (allowlist de 19 pares; DDL sobre integrity.*).
   "db/migrations/0041_adr010_ledger_allowlist_19_dedupe_estricto.sql": ["set-role"],
+  // 0047/0048/0049 (ADR-010 rev. 5 PR-b, F-A10-30): GRANT de SELECT/INSERT y policies por tenant de ledger_writer, ALTER POLICY de transition_owner (particion de pares) y de app_rw (retiro por
+  // agregado) y, en 0049, DROP POLICY y REVOKE INSERT de app_rw sobre integrity.audit_event (DDL sobre integrity.*, antes de PR-7).
+  "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };
@@ -60,7 +63,7 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
  * ADR-010 PR-3: 0035 crea el esquema platform y sus objetos con SET LOCAL ROLE de platform_schema_owner, membership_owner y grant_owner
  * (patron 0027); la allowlist es POR ROL (una entrada que el rol no usa se marca obsoleta).
  */
-export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner"];
+export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner", "ledger_gen_owner", "ledger_writer"];
 const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
 const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
 const M0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
@@ -71,6 +74,9 @@ const M0040 = "db/migrations/0040_adr010_record_assertion_fresh_auth.sql";
 const M0041 = "db/migrations/0041_adr010_ledger_allowlist_19_dedupe_estricto.sql";
 const M0042 = "db/migrations/0042_adr010_worker_downstream_only.sql";
 const M0044 = "db/migrations/0044_invitation_cancel_subject_mismatch_fn.sql"; // I9 por funcion case_state (opcion A de Carlos, 2026-10-14)
+const M0046 = "db/migrations/0046_adr010_ledger_roles.sql"; // ADR-010 rev. 5 PR-b: roles de cluster ledger_gen_owner y ledger_writer
+const M0047 = "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql";
+
 /** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
 const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
 /** ADR-010 PR-5b: TEST-CNS-1381 asume transition_owner (SET LOCAL ROLE) para probar el trigger TRG-RC-01 por efecto y la policy que protege los terminales. */
@@ -92,6 +98,10 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // 0038 (PR-5b): mismo patron (CREATE temporal de transition_owner sobre case_state; funciones de RightsCase como transition_owner).
   case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0044]: ["set-role"] }, // 0044: CREATE temporal para cancel_invitation_subject_mismatch; 0041: CREATE temporal para ledger_append con dedupe estricto; 0039: CREATE temporal para close_case (D6)
   transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [M0044]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
+  // 0046 (PR-b): GRANT de ambos roles a consent_owner WITH INHERIT FALSE, SET TRUE (F-PR6-11; solo IT0B_SYNTHETIC). 0047/0048/0049: ledger_gen_owner crea el esquema ledger_gen y reparte USAGE/CREATE temporal;
+  // ledger_writer crea sus funciones guard_*/emit_*/ledger_append/seed_local_catalog_event (SET LOCAL ROLE, patron 0037). Los tests de PR-b asumen ledger_writer para sus vectores y asserts.
+  ledger_gen_owner: { [M0046]: ["grant-membership"], [M0047]: ["set-role"] },
+  ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

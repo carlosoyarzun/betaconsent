@@ -24,7 +24,7 @@
 // APROBADOS por Carlos (approved-parameters.ts) y son el default de otp-policy.config.ts; el llamador los inyecta via `OtpPolicy`. P-04, P-06 y P-07 se
 // resuelven con `budgetPolicy` (default aprobado; overrides solo LOCAL via el loader).
 
-import { BINDING_RESULT_PLACEHOLDER_OPEN_CT03, opaqueUuidV4 } from "../common/opaque-ref.ts";
+import { opaqueUuidV4 } from "../common/opaque-ref.ts";
 import { createHmac, hkdfSync, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
@@ -226,7 +226,8 @@ interface SubmitSpec {
   readonly expectScope: OtpScope | null;
   /** Scope que declaran los eventos OTP_LOCKED/OTP_FAILED. */
   readonly eventScope: OtpScope;
-  readonly verifiedPayload: (found: OtpVerificationRecord) => Record<string, unknown>;
+  /** ADR-010 rev. 5 PR-b (LG-9): seudonimo del apoderado y version de su clave; se guardan en la fila al pasar a VERIFIED y de ellos deriva la base el evento. */
+  readonly decisionMaker: { readonly ref: string; readonly keyVersion: number };
   /** Efecto de la verificacion en la misma tx (I5 para scope DECISION). */
   readonly onVerified?: (found: OtpVerificationRecord) => Promise<void>;
 }
@@ -291,19 +292,17 @@ async function submitCore(
 
   if (isCorrect) {
     await ports.otpBudget.releaseFailure(tenantId, budgetKeys); // los aciertos no consumen presupuesto (P-04)
-    const verified: OtpVerificationRecord = { ...found, attempts, state: "VERIFIED", consumedAt: new Date() };
+    const verified: OtpVerificationRecord = {
+      ...found,
+      attempts,
+      state: "VERIFIED",
+      consumedAt: new Date(),
+      decisionMakerRef: spec.decisionMaker.ref,
+      dmRefKeyVersion: spec.decisionMaker.keyVersion,
+    };
+    // ADR-010 rev. 5 PR-b (LG-1, capa 1): DECISION_MAKER_CHANNEL_VERIFIED lo genera la base (ledger_gen.emit_otp) desde esta transicion CODE_SENT -> VERIFIED; el dominio ya no llama a
+    // `ledger.append`. En in-memory lo emite la unidad de trabajo con la misma tabla (ledger-derivation.ts).
     await ports.otpRepo.save(verified);
-    await ports.ledger.append({
-      expectedSequence: 0,
-      eventType: "DECISION_MAKER_CHANNEL_VERIFIED",
-      tenantId,
-      aggregateType: "DecisionMakerVerification",
-      aggregateId: verificationRef,
-      actorType: "HUMAN",
-      actorRole: "DECISION_MAKER",
-      payload: spec.verifiedPayload(found),
-      idempotencyKey: `${verificationRef}:verified`,
-    });
     if (spec.onVerified) {
       await spec.onVerified(found); // I5 en la misma tx: si falla, el challenge no queda VERIFIED.
     }
@@ -477,7 +476,7 @@ export async function submitOtp(
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: null,
       eventScope: "DECISION",
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, scope: "DECISION", method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
+      decisionMaker: { ref: decisionMakerRef, keyVersion: decisionMakerRefKeyVersion },
       onVerified: async (found) => {
         await markInvitationVerifiedTx(p.invitation, tenantId, found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, verificationRef); // I5
       },
@@ -540,7 +539,7 @@ export async function submitRightsOtp(
     submitCore(p, tenantId, verificationRef, code, {
       expectScope: scope,
       eventScope: scope,
-      verifiedPayload: (found) => ({ verificationRef, parentRef: found.parentRef, decisionMakerRef, decisionMakerRefKeyVersion, scope, method: "EMAIL_OTP", bindingResult: BINDING_RESULT_PLACEHOLDER_OPEN_CT03 }),
+      decisionMaker: { ref: decisionMakerRef, keyVersion: decisionMakerRefKeyVersion },
     }),
   );
   return settle(outcome);
