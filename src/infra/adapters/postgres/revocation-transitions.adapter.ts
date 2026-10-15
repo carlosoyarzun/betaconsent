@@ -27,6 +27,8 @@ const GUARD_SQLSTATES: ReadonlyMap<string, DomainErrorCode> = new Map([
   ["RC003", "ERR-RC-03"],
   ["RC009", "ERR-RC-09"],
   ["RC010", "ERR-CM-10"],
+  // 0044: I9 (case_state.cancel_invitation_subject_mismatch), GRD-IV-10.
+  ["IV009", "ERR-IV-09"],
 ]);
 
 export function mapTransitionError(error: unknown): unknown {

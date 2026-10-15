@@ -13,6 +13,7 @@ import type { ConsentDecisionRepositoryPort } from "./consent-decision-repositor
 import type { EnrollmentRepositoryPort } from "./enrollment-repository.port.ts";
 import type { IdempotencyPort } from "./idempotency.port.ts";
 import type { InvitationRepositoryPort } from "./invitation-repository.port.ts";
+import type { InvitationTransitionsPort } from "./invitation-transitions.port.ts";
 import type { LedgerPort } from "./ledger.port.ts";
 import type { ManagementHandleRegistryPort } from "./management-handle.port.ts";
 import type { OtpBudgetPort } from "./otp-budget.port.ts";
@@ -39,6 +40,8 @@ export interface TenantTxPorts {
   readonly consentDecisionRepo: ConsentDecisionRepositoryPort;
   readonly recoveryTokenRepo: RecoveryTokenRepositoryPort;
   readonly invitationRepo: InvitationRepositoryPort;
+  /** I9 por funcion de la base (Postgres). Ausente en in-memory: el dominio usa la ruta legacy repo + ledger. */
+  readonly invitationTransitions?: InvitationTransitionsPort;
   readonly otpRepo: OtpVerificationRepositoryPort;
   readonly rightsCaseRepo: RightsCaseRepositoryPort;
   /** ADR-010 PR-5b: escritura de las transiciones del RightsCase por funciones de la base (Postgres). Ausente en in-memory: el dominio usa la

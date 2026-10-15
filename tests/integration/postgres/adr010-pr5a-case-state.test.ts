@@ -193,7 +193,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     "SELECT p.proname AS n, pg_get_userbyid(p.proowner) AS o, p.prosecdef AS d FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' ORDER BY 1",
   )).rows;
   assert.deepEqual(fns.map((f) => f.n), [
-    "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
+    "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "cancel_invitation_subject_mismatch", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
     "cosign_case_confirmation", "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
     "propose_case_verification", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
     "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_revoke_decision", "seed_local_rights_case", "verify_revocation_otp",
