@@ -5,6 +5,8 @@
 
 import { isIP } from "node:net";
 import {
+  APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS,
+  APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS,
   APPROVED_P49_AUTH_MAX_PER_IP,
   APPROVED_P49_AUTH_WINDOW_SECONDS,
   APPROVED_P50_REQUESTS_MAX_PER_MINUTE,
@@ -32,6 +34,13 @@ export interface PlatformSettings {
   /** P-53: null = sin tope (solo LOCAL). */
   readonly maxAwaiting: number | null;
   readonly idp?: IdpRedirectConfig;
+  /**
+   * Vida de las sesiones PLATFORM y CASE (PR-6c). El valor de PLATFORM NO esta aprobado (F-PR6-41): en LOCAL se usan como valor de trabajo los aprobados para las sesiones hermanas STAFF/CASE
+   * (8 h absoluta, 30 min de inactividad); fuera de LOCAL son obligatorios (sin default) y la base acota los techos (8 h / 30 min).
+   */
+  readonly session: { readonly absoluteSeconds: number; readonly idleSeconds: number };
+  /** Origen publico de la plataforma = origen de CNS_PLATFORM_REDIRECT_URI. Las rutas POST exigen `Origin` exactamente igual (mismo origen). Ausente si el login no esta configurado. */
+  readonly publicOrigin?: string;
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -120,9 +129,14 @@ export function loadPlatformSettings(env: Env, environment: string): PlatformSet
     if (r.username !== "" || r.password !== "" || r.hash !== "") throw new PlatformConfigError("CNS_PLATFORM_REDIRECT_URI sin credenciales ni fragmento");
     idp = { authorizationEndpoint: endpoint, clientId, redirectUri };
   }
+  const sessionAbsolute = need("CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", int(env, "CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS", 60, 28_800), APPROVED_CASE_SESSION_ABSOLUTE_TTL_MS / 1000);
+  const sessionIdle = need("CNS_PLATFORM_SESSION_IDLE_SECONDS", int(env, "CNS_PLATFORM_SESSION_IDLE_SECONDS", 60, 1_800), APPROVED_CASE_SESSION_IDLE_TIMEOUT_MS / 1000);
+  if (sessionIdle > sessionAbsolute) throw new PlatformConfigError("CNS_PLATFORM_SESSION_IDLE_SECONDS no puede exceder CNS_PLATFORM_SESSION_ABSOLUTE_SECONDS");
   return {
     bindAddress,
     allowedCidrs,
+    session: { absoluteSeconds: sessionAbsolute, idleSeconds: sessionIdle },
+    ...(idp === undefined ? {} : { publicOrigin: new URL(idp.redirectUri).origin }),
     p49: {
       max: need("CNS_PLATFORM_P49_MAX", int(env, "CNS_PLATFORM_P49_MAX", 1, 100_000), APPROVED_P49_AUTH_MAX_PER_IP),
       windowSeconds: need("CNS_PLATFORM_P49_WINDOW_SECONDS", int(env, "CNS_PLATFORM_P49_WINDOW_SECONDS", 1, 86_400), APPROVED_P49_AUTH_WINDOW_SECONDS),

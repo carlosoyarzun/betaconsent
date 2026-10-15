@@ -1,12 +1,16 @@
 // Gobierna: ADR-010 rev. 5 §5.2 pasos 1-2 (login PLATFORM sin principal previo, state, PKCE, max_age=0 + prompt=login, 303 sin code ni ref, no-referrer), G-5 (reautenticacion), G-6 (P-49),
 // G-8 (exchangeRef SOLO en cookie `__Host-` Strict; nunca en URL, cuerpo ni headers), F-PR6-18/31; contracts/openapi/consent-platform.openapi.yaml (platformAuthLogin/Callback/ExchangeStatus).
-// Rutas del proceso platform (platform_rw, sin egress: el 302 es una redireccion del navegador). Respuestas de error: 404 uniforme (sin motivo). LOGIN_CASE y las sesiones (open_*_session, Origin,
-// P-50 por operador autenticado) son PR-6c: aqui `kind=CASE` responde 404. Nombres de cookie ilustrativos (P-26 pendiente).
+// Rutas del proceso platform (platform_rw, sin egress: el 302 es una redireccion del navegador). Respuestas de error: 404 uniforme (sin motivo). Nombres de cookie ilustrativos (P-26 pendiente).
+// PR-6c (§5.2 paso 6, F-PR6-36): `kind=CASE` exige una sesion PLATFORM vigente (cookie `__Host-cns-platform`, validada EN LA BASE con validate_session) y `caseRef` (UUIDv4); la base toma el principal de la
+// sesion (no de la request) y guarda solo sha256(caseRef) como target_ref_hash. P-50 (30/min por operador) se aplica a esta ruta autenticada. Las sesiones (open_*_session, logout) estan en session-routes.ts.
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OidcAuthorizationPort } from "../../ports/oidc-exchange.port.ts";
 import { PlatformDeniedError } from "../../ports/oidc-exchange.port.ts";
+import type { PlatformSessionPort } from "../../ports/platform-session.port.ts";
+import { COMMON, constantTimeEqual, cookie, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, tooManyRequests } from "./http-util.ts";
+import type { OperatorLimitDeps } from "./http-util.ts";
 import type { Cidr, SlidingLimiter } from "./rate-limit.ts";
 import { ipInCidrs, truncateIp } from "./rate-limit.ts";
 
@@ -21,8 +25,13 @@ export interface IdpRedirectConfig {
   readonly redirectUri: string;
 }
 
-export interface AuthRoutesDeps {
+/** case_ref = UUIDv4 opaco (mismo formato que la base, 0024/0052). */
+export const CASE_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export interface AuthRoutesDeps extends OperatorLimitDeps {
   readonly authorization: OidcAuthorizationPort;
+  /** Valida la sesion PLATFORM de `kind=CASE` EN LA BASE (no se confia en la cookie ni en un principal declarado). */
+  readonly sessions: PlatformSessionPort;
   /** Ausente = login no configurado: las rutas de login responden 404 (IdP real apagado hasta IT0b). */
   readonly idp?: IdpRedirectConfig;
   /** P-49 por IP truncada, en memoria. */
@@ -37,34 +46,6 @@ export interface AuthRoutesDeps {
 
 const b64u = (n: number): string => randomBytes(n).toString("base64url");
 const sha256Hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
-
-function parseCookies(header: string | undefined): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const part of (header ?? "").split(";")) {
-    const i = part.indexOf("=");
-    if (i < 0) continue;
-    const name = part.slice(0, i).trim();
-    if (!out.has(name)) out.set(name, part.slice(i + 1).trim());
-  }
-  return out;
-}
-
-function cookie(name: string, value: string, sameSite: "Lax" | "Strict", maxAgeSeconds: number): string {
-  return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAgeSeconds}`;
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a, "utf8");
-  const y = Buffer.from(b, "utf8");
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
-const COMMON = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const;
-
-function notFound(res: ServerResponse): void {
-  res.writeHead(404, { ...COMMON, "content-type": "application/json" });
-  res.end(JSON.stringify({ error: "not_found" }));
-}
 
 /** Devuelve true si la ruta fue atendida. El resto cae al 404 del proceso. */
 export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse, deps: AuthRoutesDeps): Promise<boolean> {
@@ -115,17 +96,31 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse,
 
   try {
     if (isLogin) {
-      if (deps.idp === undefined || url.searchParams.get("kind") !== "PLATFORM") return notFound(res), true; // CASE: PR-6c
+      const kindParam = url.searchParams.get("kind");
+      if (deps.idp === undefined || (kindParam !== "PLATFORM" && kindParam !== "CASE")) return notFound(res), true;
+      let caseLogin: { readonly sessionSid: string; readonly targetRefHash: string } | undefined;
+      if (kindParam === "CASE") {
+        // §5.2 paso 6: sesion PLATFORM vigente (validada por la base) y caseRef destino. Sin ellas, 404 uniforme (sin tocar oidc_exchange).
+        const caseRef = url.searchParams.get("caseRef") ?? "";
+        const platformSid = parseCookies(req.headers.cookie).get(PLATFORM_SESSION_COOKIE);
+        if (!CASE_REF_RE.test(caseRef) || platformSid === undefined) return notFound(res), true;
+        const session = await deps.sessions.validate({ sid: platformSid, kind: "PLATFORM" });
+        if (session === null) return notFound(res), true;
+        // P-50: solicitud autenticada del operador (principal de la sesion validada).
+        if (!p50Allows(deps, session.principalRef)) return tooManyRequests(res), true;
+        caseLogin = { sessionSid: platformSid, targetRefHash: sha256Hex(caseRef) };
+      }
       const state = b64u(24);
       const nonce = b64u(24);
       const verifier = b64u(48);
       await deps.authorization.begin({
-        kind: "LOGIN_PLATFORM",
+        kind: caseLogin === undefined ? "LOGIN_PLATFORM" : "LOGIN_CASE",
         state,
         bindingHex: sha256Hex(nonce),
         pkceVerifier: verifier,
         ttlSeconds: deps.flowTtlSeconds,
         maxAwaiting: deps.maxAwaiting,
+        ...(caseLogin === undefined ? {} : { sessionSid: caseLogin.sessionSid, targetRefHash: caseLogin.targetRefHash }),
       });
       const target = new URL(deps.idp.authorizationEndpoint);
       for (const [k, v] of Object.entries({

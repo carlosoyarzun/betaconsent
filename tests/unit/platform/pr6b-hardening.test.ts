@@ -4,6 +4,7 @@
 // TEST-CNS-1513: /login exige Sec-Fetch-Site in {same-origin, none} y Sec-Fetch-Mode=navigate (404 uniforme y sin tocar la base); una excepcion del handler responde 404 y el proceso sigue vivo.
 // TEST-CNS-1514: platform-settings: prefijo P-49 obligatorio fuera de LOCAL; allowlist con /0 o prefijo < /8 rechazada; REDIRECT_URI solo https (http solo loopback en LOCAL). Adaptador IdP: cuerpo > 64 KiB rechazado.
 
+import { DENY_ALL_SESSIONS } from "../../helpers/fake-platform-sessions.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { createHash } from "node:crypto";
@@ -79,7 +80,7 @@ const IDP_ENV = { CNS_PLATFORM_IDP_AUTHORIZATION_ENDPOINT: "http://127.0.0.1:900
 
 test("TEST-CNS-1513 /login: Sec-Fetch-Site in {same-origin, none} y Sec-Fetch-Mode=navigate o 404 uniforme sin tocar la base; una excepcion del handler responde 404 y el proceso sigue vivo", async () => {
   const authz = new Authz();
-  const server = createServer(platformRequestHandler({ authorization: authz, settings: loadPlatformSettings(IDP_ENV, "LOCAL") }));
+  const server = createServer(platformRequestHandler({ authorization: authz, sessions: DENY_ALL_SESSIONS, settings: loadPlatformSettings(IDP_ENV, "LOCAL") }));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
@@ -109,7 +110,7 @@ test("TEST-CNS-1513 /login: Sec-Fetch-Site in {same-origin, none} y Sec-Fetch-Mo
   const hostile = loadPlatformSettings(IDP_ENV, "LOCAL");
   let armed = true;
   const settings = new Proxy(hostile, { get(t, k, rcv) { if (armed && k === "allowedCidrs") throw new Error("boom"); return Reflect.get(t, k, rcv); } });
-  const s2 = createServer(platformRequestHandler({ authorization: new Authz(), settings }));
+  const s2 = createServer(platformRequestHandler({ authorization: new Authz(), sessions: DENY_ALL_SESSIONS, settings }));
   await new Promise<void>((r) => s2.listen(0, "127.0.0.1", () => r()));
   const b2 = `http://127.0.0.1:${(s2.address() as AddressInfo).port}`;
   try {
