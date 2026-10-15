@@ -1,0 +1,12 @@
+# Gobierna: ADR-010 rev. 5 §4.2.c y §10 fila 6e (el reconciler corre por corridas). ARTEFACTO de IT0: no se instala en este repo.
+# La frecuencia NO esta aprobada (el ADR no fija un intervalo): `hourly` es un valor inicial de referencia, PENDING de decision de Carlos junto con el resto de parametros operativos.
+[Unit]
+Description=Consent App - Corrida periodica del reconciler (valor inicial PENDING)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=consent-reconciler.service
+
+[Install]
+WantedBy=timers.target
