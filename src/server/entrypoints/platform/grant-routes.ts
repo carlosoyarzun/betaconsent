@@ -89,6 +89,8 @@ export async function handleGrantRoute(req: IncomingMessage, res: ServerResponse
     if (isStepUp) {
       const action = body.action;
       const targetRef = body.targetRef;
+      // Contrato (additionalProperties: false): solo {action, targetRef}; cualquier campo extra = 404 uniforme.
+      if (Object.keys(body).some((k) => k !== "action" && k !== "targetRef")) return notFound(res), true;
       if (deps.idp === undefined || typeof action !== "string" || !ACTIONS.has(action) || typeof targetRef !== "string") return notFound(res), true;
       if (!(action === "REQUEST_GRANT" ? CASE_REF_RE.test(targetRef) : UUID_RE.test(targetRef))) return notFound(res), true;
       const nonce = await deps.grants.issueStepUpNonce({ sid, action: action as CaseStepUpAction, targetRef, ttlSeconds: deps.flowTtlSeconds });

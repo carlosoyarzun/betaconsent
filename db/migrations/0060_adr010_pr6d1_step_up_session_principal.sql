@@ -6,7 +6,7 @@
 -- Que agrega (grant_owner, SECURITY DEFINER, search_path = pg_catalog, pg_temp, sin SQL dinamico; las internas SIN EXECUTE de ningun rol de runtime):
 --   platform.session_principal(sid)  INTERNA. Resuelve el sid (64 hex, GUC app.session_sid fijado por el adapter) por sha256 contra platform.platform_session: kind PLATFORM, no revocada, dentro de su vida
 --                                    absoluta y de inactividad. Devuelve el principal de ESA fila (o NULL). Es el patron sid -> fila de 0054, ahora compartido.
---   platform.rights_case_of(case_ref) INTERNA. Tenant y estado del caso REAL (app.rights_case, solo si hay exactamente UNA fila con ese case_ref: ambiguo o inexistente = 0 filas). F-PR6-40.
+--   platform.rights_case_of(case_ref) INTERNA. Tenant y estado del caso REAL via app.rights_case_tenant_of (0059; exactamente UNA fila con ese case_ref: ambiguo o inexistente = 0 filas). F-PR6-40, F-PR6-45.
 --   platform.begin_oidc_authorization (reemplazo de 0054, misma firma): STEP_UP YA NO toma el principal de app.principal_ref declarado; igual que LOGIN_CASE sale de la sesion PLATFORM validada en la base
 --                                    (sin sesion viva = DENY NO_PRINCIPAL, evidencia en authorization_check, sin crear la fila). El conteo de P-51 incluye los consumos fallidos del nonce (STEP_UP_REJECTED, 0061).
 --                                    LOGIN_PLATFORM y LOGIN_CASE no cambian. Resto del cuerpo = 0054.
@@ -39,14 +39,10 @@ CREATE FUNCTION platform.rights_case_of(p_case_ref text)
   SET search_path = pg_catalog, pg_temp
   AS $$
 DECLARE
-  v_n      integer;
-  v_tenant uuid;
-  v_status text;
 BEGIN
   IF p_case_ref IS NULL THEN RETURN; END IF;
-  SELECT pg_catalog.count(*)::integer, (pg_catalog.array_agg(c.tenant_id))[1], (pg_catalog.array_agg(c.status))[1] INTO v_n, v_tenant, v_status
-    FROM app.rights_case c WHERE c.case_ref = p_case_ref;
-  IF v_n = 1 THEN RETURN QUERY SELECT v_tenant, v_status; END IF;
+  -- app.rights_case_tenant_of (0059) aplica "exactamente una fila": inexistente o ambiguo = 0 filas.
+  RETURN QUERY SELECT t.o_tenant_id, t.o_status FROM app.rights_case_tenant_of(p_case_ref) t;
 END
 $$;
 

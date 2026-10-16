@@ -12,7 +12,7 @@
 --       authorization_check (ISSUE_NONCE) confirmada (la funcion no lanza ante un DENY).
 --   platform.consume_step_up(principal, action, target_ref, p51_max, p51_window)  INTERNA (sin EXECUTE de ningun rol de runtime; solo la llaman request_grant / approve_grant, 0062, EN LA MISMA
 --       transaccion que el efecto). Devuelve NULL si consumio el nonce o el motivo del rechazo. En orden: (1) lock por operador (el mismo de P-51 de begin) y conteo de P-51: inicios de step-up
---       + consumos fallidos en la ventana; sobre el limite = RATE_LIMITED con UN evento LIMIT_EXCEEDED por ventana; (2) busca el nonce ATTESTED del MISMO principal y accion, ligado a sha256(target_ref), vigente y
+--       + consumos fallidos en la ventana; con el nonce valido el exito se permite con conteo <= P-51; un fallo con conteo >= P-51 = RATE_LIMITED con UN evento LIMIT_EXCEEDED por ventana y SIN otro STEP_UP_REJECTED; (2) busca el nonce ATTESTED del MISMO principal y accion, ligado a sha256(target_ref), vigente y
 --       no consumido, con una grant_assertion ATTESTED del mismo binding y principal; (3) P-52: auth_time dentro de 5 min (ASSERTION_STALE); (4) UPDATE ... consumed_at WHERE consumed_at IS NULL (un solo uso).
 --       Un rechazo (2)-(4) escribe STEP_UP_REJECTED (cuenta para P-51; sin IP ni sub_hmac). Una aserción de otra accion, otro destino u otro operador no existe para esta busqueda: STEP_UP_MISSING.
 --       Sin configuracion valida de P-51 (NULL o fuera de rango) se rechaza (fail-closed).
@@ -91,6 +91,7 @@ DECLARE
   v_nonce     text;
   v_auth_time timestamptz;
   v_reason    text := NULL;
+  v_count     integer;
 BEGIN
   IF p_principal IS NULL OR p_principal !~ c_principal OR p_action IS NULL OR p_action NOT IN ('REQUEST_GRANT', 'APPROVE_GRANT') OR p_target_ref IS NULL
      OR p_p51_max IS NULL OR p_p51_max < 1 OR p_p51_max > 1000 OR p_p51_window_seconds IS NULL OR p_p51_window_seconds < 60 OR p_p51_window_seconds > 86400 THEN
@@ -98,18 +99,10 @@ BEGIN
   END IF;
   <<decide>>
   BEGIN
-    -- P-51: lock por operador (el MISMO que begin_oidc_authorization) ANTES de contar; el inicio de este step-up ya cuenta (STEP_UP_BEGIN), por eso el limite es "mas de P-51".
+    -- P-51: lock por operador (el MISMO que begin_oidc_authorization) ANTES de contar. El conteo incluye el inicio de ESTE step-up (STEP_UP_BEGIN) y los consumos fallidos previos.
     PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('platform.p51.' || p_principal, 0));
-    IF (SELECT pg_catalog.count(*) FROM platform.session_event s
-         WHERE s.event_type IN ('STEP_UP_BEGIN', 'STEP_UP_REJECTED') AND s.principal_ref = p_principal AND s.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p51_window_seconds)) > p_p51_max THEN
-      -- UN solo evento de limite por (limite, principal) y ventana (un flood no infla session_event).
-      IF NOT EXISTS (SELECT 1 FROM platform.session_event e
-                      WHERE e.event_type = 'LIMIT_EXCEEDED' AND e.limit_kind = 'P-51' AND e.principal_ref = p_principal
-                        AND e.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p51_window_seconds)) THEN
-        INSERT INTO platform.session_event (event_type, kind, principal_ref, limit_kind, window_seconds) VALUES ('LIMIT_EXCEEDED', 'STEP_UP', p_principal, 'P-51', p_p51_window_seconds);
-      END IF;
-      RETURN 'RATE_LIMITED';
-    END IF;
+    SELECT pg_catalog.count(*)::integer INTO v_count FROM platform.session_event s
+     WHERE s.event_type IN ('STEP_UP_BEGIN', 'STEP_UP_REJECTED') AND s.principal_ref = p_principal AND s.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p51_window_seconds);
     -- Nonce ATTESTED del mismo principal, accion y destino (sha256(target_ref)), vigente y sin consumir, con la aserción del IdP atestada para ese binding y principal.
     SELECT n.nonce_hash, g.auth_time INTO v_nonce, v_auth_time FROM platform.action_nonce n
       JOIN platform.grant_assertion g ON g.binding = n.nonce_hash AND g.decision = 'ATTESTED' AND g.principal_ref = n.principal_ref
@@ -117,10 +110,29 @@ BEGIN
        AND n.refs_digest = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_target_ref, 'UTF8')), 'hex')
        AND n.attested_at IS NOT NULL AND n.consumed_at IS NULL AND n.expires_at > pg_catalog.now()
      ORDER BY n.issued_at LIMIT 1 FOR UPDATE OF n;
-    IF v_nonce IS NULL THEN v_reason := 'STEP_UP_MISSING'; EXIT decide; END IF;
-    IF v_auth_time IS NULL OR v_auth_time < pg_catalog.now() - c_p52 THEN v_reason := 'ASSERTION_STALE'; EXIT decide; END IF;
-    UPDATE platform.action_nonce SET consumed_at = pg_catalog.now() WHERE nonce_hash = v_nonce AND consumed_at IS NULL;
-    IF NOT FOUND THEN v_reason := 'STEP_UP_MISSING'; EXIT decide; END IF;
+    IF v_nonce IS NULL THEN v_reason := 'STEP_UP_MISSING';
+    ELSIF v_auth_time IS NULL OR v_auth_time < pg_catalog.now() - c_p52 THEN v_reason := 'ASSERTION_STALE';
+    END IF;
+    IF v_reason IS NULL THEN
+      -- Exito permitido con conteo <= P-51 (el inicio de este step-up ya esta contado: P-51 inicios legitimos, P-51 acciones).
+      IF v_count > p_p51_max THEN v_reason := 'RATE_LIMITED'; END IF;
+    ELSIF v_count >= p_p51_max THEN
+      -- Un intento FALLIDO que ya no cabe en P-51: se rechaza como RATE_LIMITED sin registrar otro STEP_UP_REJECTED (el conteo no crece sobre el limite).
+      v_reason := 'RATE_LIMITED';
+    END IF;
+    IF v_reason = 'RATE_LIMITED' THEN
+      -- UN solo evento de limite por (limite, principal) y ventana (un flood no infla session_event).
+      IF NOT EXISTS (SELECT 1 FROM platform.session_event e
+                      WHERE e.event_type = 'LIMIT_EXCEEDED' AND e.limit_kind = 'P-51' AND e.principal_ref = p_principal
+                        AND e.at > pg_catalog.now() - pg_catalog.make_interval(secs => p_p51_window_seconds)) THEN
+        INSERT INTO platform.session_event (event_type, kind, principal_ref, limit_kind, window_seconds) VALUES ('LIMIT_EXCEEDED', 'STEP_UP', p_principal, 'P-51', p_p51_window_seconds);
+      END IF;
+      RETURN v_reason;
+    END IF;
+    IF v_reason IS NULL THEN
+      UPDATE platform.action_nonce SET consumed_at = pg_catalog.now() WHERE nonce_hash = v_nonce AND consumed_at IS NULL;
+      IF NOT FOUND THEN v_reason := 'STEP_UP_MISSING'; END IF;
+    END IF;
   END;
   IF v_reason IS NOT NULL THEN
     INSERT INTO platform.session_event (event_type, reason_code, kind, principal_ref) VALUES ('STEP_UP_REJECTED', v_reason, 'STEP_UP', p_principal);

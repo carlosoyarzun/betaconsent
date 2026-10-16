@@ -4,7 +4,7 @@
 -- 0053 es inmutable: los reemplazos van aqui, con las MISMAS firmas (ACL de 0053 conservada: EXECUTE solo platform_rw).
 --
 -- Que cambia:
---   platform.open_case_session  : ademas de lo de 0053, el caso debe existir (exactamente una fila en app.rights_case, via platform.rights_case_of) y su tenant debe ser el del grant; si no, rechazo
+--   platform.open_case_session  : ademas de lo de 0053, el caso debe existir (exactamente una fila, via platform.rights_case_of) y NO ser terminal, su tenant debe ser el del grant y el operador no debe tener Membership TENANT; si no, rechazo
 --                                 CASE_MISMATCH con evento LOGIN_REJECTED (la asercion queda consumida, igual que NO_GRANT).
 --   platform.validate_session   : en CASE, en CADA llamada, el caso debe seguir existiendo con el tenant de la sesion y el de su grant (un grant o sesion sembrados con tenant ajeno al caso real no validan).
 -- Resto del cuerpo = 0053.
@@ -58,13 +58,15 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM platform.platform_role_assignment a WHERE a.principal_ref = v_principal AND a.platform_role = 'RIGHTS_OPERATOR' AND a.status = 'ACTIVE') THEN
       v_reason := 'ROLE_INACTIVE'; EXIT decide;
     END IF;
+    -- GRD-RC-10 / P2-c: el operador no tiene Membership TENANT (se re-chequea al abrir la sesion CASE).
+    IF EXISTS (SELECT 1 FROM platform.tenant_membership m WHERE m.principal_ref = v_principal) THEN v_reason := 'TENANT_MEMBER'; EXIT decide; END IF;
     -- Grant atestado y vigente del operador para ESTE caso (el mas largo si hay varios).
     SELECT * INTO v_grant FROM platform.rights_case_grant g
      WHERE g.operator_principal_ref = v_principal AND g.case_ref = p_case_ref AND g.revoked_at IS NULL AND g.expires_at > pg_catalog.now()
      ORDER BY g.expires_at DESC LIMIT 1;
     IF NOT FOUND THEN v_reason := 'NO_GRANT'; EXIT decide; END IF;
     -- F-PR6-40: el caso EXISTE de verdad (exactamente una fila en app.rights_case) y su tenant es el del grant: la sesion CASE hereda el tenant del caso real, no de lo que diga una fila suelta.
-    IF NOT EXISTS (SELECT 1 FROM platform.rights_case_of(p_case_ref) c WHERE c.o_tenant_id = v_grant.tenant_id) THEN v_reason := 'CASE_MISMATCH'; EXIT decide; END IF;
+    IF NOT EXISTS (SELECT 1 FROM platform.rights_case_of(p_case_ref) c WHERE c.o_tenant_id = v_grant.tenant_id AND c.o_status NOT IN ('RESOLVED', 'WITHDRAWN')) THEN v_reason := 'CASE_MISMATCH'; EXIT decide; END IF;
   END;
   IF v_reason IS NOT NULL THEN
     INSERT INTO platform.session_event (event_type, reason_code, kind, principal_ref, case_ref) VALUES ('LOGIN_REJECTED', v_reason, 'LOGIN_CASE', v_principal, p_case_ref);
@@ -111,7 +113,10 @@ BEGIN
                          AND p.last_seen_at > pg_catalog.now() - pg_catalog.make_interval(secs => p.idle_seconds))
        -- F-PR6-40: tenant y caso se RE-VERIFICAN en cada llamada contra el caso real y contra el grant (el tenant de la sesion = el del caso = el del grant).
        OR NOT EXISTS (SELECT 1 FROM platform.rights_case_of(v_s.case_ref) c JOIN platform.rights_case_grant g2 ON g2.grant_ref = v_s.grant_ref AND g2.tenant_id = c.o_tenant_id
-                       WHERE c.o_tenant_id = v_s.tenant_id) THEN
+                       WHERE c.o_tenant_id = v_s.tenant_id AND c.o_status NOT IN ('RESOLVED', 'WITHDRAWN'))
+       -- F-PR6-46 (fail-closed): un caso que pasa a estado terminal (RESOLVED/WITHDRAWN) corta la sesion CASE.
+       -- Membership TENANT sobrevenida: tambien corta (GRD-RC-10, revalidacion en cada sesion).
+       OR EXISTS (SELECT 1 FROM platform.tenant_membership m WHERE m.principal_ref = v_s.principal_ref) THEN
       RETURN;
     END IF;
   END IF;

@@ -86,7 +86,7 @@ test("TEST-CNS-1659 POST /platform/step-up: mismo origen, sesion validada, 303 a
     assert.equal((await send(base, "GET", "/platform/step-up", withSession(sid))).status, 404);
     assert.equal((await send(base, "POST", "/platform/step-up?action=x", withSession(sid), body)).status, 404);
     // Accion fuera del alcance o destino mal formado: 404 sin emitir nonce.
-    for (const b of [{ action: "APPROVE_MEMBERSHIP", targetRef: CASE }, { action: "REQUEST_GRANT", targetRef: "x" }, { action: "APPROVE_GRANT", targetRef: "x" }, { targetRef: CASE }, {}]) {
+    for (const b of [{ action: "REQUEST_GRANT", targetRef: CASE, principalRef: "suplanta" }, { action: "REQUEST_GRANT", targetRef: CASE, tenantId: "x" }, { action: "APPROVE_MEMBERSHIP", targetRef: CASE }, { action: "REQUEST_GRANT", targetRef: "x" }, { action: "APPROVE_GRANT", targetRef: "x" }, { targetRef: CASE }, {}]) {
       assert.equal((await send(base, "POST", "/platform/step-up", withSession(sid), JSON.stringify(b))).status, 404, JSON.stringify(b));
     }
     assert.deepEqual(grants.calls, []);

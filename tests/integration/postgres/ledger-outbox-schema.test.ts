@@ -136,10 +136,12 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   const reconcilerPolicies = all.filter((p) => p.roles.includes("integrity_reconciler"));
   assert.deepEqual(reconcilerPolicies.map((p) => p.k).sort(), RECONCILER_POLICIES);
   for (const p of reconcilerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_reconciler"], "true", null], p.k);
-  // ADR-010 rev. 5 PR-6d parte 1 (0059, F-PR6-40): UNA lectura explicita de grant_owner sobre app.rights_case (solo columnas tenant_id, case_ref, status) para derivar el tenant del caso REAL.
-  const grantOwnerPolicies = all.filter((p) => p.roles.includes("grant_owner") && p.k.startsWith("app."));
-  assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["app.rights_case/rights_case_grant_owner_select"]);
-  for (const p of grantOwnerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["grant_owner"], "true", null], p.k);
+  // ADR-010 rev. 5 PR-6d parte 1 (0059, F-PR6-40/45): grant_owner NO tiene policy sobre app. La unica policy nueva es TO consent_owner (el dueño, FORCE RLS) para app.rights_case_tenant_of (SECURITY DEFINER,
+  // EXECUTE solo grant_owner): ningun rol de runtime la usa. Lista EXACTA y cerrada.
+  assert.equal(all.filter((p) => p.roles.includes("grant_owner") && p.k.startsWith("app.")).length, 0, "grant_owner sin policies sobre app");
+  const grantOwnerPolicies = all.filter((p) => p.roles.includes("consent_owner"));
+  assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["app.rights_case/rights_case_owner_lookup_select"]);
+  for (const p of grantOwnerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["consent_owner"], "true", null], p.k);
   for (const p of all) {
     if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
@@ -149,7 +151,8 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     }
     assert.match(`${p.qual ?? ""} ${p.with_check ?? ""}`, /app\.current_tenant_id\(\)/, `${p.k} sin app.current_tenant_id()`);
   }
-  assert.deepEqual(all.filter((p) => p.roles.includes("consent_owner") || p.roles.includes("public")).map((p) => p.k), [], "ninguna policy para el dueno ni PUBLIC");
+  // Unica excepcion (0059, F-PR6-45): la lectura del dueño para app.rights_case_tenant_of (verificada arriba: SELECT, USING (true), solo consent_owner).
+  assert.deepEqual(all.filter((p) => p.roles.includes("consent_owner") || p.roles.includes("public")).map((p) => p.k), ["app.rights_case/rights_case_owner_lookup_select"], "ninguna policy para el dueno ni PUBLIC salvo la de app.rights_case_tenant_of");
 
   // Funcion de entorno por defecto: ejecutable por runtime, no por PUBLIC.
   const fn = (await admin.query<{ p: boolean; c: string[] | null }>(

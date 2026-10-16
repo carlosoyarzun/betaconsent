@@ -16,7 +16,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { call, loginFlow, seedOperator } from "../../helpers/pg-login-flow.ts";
-import { seedApprovedGrant, seedPlatformSession, seedRightsCase } from "../../helpers/pg-platform-session.ts";
+import { seedApprovedGrant, seedCaseSession, seedPlatformSession, seedRightsCase } from "../../helpers/pg-platform-session.ts";
 import { pgTest } from "./harness.ts";
 import type { PgRole, PgTestContext } from "./harness.ts";
 
@@ -276,12 +276,12 @@ pgTest("TEST-CNS-1654 pg carrera: N confirmaciones fallidas concurrentes del mis
     const max = 3;
     const results = await Promise.all(clients.map((c) => requestGrant(c, R.sid, CASE, [max, 600])));
     assert.ok(results.every((r) => r === null));
-    // Cada intento cuenta; el conteo previo supera el limite desde el (max + 2)-esimo: exactamente max + 1 intentos se registran como fallidos y el resto es RATE_LIMITED.
+    // P2-b: un fallo con conteo >= P-51 es RATE_LIMITED sin otro STEP_UP_REJECTED: exactamente `max` intentos fallidos se registran y el resto es RATE_LIMITED.
     const rejected = (await events(admin, R.principal, "STEP_UP_REJECTED")).length;
-    assert.equal(rejected, max + 1, "P-51: ningun conteo supera el limite bajo concurrencia");
+    assert.equal(rejected, max, "P-51: ningun conteo supera el limite bajo concurrencia");
     const reasons = (await events(admin, R.principal, "GRANT_REJECTED")).map((e) => e.reason_code);
-    assert.equal(reasons.filter((r) => r === "STEP_UP_MISSING").length, max + 1);
-    assert.equal(reasons.filter((r) => r === "RATE_LIMITED").length, clients.length - (max + 1));
+    assert.equal(reasons.filter((r) => r === "STEP_UP_MISSING").length, max);
+    assert.equal(reasons.filter((r) => r === "RATE_LIMITED").length, clients.length - max);
     assert.equal((await events(admin, R.principal, "LIMIT_EXCEEDED")).length, 1, "un solo evento de limite por ventana");
     // Sin configuracion valida de P-51 se rechaza (fail-closed).
     const p = clients[0]!;
@@ -370,7 +370,6 @@ pgTest("TEST-CNS-1656 pg: la sesion CASE solo abre con un grant vigente (antes d
   const parent = await seedPlatformSession(admin, R2.principal);
   const C2 = fixtureUuid("pr6d1-1656-case2");
   await seedRightsCase(admin, TENANT, C2);
-  const { seedCaseSession } = await import("../../helpers/pg-platform-session.ts");
   const cs = await seedCaseSession(admin, R2.principal, parent, C2, TENANT);
   assert.equal((await call(platform, null, "SELECT * FROM platform.validate_session($1, 'CASE')", [cs.sid])).length, 1);
   await seedApprovedGrant(admin, { tenantId: TENANT, caseRef: fixtureUuid("pr6d1-1656-other"), operator: R2.principal });
@@ -397,12 +396,15 @@ pgTest("TEST-CNS-1657 pg: privilegios de step-up y grants: ACL exacta, internas 
   await assert.rejects(platform.query("SELECT platform.consume_step_up($1, 'REQUEST_GRANT', $1, 5, 600)", [P("x")]), (e) => codeOf(e) === "42501");
   await assert.rejects(platform.query("SELECT platform.session_principal($1)", ["0".repeat(64)]), (e) => codeOf(e) === "42501");
   await assert.rejects(platform.query("SELECT platform.rights_case_of($1)", [fixtureUuid("x")]), (e) => codeOf(e) === "42501");
+  await assert.rejects(platform.query("SELECT * FROM app.rights_case_tenant_of($1)", [fixtureUuid("x")]), (e) => codeOf(e) === "42501", "app.rights_case_tenant_of solo para grant_owner");
+  assert.equal((await admin.query<{ r: string }>("SELECT COALESCE(string_agg(DISTINCT pg_get_userbyid(a.grantee), ',' ORDER BY pg_get_userbyid(a.grantee)), '') AS r FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace LEFT JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a ON a.grantee <> p.proowner WHERE n.nspname = 'app' AND p.proname = 'rights_case_tenant_of'")).rows[0]!.r, "grant_owner");
   // Sin principal ni tenant como parametro.
   assert.equal((await admin.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'platform' AND p.proname IN ('issue_step_up_nonce', 'request_grant', 'approve_grant') AND pg_get_function_arguments(p.oid) ~* '(principal|tenant)'")).rowCount, 0);
   // platform_rw no ve app.rights_case ni las tablas de grants.
   for (const t of ["app.rights_case", "platform.grant_request", "platform.rights_case_grant", "platform.action_nonce"]) await assert.rejects(platform.query(`SELECT 1 FROM ${t}`), (e) => codeOf(e) === "42501", t);
-  // grant_owner lee solo (tenant_id, case_ref, status) de app.rights_case, sin DML.
+  // grant_owner no tiene ningun privilegio sobre app.rights_case (solo EXECUTE de app.rights_case_tenant_of).
   assert.equal((await admin.query<{ r: boolean }>("SELECT has_table_privilege('grant_owner', 'app.rights_case', 'SELECT') AS r")).rows[0]!.r, false);
+  assert.equal((await admin.query<{ r: boolean }>("SELECT has_any_column_privilege('grant_owner', 'app.rights_case', 'SELECT') AS r")).rows[0]!.r, false);
   assert.equal((await admin.query<{ r: boolean }>("SELECT has_any_column_privilege('grant_owner', 'app.rights_case', 'INSERT,UPDATE') AS r")).rows[0]!.r, false);
   assert.equal((await admin.query<{ r: boolean }>("SELECT has_column_privilege('grant_owner', 'app.rights_case', 'chain_ref', 'SELECT') AS r")).rows[0]!.r, false);
   // Un grant solo nace de una solicitud APPROVED por ese aprobador (trigger + FK compuesta), incluso para el superusuario.
@@ -444,4 +446,103 @@ pgTest("TEST-CNS-1658 pg: begin STEP_UP ya no toma el principal de app.principal
   assert.equal(await issue(platform, A.sid, "REQUEST_ROLE_ASSIGNMENT", CASE), null, "accion fuera del alcance");
   assert.equal(await issue(platform, A.sid, "REQUEST_GRANT", "x"), null);
   assert.equal((await call<{ n: string | null }>(platform, null, "SELECT platform.issue_step_up_nonce('REQUEST_GRANT', $1, 601) AS n", [CASE], A.sid))[0]?.n, null);
+});
+
+pgTest("TEST-CNS-1661 pg carrera: approve || approve (un solo grant; el perdedor no quema su nonce) y approve || vencimiento (nunca se aprueba pasado expires_at)", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const platform = await connect(ctx, "platform_rw");
+  const c1 = await ctx.connectAs("platform_rw");
+  const c2 = await ctx.connectAs("platform_rw");
+  try {
+    const R = await operator(admin, "1661-r", "RIGHTS_OPERATOR");
+    const A = await operator(admin, "1661-a", "APPROVER");
+    const B = await operator(admin, "1661-b", "APPROVER");
+    const CASE = fixtureUuid("pr6d1-1661-case");
+    await seedRightsCase(admin, TENANT, CASE);
+    await seedAttestedStepUp(admin, R.principal, "REQUEST_GRANT", CASE);
+    const rq = (await requestGrant(platform, R.sid, CASE))!;
+    const nA = await seedAttestedStepUp(admin, A.principal, "APPROVE_GRANT", rq);
+    const nB = await seedAttestedStepUp(admin, B.principal, "APPROVE_GRANT", rq);
+    const [ra, rb] = await Promise.all([approveGrant(c1, A.sid, CASE, rq), approveGrant(c2, B.sid, CASE, rq)]);
+    assert.equal([ra, rb].filter((r) => r !== null).length, 1, "exactamente una aprobacion gana");
+    assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM platform.rights_case_grant WHERE request_ref = $1", [rq])).rows[0]!.n), 1);
+    const [winner, loser] = ra !== null ? [nA, nB] : [nB, nA];
+    assert.equal(await consumed(admin, winner), true);
+    assert.equal(await consumed(admin, loser), false, "el perdedor no consume su nonce");
+    assert.equal((await admin.query("SELECT 1 FROM platform.session_event WHERE event_type = 'GRANT_REJECTED' AND reason_code = 'REQUEST_NOT_PENDING' AND request_ref = $1", [rq])).rowCount, 1);
+
+    // approve || vencimiento: la solicitud vence ~1.5 s despues; dos aprobadores disparan justo en el borde.
+    const CE = fixtureUuid("pr6d1-1661-case-exp");
+    await seedRightsCase(admin, TENANT, CE);
+    const exp = (await admin.query<{ request_ref: string }>(
+      `INSERT INTO platform.grant_request (tenant_id, case_ref, operator_principal_ref, requested_by_ref, requested_at, expires_at) VALUES ($1, $2, $3, $3, now() - interval '59 minutes 58 seconds', now() + interval '1500 milliseconds') RETURNING request_ref`,
+      [TENANT, CE, R.principal])).rows[0]!.request_ref;
+    await seedAttestedStepUp(admin, A.principal, "APPROVE_GRANT", exp);
+    await seedAttestedStepUp(admin, B.principal, "APPROVE_GRANT", exp);
+    await new Promise((r) => setTimeout(r, 1440));
+    await Promise.all([approveGrant(c1, A.sid, CE, exp), approveGrant(c2, B.sid, CE, exp)]);
+    const row = (await admin.query<{ status: string; ok: boolean | null }>("SELECT status, approved_at <= expires_at AS ok FROM platform.grant_request WHERE request_ref = $1", [exp])).rows[0]!;
+    assert.ok(row.status === "PENDING" ? row.ok === null : row.ok === true, "una aprobacion nunca queda fechada despues de expires_at");
+    assert.ok(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM platform.rights_case_grant WHERE request_ref = $1", [exp])).rows[0]!.n) <= 1);
+  } finally {
+    await c1.end();
+    await c2.end();
+  }
+});
+
+pgTest("TEST-CNS-1662 pg: F-PR6-44 interino (no se pide grant mientras haya uno vigente), Membership TENANT (request/approve/open) y caso terminal cortan (F-PR6-46)", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const platform = await connect(ctx, "platform_rw");
+  const verifier = await connect(ctx, "integrity_verifier");
+  const R = await operator(admin, "1662-r", "RIGHTS_OPERATOR");
+  const A = await operator(admin, "1662-a", "APPROVER");
+  const CASE = fixtureUuid("pr6d1-1662-case");
+  await seedRightsCase(admin, TENANT, CASE);
+  await seedAttestedStepUp(admin, R.principal, "REQUEST_GRANT", CASE);
+  const rq = (await requestGrant(platform, R.sid, CASE))!;
+  await seedAttestedStepUp(admin, A.principal, "APPROVE_GRANT", rq);
+  assert.ok(typeof (await approveGrant(platform, A.sid, CASE, rq)) === "string");
+  // Grant vigente: no se pide otro (interino), y el nonce no se quema.
+  const nonce = await seedAttestedStepUp(admin, R.principal, "REQUEST_GRANT", CASE);
+  assert.equal(await requestGrant(platform, R.sid, CASE), null);
+  assert.ok((await events(admin, R.principal, "GRANT_REJECTED")).some((e) => e.reason_code === "GRANT_ACTIVE"));
+  assert.equal(await consumed(admin, nonce), false);
+
+  // Membership TENANT sobrevenida: approve la rechaza (TENANT_MEMBER) y open_case_session tambien.
+  const M = await operator(admin, "1662-m", "RIGHTS_OPERATOR");
+  const CM = fixtureUuid("pr6d1-1662-case-m");
+  await seedRightsCase(admin, TENANT, CM);
+  await seedAttestedStepUp(admin, M.principal, "REQUEST_GRANT", CM);
+  const rqM = (await requestGrant(platform, M.sid, CM))!;
+  assert.ok(typeof rqM === "string");
+  await admin.query("INSERT INTO platform.tenant_membership (tenant_id, principal_ref, membership_role, status, requested_by_ref) VALUES ($1, $2, 'INVITER', 'PENDING', $3)", [TENANT, M.principal, A.principal]);
+  const nM = await seedAttestedStepUp(admin, A.principal, "APPROVE_GRANT", rqM);
+  assert.equal(await approveGrant(platform, A.sid, CM, rqM), null);
+  assert.ok((await events(admin, A.principal, "GRANT_REJECTED")).some((e) => e.reason_code === "TENANT_MEMBER"));
+  assert.equal(await consumed(admin, nM), false);
+  const CO = fixtureUuid("pr6d1-1662-case-o");
+  await seedApprovedGrant(admin, { tenantId: TENANT, caseRef: CO, operator: M.principal });
+  const flow = (await loginFlow({ platform, verifier }, "LOGIN_CASE", M.sub, { sid: M.sid, targetRefHash: sha(CO) }))!;
+  assert.equal((await call<{ s: string | null }>(platform, null, "SELECT platform.open_case_session($1::uuid, $2, $3, $4, 3600, 600, NULL) AS s", [flow.ref, flow.state, CO, M.sid]))[0]?.s, null);
+  assert.ok((await events(admin, M.principal, "LOGIN_REJECTED")).some((e) => e.reason_code === "TENANT_MEMBER"));
+  // Una sesion CASE existente deja de validar si el operador obtiene Membership TENANT.
+  const Q = await operator(admin, "1662-q", "RIGHTS_OPERATOR");
+  const CQ = fixtureUuid("pr6d1-1662-case-q");
+  const parent = await seedPlatformSession(admin, Q.principal);
+  const cs = await seedCaseSession(admin, Q.principal, parent, CQ, TENANT);
+  const valid = async (sid: string): Promise<number> => (await call(platform, null, "SELECT * FROM platform.validate_session($1, 'CASE')", [sid])).length;
+  assert.equal(await valid(cs.sid), 1);
+  await admin.query("INSERT INTO platform.tenant_membership (tenant_id, principal_ref, membership_role, status, requested_by_ref) VALUES ($1, $2, 'INVITER', 'PENDING', $3)", [TENANT, Q.principal, A.principal]);
+  assert.equal(await valid(cs.sid), 0, "Membership TENANT corta la sesion CASE");
+
+  // F-PR6-46: caso terminal = la sesion CASE no valida (fail-closed); con el caso abierto si.
+  const T = await operator(admin, "1662-t", "RIGHTS_OPERATOR");
+  const tParent = await seedPlatformSession(admin, T.principal);
+  const CT = fixtureUuid("pr6d1-1662-case-t");
+  const CTO = fixtureUuid("pr6d1-1662-case-to");
+  await seedRightsCase(admin, TENANT, CT, "RESOLVED");
+  const csDone = await seedCaseSession(admin, T.principal, tParent, CT, TENANT);
+  const csOpen = await seedCaseSession(admin, T.principal, tParent, CTO, TENANT);
+  assert.equal(await valid(csDone.sid), 0, "caso RESOLVED: la sesion CASE no valida");
+  assert.equal(await valid(csOpen.sid), 1, "caso abierto: valida");
 });

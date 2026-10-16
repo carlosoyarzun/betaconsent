@@ -8,13 +8,14 @@
 -- incluido el consumo del nonce. Sin ledger: solo platform.session_event (respeta TEST-CNS-1470 y la particion de pares).
 --   platform.request_grant(case_ref, p51_max, p51_window)            -> request_ref
 --       RIGHTS_OPERATOR ACTIVE (el receptor pide para SI MISMO: operator = solicitante = principal de la sesion), sin Membership TENANT (GRD-RC-10), caso REAL (exactamente una fila en app.rights_case, no terminal;
---       el tenant sale de ESA fila), ninguna solicitud PENDING vigente del mismo (caso, operador) (lock por par), step-up REQUEST_GRANT consumido en la MISMA tx (GRD-RC-12). expires_at = now() + 1 h (P-37).
+--       el tenant sale de ESA fila), ninguna solicitud PENDING vigente ni grant VIGENTE del mismo (caso, operador) (lock por par; F-PR6-44 interino), step-up REQUEST_GRANT consumido en la MISMA tx (GRD-RC-12). expires_at = now() + 1 h (P-37).
 --   platform.approve_grant(case_ref, request_ref, valid_seconds, p51_max, p51_window)  -> grant_ref
 --       APPROVER ACTIVE (PRIVACY_LEGAL o SECURITY), distinto del solicitante y del operador (SELF_APPROVAL), solicitud PENDING del caso indicado (FOR UPDATE), VIGENTE (si vencio: no se aprueba y se registra
---       GRANT_REJECTED/REQUEST_EXPIRED, P-37), tenant re-derivado del caso real y coincidente con el de la solicitud, operador todavia RIGHTS_OPERATOR ACTIVE, step-up APPROVE_GRANT sobre la request_ref consumido en la
+--       GRANT_REJECTED/REQUEST_EXPIRED, P-37), tenant re-derivado del caso real y coincidente con el de la solicitud, operador todavia RIGHTS_OPERATOR ACTIVE y sin Membership TENANT, step-up APPROVE_GRANT sobre la request_ref consumido en la
 --       MISMA tx. valid_seconds: NULL = 7200 (defecto 2 h); rango 60..14400 (P-23: > 4 h se RECHAZA, no se recorta). Crea el rights_case_grant con request_ref y approved_by_ref.
 -- NO implementado aqui (FINDING F-PR6-43): el cruce "ningun grant del caso lo aprueba el aprobador de una RH2/RH2v del caso" (GRD-RC-10, INV-14) depende del aprobador RH2 con sesion PLATFORM (P6-5, 6d parte 2).
--- NO implementado (FINDING F-PR6-44): vinculo de renovacion de INV-15 (mismo approved_by_ref que el grant original) contradice "renovar = nueva doble aprobacion" (P-23); cada grant es nuevo y doblemente aprobado.
+-- NO decidido (FINDING F-PR6-44, abierto): el vinculo de renovacion de INV-15 (mismo approved_by_ref que el grant original) contradice "renovar = nueva doble aprobacion" (P-23). Interino conservador: cada grant es nuevo y
+-- doblemente aprobado, y no se pide otro mientras haya uno vigente del mismo (caso, operador).
 
 SET LOCAL ROLE platform_schema_owner;
 GRANT CREATE ON SCHEMA platform TO grant_owner;
@@ -58,6 +59,11 @@ BEGIN
     IF EXISTS (SELECT 1 FROM platform.grant_request r
                 WHERE r.tenant_id = v_tenant AND r.case_ref = p_case_ref AND r.operator_principal_ref = v_principal AND r.status = 'PENDING' AND r.expires_at > pg_catalog.now()) THEN
       v_reason := 'REQUEST_PENDING'; EXIT decide;
+    END IF;
+    -- F-PR6-44 (interino conservador, sin decidir que es "renovacion"): no se pide un grant nuevo mientras exista uno VIGENTE (no revocado, no vencido) del mismo (caso, operador).
+    IF EXISTS (SELECT 1 FROM platform.rights_case_grant g
+                WHERE g.tenant_id = v_tenant AND g.case_ref = p_case_ref AND g.operator_principal_ref = v_principal AND g.revoked_at IS NULL AND g.expires_at > pg_catalog.now()) THEN
+      v_reason := 'GRANT_ACTIVE'; EXIT decide;
     END IF;
     -- GRD-RC-12: step-up REQUEST_GRANT (nonce ATTESTED, ligado a este operador y a este caso) consumido en ESTA transaccion, justo antes del efecto.
     v_reason := platform.consume_step_up(v_principal, 'REQUEST_GRANT', p_case_ref, p_p51_max, p_p51_window_seconds);
@@ -125,6 +131,8 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM platform.platform_role_assignment a WHERE a.principal_ref = v_req.operator_principal_ref AND a.platform_role = 'RIGHTS_OPERATOR' AND a.status = 'ACTIVE') THEN
       v_reason := 'OPERATOR_INACTIVE'; EXIT decide;
     END IF;
+    -- GRD-RC-10: el operador receptor tampoco tiene Membership TENANT al aprobar (pudo obtenerla durante la hora de vigencia de la solicitud).
+    IF EXISTS (SELECT 1 FROM platform.tenant_membership m WHERE m.principal_ref = v_req.operator_principal_ref) THEN v_reason := 'TENANT_MEMBER'; EXIT decide; END IF;
     -- GRD-RC-12: step-up APPROVE_GRANT (ligado a este aprobador y a ESTA solicitud) consumido en ESTA transaccion, justo antes del efecto.
     v_reason := platform.consume_step_up(v_principal, 'APPROVE_GRANT', p_request_ref::pg_catalog.text, p_p51_max, p_p51_window_seconds);
     IF v_reason IS NOT NULL THEN EXIT decide; END IF;
