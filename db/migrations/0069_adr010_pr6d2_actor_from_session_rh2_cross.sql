@@ -17,6 +17,10 @@
 --   approve_grant REEMPLAZADA: rechaza (GRANT_REJECTED / RH_TWO_APPROVER) al aprobador de una RH2 del caso. rights_case_grant_insert_guard REEMPLAZADA: el mismo cruce como red de seguridad de la base (un grant no nace
 --       con aprobador = aprobador de RH2 del caso). Un test cubre ambos caminos; GRD-RC-10 sale de traceability/x8-exceptions.csv.
 --   P2-6 (F-6D3-SEC-06): el destino del step-up de RH2 es `<case_ref>:<proposal_ref>` (ligado a caso Y propuesta).
+-- Decision de Carlos 2026-10-16 (INV-14, opcion A; F-6D3-SEC-P1B): quien aprueba RH2 de un caso no puede NI aprobar NI RECIBIR un grant de ese caso, ni registrar ni co-firmar RH3 del caso:
+--   approve_grant (tras consume_step_up, bajo el lock del caso) y rights_case_grant_insert_guard rechazan operator_principal_ref = aprobador RH2 (motivo RH_TWO_APPROVER_OPERATOR); record_rh2_approval rechaza (RV004) si el
+--   aprobador tiene un grant o solicitud pendiente del caso (cierre simetrico); platform.is_case_rh2_approver (EXECUTE solo transition_owner) la usan record/cosign_case_confirmation (0070, RV004 = ERR-RV-07).
+--   approve_grant y record_rh2_approval toman el MISMO advisory lock por caso (platform.rh2grant.<case_ref>) para serializar la carrera "RH2 de X" vs "grant a X".
 -- Decision de Carlos 2026-10-15 (F-PR6-44, opcion A): sin renovaciones; request_grant ya rechaza GRANT_ACTIVE (0062).
 
 SET LOCAL ROLE platform_schema_owner;
@@ -75,6 +79,9 @@ CREATE OR REPLACE FUNCTION platform.rights_case_grant_insert_guard() RETURNS tri
 BEGIN
   IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = NEW.tenant_id AND cv.case_ref = NEW.case_ref AND cv.approved_by_ref = NEW.approved_by_ref) THEN
     RAISE EXCEPTION 'platform.rights_case_grant: el aprobador de una RH2 del caso no aprueba grants del caso (GRD-RC-10, INV-14)' USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = NEW.tenant_id AND cv.case_ref = NEW.case_ref AND cv.approved_by_ref = NEW.operator_principal_ref) THEN
+    RAISE EXCEPTION 'platform.rights_case_grant: el aprobador de una RH2 del caso no recibe grants del caso (GRD-RC-10, INV-14)' USING ERRCODE = 'integrity_constraint_violation';
   END IF;
   IF EXISTS (SELECT 1 FROM platform.grant_request r
               WHERE r.request_ref = NEW.request_ref AND r.status = 'APPROVED' AND r.approved_by_ref = NEW.approved_by_ref AND r.requested_by_ref <> NEW.approved_by_ref) THEN
@@ -162,6 +169,14 @@ BEGIN
 END
 $$;
 
+-- INV-14 (decision de Carlos 2026-10-16): el principal fue aprobador de una RH2 del caso (tenant de la sesion). Lectura sin efectos para record/cosign_case_confirmation.
+CREATE FUNCTION platform.is_case_rh2_approver(p_case_ref text, p_principal text) RETURNS boolean
+  LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+  SELECT EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = app.current_tenant_id() AND cv.case_ref = p_case_ref AND cv.approved_by_ref = p_principal)
+$$;
+
 CREATE FUNCTION platform.record_rh2_approval(p_revocation_ref text, p_case_ref text, p_proposal_ref text, p_proposed_by text, p_approver text) RETURNS void
   LANGUAGE plpgsql VOLATILE SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
@@ -170,6 +185,8 @@ DECLARE
   v_tenant uuid := app.current_tenant_id();
 BEGIN
   IF v_tenant IS NULL THEN RAISE EXCEPTION 'tenant no resuelto' USING ERRCODE = 'RC004'; END IF;
+  -- Serializa con approve_grant del mismo caso (mismo lock): un grant a este aprobador y su RH2 no pueden confirmarse a la vez sin verse.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('platform.rh2grant.' || p_case_ref, 0));
   -- GRD-RC-10 / INV-14 (en el otro sentido): el aprobador de RH2 no es aprobador NI receptor de ningun grant del caso.
   IF EXISTS (SELECT 1 FROM platform.rights_case_grant g
               WHERE g.tenant_id = v_tenant AND g.case_ref = p_case_ref AND (g.approved_by_ref = p_approver OR g.operator_principal_ref = p_approver))
@@ -359,6 +376,11 @@ BEGIN
     IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = v_req.tenant_id AND cv.case_ref = p_case_ref AND cv.approved_by_ref = v_principal) THEN
       v_reason := 'RH_TWO_APPROVER'; EXIT decide;
     END IF;
+    -- INV-14 (Carlos 2026-10-16, opcion A): tampoco RECIBE el grant quien aprobo RH2 del caso. Mismo lock por caso que record_rh2_approval: la RH2 concurrente de ese principal se ve aqui ya confirmada.
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('platform.rh2grant.' || p_case_ref, 0));
+    IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = v_req.tenant_id AND cv.case_ref = p_case_ref AND cv.approved_by_ref = v_req.operator_principal_ref) THEN
+      v_reason := 'RH_TWO_APPROVER_OPERATOR'; EXIT decide;
+    END IF;
     UPDATE platform.grant_request SET status = 'APPROVED', approved_by_ref = v_principal, approved_at = pg_catalog.now() WHERE request_ref = v_req.request_ref AND status = 'PENDING';
     IF NOT FOUND THEN v_reason := 'REQUEST_NOT_PENDING'; EXIT decide; END IF;
     INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at, request_ref, approved_by_ref)
@@ -380,6 +402,8 @@ REVOKE ALL ON FUNCTION platform.require_case_actor(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.require_platform_actor(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.record_rh2_approval(text, text, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.session_case_receipt_actor(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.is_case_rh2_approver(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION platform.is_case_rh2_approver(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.require_case_actor(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.require_platform_actor(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.record_rh2_approval(text, text, text, text, text) TO transition_owner;
@@ -400,7 +424,7 @@ DECLARE
   roles text[] := ARRAY['app_rw', 'platform_rw', 'worker', 'integrity_verifier', 'integrity_reconciler', 'consent_owner', 'consent_migrator', 'membership_owner', 'case_state_owner', 'platform_schema_owner'];
 BEGIN
   FOREACH spec SLICE 1 IN ARRAY ARRAY[
-      ARRAY['require_case_actor', 'transition_owner'], ARRAY['require_platform_actor', 'transition_owner'], ARRAY['record_rh2_approval', 'transition_owner'],
+      ARRAY['require_case_actor', 'transition_owner'], ARRAY['require_platform_actor', 'transition_owner'], ARRAY['record_rh2_approval', 'transition_owner'], ARRAY['is_case_rh2_approver', 'transition_owner'],
       ARRAY['approve_grant', 'platform_rw'], ARRAY['issue_step_up_nonce', 'platform_rw'], ARRAY['consume_step_up', 'transition_owner']] LOOP
     SELECT pg_catalog.count(*) INTO n FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = spec[1];
     IF n <> 1 THEN RAISE EXCEPTION '0069: platform.% debe existir exactamente una vez (hay %)', spec[1], n; END IF;
@@ -424,7 +448,7 @@ BEGIN
     END IF;
   END LOOP;
   SELECT p.prosrc INTO t FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = 'approve_grant';
-  IF t.prosrc !~ 'RH_TWO_APPROVER' OR t.prosrc !~ 'platform\.case_verification' OR t.prosrc !~ 'SELF_APPROVAL' OR t.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0069: approve_grant perdio el cruce GRD-RC-10 o una regla anterior'; END IF;
+  IF t.prosrc !~ 'RH_TWO_APPROVER_OPERATOR' OR t.prosrc !~ 'RH_TWO_APPROVER' OR t.prosrc !~ 'platform\.case_verification' OR t.prosrc !~ 'SELF_APPROVAL' OR t.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0069: approve_grant perdio el cruce GRD-RC-10 o una regla anterior'; END IF;
   SELECT p.prosrc INTO t FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = 'rights_case_grant_insert_guard';
   IF t.prosrc !~ 'platform\.case_verification' THEN RAISE EXCEPTION '0069: rights_case_grant_insert_guard perdio el cruce GRD-RC-10'; END IF;
   SELECT p.prosrc INTO t FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = 'issue_step_up_nonce';

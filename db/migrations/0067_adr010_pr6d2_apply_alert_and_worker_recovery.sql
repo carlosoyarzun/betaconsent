@@ -5,6 +5,7 @@
 -- 0045 y 0066 son anteriores: lo nuevo va en migracion nueva.
 --
 -- 1) ops.security_event (dueno security_event_owner; DDL con SET LOCAL ROLE security_event_owner, mismo patron que 0045): tipo nuevo REVOCATION_APPLY_ALERT con dos columnas nuevas, alert_reason (enum cerrado:
+--      R4_APPLY_FAILED = (G-3 alcance, Carlos 2026-10-16, opcion A) el llamador (R3, R3r/R1r-R3r, RH3 + R4) fallo por algo que NO es un guard de dominio ni un error transitorio (p. ej. XX000) y la tx se revirtio;
 --      R4_RETRIES_EXHAUSTED = el llamador agoto los reintentos de R3/R3r/RH3 + R4 y la tx se revirtio; R4_BACKUP_APPLIED = el worker aplico R4 sobre una Revocation CONFIRMED sin APPLIED;
 --      R4_BACKUP_FAILED = el worker no pudo aplicarla) y revocation_ref (UUIDv4 opaco: en R1r-R3r tras el rollback es la ref generada para el intento, que no queda persistida). Sin PII, sin payload, sin IP.
 --      Los demas tipos las llevan NULL (CHECK security_event_apply_alert_cols_only_for_type). CHECK type_enum (14 tipos) y otp_shape (rama nueva) actualizados.
@@ -37,7 +38,7 @@ ALTER TABLE ops.security_event
   ADD COLUMN IF NOT EXISTS revocation_ref uuid;
 
 ALTER TABLE ops.security_event DROP CONSTRAINT IF EXISTS security_event_alert_reason_enum;
-ALTER TABLE ops.security_event ADD CONSTRAINT security_event_alert_reason_enum CHECK (alert_reason IN ('R4_RETRIES_EXHAUSTED', 'R4_BACKUP_APPLIED', 'R4_BACKUP_FAILED'));
+ALTER TABLE ops.security_event ADD CONSTRAINT security_event_alert_reason_enum CHECK (alert_reason IN ('R4_RETRIES_EXHAUSTED', 'R4_BACKUP_APPLIED', 'R4_BACKUP_FAILED', 'R4_APPLY_FAILED'));
 ALTER TABLE ops.security_event DROP CONSTRAINT IF EXISTS security_event_revocation_ref_uuidv4;
 ALTER TABLE ops.security_event ADD CONSTRAINT security_event_revocation_ref_uuidv4
   CHECK (revocation_ref::pg_catalog.text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
@@ -117,7 +118,7 @@ BEGIN
   IF p_revocation_ref IS NULL OR p_revocation_ref !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN
     RAISE EXCEPTION 'revocation_ref invalida' USING ERRCODE = '22023';
   END IF;
-  IF p_reason IS NULL OR p_reason NOT IN ('R4_RETRIES_EXHAUSTED', 'R4_BACKUP_APPLIED', 'R4_BACKUP_FAILED') THEN
+  IF p_reason IS NULL OR p_reason NOT IN ('R4_RETRIES_EXHAUSTED', 'R4_BACKUP_APPLIED', 'R4_BACKUP_FAILED', 'R4_APPLY_FAILED') THEN
     RAISE EXCEPTION 'motivo de alerta invalido' USING ERRCODE = '22023';
   END IF;
   INSERT INTO ops.security_event (tenant_id, event_type, alert_reason, revocation_ref)

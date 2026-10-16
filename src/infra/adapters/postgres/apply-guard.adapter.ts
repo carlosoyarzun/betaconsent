@@ -2,6 +2,7 @@
 // y 0070 (case_state.alert_apply_exhausted). Fabrica de la configuracion del guardia de R4 para web (alerta por ops.record_revocation_apply_alert en una tx de tenant SEPARADA) y platform (alerta por la sesion CASE).
 // Sin PII: el log de respaldo lo emite apply-guard.ts con codigo de motivo, ref opaca y hora.
 
+import { DomainError } from "../../../server/modules/common/errors.ts";
 import { DEFAULT_APPLY_MAX_ATTEMPTS } from "../../../server/modules/revocation/apply-guard.ts";
 import type { ApplyAlertSink, ApplyGuardConfig } from "../../../server/modules/revocation/apply-guard.ts";
 import { isTransientTxError } from "./transient-error.ts";
@@ -16,6 +17,13 @@ export interface ApplyGuardOptions {
   readonly now?: () => Date;
 }
 
+/** Guard de dominio = DomainError ya mapeado o SQLSTATE de guard de las funciones case_state (RVxxx, RCxxx, IV009). Todo lo demas (XX000, privilegios, programa) NO es un guard y alerta. */
+export function isDomainGuardError(error: unknown): boolean {
+  if (error instanceof DomainError) return true;
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^(RV|RC|IV)\d{3}$/.test(code);
+}
+
 export function createApplyGuardConfig(alert: ApplyAlertSink, options: ApplyGuardOptions = {}): ApplyGuardConfig {
   const base = options.backoffBaseMs ?? 50;
   const cap = options.backoffCapMs ?? 500;
@@ -24,6 +32,7 @@ export function createApplyGuardConfig(alert: ApplyAlertSink, options: ApplyGuar
     backoffMs: (attempt) => Math.floor(Math.random() * Math.min(cap, base * 2 ** (attempt - 1))),
     sleep: options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     isTransient: isTransientTxError,
+    isDomainGuard: isDomainGuardError,
     alert,
     log: options.log ?? ((line) => console.error(line)),
     now: options.now ?? (() => new Date()),

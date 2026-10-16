@@ -11,13 +11,15 @@
 //  4. Agotamiento: (a) alerta a operacion (evento sin PII, motivo R4_RETRIES_EXHAUSTED) en una tx SEPARADA, posterior al rollback; (b) si esa tx tambien falla, la alerta va al LOG del proceso sin PII (codigo de
 //     motivo, ref opaca, hora) y el llamador igual recibe el error uniforme (fail-closed); (c) el caso queda pendiente (la Revocation sigue VERIFIED / en su estado previo, sin APPLIED; el seguimiento es el worker de respaldo
 //     para CONFIRMED sin APPLIED y, si nadie actua, la escalada humana R9 por TTL P-19); (d) se lanza RevocationApplyUnavailableError: NUNCA un acuse de aplicacion exitosa.
+//  5. Fallo NO transitorio y NO guard de dominio (G-3 alcance, Carlos 2026-10-16, opcion A; p. ej. XX000): alerta R4_APPLY_FAILED con las mismas garantias (tx separada, sin PII, log si falla) y el error original se
+//     propaga sin acuse de exito. Los guards de dominio (rechazos esperados) no alertan.
 //
 // LEGAL DECISION (F-PR6-25, no la decide este codigo ni ningun modelo): que se comunica al titular cuando se agotan los reintentos; si basta la alerta como registro de la voluntad expresada en R1r-R3r (donde no queda
 // ninguna fila); y si el plazo P-19 hasta R9 es aceptable tras una confirmacion fallida. Este modulo solo lanza el error uniforme; el handler HTTP no inventa texto para el titular.
 //
 // Sin PII: el log y la alerta llevan solo codigo de motivo, ref opaca y hora.
 
-export const APPLY_ALERT_REASONS = ["R4_RETRIES_EXHAUSTED", "R4_BACKUP_APPLIED", "R4_BACKUP_FAILED"] as const;
+export const APPLY_ALERT_REASONS = ["R4_RETRIES_EXHAUSTED", "R4_BACKUP_APPLIED", "R4_BACKUP_FAILED", "R4_APPLY_FAILED"] as const;
 export type ApplyAlertReason = (typeof APPLY_ALERT_REASONS)[number];
 
 /** Error uniforme de agotamiento (o de Revocation CONFIRMED sin APPLIED): el llamador NO emite acuse de exito. Sin detalle. */
@@ -47,6 +49,8 @@ export interface ApplyGuardConfig {
   readonly sleep: (ms: number) => Promise<void>;
   /** Clasifica un error como transitorio o de commit ambiguo (infraestructura: SQLSTATE 40001/40P01/55P03, conflicto de secuencia, conexion perdida). */
   readonly isTransient: (error: unknown) => boolean;
+  /** G-3 alcance (Carlos 2026-10-16, opcion A): true = guard de dominio (rechazo esperado: no es una falla de aplicar, no alerta). Todo otro error no transitorio dispara R4_APPLY_FAILED. */
+  readonly isDomainGuard: (error: unknown) => boolean;
   readonly alert: ApplyAlertSink;
   /** Respaldo de la alerta (fail-closed): linea de log del proceso SIN PII. */
   readonly log: (line: string) => void;
@@ -98,7 +102,14 @@ export async function runBoundedApply<T>(
     try {
       return await attempt();
     } catch (error) {
-      if (!config.isTransient(error)) throw error;
+      if (!config.isTransient(error)) {
+        // G-3 alcance (Carlos 2026-10-16, opcion A): un fallo que NO es guard de dominio ni transitorio (p. ej. XX000) alerta (tx separada, sin PII; si falla, log) y se propaga SIN acuse de exito.
+        // RevocationApplyUnavailableError ya es el error uniforme de "aplicacion no disponible": no se alerta dos veces.
+        if (!(error instanceof RevocationApplyUnavailableError) && !config.isDomainGuard(error)) {
+          await raiseApplyAlert(config, { tenantId: ctx.tenantId, revocationRef: ctx.revocationRef() ?? "", reason: "R4_APPLY_FAILED" });
+        }
+        throw error;
+      }
       if (n < config.maxAttempts) await config.sleep(config.backoffMs(n));
     }
     // Antes de reintentar (y tambien antes de rendirse) se lee el estado: un commit ambiguo pudo haber aplicado la solicitud.

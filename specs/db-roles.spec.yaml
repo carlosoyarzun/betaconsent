@@ -293,7 +293,7 @@ roles:
       - {name: "case_state.read_case_apply_state", status: "0070 (6d parte 2): lectura de estado SIN efectos para el reintento acotado de RH3 (F-6D2-QA-02)"}
       - {name: "case_state.list_confirmed_unapplied(limit, skip_refs)", status: "0070 (6d parte 2, F-6D3-SEC-01): descubrimiento de Revocation CONFIRMED sin APPLIED para el respaldo del worker; devuelve solo (tenant_id, revocation_ref); EXECUTE solo worker; la policy revocation_transition_recovery_select (0067, TO transition_owner, solo CONFIRMED bajo el efecto de esta funcion) es la unica excepcion cross-tenant (F-6D3-SEC-08); el worker NO tiene policy cross-tenant propia"}
       - {name: "platform.session_case_receipt_actor(case_ref)", status: "0069 (6d parte 2, F-6D3-SEC-07): principal de la sesion CASE para la relectura de estado tras un commit ambiguo; tolera sesion vencida hace < 15 min y no revocada; EXECUTE solo transition_owner"}
-      - {name: "case_state.alert_apply_exhausted", status: "0070 (6d parte 2): alerta R4_RETRIES_EXHAUSTED de RH3 (G-3)"}
+      - {name: "case_state.alert_apply_exhausted", status: "0070 (6d parte 2): alerta de RH3 (G-3): firma (case_ref, motivo); motivo R4_RETRIES_EXHAUSTED (agotamiento) o R4_APPLY_FAILED (fallo que no es guard de dominio, Carlos 2026-10-16 opción A)"}
     tables: [{object: "vistas case_scope() (rights-case.spec.yaml:422)", privileges: [SELECT], status: PR-5}]
     mustNot: ["DML directo", "CREATE", "Ser asumido por app_rw, worker o integrity_verifier"]
     verifiedBy: {newTests: ["TEST-CNS-TBD-DBR-06: catálogo de rights_operator = exactamente las 7 funciones (propose, withdraw, record, cosign, close, read_case_apply_state, alert_apply_exhausted) y las vistas case_scope; ACL exacta asertada en 0070"]}

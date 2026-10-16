@@ -178,6 +178,8 @@ BEGIN
   IF v_rev.status <> 'VERIFIED' OR v_rev.attested_revocation_ref IS DISTINCT FROM v_rev.revocation_ref OR v_rev.attested_case_ref IS DISTINCT FROM p_case_ref THEN
     RAISE EXCEPTION 'RH3 sin RH2 atestada' USING ERRCODE = 'RV006'; -- ERR-RV-20
   END IF;
+  -- INV-14 (Carlos 2026-10-16, opcion A): quien aprobo RH2 del caso (second_approver_ref o platform.case_verification) no registra RH3. Codigo uniforme del contrato: RV004 = ERR-RV-07 (403).
+  IF v_actor IS NOT DISTINCT FROM v_rev.second_approver_ref OR platform.is_case_rh2_approver(p_case_ref, v_actor) THEN RAISE EXCEPTION 'el aprobador de RH2 no registra RH3' USING ERRCODE = 'RV004'; END IF;
   UPDATE app.revocation SET recorded_by_ref = v_actor WHERE tenant_id = v_rev.tenant_id AND revocation_ref = v_rev.revocation_ref;
   RETURN pg_catalog.jsonb_build_object('ok', true);
 END
@@ -214,6 +216,8 @@ BEGIN
   IF v_rev.status <> 'VERIFIED' OR v_rev.attested_revocation_ref IS DISTINCT FROM v_rev.revocation_ref OR v_rev.attested_case_ref IS DISTINCT FROM p_case_ref THEN
     RAISE EXCEPTION 'RH3 sin RH2 atestada' USING ERRCODE = 'RV006'; -- ERR-RV-20
   END IF;
+  -- INV-14 (Carlos 2026-10-16, opcion A): el aprobador de RH2 del caso (por cualquier via) no co-firma RH3.
+  IF v_actor IS NOT DISTINCT FROM v_rev.second_approver_ref OR platform.is_case_rh2_approver(p_case_ref, v_actor) THEN RAISE EXCEPTION 'el aprobador de RH2 no co-firma RH3' USING ERRCODE = 'RV004'; END IF;
   IF v_rev.recorded_by_ref IS NULL OR v_actor = v_rev.recorded_by_ref THEN RAISE EXCEPTION 'RH3 exige cuatro ojos' USING ERRCODE = 'RV005'; END IF; -- ERR-RV-18
   -- P2(c): la decision afectada se bloquea ANTES del primer append al ledger; sin decision revocable no hay R3 (y la tx no deja nada).
   SELECT d.state INTO v_dec_state FROM app.consent_decision d
@@ -292,7 +296,8 @@ $fn$;
 
 
 -- Alerta de agotamiento de RH3 (G-3): tx SEPARADA y posterior al rollback; la Revocation sale del caso real y el tenant de la sesion CASE validada. Sin PII.
-CREATE FUNCTION case_state.alert_apply_exhausted(p_case_ref text) RETURNS jsonb
+-- G-3 (Carlos 2026-10-16, opcion A): alerta de RH3 + R4 por agotamiento (R4_RETRIES_EXHAUSTED) o por un fallo que NO es guard de dominio (R4_APPLY_FAILED).
+CREATE FUNCTION case_state.alert_apply_exhausted(p_case_ref text, p_reason text) RETURNS jsonb
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
@@ -304,7 +309,8 @@ BEGIN
   v_actor := platform.require_case_actor(p_case_ref, 'RIGHTS_OPERATOR');
   SELECT c.revocation_ref INTO v_revref FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
   IF v_revref IS NULL THEN RAISE EXCEPTION 'caso sin Revocation' USING ERRCODE = 'RV001'; END IF;
-  PERFORM ops.record_revocation_apply_alert(v_revref, 'R4_RETRIES_EXHAUSTED');
+  IF p_reason IS NULL OR p_reason NOT IN ('R4_RETRIES_EXHAUSTED', 'R4_APPLY_FAILED') THEN RAISE EXCEPTION 'motivo de alerta invalido' USING ERRCODE = '22023'; END IF;
+  PERFORM ops.record_revocation_apply_alert(v_revref, p_reason);
   RETURN pg_catalog.jsonb_build_object('ok', true);
 END
 $fn$;
@@ -334,7 +340,7 @@ REVOKE ALL ON FUNCTION case_state.withdraw_case_verification_proposal(text, text
 REVOKE ALL ON FUNCTION case_state.record_case_confirmation(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.cosign_case_confirmation(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.close_case(text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION case_state.alert_apply_exhausted(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.alert_apply_exhausted(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.read_case_apply_state(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.list_confirmed_unapplied(integer, text[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION case_state.propose_case_verification(text, text, text, integer, integer) TO rights_operator;
@@ -342,7 +348,7 @@ GRANT EXECUTE ON FUNCTION case_state.withdraw_case_verification_proposal(text, t
 GRANT EXECUTE ON FUNCTION case_state.record_case_confirmation(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.cosign_case_confirmation(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.close_case(text, text) TO rights_operator;
-GRANT EXECUTE ON FUNCTION case_state.alert_apply_exhausted(text) TO rights_operator;
+GRANT EXECUTE ON FUNCTION case_state.alert_apply_exhausted(text, text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.read_case_apply_state(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.list_confirmed_unapplied(integer, text[]) TO worker;
 GRANT EXECUTE ON FUNCTION case_state.approve_case_verification(text, text, integer, integer) TO platform_rw;
@@ -402,7 +408,7 @@ BEGIN
     IF f.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal') AND f.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0070: case_state.% perdio el step-up (GRD-RC-12)', f.proname; END IF;
   END LOOP;
   SELECT p.prosrc INTO f FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = 'cosign_case_confirmation';
-  IF f.prosrc !~ 'case_state\.r4_apply\(' OR pg_catalog.strpos(f.prosrc, 'FOR UPDATE') > pg_catalog.strpos(f.prosrc, 'ledger_append') OR f.prosrc !~ 'RV005' THEN
+  IF f.prosrc !~ 'case_state\.r4_apply\(' OR pg_catalog.strpos(f.prosrc, 'FOR UPDATE') > pg_catalog.strpos(f.prosrc, 'ledger_append') OR f.prosrc !~ 'RV005' OR f.prosrc !~ 'platform\.is_case_rh2_approver\(' THEN
     RAISE EXCEPTION '0070: cosign_case_confirmation perdio R4 en la misma tx, el FOR UPDATE previo al ledger o los cuatro ojos';
   END IF;
   SELECT p.prosrc INTO f FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = 'approve_case_verification';

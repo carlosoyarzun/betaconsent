@@ -136,6 +136,7 @@ const EXPECTED_EXECUTE: Record<string, string[]> = {
   require_platform_actor: ["transition_owner"],
   record_rh2_approval: ["transition_owner"],
   session_case_receipt_actor: ["transition_owner"], // P2-7
+  is_case_rh2_approver: ["transition_owner"], // INV-14 (Carlos 2026-10-16)
   case_verification_guard: [],
 };
 const FUNCTION_OWNERS: Record<string, string> = {
@@ -149,7 +150,7 @@ const FUNCTION_OWNERS: Record<string, string> = {
   open_platform_session: "grant_owner", open_case_session: "grant_owner", validate_session: "grant_owner", revoke_session: "grant_owner", revoke_session_internal: "grant_owner",
   platform_session_guard: "grant_owner", rights_case_grant_guard: "grant_owner", grant_request_guard: "grant_owner",
   issue_step_up_nonce: "grant_owner", request_grant: "grant_owner", approve_grant: "grant_owner", consume_step_up: "grant_owner", session_principal: "grant_owner", rights_case_of: "grant_owner",
-  rights_case_grant_insert_guard: "grant_owner", require_case_actor: "grant_owner", require_platform_actor: "grant_owner", record_rh2_approval: "grant_owner", session_case_receipt_actor: "grant_owner", case_verification_guard: "grant_owner",
+  rights_case_grant_insert_guard: "grant_owner", require_case_actor: "grant_owner", require_platform_actor: "grant_owner", record_rh2_approval: "grant_owner", session_case_receipt_actor: "grant_owner", is_case_rh2_approver: "grant_owner", case_verification_guard: "grant_owner",
 };
 const TABLE_OWNERS: Record<string, string> = {
   tenant_membership: "membership_owner", platform_role_assignment: "membership_owner", principal_identity: "membership_owner",
@@ -157,7 +158,7 @@ const TABLE_OWNERS: Record<string, string> = {
   login_assertion: "grant_owner", session_event: "grant_owner", platform_session: "grant_owner", rights_case_grant: "grant_owner", grant_request: "grant_owner", case_verification: "grant_owner",
 };
 
-pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 12 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 40 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
+pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 12 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 41 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
 
   const ns = (await admin.query<{ owner: string }>("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'platform'")).rows;

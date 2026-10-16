@@ -71,8 +71,8 @@ export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapte
       const withAlert: ApplyGuardConfig = {
         ...guard,
         alert: async ({ reason }) => {
-          if (reason !== "R4_RETRIES_EXHAUSTED") return;
-          const r = await op(i.sid, "SELECT case_state.alert_apply_exhausted($1::text) AS r", [i.caseRef]);
+          if (reason !== "R4_RETRIES_EXHAUSTED" && reason !== "R4_APPLY_FAILED") return;
+          const r = await op(i.sid, "SELECT case_state.alert_apply_exhausted($1::text, $2::text) AS r", [i.caseRef, reason]);
           if (!r.ok) throw new Error("alert_not_persisted");
         },
       };

@@ -14,7 +14,7 @@ const OPERATOR_FUNCTIONS = [
   "case_state.record_case_confirmation(text)",
   "case_state.cosign_case_confirmation(text)",
   "case_state.close_case(text, text)",
-  "case_state.alert_apply_exhausted(text)",
+  "case_state.alert_apply_exhausted(text, text)",
 ] as const;
 const SYSTEM_FUNCTIONS = [
   "case_state.apply_revocation(text, integer)",
@@ -58,7 +58,7 @@ pgTest("TEST-CNS-1701 pg: app_rw sin EXECUTE de funciones de operador/SYSTEM/sie
     "SELECT case_state.record_case_confirmation('x')",
     "SELECT case_state.cosign_case_confirmation('x')",
     "SELECT case_state.close_case('x', 'RESOLVED')",
-    "SELECT case_state.alert_apply_exhausted('x')",
+    "SELECT case_state.alert_apply_exhausted('x', 'R4_APPLY_FAILED')",
     "SELECT case_state.apply_revocation('x', 1)",
     "SELECT platform.require_case_actor('x', 'RIGHTS_OPERATOR')",
     "SELECT platform.validate_session('x', 'CASE')",
@@ -83,7 +83,7 @@ pgTest("TEST-CNS-1701 pg: app_rw sin EXECUTE de funciones de operador/SYSTEM/sie
 
   // EXECUTE exacto en el rol que corresponde.
   for (const fn of ["case_state.propose_case_verification(text, text, text, integer, integer)", "case_state.withdraw_case_verification_proposal(text, text, integer, integer)", "case_state.record_case_confirmation(text)",
-    "case_state.cosign_case_confirmation(text)", "case_state.close_case(text, text)", "case_state.alert_apply_exhausted(text)"]) {
+    "case_state.cosign_case_confirmation(text)", "case_state.close_case(text, text)", "case_state.alert_apply_exhausted(text, text)"]) {
     assert.equal(await can("rights_operator", fn), true, `rights_operator ejecuta ${fn}`);
     assert.equal(await can("platform_rw", fn), false, `platform_rw no ejecuta directo ${fn} (solo via SET LOCAL ROLE rights_operator)`);
     assert.equal(await can("worker", fn), false);
