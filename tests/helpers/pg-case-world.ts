@@ -255,8 +255,13 @@ export function ambiguousCommitPool(times = 0): { wrap: (pool: Pool) => PoolLike
         if (tagged[PATCHED] !== true) {
           tagged[PATCHED] = true;
           const original = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+          // El pool es compartido con las sesiones: solo falla el COMMIT de la tx que llamo a la co-firma.
+          let sawCosign = false;
           (client as unknown as { query: unknown }).query = async (...args: unknown[]): Promise<unknown> => {
-            if (args[0] === "COMMIT" && remaining > 0) {
+            if (typeof args[0] === "string" && args[0].includes("cosign_case_confirmation")) sawCosign = true;
+            if (args[0] === "ROLLBACK") sawCosign = false;
+            if (args[0] === "COMMIT" && sawCosign && remaining > 0) {
+              sawCosign = false;
               remaining -= 1;
               fired += 1;
               await original("COMMIT");
@@ -281,7 +286,10 @@ export async function seedConfirmedWithoutApplied(admin: Client, w: CaseWorld): 
     await admin.query("SELECT set_config('app.tenant_id', $1, true)", [w.tenantId]);
     await admin.query("SELECT set_config('case_state.effect', 'cosign_case_confirmation', true)");
     const seq = Number((await admin.query<{ n: number }>("SELECT COALESCE(max(sequence), 0)::integer AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2", [w.tenantId, w.revocationRef])).rows[0]!.n);
+    // El guard INV-RV-12 solo deja escribir a las funciones case_state: se deshabilita DENTRO de esta tx de fixture y se vuelve a dejar ENABLE ALWAYS antes del COMMIT (solo tests).
+    await admin.query("ALTER TABLE app.revocation DISABLE TRIGGER revocation_transition_guard");
     await admin.query("UPDATE app.revocation SET status = 'CONFIRMED', cosigned_by_ref = $3 WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef, w.op2.principal]);
+    await admin.query("ALTER TABLE app.revocation ENABLE ALWAYS TRIGGER revocation_transition_guard");
     await admin.query(
       "SELECT case_state.ledger_append('Revocation', $1::text, 'REVOCATION_CONFIRMED', 'HUMAN', 'DECISION_MAKER', $2::text, $3::text, jsonb_build_object('revocationRef', $1::text, 'recordedByRef', $2::text, 'cosignedByRef', $3::text), $1::text || ':rh3', $4::integer)",
       [w.revocationRef, w.op1.principal, w.op2.principal, seq],
