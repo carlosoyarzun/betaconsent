@@ -164,7 +164,7 @@ pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json =
     }
     const report = await verifyLedgerChain({ readChain: (t) => outside.ledger.readChain(t) }, T);
     assert.equal(report.ok, true, JSON.stringify(report));
-    assert.ok(report.verified >= 20, `eslabones verificados: ${report.verified}`);
+    assert.ok(report.verified >= 18, `eslabones verificados: ${report.verified}`); // 9 por via (OTP, LINK); la via CASE (antes >= 20 con 3 vias) se cubre sobre platform en TEST-CNS-1711
   } finally {
     await pool.end();
   }

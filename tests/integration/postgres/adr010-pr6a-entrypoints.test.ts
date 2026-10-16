@@ -141,8 +141,9 @@ pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 int
     assert.equal(await execFor(admin, "worker", fn), true, `worker ${fn}`);
     for (const role of ["app_rw", "platform_rw", "integrity_verifier"]) assert.equal(await execFor(admin, role, fn), false, `${role} ${fn}`);
   }
-  assert.equal(await execFor(admin, "app_rw", "apply_revocation"), true, "R4 intacta: app_rw (enmienda P6-2 pendiente)");
-  assert.equal(await execFor(admin, "worker", "apply_revocation"), true, "R4 intacta: worker");
+  // 6d parte 2 (0070, cierre de F-A10-26 por privilegio): apply_revocation ya no es de app_rw (R4 corre dentro de R3 via r4_apply, interna); queda el worker como respaldo.
+  assert.equal(await execFor(admin, "app_rw", "apply_revocation"), false, "R4: app_rw sin EXECUTE (0070)");
+  assert.equal(await execFor(admin, "worker", "apply_revocation"), true, "R4 de respaldo: worker");
 
   // Ataque real: app_rw intenta ejecutar R5/R6/R7 -> 42501 (privilegio, no guard de dominio).
   const app = await ctx.connectAs("app_rw");
@@ -250,7 +251,7 @@ pgTest("TEST-CNS-1399 pg: el worker ejecuta R5-R7 hasta COMPLETED (stub interno,
     try {
       const result = await runWorkerCycle({ pool, environment: "LOCAL" });
       assert.equal(result.failed, 0);
-      assert.equal(result.completed, 3);
+      assert.equal(result.completed, 2); // OTP y LINK; la via CASE corre en platform (TEST-CNS-1711)
     } finally {
       await pool.end();
     }
@@ -268,7 +269,7 @@ pgTest("TEST-CNS-1399 pg: el worker ejecuta R5-R7 hasta COMPLETED (stub interno,
     const poolRc = await openProcessPool({ process: "worker", environment: "LOCAL", env: envFor(ctx, "worker") });
     try {
       const again = await runWorkerCycle({ pool: poolRc, environment: "LOCAL" });
-      assert.ok(again.claimed >= 3, "reclama de nuevo");
+      assert.ok(again.claimed >= 2, "reclama de nuevo"); // OTP y LINK (la via CASE corre en platform)
       assert.equal(again.failed, 0);
     } finally {
       await poolRc.end();

@@ -241,7 +241,7 @@ test("TEST-CNS-715: rol no permitido: una sesión con rol distinto de TENANT_ADM
         body: JSON.stringify({ principalRef }),
       });
       assert.equal(parseAllSetCookies(res)[STAFF_COOKIE], undefined, principalRef);
-      assert.equal(res.status, 422, principalRef);
+      assert.equal(res.status, 404, principalRef); // ADR-010 rev. 5 (6d parte 2): el dev-login de web solo emite STAFF (TENANT_ADMIN); cualquier otro rol o principal = 404 uniforme (antes 422 del login CASE)
     }
 
     // Membership no vigente (GRD-CM-01/02): sesión firmada por el servidor pero de un principal fuera

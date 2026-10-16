@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import {
-  applyRevocation,
+  confirmRevocation,
   hashRecoveryToken,
   issueRecoveryLinkBearer,
   requestRevocation,
@@ -65,9 +65,10 @@ pgTest("TEST-CNS-822 pg: R4 concurrente con R8 (retiro) en dos conexiones: exact
       const REV = fixtureUuid(`rev822-${round}`);
       await outside.consentDecisionRepo.save({ ...syntheticDecision(T, D), chainRef: `chain-822-${round}` });
       await outside.revocationRepo.save({
-        revocationRef: REV, tenantId: T, chainRef: `chain-822-${round}`, revokedDecisionRef: D, status: "CONFIRMED", verifiedAuthPath: "OTP",
+        revocationRef: REV, tenantId: T, chainRef: `chain-822-${round}`, revokedDecisionRef: D, status: "VERIFIED", verifiedAuthPath: "OTP",
       });
-      const results = await Promise.allSettled([applyRevocation(ports, T, REV), withdrawRevocation(ports, T, REV)]);
+      // ADR-010 rev. 5 (6d parte 2): R4 corre dentro de R3 (confirm_revocation, atomica); la carrera es R3+R4 vs R8 sobre la misma fila VERIFIED.
+      const results = await Promise.allSettled([confirmRevocation(ports, T, REV), withdrawRevocation(ports, T, REV)]);
       const [r4, r8] = results;
       assert.equal(results.filter((r) => r.status === "fulfilled").length, 1, `ronda ${round}: exactamente una gana`);
       const final = await outside.revocationRepo.findByRef(T, REV);
@@ -76,7 +77,7 @@ pgTest("TEST-CNS-822 pg: R4 concurrente con R8 (retiro) en dos conexiones: exact
       const decision = await outside.consentDecisionRepo.findByConsentId(T, D);
       if (r4?.status === "fulfilled") {
         assert.equal(final?.status, "APPLIED");
-        assert.deepEqual(events.sort(), ["CONSENT_REVOKED", "RECEIPT_CREATED"], "R4 aplico y R8 no dejo REVOCATION_FAILED");
+        assert.deepEqual(events.sort(), ["CONSENT_REVOKED", "RECEIPT_CREATED", "REVOCATION_CONFIRMED"], "R3+R4 aplicaron en una tx y R8 no dejo REVOCATION_FAILED");
         assert.equal(outboxRows, 1);
         assert.equal(decision?.state, "REVOKED");
         assert.ok(r8?.status === "rejected" && r8.reason instanceof DomainError && r8.reason.code === "ERR-CM-06");

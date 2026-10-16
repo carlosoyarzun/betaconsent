@@ -299,130 +299,25 @@ pgTest("TEST-CNS-874 e2e pg: recuperacion /r: enlace por RV0 -> /r/{token} -> /r
   }
 });
 
-pgTest("TEST-CNS-875 e2e pg: RH3 registro + co-firma por dos RIGHTS_OPERATOR distintos -> CONFIRMED/APPLIED en la base", async (ctx) => {
+pgTest("TEST-CNS-875 e2e pg: el caso RH3 sembrado por el camino legal (RC1 -> RC2u -> RC3) queda IN_VERIFICATION con la Revocation REQUESTED y web ya no lo opera (dev-login CASE y /platform/* = 404); RH3 sobre platform: TEST-CNS-1711", async (ctx) => {
   const env = await boot(ctx);
   try {
     await seedRh3DevCase(env.bundle.ports, env.bundle.revocationPorts, T);
-    const login = async (principalRef: string): Promise<{ jar: Record<string, string>; csrf: string }> => {
-      const res = await fetch(`${env.baseUrl}/__dev/staff-login`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tenantId: T, caseRef: RH3_DEV_CASE_REF, principalRef }),
-      });
-      assert.equal(res.status, 200);
-      const c = cookiesOf(res);
-      return { jar: { "__Host-cns-case": c["__Host-cns-case"]!, "__Host-cns-case-csrf": c["__Host-cns-case-csrf"]! }, csrf: c["__Host-cns-case-csrf"]! };
-    };
-    const call = (who: { jar: Record<string, string>; csrf: string }, path: string, body: unknown): Promise<Response> =>
-      fetch(`${env.baseUrl}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": who.csrf, cookie: Object.entries(who.jar).map(([k, v]) => `${k}=${v}`).join("; ") },
-        body: JSON.stringify(body),
-      });
-    const op1 = await login(fixtureUuid("staff-synthetic-01"));
-    const first = await call(op1, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true });
-    assert.equal(first.status, 200);
-    assert.deepEqual(await first.json(), { cosign: "AWAITING_COSIGN", revocationState: "VERIFIED" });
-    const op2 = await login(fixtureUuid("staff-synthetic-02"));
-    const second = await call(op2, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, {});
-    assert.equal(second.status, 200);
-    assert.equal(((await second.json()) as { cosign: string }).cosign, "COSIGNED");
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'APPLIED'", [T, RH3_DEV_REVOCATION_REF]), 1);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1 AND dedupe_key = $2", [T, `${RH3_DEV_REVOCATION_REF}:consent.revoked`]), 1);
-  } finally {
-    await env.close();
-  }
-});
-
-pgTest("TEST-CNS-880 e2e pg: consola STAFF (EN0 enrolar, I1 invitar, ready, send) contra Postgres con el catalogo sembrado por las fixtures LOCAL-only", async (ctx) => {
-  // Catalogo (SELECT-only para app_rw): lo provisiona el paso de fixtures como consent_migrator (SEC-CNS-017 c).
-  const migrator = await ctx.connectAs("consent_migrator");
-  await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
-  const env = await boot(ctx);
-  try {
+    // Camino legal: caso IN_VERIFICATION ligado a la Revocation REQUESTED, sin propuesta RH2 ni aprobador (RH2 solo por platform).
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION' AND revocation_ref = $3", [T, RH3_DEV_CASE_REF, RH3_DEV_REVOCATION_REF]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'REQUESTED' AND proposal_ref IS NULL AND second_approver_ref IS NULL", [T, RH3_DEV_REVOCATION_REF]), 1);
     const login = await fetch(`${env.baseUrl}/__dev/staff-login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ principalRef: fixtureUuid("staff-synthetic-05") }),
+      body: JSON.stringify({ tenantId: T, caseRef: RH3_DEV_CASE_REF, principalRef: fixtureUuid("staff-synthetic-01") }),
     });
-    assert.equal(login.status, 200);
-    const c = cookiesOf(login);
-    const jar = `__Host-cns-staff=${c["__Host-cns-staff"]}; __Host-cns-staff-csrf=${c["__Host-cns-staff-csrf"]}`;
-    const staffPost = (path: string, body: unknown, extra: Record<string, string> = {}): Promise<Response> =>
-      fetch(`${env.baseUrl}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": c["__Host-cns-staff-csrf"]!, cookie: jar, ...extra },
-        body: JSON.stringify(body),
-      });
-    const enrolled = await staffPost("/staff/enrollments", { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF });
-    assert.equal(enrolled.status, 201, await enrolled.clone().text());
-    const { enrollmentRef } = (await enrolled.json()) as { enrollmentRef: string };
-    const invited = await staffPost(
-      "/staff/invitations",
-      { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef },
-      { "idempotency-key": "pg-880-idem-key-0001" },
-    );
-    assert.equal(invited.status, 201, await invited.clone().text());
-    const { invitationRef } = (await invited.json()) as { invitationRef: string };
-    // Misma Idempotency-Key + mismo cuerpo: repite sin crear otra invitacion (IdempotencyPort en la tx).
-    const replay = await staffPost(
-      "/staff/invitations",
-      { subjectRef: LOCAL_ONLY_DEV_STAFF_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef },
-      { "idempotency-key": "pg-880-idem-key-0001" },
-    );
-    assert.equal(replay.status, 201);
-    // FINDING (contract<->implementation, EXT-B/LD-21 pendiente de Carlos): RECIPIENT_CHANNEL en la consola STAFF exige
-    // recipientChannelRef UUIDv4 (REF_PATTERN) pero app.invitation.recipient_channel_ref solo admite email reservado
-    // (0010): en Postgres esa rama no puede persistir. Aqui se ejerce UNBOUND, que no toca esa columna.
-    const ready = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "UNBOUND" });
-    assert.equal(ready.status, 200, await ready.clone().text());
-    const sent = await staffPost(`/staff/invitations/${invitationRef}/send`, {});
-    assert.equal(sent.status, 200, await sent.clone().text());
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND subject_ref = $2", [T, LOCAL_ONLY_DEV_STAFF_SUBJECT_REF]), 1);
-  } finally {
-    await env.close();
-  }
-});
-
-pgTest("TEST-CNS-889 e2e pg: /ready con RECIPIENT_CHANNEL y un UUID responde 422 uniforme (EXT-B (i): solo email reservado; el CHECK 23514 de la BD queda como defensa en profundidad), sin 500 ni request_failed; la invitacion sigue DRAFT y UNBOUND funciona", async (ctx) => {
-  const migrator = await ctx.connectAs("consent_migrator");
-  await applyLocalFixtures(migrator, loadLocalFixtures(new URL("../../../db/fixtures/local", import.meta.url).pathname), { environment: "LOCAL" });
-  const env = await boot(ctx);
-  try {
-    const login = await fetch(`${env.baseUrl}/__dev/staff-login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ principalRef: fixtureUuid("staff-synthetic-05") }),
-    });
-    assert.equal(login.status, 200);
-    const c = cookiesOf(login);
-    const jar = `__Host-cns-staff=${c["__Host-cns-staff"]}; __Host-cns-staff-csrf=${c["__Host-cns-staff-csrf"]}`;
-    const staffPost = (path: string, body: unknown, extra: Record<string, string> = {}): Promise<Response> =>
-      fetch(`${env.baseUrl}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": c["__Host-cns-staff-csrf"]!, cookie: jar, ...extra },
-        body: JSON.stringify(body),
-      });
-    const enrolled = await staffPost("/staff/enrollments", { subjectRef: LOCAL_ONLY_DEV_SUBJECT_REF, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF });
-    assert.equal(enrolled.status, 201, await enrolled.clone().text());
-    const { enrollmentRef } = (await enrolled.json()) as { enrollmentRef: string };
-    const invited = await staffPost("/staff/invitations", { subjectRef: LOCAL_ONLY_DEV_SUBJECT_REF, enrollmentRef, participationRef: LOCAL_ONLY_DEV_PARTICIPATION_REF, contextRef: LECTORPRO_BETA_CONFIG.contextRef }, { "idempotency-key": "pg-889-idem-key-0001" });
-    assert.equal(invited.status, 201, await invited.clone().text());
-    const { invitationRef } = (await invited.json()) as { invitationRef: string };
-
-    // EXT-B (i) (Carlos, 2026-10-01): el contrato exige email reservado; un UUID (valor antiguo) es 422 uniforme en el
-    // handler, sin llegar a la BD ni reflejarse en el error.
-    const legacyUuid = "f1a5c9e3-4d27-4b68-9e30-2c4e6a8b0d51";
-    const ready = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "RECIPIENT_CHANNEL", recipientChannelRef: legacyUuid });
-    assert.equal(ready.status, 422);
-    const problem = (await ready.json()) as { code: string; status: number };
-    assert.equal(problem.status, 422);
-    assert.ok(!JSON.stringify(problem).includes(legacyUuid), "el error no refleja el valor");
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.invitation WHERE tenant_id = $1 AND invitation_ref = $2 AND state = 'DRAFT'", [T, invitationRef]), 1, "rollback: sigue DRAFT");
-
-    // La tx abortada no dejo la conexion ni el agregado inutilizables: UNBOUND pasa a READY.
-    const unbound = await staffPost(`/staff/invitations/${invitationRef}/ready`, { consentVersion: "v1-dev", recipientBinding: "UNBOUND" });
-    assert.equal(unbound.status, 200, await unbound.clone().text());
+    assert.equal(login.status, 404, "sin dev-login CASE en web");
+    assert.deepEqual(Object.keys(cookiesOf(login)), []);
+    for (const suffix of ["/confirmation", "/confirmation/cosign", "/close"]) {
+      const res = await fetch(`${env.baseUrl}/platform/rights-cases/${RH3_DEV_CASE_REF}${suffix}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: "{}" });
+      assert.equal(res.status, 404, suffix);
+    }
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'REQUESTED'", [T, RH3_DEV_REVOCATION_REF]), 1, "web no cambia el estado");
   } finally {
     await env.close();
   }
@@ -542,40 +437,7 @@ pgTest("TEST-CNS-979 pg: paridad entre isReservedEmail (TS) y app.is_reserved_em
   }
 });
 
-pgTest("TEST-CNS-1174 e2e pg: sesion CASE en app.case_session (solo hash del sid); logout revoca en la BD y la cookie robada no sirve; sid de otro tenant no existe; BD sin sid en claro ni PII (CA-139)", async (ctx) => {
-  const env = await boot(ctx);
-  try {
-    await seedRh3DevCase(env.bundle.ports, env.bundle.revocationPorts, T);
-    const res = await fetch(`${env.baseUrl}/__dev/staff-login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tenantId: T, caseRef: RH3_DEV_CASE_REF, principalRef: fixtureUuid("staff-synthetic-01") }),
-    });
-    assert.equal(res.status, 200);
-    const c = cookiesOf(res);
-    const session = c["__Host-cns-case"]!;
-    const csrf = c["__Host-cns-case-csrf"]!;
-    const call = (path: string, body: unknown): Promise<Response> =>
-      fetch(`${env.baseUrl}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "x-csrf-token": csrf, cookie: `__Host-cns-case=${session}; __Host-cns-case-csrf=${csrf}` }, body: JSON.stringify(body) });
-    const sid = JSON.parse(Buffer.from(session.split(".")[0]!, "base64url").toString("utf8")).sid as string;
-    const sidHash = createHash("sha256").update(sid, "utf8").digest("hex");
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND case_ref = $2 AND sid_hash = $3 AND revoked_at IS NULL", [T, RH3_DEV_CASE_REF, sidHash]), 1);
-    // El caso RH3 ya pudo confirmarse en otro test de este archivo (misma base): 200 o 409; lo que importa es que la sesion se acepta (ni 404 ni 403).
-    assert.ok([200, 409].includes((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true })).status), "la sesion registrada sirve (RLS por tenant)");
-    const dump = (await env.admin.query<{ row: string }>("SELECT t::text AS row FROM app.case_session t")).rows.map((r) => r.row).join("\n");
-    assert.ok(!dump.includes(sid) && !dump.includes(session) && !dump.includes("@"), "la BD no guarda sid en claro, cookie ni correos");
-    assert.match(dump, /[0-9a-f]{64}/);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND sid_hash = $2", [LOCAL_ONLY_DEV_OTHER_TENANT_ID, sidHash]), 0, "otro tenant no tiene (ni ve) esa sesion");
-
-    const out = await call("/platform/case-session/logout", {});
-    assert.equal(out.status, 200);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.case_session WHERE tenant_id = $1 AND sid_hash = $2 AND revoked_at IS NOT NULL", [T, sidHash]), 1, "logout revoca en la BD");
-    assert.equal((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, {})).status, 404, "cookie robada tras logout");
-    assert.equal((await call(`/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { confirmationGivenOnCasePage: true })).status, 404);
-  } finally {
-    await env.close();
-  }
-});
+// TEST-CNS-1174 (sesion CASE de web en app.case_session) se retiro: la sesion CASE vive solo en platform.platform_session (ADR-010 rev. 5, 6d parte 2); equivalente sobre platform: TEST-CNS-1713.
 
 /** Invitación -> OTP -> pasos de C2 hasta dejar la sesión lista para /decision/submit (o para /decision/subject-mismatch). */
 async function pgVerifiedSession(env: Env, label: string): Promise<{ inv: string; session: string }> {

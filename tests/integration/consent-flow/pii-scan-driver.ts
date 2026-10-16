@@ -3,7 +3,7 @@
 // (el codigo OTP en claro no sale del sink), PRIV (cero PII en URLs/logs). Driver compartido por
 // pii-scan-http.test.ts (memoria, TEST-CNS-952) y postgres/pii-scan-http-pg.test.ts (pg, TEST-CNS-953):
 // recorre por HTTP real los flujos /i -> OTP -> decision, /m -> retiro -> recibo, /r recuperacion,
-// RH3 (staff, cuatro ojos) y consola STAFF (enrolar/invitar), mientras captura TODO lo escrito a
+// intentos RH3 en web (404) y consola STAFF (enrolar/invitar), mientras captura TODO lo escrito a
 // stdout/stderr y todas las URLs observadas (request, Location, href/src/action del HTML, Link).
 // SYNTHETIC DATA ONLY. Este archivo no es un test (no termina en .test.ts).
 
@@ -254,21 +254,19 @@ async function flowRecovery(env: ScanEnv, corpus: Corpus): Promise<void> {
   // (El reintento del enlace de un solo uso lo cubre TEST-CNS-874; aqui el token solo se solicita una vez.)
 }
 
-/** Flujo 4: staff RH3 (cuatro ojos): login dev, registro y co-firma por dos operadores distintos. */
+/**
+ * Flujo 4 (ADR-010 rev. 5, 6d parte 2): RH2/RH3 viven SOLO en el proceso platform. En web, el caso sembrado no se opera: el dev-login CASE y `/platform/*` responden 404 uniforme y esos intentos tambien se
+ * escanean (ninguna cookie, token ni principal en logs/URLs). El recorrido HTTP de platform lo cubre TEST-CNS-1711.
+ */
 async function flowRh3(env: ScanEnv, corpus: Corpus, tenantId: string): Promise<void> {
   await env.seedRh3();
-  const login = async (principalRef: string): Promise<Jar> => {
-    const jar = new Jar();
-    const res = await call(env, corpus, jar, "/__dev/staff-login", { method: "POST", body: { tenantId, caseRef: RH3_DEV_CASE_REF, principalRef } });
-    assert.equal(res.status, 200);
-    return jar;
-  };
-  const op1 = await login(fixtureUuid("staff-synthetic-01"));
-  const first = await call(env, corpus, op1, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation`, { method: "POST", csrfCookie: "__Host-cns-case-csrf", body: { confirmationGivenOnCasePage: true } });
-  assert.equal(first.status, 200);
-  const op2 = await login(fixtureUuid("staff-synthetic-02"));
-  const second = await call(env, corpus, op2, `/platform/rights-cases/${RH3_DEV_CASE_REF}/confirmation/cosign`, { method: "POST", csrfCookie: "__Host-cns-case-csrf", body: {} });
-  assert.equal(second.status, 200);
+  const jar = new Jar();
+  const login = await call(env, corpus, jar, "/__dev/staff-login", { method: "POST", body: { tenantId, caseRef: RH3_DEV_CASE_REF, principalRef: fixtureUuid("staff-synthetic-01") } });
+  assert.equal(login.status, 404);
+  for (const suffix of ["/confirmation", "/confirmation/cosign", "/close"]) {
+    const res = await call(env, corpus, jar, `/platform/rights-cases/${RH3_DEV_CASE_REF}${suffix}`, { method: "POST", csrfCookie: "__Host-cns-case-csrf", body: {} });
+    assert.equal(res.status, 404, suffix);
+  }
 }
 
 /** Flujo 5: consola STAFF (TENANT_ADMIN): enrolar, invitar, ready, send, enlace del sink -> /i/{token}. */
