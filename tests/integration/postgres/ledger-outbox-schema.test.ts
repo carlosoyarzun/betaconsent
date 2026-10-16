@@ -143,8 +143,15 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   const grantOwnerPolicies = all.filter((p) => p.roles.includes("rights_case_lookup_owner"));
   assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["app.rights_case/rights_case_lookup_select"]);
   for (const p of grantOwnerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["rights_case_lookup_owner"], "true", null], p.k);
+  // ADR-010 rev. 5 6d parte 2 (0067, P2-1): UNICA excepcion cerrada y cross-tenant a proposito de transition_owner: solo filas CONFIRMED y solo bajo el efecto que fija case_state.list_confirmed_unapplied (la
+  // funcion que solo ejecuta `worker` y devuelve (tenant_id, revocation_ref)). Ningun rol de runtime tiene policy cross-tenant sobre app.revocation.
+  const recoveryPolicies = all.filter((p) => p.k === "app.revocation/revocation_transition_recovery_select");
+  assert.equal(recoveryPolicies.length, 1, "exactamente una policy de recuperacion");
+  assert.deepEqual([recoveryPolicies[0]!.roles, recoveryPolicies[0]!.with_check], [["transition_owner"], null]);
+  assert.equal(recoveryPolicies[0]!.qual, "((status = 'CONFIRMED'::text) AND (current_setting('case_state.effect'::text, true) = 'list_confirmed_unapplied'::text))");
+  assert.equal(all.filter((p) => p.k.startsWith("app.revocation/") && p.roles.includes("worker") && !p.qual?.includes("current_tenant_id")).length, 0, "el worker no tiene policy cross-tenant");
   for (const p of all) {
-    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p) || recoveryPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

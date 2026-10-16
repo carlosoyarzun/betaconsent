@@ -14,7 +14,7 @@
 --      alcanza solo por platform.alert_case_apply_exhausted (0069), que valida la sesion CASE y deriva el tenant de ella.
 -- 4) Descubrimiento de Revocation CONFIRMED sin APPLIED para el proceso de respaldo del worker SIN ampliar su lectura de app.revocation (P2-1 / F-6D3-SEC-01; reemplaza la policy cross-tenant TO worker de la
 --      primera version de esta migracion, que dejaba al worker leer TODAS las columnas de las filas CONFIRMED de todos los tenants; F-PR6-47 NO es esto: F-PR6-47 son los defectos de QA de 6d parte 2).
---      case_state.list_confirmed_unapplied(limit, skip_refs) RETURNS TABLE(o_tenant_id, o_revocation_ref) (dueno transition_owner, SECURITY DEFINER, search_path fijo, sin SQL dinamico, EXECUTE solo worker): devuelve
+--      case_state.list_confirmed_unapplied(limit, skip_refs) RETURNS TABLE(o_tenant_id, o_revocation_ref) (se crea en 0070; dueno transition_owner, SECURITY DEFINER, search_path fijo, sin SQL dinamico, EXECUTE solo worker): devuelve
 --      SOLO (tenant_id, revocation_ref) de filas status = 'CONFIRMED', sin las refs de `skip_refs` (backoff por fila del worker), maximo 1..100. Lo habilita UNA policy de SELECT TO transition_owner
 --      (revocation_transition_recovery_select) que solo se cumple si la funcion fijo case_state.effect = 'list_confirmed_unapplied' en su propia tx; las demas funciones de transition_owner siguen acotadas a su tenant.
 --      El worker mantiene su policy tenant-acotada de 0042 y NO gana ninguna policy cross-tenant.
@@ -128,39 +128,13 @@ $fn$;
 REVOKE ALL ON FUNCTION ops.record_revocation_apply_alert(text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ops.record_revocation_apply_alert(text, text) TO app_rw, worker;
 
--- C. De vuelta a consent_owner: policy de transition_owner sobre app.revocation (dueno: consent_owner) y retiro de los temporales.
+-- C. De vuelta a consent_owner: policy de transition_owner (la funcion que la usa se crea en 0070) sobre app.revocation (dueno: consent_owner) y retiro de los temporales.
 SET LOCAL ROLE consent_owner;
 DROP POLICY IF EXISTS revocation_worker_recovery_select ON app.revocation; -- version anterior de esta migracion (nunca mergeada): ya no existe
 DROP POLICY IF EXISTS revocation_transition_recovery_select ON app.revocation;
 CREATE POLICY revocation_transition_recovery_select ON app.revocation FOR SELECT TO transition_owner
   USING (status = 'CONFIRMED' AND pg_catalog.current_setting('case_state.effect', true) = 'list_confirmed_unapplied');
 
--- D. La funcion (transition_owner necesita CREATE temporal en case_state, como en 0070).
-SET LOCAL ROLE case_state_owner;
-GRANT CREATE ON SCHEMA case_state TO transition_owner;
-SET LOCAL ROLE transition_owner;
-ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-DROP FUNCTION IF EXISTS case_state.list_confirmed_unapplied(integer, text[]);
-CREATE FUNCTION case_state.list_confirmed_unapplied(p_limit integer, p_skip_refs text[]) RETURNS TABLE (o_tenant_id uuid, o_revocation_ref text)
-  LANGUAGE plpgsql VOLATILE SECURITY DEFINER
-  SET search_path = pg_catalog, pg_temp
-AS $fn$
-BEGIN
-  IF session_user <> 'worker' THEN RAISE EXCEPTION 'llamador no autorizado' USING ERRCODE = 'RC004'; END IF;
-  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 THEN RAISE EXCEPTION 'limite invalido' USING ERRCODE = '22023'; END IF;
-  IF pg_catalog.cardinality(COALESCE(p_skip_refs, ARRAY[]::text[])) > 1000 THEN RAISE EXCEPTION 'lista de omision demasiado grande' USING ERRCODE = '22023'; END IF;
-  PERFORM pg_catalog.set_config('case_state.effect', 'list_confirmed_unapplied', true);
-  RETURN QUERY
-    SELECT r.tenant_id, r.revocation_ref FROM app.revocation r
-     WHERE r.status = 'CONFIRMED' AND r.revocation_ref <> ALL (COALESCE(p_skip_refs, ARRAY[]::text[]))
-     ORDER BY r.created_at, r.revocation_ref LIMIT p_limit;
-END
-$fn$;
-REVOKE ALL ON FUNCTION case_state.list_confirmed_unapplied(integer, text[]) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION case_state.list_confirmed_unapplied(integer, text[]) TO worker;
-SET LOCAL ROLE case_state_owner;
-REVOKE CREATE ON SCHEMA case_state FROM transition_owner;
-SET LOCAL ROLE consent_owner;
 DO $revoke$
 BEGIN
   IF pg_catalog.current_setting('m0067.had_app_usage') <> 'true' THEN REVOKE USAGE ON SCHEMA app FROM security_event_owner; END IF;
@@ -232,7 +206,7 @@ BEGIN
     RAISE EXCEPTION '0067: ops.record_revocation_apply_alert debe tomar el tenant de app.current_tenant_id() y no recibirlo como parametro';
   END IF;
 
-  -- worker: SIN policy cross-tenant propia, sin escritura; el descubrimiento es la funcion de transition_owner (solo CONFIRMED, solo 2 columnas).
+  -- worker: SIN policy cross-tenant propia, sin escritura; el descubrimiento es la funcion case_state.list_confirmed_unapplied (se crea en 0070, que ya esta en la allowlist de transition_owner; solo CONFIRMED, solo 2 columnas).
   SELECT c.oid INTO rv FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'app' AND c.relname = 'revocation';
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = rv AND (p.polname = 'revocation_worker_recovery_select' OR pg_catalog.pg_get_expr(p.polqual, p.polrelid) = 'true'
                AND (SELECT x.oid FROM pg_catalog.pg_roles x WHERE x.rolname = 'worker') = ANY (p.polroles))) THEN
@@ -251,16 +225,5 @@ BEGIN
       RAISE EXCEPTION '0067: la policy de recuperacion alcanza a %', r;
     END IF;
   END LOOP;
-  SELECT p.oid, p.prosrc, p.prosecdef, p.proconfig, p.proacl, p.proowner, pg_catalog.pg_get_userbyid(p.proowner) AS owner INTO f
-    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'case_state' AND p.proname = 'list_confirmed_unapplied';
-  IF f.oid IS NULL OR f.owner <> 'transition_owner' OR NOT f.prosecdef OR f.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp'] OR f.prosrc ~* '\mexecute\M'
-     OR pg_catalog.has_function_privilege('public', f.oid, 'EXECUTE') THEN
-    RAISE EXCEPTION '0067: case_state.list_confirmed_unapplied no es la declarada (dueno, SECURITY DEFINER, search_path, sin SQL dinamico, sin EXECUTE PUBLIC)';
-  END IF;
-  IF COALESCE((SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text, ',' ORDER BY pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text COLLATE "C")
-                 FROM pg_catalog.aclexplode(COALESCE(f.proacl, pg_catalog.acldefault('f', f.proowner))) a WHERE a.grantee <> f.proowner), '') IS DISTINCT FROM 'worker' THEN
-    RAISE EXCEPTION '0067: la ACL de case_state.list_confirmed_unapplied no es exactamente worker';
-  END IF;
-  IF pg_catalog.has_schema_privilege('transition_owner', 'case_state', 'CREATE') THEN RAISE EXCEPTION '0067: el CREATE temporal de transition_owner sobre case_state no quedo revocado'; END IF;
 END
 $assert67$;

@@ -93,7 +93,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     "invitation.invitation_transition_update:UPDATE",
     "outbox.outbox_transition_insert:INSERT", "outbox.outbox_transition_select:SELECT",
     "recovery_token.recovery_token_transition_select:SELECT", "recovery_token.recovery_token_transition_update:UPDATE",
-    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
+    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_recovery_select:SELECT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
     "rights_case.rights_case_transition_insert:INSERT", "rights_case.rights_case_transition_select:SELECT", "rights_case.rights_case_transition_update:UPDATE", // 0038 (PR-5b)
   ]);
   assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["consent_text_hash", "consent_version", "prior_steps_complete", "privacy_notice_version", "purposes", "receipt_ref", "relationship_ref", "state", "steps_recorded"]); // 0049 (PR-b): columnas de las que la base deriva el ledger, solo UPDATE

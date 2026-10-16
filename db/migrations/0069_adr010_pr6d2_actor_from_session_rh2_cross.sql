@@ -147,17 +147,18 @@ CREATE FUNCTION platform.session_case_receipt_actor(p_case_ref text) RETURNS tex
   AS $$
 DECLARE
   v_sid text := NULLIF(pg_catalog.current_setting('app.session_sid', true), '');
-  v_s   record;
+  v_principal text;
+  v_tenant    uuid;
 BEGIN
   IF session_user <> 'platform_rw' OR p_case_ref IS NULL OR v_sid IS NULL OR v_sid !~ '^[0-9a-f]{64}$' THEN
     RAISE EXCEPTION 'sesion CASE no valida' USING ERRCODE = 'RC004';
   END IF;
-  SELECT s.principal_ref, s.tenant_id INTO v_s FROM platform.platform_session s
+  SELECT s.principal_ref, s.tenant_id INTO v_principal, v_tenant FROM platform.platform_session s
    WHERE s.sid_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_sid, 'UTF8')), 'hex') AND s.session_kind = 'CASE' AND s.case_ref = p_case_ref
      AND s.revoked_at IS NULL AND s.expires_at > pg_catalog.now() - interval '15 minutes';
   IF NOT FOUND THEN RAISE EXCEPTION 'sesion CASE no valida' USING ERRCODE = 'RC004'; END IF;
-  PERFORM pg_catalog.set_config('app.tenant_id', v_s.tenant_id::pg_catalog.text, true);
-  RETURN v_s.principal_ref;
+  PERFORM pg_catalog.set_config('app.tenant_id', v_tenant::pg_catalog.text, true);
+  RETURN v_principal;
 END
 $$;
 

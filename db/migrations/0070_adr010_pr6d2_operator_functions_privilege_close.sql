@@ -309,6 +309,23 @@ BEGIN
 END
 $fn$;
 
+-- P2-1 (F-6D3-SEC-01): descubrimiento de CONFIRMED sin APPLIED para el respaldo del worker. Solo (tenant_id, revocation_ref); la policy revocation_transition_recovery_select (0067) solo se cumple bajo el efecto
+-- 'list_confirmed_unapplied' que fija esta funcion. EXECUTE solo worker.
+CREATE FUNCTION case_state.list_confirmed_unapplied(p_limit integer, p_skip_refs text[]) RETURNS TABLE (o_tenant_id uuid, o_revocation_ref text)
+  LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  IF session_user <> 'worker' THEN RAISE EXCEPTION 'llamador no autorizado' USING ERRCODE = 'RC004'; END IF;
+  IF p_limit IS NULL OR p_limit < 1 OR p_limit > 100 THEN RAISE EXCEPTION 'limite invalido' USING ERRCODE = '22023'; END IF;
+  IF pg_catalog.cardinality(COALESCE(p_skip_refs, ARRAY[]::text[])) > 1000 THEN RAISE EXCEPTION 'lista de omision demasiado grande' USING ERRCODE = '22023'; END IF;
+  PERFORM pg_catalog.set_config('case_state.effect', 'list_confirmed_unapplied', true);
+  RETURN QUERY
+    SELECT r.tenant_id, r.revocation_ref FROM app.revocation r
+     WHERE r.status = 'CONFIRMED' AND r.revocation_ref <> ALL (COALESCE(p_skip_refs, ARRAY[]::text[]))
+     ORDER BY r.created_at, r.revocation_ref LIMIT p_limit;
+END
+$fn$;
 -- EXECUTE minimo por rol. current_sequence es interna (solo las funciones de este dueno la llaman).
 REVOKE ALL ON FUNCTION case_state.current_sequence(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.propose_case_verification(text, text, text, integer, integer) FROM PUBLIC;
@@ -319,6 +336,7 @@ REVOKE ALL ON FUNCTION case_state.cosign_case_confirmation(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.close_case(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.alert_apply_exhausted(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.read_case_apply_state(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.list_confirmed_unapplied(integer, text[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION case_state.propose_case_verification(text, text, text, integer, integer) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.withdraw_case_verification_proposal(text, text, integer, integer) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.record_case_confirmation(text) TO rights_operator;
@@ -326,6 +344,7 @@ GRANT EXECUTE ON FUNCTION case_state.cosign_case_confirmation(text) TO rights_op
 GRANT EXECUTE ON FUNCTION case_state.close_case(text, text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.alert_apply_exhausted(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.read_case_apply_state(text) TO rights_operator;
+GRANT EXECUTE ON FUNCTION case_state.list_confirmed_unapplied(integer, text[]) TO worker;
 GRANT EXECUTE ON FUNCTION case_state.approve_case_verification(text, text, integer, integer) TO platform_rw;
 
 -- F-A10-26: R4 solo worker (respaldo); F-A10-28: siembras LOCAL sin app_rw.
@@ -345,12 +364,12 @@ DECLARE
   oid_fn oid;
   spec text[];
   all_fns text[] := ARRAY['propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation', 'cosign_case_confirmation', 'close_case', 'alert_apply_exhausted', 'read_case_apply_state',
-                          'apply_revocation', 'r4_apply', 'current_sequence', 'mark_downstream_emitted', 'record_downstream_ack', 'record_erasure_attestation', 'seed_local_revocation', 'seed_local_rights_case'];
+                          'apply_revocation', 'r4_apply', 'current_sequence', 'list_confirmed_unapplied', 'mark_downstream_emitted', 'record_downstream_ack', 'record_erasure_attestation', 'seed_local_revocation', 'seed_local_rights_case'];
 BEGIN
   -- ACL exacta de las funciones de operador, SYSTEM e internas.
   FOREACH spec SLICE 1 IN ARRAY ARRAY[
       ARRAY['propose_case_verification', 'rights_operator'], ARRAY['withdraw_case_verification_proposal', 'rights_operator'], ARRAY['record_case_confirmation', 'rights_operator'],
-      ARRAY['cosign_case_confirmation', 'rights_operator'], ARRAY['close_case', 'rights_operator'], ARRAY['alert_apply_exhausted', 'rights_operator'], ARRAY['read_case_apply_state', 'rights_operator'], ARRAY['approve_case_verification', 'platform_rw'],
+      ARRAY['cosign_case_confirmation', 'rights_operator'], ARRAY['close_case', 'rights_operator'], ARRAY['alert_apply_exhausted', 'rights_operator'], ARRAY['read_case_apply_state', 'rights_operator'], ARRAY['list_confirmed_unapplied', 'worker'], ARRAY['approve_case_verification', 'platform_rw'],
       ARRAY['apply_revocation', 'worker'], ARRAY['mark_downstream_emitted', 'worker'], ARRAY['record_downstream_ack', 'worker'], ARRAY['record_erasure_attestation', 'worker'],
       ARRAY['r4_apply', ''], ARRAY['current_sequence', ''], ARRAY['seed_local_revocation', ''], ARRAY['seed_local_rights_case', '']] LOOP
     SELECT pg_catalog.count(*) INTO n FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = spec[1];
@@ -371,7 +390,7 @@ BEGIN
       IF pg_catalog.has_function_privilege(r, f.oid, 'EXECUTE') THEN RAISE EXCEPTION '0070: % puede ejecutar case_state.% (F-A10-26/28)', r, f.proname; END IF;
     END LOOP;
     IF f.proname <> 'approve_case_verification' AND pg_catalog.has_function_privilege('platform_rw', f.oid, 'EXECUTE') THEN RAISE EXCEPTION '0070: platform_rw puede ejecutar case_state.% sin SET ROLE', f.proname; END IF;
-    IF f.proname NOT IN ('apply_revocation', 'mark_downstream_emitted', 'record_downstream_ack', 'record_erasure_attestation') AND pg_catalog.has_function_privilege('worker', f.oid, 'EXECUTE') THEN
+    IF f.proname NOT IN ('apply_revocation', 'mark_downstream_emitted', 'record_downstream_ack', 'record_erasure_attestation', 'list_confirmed_unapplied') AND pg_catalog.has_function_privilege('worker', f.oid, 'EXECUTE') THEN
       RAISE EXCEPTION '0070: worker puede ejecutar case_state.% (solo las SYSTEM)', f.proname;
     END IF;
   END LOOP;
