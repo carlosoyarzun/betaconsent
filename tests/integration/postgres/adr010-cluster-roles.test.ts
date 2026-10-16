@@ -12,6 +12,17 @@ import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-c
 import { MIGRATIONS_DIR, pgTest } from "./harness.ts";
 
 const NEW_OWNERS = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner"];
+const EXPECTED_OWNED_RELATIONS: string[] = [
+  "case_state_owner:case_state.revocation",
+  "case_state_owner:case_state.revocation_case_idx",
+  "case_state_owner:case_state.revocation_chain_idx",
+  "case_state_owner:case_state.revocation_open_per_decision_uq",
+  "case_state_owner:case_state.revocation_pkey",
+  "case_state_owner:case_state.revocation_verification_ref_uq",
+  "case_state_owner:case_state.rights_case",
+  "case_state_owner:case_state.rights_case_pkey",
+  "case_state_owner:case_state.rights_case_single_open_uq",
+]; // transition_owner, rights_operator e integrity_verifier: ninguna
 const NOLOGIN_FLAGS = { rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false, rolcanlogin: false };
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
@@ -69,6 +80,13 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
     "SELECT c.relname::text AS relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = 'case_state_owner' AND c.relkind = 'r' ORDER BY 1",
   )).rows.map((x) => x.relname);
   assert.deepEqual(relOwners, ["revocation", "rights_case"]);
+  // P2-7 (revision de seguridad 7c): lista EXACTA de relaciones (todos los relkind fuera de pg_toast/pg_catalog) de los cuatro roles: transition_owner, rights_operator e integrity_verifier no son duenos de ninguna.
+  const ownedRels = (await admin.query<{ rolname: string; rel: string }>(
+    `SELECT r.rolname::text AS rolname, n.nspname::text || '.' || c.relname::text AS rel FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner
+      WHERE r.rolname = ANY($1) AND n.nspname !~ '^pg_' ORDER BY 1, 2`,
+    [["case_state_owner", "transition_owner", "rights_operator", "integrity_verifier"]],
+  )).rows.map((x) => `${x.rolname}:${x.rel}`);
+  assert.deepEqual(ownedRels, EXPECTED_OWNED_RELATIONS);
 
   // 0034 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const before = await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]);

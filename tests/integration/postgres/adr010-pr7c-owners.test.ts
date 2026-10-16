@@ -1,4 +1,4 @@
-// Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-PR7-01 (trojan del migrador), F-6D3-SEC-08, Q16, R-21-1/FN-12; decisiones de Carlos del 2026-10-17 (C-2, C-3, F-6D3-SEC-08, C-6);
+// Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-PR7-01 (trojan del migrador), F-6D3-SEC-08, Q16, R-21-1/FN-12; decisiones de Carlos del 2026-10-16 (C-2, C-3, F-6D3-SEC-08, C-6);
 // specs/db-roles.spec.yaml rev. 0.7 (INV-DBR-01, INV-DBR-03). SYNTHETIC ONLY. Requiere Postgres real (harness.ts).
 // TEST-CNS-1800 roles de PR-7c; 1801 Q16 (tablas en case_state, consent_owner sin DROP/DISABLE TRIGGER/ALTER); 1802 funciones compartidas (shared_fn_owner, sin CREATE OR REPLACE del migrador);
 // 1803 esquemas app/ops de owners NOLOGIN (sin DROP SCHEMA ni DROP de objetos ajenos; consent_owner sigue creando los propios); 1804 recovery reader (F-6D3-SEC-08); 1805 inventario por catalogo igual a la
@@ -170,7 +170,7 @@ pgTest("TEST-CNS-1805 pg (F-PR7-01, C-3): el inventario por catalogo de consent_
     await migrator.query("CREATE FUNCTION app.trojan_1805() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$");
     await migrator.query("CREATE TRIGGER trojan_1805 BEFORE INSERT ON app.outbox FOR EACH ROW EXECUTE FUNCTION app.trojan_1805()");
     const found = await checkConsentOwnerInventory(migrator);
-    assert.ok(found.some((p) => p.includes("V2|fn|app.trojan_1805")), found.join(" | "));
+    assert.ok(found.some((p) => p.includes("V2|fn|consent_owner|app.trojan_1805()")), found.join(" | "));
     assert.ok(found.some((p) => p.includes("V2|trigger|app.outbox|trojan_1805")), found.join(" | "));
   } finally {
     await migrator.query("ROLLBACK");
@@ -187,6 +187,31 @@ pgTest("TEST-CNS-1805 pg (F-PR7-01, C-3): el inventario por catalogo de consent_
     await admin.query("ROLLBACK");
   }
   assert.deepEqual(await checkConsentOwnerInventory(admin), [], "los ROLLBACK dejaron el catalogo intacto");
+  // Revision de seguridad 7c (P1-1, P1-2): cada cambio de superficie del migrador se detecta (cada uno en su transaccion, con ROLLBACK).
+  const mutations: Array<{ name: string; sql: string[]; expect: RegExp }> = [
+    { name: "CREATE OR REPLACE de una funcion de disparador (el dueño sigue siendo shared_fn_owner; se llega por app_schema_owner + SET, R-22)", sql: ["CREATE OR REPLACE FUNCTION app.invitation_otp_exhausted_monotonic() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN NEW; END $$"], expect: /V2\|fn\|shared_fn_owner\|app\.invitation_otp_exhausted_monotonic\(\)/ },
+    { name: "DISABLE ROW LEVEL SECURITY", sql: ["ALTER TABLE app.outbox DISABLE ROW LEVEL SECURITY"], expect: /V2\|acl\|app\.outbox\|false\|/ },
+    { name: "NO FORCE ROW LEVEL SECURITY", sql: ["ALTER TABLE app.outbox NO FORCE ROW LEVEL SECURITY"], expect: /V2\|acl\|app\.outbox\|true\|false\|/ },
+    { name: "ALTER POLICY USING", sql: ["ALTER POLICY outbox_tenant_select ON app.outbox USING (true)"], expect: /V2\|policy\|app\.outbox\|outbox_tenant_select\|/ },
+    { name: "DROP de un CHECK sin funciones", sql: ["ALTER TABLE app.outbox DROP CONSTRAINT outbox_status_enum"], expect: /falta respecto de la allowlist.*V2\|constraint\|app\.outbox\|outbox_status_enum\|/ },
+    { name: "DROP DEFAULT sin funciones", sql: ["ALTER TABLE app.outbox ALTER COLUMN status DROP DEFAULT"], expect: /falta respecto de la allowlist.*V2\|default\|app\.outbox\|status\|/ },
+    { name: "ALTER TRIGGER ... DISABLE (tgenabled)", sql: ["ALTER TABLE app.outbox DISABLE TRIGGER outbox_envelope_immutable"], expect: /V2\|trigger\|app\.outbox\|outbox_envelope_immutable\|D\|/ },
+  ];
+  for (const m of mutations) {
+    await admin.query("BEGIN");
+    try {
+      for (const stmt of m.sql) await admin.query(stmt);
+      const found = await checkConsentOwnerInventory(admin);
+      assert.ok(found.some((p) => m.expect.test(p)), `${m.name}: no detectado -> ${found.join(" | ")}`);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  }
+  assert.deepEqual(await checkConsentOwnerInventory(admin), [], "los ROLLBACK de las mutaciones dejaron el catalogo intacto");
+  // P2-6 (residual R-22 explicito, no "imposible"): consent_owner SI puede hacer SET ROLE a shared_fn_owner y app_schema_owner (membresia SET sin INHERIT, 0080); lo cubre el inventario (V2|fn con md5(prosrc)), no la prevencion.
+  for (const role of ["shared_fn_owner", "app_schema_owner"]) {
+    assert.equal((await admin.query<{ r: boolean }>("SELECT pg_has_role('consent_owner', $1, 'SET') AS r", [role])).rows[0]?.r, true, `consent_owner puede SET ROLE ${role} (R-22)`);
+  }
 });
 
 pgTest("TEST-CNS-1806 pg (C-3): el arranque incluye el inventario y REAL_DATA queda bloqueado mientras F-PR7-01 siga abierto", async (ctx) => {

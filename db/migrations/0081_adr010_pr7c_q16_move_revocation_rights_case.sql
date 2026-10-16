@@ -1,5 +1,5 @@
 -- scope: database
--- Gobierna: ADR-010 rev. 6 §10 fila PR-7 ("mover app.revocation/app.rights_case (Q16)", sub-PR 7c), F-PR7-01, FN-6; decision de Carlos del 2026-10-17 (C-2: Q16 literal, mover las tablas al esquema case_state);
+-- Gobierna: ADR-010 rev. 6 §10 fila PR-7 ("mover app.revocation/app.rights_case (Q16)", sub-PR 7c), F-PR7-01, FN-6; decision de Carlos del 2026-10-16 (C-2: Q16 literal, mover las tablas al esquema case_state);
 -- specs/db-roles.spec.yaml rev. 0.7 (INV-DBR-01, INV-DBR-03); specs/state-machines/revocation.spec.yaml y rights-case.spec.yaml. Regla de Carlos (2026-10-01): las migraciones mergeadas no se editan.
 --
 -- Que cambia:
@@ -22,7 +22,7 @@ BEGIN
     SELECT pg_catalog.md5(pg_catalog.string_agg(
              n.nspname::pg_catalog.text || '.' || p.proname::pg_catalog.text || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')|' || pg_catalog.pg_get_userbyid(p.proowner)::pg_catalog.text || '|' || p.prosecdef::pg_catalog.text || '|'
              || COALESCE(p.proconfig::pg_catalog.text, '') || '|' || COALESCE(p.proacl::pg_catalog.text, '') || '|' || p.provolatile::pg_catalog.text || '|' || p.proretset::pg_catalog.text || '|' || p.prorettype::pg_catalog.text || '|'
-             || COALESCE(p.proargnames::pg_catalog.text, '') || '|' || p.prolang::pg_catalog.text || '|' || p.proleakproof::pg_catalog.text || '|' || p.proparallel::pg_catalog.text,
+             || COALESCE(p.proargnames::pg_catalog.text, '') || '|' || p.prolang::pg_catalog.text || '|' || p.proleakproof::pg_catalog.text || '|' || p.proparallel::pg_catalog.text || '|' || pg_catalog.md5(p.prosrc),
              E'\n' ORDER BY n.nspname::pg_catalog.text COLLATE "C", p.proname::pg_catalog.text COLLATE "C", pg_catalog.pg_get_function_identity_arguments(p.oid) COLLATE "C"))
       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
      WHERE p.prosrc ~ '\mapp\.(revocation|rights_case)\M'), ''), true);
@@ -179,7 +179,7 @@ BEGIN
   SELECT COALESCE(pg_catalog.md5(pg_catalog.string_agg(
            n2.nspname::pg_catalog.text || '.' || p.proname::pg_catalog.text || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')|' || pg_catalog.pg_get_userbyid(p.proowner)::pg_catalog.text || '|' || p.prosecdef::pg_catalog.text || '|'
            || COALESCE(p.proconfig::pg_catalog.text, '') || '|' || COALESCE(p.proacl::pg_catalog.text, '') || '|' || p.provolatile::pg_catalog.text || '|' || p.proretset::pg_catalog.text || '|' || p.prorettype::pg_catalog.text || '|'
-           || COALESCE(p.proargnames::pg_catalog.text, '') || '|' || p.prolang::pg_catalog.text || '|' || p.proleakproof::pg_catalog.text || '|' || p.proparallel::pg_catalog.text,
+           || COALESCE(p.proargnames::pg_catalog.text, '') || '|' || p.prolang::pg_catalog.text || '|' || p.proleakproof::pg_catalog.text || '|' || p.proparallel::pg_catalog.text || '|' || pg_catalog.md5(pg_catalog.regexp_replace(p.prosrc, '\mcase_state\.(revocation|rights_case)\M', 'app.\1', 'g')), -- P2-3: el cuerpo, con el nombre nuevo devuelto al viejo, es identico
            E'\n' ORDER BY n2.nspname::pg_catalog.text COLLATE "C", p.proname::pg_catalog.text COLLATE "C", pg_catalog.pg_get_function_identity_arguments(p.oid) COLLATE "C")), '')
     INTO digest_after
     FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n2 ON n2.oid = p.pronamespace
@@ -187,6 +187,10 @@ BEGIN
   -- (Funciones que ya nombraban case_state.revocation antes —ninguna en 0037-0070— entrarian en la huella posterior y no en la anterior: la comparacion lo detectaria.)
   IF pg_catalog.current_setting('cns.pr7c_fn_digest', true) <> '' AND digest_after IS DISTINCT FROM pg_catalog.current_setting('cns.pr7c_fn_digest', true) THEN -- (en una reaplicacion no hay funciones con el nombre viejo: huella vacia, nada que comparar)
     RAISE EXCEPTION '0081: la huella de las funciones recreadas cambio (dueño, SECURITY DEFINER, search_path, ACL, volatilidad o firma)';
+  END IF;
+  -- Ninguna funcion de case_state es ejecutable por PUBLIC (integrity_reconciler y otros tienen USAGE del esquema).
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE')) THEN
+    RAISE EXCEPTION '0081: una funcion de case_state es ejecutable por PUBLIC';
   END IF;
   -- Los CREATE temporales quedaron revocados.
   FOREACH r IN ARRAY ARRAY['transition_owner', 'consent_owner', 'consent_migrator', 'app_rw', 'platform_rw', 'worker', 'integrity_reconciler', 'rights_case_lookup_owner'] LOOP

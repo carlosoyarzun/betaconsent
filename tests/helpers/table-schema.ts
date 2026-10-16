@@ -1,4 +1,4 @@
-// Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c, Q16; decision de Carlos del 2026-10-17, C-2): app.revocation y app.rights_case pasan al esquema case_state (0081).
+// Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c, Q16; decision de Carlos del 2026-10-16, C-2): app.revocation y app.rights_case pasan al esquema case_state (0081).
 // Helper de tests: esquema y dueño de las tablas de agregado que recorren los tests genericos. Solo tests.
 
 const CASE_STATE_TABLES: readonly string[] = ["revocation", "rights_case"];

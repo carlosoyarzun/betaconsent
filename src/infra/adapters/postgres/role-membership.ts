@@ -20,7 +20,7 @@ export const DEFAULT_DB_ROLE_MODE: DbRoleMode = "IT0B_SYNTHETIC";
 export const ACTIVE_DB_ROLE_MODES: readonly DbRoleMode[] = ["IT0B_SYNTHETIC"];
 
 /**
- * ADR-010 rev. 6 PR-7c (decision de Carlos del 2026-10-17, C-3): hallazgos que BLOQUEAN el modo REAL_DATA mientras sigan abiertos. F-PR7-01 (P1 hoy, P0 antes de datos reales): consent_owner (el migrador) sigue
+ * ADR-010 rev. 6 PR-7c (decision de Carlos del 2026-10-16, C-3): hallazgos que BLOQUEAN el modo REAL_DATA mientras sigan abiertos. F-PR7-01 (P1 hoy, P0 antes de datos reales): consent_owner (el migrador) sigue
  * siendo dueño de las tablas app.* y ops.* que escriben las funciones de otros owners (detectado por el inventario de consent-owner-inventory.ts, no prevenido). Se retira de esta lista solo cuando C-3 (a)
  * este implementado (el migrador no es dueño de nada en REAL_DATA) y lo apruebe Carlos. startup-checks.ts y resolveDbRoleMode rechazan REAL_DATA mientras la lista no este vacia.
  */

@@ -1,5 +1,5 @@
 -- scope: database
--- Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-6D3-SEC-08 (decision de Carlos del 2026-10-17: rol NOLOGIN propio dueño de case_state.list_confirmed_unapplied, con la policy TO ese rol en vez de la policy
+-- Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-6D3-SEC-08 (decision de Carlos del 2026-10-16: rol NOLOGIN propio dueño de case_state.list_confirmed_unapplied, con la policy TO ese rol en vez de la policy
 -- cross-tenant de transition_owner), F-6D3-SEC-01 (descubrimiento de CONFIRMED sin APPLIED para el respaldo R4 del worker), ADR-010 rev. 5 §4.2.a (G-3); specs/db-roles.spec.yaml rev. 0.7 (INV-DBR-01).
 -- Depende de 0080 (rol de cluster) y 0081 (case_state.revocation). Regla de Carlos (2026-10-01): las migraciones mergeadas no se editan; 0067 y 0070 siguen siendo las vigentes hasta aqui y esta las corrige.
 --

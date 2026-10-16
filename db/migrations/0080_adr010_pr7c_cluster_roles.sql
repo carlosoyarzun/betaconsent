@@ -1,5 +1,5 @@
 -- scope: cluster
--- Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-PR7-01 (P1 hoy; P0 antes de REAL_DATA), F-6D3-SEC-08, Q16, R-21-1/FN-12; decisiones de Carlos del 2026-10-17 (C-2: Q16 literal + esquemas app/ops a owners NOLOGIN;
+-- Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-PR7-01 (P1 hoy; P0 antes de REAL_DATA), F-6D3-SEC-08, Q16, R-21-1/FN-12; decisiones de Carlos del 2026-10-16 (C-2: Q16 literal + esquemas app/ops a owners NOLOGIN;
 -- C-3: funciones compartidas a un owner NOLOGIN propio; F-6D3-SEC-08: rol propio para list_confirmed_unapplied); specs/db-roles.spec.yaml rev. 0.7 (INV-DBR-01, INV-DBR-03).
 -- Regla de Carlos (2026-10-01): las migraciones mergeadas no se editan; esta es nueva.
 --

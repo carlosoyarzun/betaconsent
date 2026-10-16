@@ -107,7 +107,7 @@ DDL del ledger deba declararse y revisarse (`0026:18`).
 
 Un proceso = un rol LOGIN = un pool (`src/infra/adapters/postgres/runtime-process.ts`): web=`app_rw`, platform=`platform_rw`, worker=`worker`, verifier=`integrity_verifier`. `0042` quita a `app_rw` el EXECUTE de R5–R7 (solo `worker`; R4 queda hasta la enmienda P6-2) y concede, de forma interina pendiente de ratificación, SELECT del worker sobre `app.revocation`/`integrity.audit_event` bajo RLS (F-PR6-20) y USAGE `app`/`ops` + SELECT `ops.db_catalog` al verifier (F-PR6-21).
 
-## PR-7c (ADR-010 rev. 6): el migrador deja de ser dueño de lo compartido (F-PR7-01, Q16; decisiones de Carlos 2026-10-17)
+## PR-7c (ADR-010 rev. 6): el migrador deja de ser dueño de lo compartido (F-PR7-01, Q16; decisiones de Carlos 2026-10-16)
 
 - `0080` (cluster): roles NOLOGIN `app_schema_owner`, `ops_schema_owner`, `shared_fn_owner`, `revocation_recovery_reader` (`consent_owner` con SET sin herencia solo en IT0B_SYNTHETIC).
 - `0081` (Q16): `app.revocation` y `app.rights_case` pasan a `case_state.revocation` / `case_state.rights_case`, de `case_state_owner`. Las ~30 funciones que las nombran se recrean por catalogo (cuerpo vigente con el nombre nuevo) por cada dueño con `SET LOCAL ROLE` literal; una huella (dueño, SECURITY DEFINER, search_path, ACL, firma) prueba que nada mas cambio. USAGE de `case_state` para `integrity_reconciler` y `rights_case_lookup_owner`.

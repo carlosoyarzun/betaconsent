@@ -1,5 +1,5 @@
 -- scope: database
--- Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-PR7-01 (P1 hoy; P0 antes de REAL_DATA; funciones compartidas y dueños de esquema), R-21-1/FN-12; decisiones de Carlos del 2026-10-17 (C-2: esquemas app y ops a
+-- Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7c), F-PR7-01 (P1 hoy; P0 antes de REAL_DATA; funciones compartidas y dueños de esquema), R-21-1/FN-12; decisiones de Carlos del 2026-10-16 (C-2: esquemas app y ops a
 -- owners NOLOGIN; C-3: funciones compartidas a un owner NOLOGIN propio); specs/db-roles.spec.yaml rev. 0.7 (INV-DBR-01, INV-DBR-03). Depende de 0080 (roles de cluster) y 0081. Regla de Carlos (2026-10-01): las migraciones
 -- mergeadas no se editan.
 --
@@ -17,16 +17,20 @@
 
 SET LOCAL ROLE consent_owner;
 
--- 1. Funciones compartidas. ALTER FUNCTION ... OWNER TO exige CREATE del nuevo dueño en el esquema de la funcion (temporal).
+-- 1. Funciones de consent_owner que otros roles ejecutan: las tres compartidas (app.current_tenant_id(), app.is_reserved_email(text), ops.catalog_environment()) y TODAS las funciones de disparador de app/ops
+--    (app.case_session_guard, app.invitation_otp_exhausted_monotonic, app.outbox_envelope_immutable, app.staff_session_guard, ops.access_log_immutable, ops.db_catalog_immutable: SECURITY INVOKER, ENABLE ALWAYS,
+--    ejecutadas por transition_owner, outbox_claimer, etc.; con CREATE OR REPLACE del migrador correrian como esos roles; P1-1 de la revision de seguridad). Se transfiere toda funcion de consent_owner en app/ops
+--    (el bucle no filtra por nombre ni firma: ninguna sobrecarga queda atras, y consent_owner no queda dueño de ninguna funcion). ALTER FUNCTION ... OWNER TO exige CREATE del nuevo dueño en el esquema (temporal). FUNCTION ... OWNER TO exige CREATE del nuevo dueño en el esquema de la funcion (temporal).
 DO $shared$
 DECLARE
   f record;
 BEGIN
   FOR f IN SELECT n.nspname::pg_catalog.text AS sch, p.proname::pg_catalog.text AS fname, pg_catalog.pg_get_function_identity_arguments(p.oid) AS args
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-            WHERE pg_catalog.pg_get_userbyid(p.proowner) = 'consent_owner'
-              AND ((n.nspname = 'app' AND p.proname IN ('current_tenant_id', 'is_reserved_email')) OR (n.nspname = 'ops' AND p.proname = 'catalog_environment'))
-            ORDER BY 1, 2 LOOP
+            WHERE pg_catalog.pg_get_userbyid(p.proowner) = 'consent_owner' AND p.prokind = 'f'
+              AND n.nspname IN ('app', 'ops')
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND e.objid = p.oid AND e.deptype = 'e')
+            ORDER BY 1, 2, 3 LOOP
     EXECUTE pg_catalog.format('GRANT USAGE, CREATE ON SCHEMA %I TO shared_fn_owner', f.sch);
     EXECUTE pg_catalog.format('ALTER FUNCTION %I.%I(%s) OWNER TO shared_fn_owner', f.sch, f.fname, f.args);
     EXECUTE pg_catalog.format('REVOKE CREATE ON SCHEMA %I FROM shared_fn_owner', f.sch); -- conserva USAGE (resolver sus funciones por nombre en ceremonias); nunca CREATE
@@ -69,7 +73,8 @@ DECLARE
 BEGIN
   -- Funciones compartidas: dueño, SECURITY DEFINER/volatilidad intactos (solo cambia el dueño) y ACL de EXECUTE sin consent_owner ni PUBLIC.
   FOREACH spec SLICE 1 IN ARRAY ARRAY[ARRAY['app', 'current_tenant_id'], ARRAY['app', 'is_reserved_email'], ARRAY['ops', 'catalog_environment']] LOOP
-    SELECT p.oid, p.proowner, p.proacl, p.proconfig INTO fn FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = spec[1] AND p.proname = spec[2];
+    SELECT p.oid, p.proowner, p.proacl, p.proconfig INTO fn FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
+     WHERE s.nspname = spec[1] AND p.proname = spec[2] AND p.proargtypes::pg_catalog.text = (CASE spec[2] WHEN 'is_reserved_email' THEN '25' ELSE '' END); -- firma fija (P2-4)
     IF fn.oid IS NULL OR pg_catalog.pg_get_userbyid(fn.proowner) <> 'shared_fn_owner' THEN RAISE EXCEPTION '0082: %.% no pertenece a shared_fn_owner', spec[1], spec[2]; END IF;
     IF fn.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp'] THEN RAISE EXCEPTION '0082: %.% perdio el search_path fijo', spec[1], spec[2]; END IF;
     IF pg_catalog.has_function_privilege('public', fn.oid, 'EXECUTE') THEN RAISE EXCEPTION '0082: PUBLIC puede ejecutar %.%', spec[1], spec[2]; END IF;
@@ -83,7 +88,17 @@ BEGIN
       IF spec[2] <> 'is_reserved_email' AND NOT pg_catalog.has_function_privilege(r, fn.oid, 'EXECUTE') THEN RAISE EXCEPTION '0082: % perdio EXECUTE de %.%', r, spec[1], spec[2]; END IF;
     END LOOP;
   END LOOP;
-  -- Ninguna funcion de consent_owner es referida por objetos de otros owners: las unicas funciones de consent_owner que quedan son disparadores de SUS propias tablas.
+  -- consent_owner ya no es dueño de ninguna funcion de usuario (P1-1): las de disparador tambien pasaron a shared_fn_owner. Cualquier funcion futura que cree el migrador aparece en el inventario V2|fn y en V1 si otro owner la usa.
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.proowner = (SELECT x.oid FROM pg_catalog.pg_roles x WHERE x.rolname = 'consent_owner')
+              AND p.pronamespace NOT IN (SELECT s.oid FROM pg_catalog.pg_namespace s WHERE s.nspname IN ('pg_catalog', 'information_schema'))
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend e WHERE e.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND e.objid = p.oid AND e.deptype = 'e')) THEN
+    RAISE EXCEPTION '0082: consent_owner sigue siendo dueño de una funcion de usuario';
+  END IF;
+  -- pg_maintain (PG17+): ningun rol es miembro (MAINTAIN sobre todas las relaciones).
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles x ON x.oid = m.roleid WHERE x.rolname = 'pg_maintain') THEN
+    RAISE EXCEPTION '0082: un rol es miembro de pg_maintain';
+  END IF;
+  -- Ninguna funcion de consent_owner es referida por objetos de otros owners (defensa: el bucle ya no encuentra funciones de consent_owner).
   FOR fn IN SELECT n2.nspname::pg_catalog.text AS sch, p.proname::pg_catalog.text AS fname, p.oid
               FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n2 ON n2.oid = p.pronamespace WHERE pg_catalog.pg_get_userbyid(p.proowner) = 'consent_owner' LOOP
     -- referidas desde cuerpos de funciones de OTROS dueños (por nombre calificado)
