@@ -94,7 +94,6 @@ async function boot(ctx: PgTestContext, roster: readonly StaffPrincipal[], direc
     environment: "LOCAL",
     staffIdentity,
     staffConsole: bundle.staffConsole,
-    caseSessions: bundle.caseSessions,
     storeMode: "postgres",
     staffRosterCursorKey: deriveStaffRosterCursorKey(randomBytes(32)),
     staffUi: { contextRef: LECTORPRO_BETA_CONFIG.contextRef, consentVersion: "v1-dev" },

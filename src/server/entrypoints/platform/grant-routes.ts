@@ -40,7 +40,7 @@ export interface GrantRoutesDeps extends OperatorLimitDeps {
 const MAX_BODY_BYTES = 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SID_RE = /^[0-9a-f]{64}$/;
-const ACTIONS: ReadonlySet<string> = new Set(["REQUEST_GRANT", "APPROVE_GRANT"]);
+const ACTIONS: ReadonlySet<string> = new Set(["REQUEST_GRANT", "APPROVE_GRANT", "PROPOSE_CASE_VERIFICATION", "APPROVE_CASE_VERIFICATION", "WITHDRAW_CASE_VERIFICATION"]);
 const b64u = (n: number): string => randomBytes(n).toString("base64url");
 const sha256Hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 

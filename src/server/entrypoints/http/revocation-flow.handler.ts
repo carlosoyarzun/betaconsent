@@ -15,6 +15,7 @@
 import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../../modules/common/errors.ts";
+import { RevocationApplyUnavailableError } from "../../modules/revocation/apply-guard.ts";
 import { assertCsrfAndOrigin } from "../../modules/common/guards.ts";
 import type { TenantHandlePort } from "../../ports/tenant-handle.port.ts";
 import type { ManageHandlePolicy } from "../../modules/revocation/manage-handle-policy.config.ts";
@@ -64,6 +65,11 @@ const RECOVERY_TOKEN_HASH_MAX_INPUT_LENGTH = 512;
 
 function uniformNotFound(): HttpResult {
   return { status: 404, body: { status: 404 } };
+}
+
+/** ADR-010 rev. 5 (G-3, F-PR6-25): R3/R3r + R4 agotaron sus reintentos o la Revocation quedo CONFIRMED sin APPLIED: error uniforme 503, SIN acuse de exito ni texto para el titular (LEGAL DECISION). */
+function applyUnavailable(): HttpResult {
+  return { status: 503, body: { code: "GUARD_EVALUATOR_UNAVAILABLE", status: 503, correlationId: randomUUID() }, extraHeaders: { "Cache-Control": "no-store" } };
 }
 
 function csrfRejected(): HttpResult {
@@ -270,6 +276,7 @@ export async function handleConfirmRevocation(
     const applied = await confirmRevocation(ports.revocation, session.tenantId, session.revocationRef);
     return { status: 200, body: { revocationRef: applied.revocationRef, status: applied.status } };
   } catch (err) {
+    if (err instanceof RevocationApplyUnavailableError) return applyUnavailable();
     if (err instanceof DomainError) {
       if (err.code === "ERR-CM-01") return uniformNotFound();
       return problem(409, err.code);
@@ -439,7 +446,13 @@ export async function handleRecoveryRevoke(
     return problem(422, "ERR-CM-06");
   }
 
-  const outcome = await revokeWithRecoveryLinkByHash(ports.revocation, handle.h);
+  let outcome: Awaited<ReturnType<typeof revokeWithRecoveryLinkByHash>>;
+  try {
+    outcome = await revokeWithRecoveryLinkByHash(ports.revocation, handle.h);
+  } catch (err) {
+    if (err instanceof RevocationApplyUnavailableError) return applyUnavailable();
+    throw err;
+  }
   if (outcome.kind === "CONFIRMED") {
     return { status: 200, body: { revocationRef: outcome.revocationRef, state: "CONFIRMED", receiptDelivery: "BOUND_CHANNEL" } };
   }

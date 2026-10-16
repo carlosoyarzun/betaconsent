@@ -84,21 +84,9 @@ import {
   resolveRecoveryConfirmView,
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
-import {
-  handleApproveCaseVerification,
-  handleWithdrawCaseVerificationProposal,
-  handleCaseLogout,
-  handleCosignCaseConfirmation,
-  handleDevStaffLogin,
-  handleProposeCaseVerification,
-  handleRecordCaseConfirmation,
-  type CaseConfirmationPorts } from "./case-confirmation.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
-import { deriveCaseSessionKey } from "./case-session.ts";
-import type { CaseSessionStorePort } from "../../ports/case-session-store.port.ts";
-import { createInMemoryCaseSessionStore } from "../../../infra/adapters/in-memory-case-session-store.adapter.ts";
-import { createPgCaseSessionStore } from "../../../infra/adapters/postgres/case-session.adapter.ts";
+import { createApplyGuardConfig, createTenantAlertSink } from "../../../infra/adapters/postgres/apply-guard.adapter.ts";
 import { deriveStaffSessionKey } from "./staff-session.ts";
 import { createInMemoryStaffSessionStore } from "../../../infra/adapters/in-memory-staff-session-store.adapter.ts";
 import { createPgStaffSessionStore } from "../../../infra/adapters/postgres/staff-session.adapter.ts";
@@ -206,15 +194,10 @@ interface ConsentFlowHttpServerBaseOptions {
   readonly staffUi?: StaffUiConfig;
   /** CA-138: reloj de la sesion STAFF (expiracion absoluta, inactividad, flash, cursor). Solo tests; por defecto Date.now. */
   readonly staffNowMs?: () => number;
-  /** CA-139: registro servidor de sesiones CASE (app.case_session en Postgres, RLS FORCE por tenant). Por defecto in-memory solo con
-   * storeMode=memory; con storeMode=postgres es OBLIGATORIO (fail-closed: nunca una sesion CASE en memoria sobre una base real). */
-  readonly caseSessions?: CaseSessionStorePort;
   /** Flujo del invitado v2 (D-03): canal de mensajes al canal verificado. Por defecto un sink in-memory (sin red). */
   readonly guestMessageChannel?: GuestMessageChannelPort;
   /** Origen público del enlace de gestión en el mensaje (sintético; por defecto https://consent.example.invalid). */
   readonly publicBaseUrl?: string;
-  /** CA-139: reloj de la sesion CASE (expiracion absoluta, inactividad). Solo tests; por defecto Date.now. */
-  readonly caseNowMs?: () => number;
 }
 
 /** CA-125: cableado por defecto (in-memory) de la consola STAFF. `policy` (P-10 + deliveryChannel,
@@ -428,8 +411,6 @@ export function createPostgresFlowPorts(
   ports: ConsentFlowPorts;
   revocationPorts: RevocationFlowPorts;
   staffConsole: StaffConsolePorts & { readonly invitationLinkSink: InMemoryInvitationLinkChannelSink };
-  /** CA-139: registro servidor de sesiones CASE (app.case_session). */
-  caseSessions: CaseSessionStorePort;
 } {
   assertKeyMaterial(cfg.otpSecret, "otpSecret", "CNS_OTP_SECRET");
   const o = store.outsideTx;
@@ -470,6 +451,8 @@ export function createPostgresFlowPorts(
       consentDecisionRepo: o.consentDecisionRepo,
       uow: store.uow,
       tenantResolver: store.tenantResolver,
+      // ADR-010 rev. 5 §4.2.a (G-3): reintentos acotados de la tx completa R3/R3r + R4, commit ambiguo y alerta en tx separada.
+      applyGuard: createApplyGuardConfig(createTenantAlertSink(store.uow)),
     },
     rightsCase: { rightsCaseRepo: o.rightsCaseRepo, ledger: o.ledger, uow: store.uow },
   };
@@ -492,7 +475,7 @@ export function createPostgresFlowPorts(
     ...(cfg.subjectDirectory ? { subjectDirectory: cfg.subjectDirectory } : {}),
     invitationLinkSink,
   };
-  return { ports: { invitation, otp, decision, decisionMakerRefKey: cfg.decisionMakerRefKey }, revocationPorts, staffConsole, caseSessions: createPgCaseSessionStore(store.uow) };
+  return { ports: { invitation, otp, decision, decisionMakerRefKey: cfg.decisionMakerRefKey }, revocationPorts, staffConsole };
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
@@ -703,8 +686,6 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const recoveryCsrfKey = deriveRecoveryCsrfKey(sessionSecret);
   const invitationHandleKey = deriveLinkHandleKey(sessionSecret, INVITATION_HANDLE_HKDF_INFO);
   const manageEntryHandleKey = deriveLinkHandleKey(sessionSecret, MANAGE_ENTRY_HANDLE_HKDF_INFO);
-  // CA-128: clave propia de la sesión CASE (case-session.ts), aislada de las de arriba.
-  const caseSessionKey = deriveCaseSessionKey(sessionSecret);
   // LOCAL + CI / SYNTHETIC DATA ONLY — APR-IDP PENDING: roster vacío por defecto (fail-closed,
   // GRD-RC-15 ERR-RC-10 siempre sin override explícito).
   const staffIdentity: StaffIdentityPort = options.staffIdentity ?? createInMemoryStaffIdentityAdapter([]);
@@ -714,15 +695,6 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   // CA-138: un reloj inyectado (tests) viaja en los puertos para que TODA validacion de sesion use el mismo instante.
   const staffConsolePorts: StaffConsolePorts = options.staffNowMs ? { ...staffConsoleBase, nowMs: options.staffNowMs } : staffConsoleBase;
   // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion); validada arriba.
-  if (options.storeMode === "postgres" && !options.caseSessions) {
-    throw new Error("createConsentFlowHttpServer: storeMode=postgres requiere `caseSessions` (CA-139, app.case_session); sin registro de sesiones CASE no hay sesion valida.");
-  }
-  const caseConfirmationPorts: CaseConfirmationPorts = {
-    revocation: revocationPorts.revocation,
-    staffIdentity,
-    sessions: options.caseSessions ?? createInMemoryCaseSessionStore(),
-    ...(options.caseNowMs ? { nowMs: options.caseNowMs } : {}),
-  };
 
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "";
@@ -1226,71 +1198,23 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     };
 
     if (path === "/__dev/staff-login") {
-      // CA-125: un principal TENANT_ADMIN recibe la sesión STAFF (staff-session.ts); cualquier
-      // otro rol sigue el login CASE de CA-128. El rol lo decide el roster, no el body.
+      // ADR-010 rev. 5 (6d parte 2, P6-4, GRD-CM-13): se ELIMINA el dev-login CASE de web. Este login solo emite la sesion STAFF (TENANT_ADMIN, Q-17: N7 solo aplica a CASE/PLATFORM); cualquier otro rol = 404.
       const requestedPrincipal = (request.body as { principalRef?: unknown } | undefined)?.principalRef;
       const requestedRole = typeof requestedPrincipal === "string" ? (await staffIdentity.findByPrincipalRef(requestedPrincipal))?.role : undefined;
       if (requestedRole === "TENANT_ADMIN") {
         writeResult(res, config, await handleDevStaffConsoleLogin(request, options.environment ?? "DEV", staffConsolePorts, config, staffSessionKey));
         return;
       }
-      // CA-128 (Carlos 2026-09-28, opción (ii)): mismo guard GRD-CM-13 que /__dev/otp-sink;
-      // handleDevStaffLogin ya rechaza fuera de LOCAL, aquí solo se enruta.
-      const result = await handleDevStaffLogin(
-        request,
-        options.environment ?? "DEV",
-        { staffIdentity, uow: revocationPorts.revocation.uow, sessions: caseConfirmationPorts.sessions, ...(options.caseNowMs ? { nowMs: options.caseNowMs } : {}) },
-        config,
-        caseSessionKey,
-      );
-      writeResult(res, config, result);
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: 404 }));
       return;
     }
 
-    if (path === "/platform/case-session/logout") {
-      // API-CNS-193 (CA-139): logout de la sesion CASE; revoca el sid en servidor.
-      writeResult(res, config, await handleCaseLogout(request, caseConfirmationPorts, config, caseSessionKey));
+    // ADR-010 rev. 5 (opcion A de Carlos, 2026-10-15): `/platform/*` NO se sirve en web (404); vive solo en el proceso platform.
+    if (path.startsWith("/platform/")) {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: 404 }));
       return;
-    }
-
-    if (path.startsWith("/platform/rights-cases/") && path.includes("/verification-proposals")) {
-      // API-CNS-136/137: .../{caseRef}/verification-proposals y .../{caseRef}/verification-proposals/{proposalRef}/approval.
-      const rest = path.slice("/platform/rights-cases/".length);
-      const parts = rest.split("/");
-      if (parts.length === 2 && parts[0] && parts[1] === "verification-proposals") {
-        writeResult(res, config, await handleProposeCaseVerification(request, parts[0], caseConfirmationPorts, config, caseSessionKey));
-        return;
-      }
-      if (parts.length === 4 && parts[0] && parts[1] === "verification-proposals" && parts[2] && parts[3] === "approval") {
-        writeResult(res, config, await handleApproveCaseVerification(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey, options.environment ?? "DEV"));
-        return;
-      }
-      if (parts.length === 4 && parts[0] && parts[1] === "verification-proposals" && parts[2] && parts[3] === "withdrawal") {
-        // API-CNS-140: retiro de la propuesta PENDING por su proponente.
-        writeResult(res, config, await handleWithdrawCaseVerificationProposal(request, parts[0], parts[2], caseConfirmationPorts, config, caseSessionKey));
-        return;
-      }
-    }
-
-    if (path.startsWith("/platform/rights-cases/") && path.endsWith("/confirmation/cosign")) {
-      // API-CNS-139: mismo criterio de un solo segmento intermedio que API-CNS-138.
-      const caseRef = path.slice("/platform/rights-cases/".length, path.length - "/confirmation/cosign".length);
-      if (caseRef.length > 0 && !caseRef.includes("/")) {
-        const result = await handleCosignCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
-        writeResult(res, config, result);
-        return;
-      }
-    }
-
-    if (path.startsWith("/platform/rights-cases/") && path.endsWith("/confirmation")) {
-      // API-CNS-138: caseRef es el único segmento intermedio; un path con "/" adicional
-      // (intento de traversal o de apuntar a otra sub-ruta) nunca resuelve, cae al 404 genérico.
-      const caseRef = path.slice("/platform/rights-cases/".length, path.length - "/confirmation".length);
-      if (caseRef.length > 0 && !caseRef.includes("/")) {
-        const result = await handleRecordCaseConfirmation(request, caseRef, caseConfirmationPorts, config, caseSessionKey);
-        writeResult(res, config, result);
-        return;
-      }
     }
 
     // CA-125: consola STAFF (API-CNS-105/110/111/112). invitationRef es el único segmento

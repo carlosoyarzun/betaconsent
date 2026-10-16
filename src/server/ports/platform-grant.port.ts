@@ -5,7 +5,7 @@
 // Un DENY de la base devuelve null (la evidencia ya esta confirmada); un error de base lanza PlatformDeniedError uniforme. Cero PII: refs opacas.
 
 /** Acciones de step-up que implementa la parte 1 de 6d (el enum de la base admite mas; llegan con sus funciones). */
-export type CaseStepUpAction = "REQUEST_GRANT" | "APPROVE_GRANT";
+export type CaseStepUpAction = "REQUEST_GRANT" | "APPROVE_GRANT" | "PROPOSE_CASE_VERIFICATION" | "APPROVE_CASE_VERIFICATION" | "WITHDRAW_CASE_VERIFICATION";
 
 /** P-51 por configuracion del proceso (sin default fuera de LOCAL). */
 export interface StepUpLimit {

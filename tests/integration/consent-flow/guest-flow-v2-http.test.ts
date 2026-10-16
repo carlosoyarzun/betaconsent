@@ -693,7 +693,7 @@ test("TEST-CNS-1414: con store Postgres o entorno distinto de LOCAL el servidor 
   const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const common = { sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports: base };
   assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "STAGING" }), /guestMessageChannel/);
-  assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "LOCAL", storeMode: "postgres", caseSessions: {} as never }), /guestMessageChannel/);
+  assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "LOCAL", storeMode: "postgres" }), /guestMessageChannel/);
   // LOCAL en memoria conserva el sink por defecto.
   createConsentFlowHttpServer({ ...common, environment: "LOCAL" }).close();
 });

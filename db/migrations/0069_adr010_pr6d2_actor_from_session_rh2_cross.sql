@@ -1,7 +1,7 @@
 -- scope: database
 -- Gobierna: ADR-010 rev. 5 (enmienda rev. c, aceptada por Carlos el 2026-10-15) §4.2.d y §10 fila 6d (funciones de operador con actor desde la sesion: platform.require_case_actor / require_platform_actor, EXECUTE solo
 -- transition_owner), §6 (GRD-RC-10 sin relajar: "el aprobador debe ser PRIVACY_LEGAL/SECURITY, distinto del solicitante y del aprobador de RH2 del caso"; P6-5: aprobador de RH2 con sesion PLATFORM), §5.4 (P-51);
--- GRD-RC-10, GRD-RC-12, INV-13, INV-14 (specs/state-machines/rights-case.spec.yaml); F-PR6-43 (condicion de merge de Carlos, 2026-10-15), F-PR6-39, F-A10-26/27; F-PR6-25 (alerta de RH3 por platform).
+-- GRD-RC-10, GRD-RC-12, INV-13, INV-14 (specs/state-machines/rights-case.spec.yaml); F-PR6-43 (condicion de merge de Carlos, 2026-10-15), F-PR6-39, F-A10-26/27; F-PR6-25.
 -- Depende de 0059-0063 y 0066-0068. 0000-0065 son inmutables: los reemplazos van aqui, con las MISMAS firmas.
 --
 -- Que agrega (grant_owner, SECURITY DEFINER, search_path = pg_catalog, pg_temp, sin SQL dinamico):
@@ -11,7 +11,6 @@
 --       exige que el caso de la sesion sea el pedido y FIJA app.tenant_id desde la sesion (nunca desde la request). Si no, SQLSTATE RC004 (404 uniforme).
 --   platform.require_platform_actor(role, case_ref) -> principal  (EXECUTE solo transition_owner): igual con la sesion PLATFORM y el rol (APPROVER) ACTIVE, sin Membership TENANT; el tenant sale del caso REAL (rights_case_of).
 --   platform.record_rh2_approval(revocation_ref, case_ref, proposal_ref, proposed_by, approver) (EXECUTE solo transition_owner): cruce GRD-RC-10 (el aprobador de RH2 no es aprobador NI receptor de un grant del caso) y registro.
---   platform.alert_case_apply_exhausted(revocation_ref) (EXECUTE platform_rw): alerta de agotamiento de RH3 por la sesion CASE validada (tenant de la sesion) via ops.record_revocation_apply_alert (0067).
 --   issue_step_up_nonce / consume_step_up REEMPLAZADAS: admiten tambien PROPOSE/APPROVE/WITHDRAW_CASE_VERIFICATION (RH2; GRD-RC-12). Propose y withdraw: RIGHTS_OPERATOR; approve: APPROVER. consume_step_up (interna) pasa a ser
 --       EXECUTE de transition_owner: la llaman las funciones de RH2 en la misma tx que el efecto.
 --   approve_grant REEMPLAZADA: rechaza (GRANT_REJECTED / RH2_APPROVER) al aprobador de una RH2 del caso. rights_case_grant_insert_guard REEMPLAZADA: el mismo cruce como red de seguridad de la base (un grant no nace
@@ -22,10 +21,10 @@ SET LOCAL ROLE platform_schema_owner;
 GRANT CREATE ON SCHEMA platform TO grant_owner;
 GRANT USAGE ON SCHEMA platform TO transition_owner;
 SET LOCAL ROLE consent_owner;
--- grant_owner llama ops.record_revocation_apply_alert (dueno security_event_owner, 0067): USAGE sobre ops y EXECUTE (permanente y minimo; grant_owner no es asumible por runtime).
-GRANT USAGE ON SCHEMA ops TO grant_owner;
+-- transition_owner llama ops.record_revocation_apply_alert (dueno security_event_owner, 0067) desde case_state.alert_apply_exhausted (0070): USAGE sobre ops y EXECUTE (permanente y minimo).
+GRANT USAGE ON SCHEMA ops TO transition_owner;
 SET LOCAL ROLE security_event_owner;
-GRANT EXECUTE ON FUNCTION ops.record_revocation_apply_alert(text, text) TO grant_owner;
+GRANT EXECUTE ON FUNCTION ops.record_revocation_apply_alert(text, text) TO transition_owner;
 SET LOCAL ROLE consent_owner;
 
 SET LOCAL ROLE grant_owner;
@@ -153,24 +152,6 @@ BEGIN
   END IF;
   INSERT INTO platform.case_verification (tenant_id, case_ref, revocation_ref, proposal_ref, proposed_by_ref, approved_by_ref)
   VALUES (v_tenant, p_case_ref, p_revocation_ref, p_proposal_ref, p_proposed_by, p_approver);
-END
-$$;
-
-CREATE FUNCTION platform.alert_case_apply_exhausted(p_revocation_ref text) RETURNS void
-  LANGUAGE plpgsql VOLATILE SECURITY DEFINER
-  SET search_path = pg_catalog, pg_temp
-  AS $$
-DECLARE
-  v_sid     text := NULLIF(pg_catalog.current_setting('app.session_sid', true), '');
-  v_session record;
-  v_tenant  uuid;
-BEGIN
-  IF session_user <> 'platform_rw' OR v_sid IS NULL OR v_sid !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'sesion CASE no valida' USING ERRCODE = 'RC004'; END IF;
-  SELECT v.* INTO v_session FROM platform.validate_session(v_sid, 'CASE') v;
-  IF v_session.o_principal_ref IS NULL THEN RAISE EXCEPTION 'sesion CASE no valida' USING ERRCODE = 'RC004'; END IF;
-  SELECT s.tenant_id INTO v_tenant FROM platform.platform_session s WHERE s.session_ref = v_session.o_session_ref;
-  PERFORM pg_catalog.set_config('app.tenant_id', v_tenant::pg_catalog.text, true);
-  PERFORM ops.record_revocation_apply_alert(p_revocation_ref, 'R4_RETRIES_EXHAUSTED');
 END
 $$;
 
@@ -369,11 +350,9 @@ $$;
 REVOKE ALL ON FUNCTION platform.require_case_actor(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.require_platform_actor(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.record_rh2_approval(text, text, text, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION platform.alert_case_apply_exhausted(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.require_case_actor(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.require_platform_actor(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.record_rh2_approval(text, text, text, text, text) TO transition_owner;
-GRANT EXECUTE ON FUNCTION platform.alert_case_apply_exhausted(text) TO platform_rw;
 -- consume_step_up (interna, 0061) la llaman ahora tambien las funciones de RH2 de transition_owner en la misma tx.
 GRANT EXECUTE ON FUNCTION platform.consume_step_up(text, text, text, integer, integer) TO transition_owner;
 
@@ -391,7 +370,7 @@ DECLARE
 BEGIN
   FOREACH spec SLICE 1 IN ARRAY ARRAY[
       ARRAY['require_case_actor', 'transition_owner'], ARRAY['require_platform_actor', 'transition_owner'], ARRAY['record_rh2_approval', 'transition_owner'],
-      ARRAY['alert_case_apply_exhausted', 'platform_rw'], ARRAY['approve_grant', 'platform_rw'], ARRAY['issue_step_up_nonce', 'platform_rw'], ARRAY['consume_step_up', 'transition_owner']] LOOP
+      ARRAY['approve_grant', 'platform_rw'], ARRAY['issue_step_up_nonce', 'platform_rw'], ARRAY['consume_step_up', 'transition_owner']] LOOP
     SELECT pg_catalog.count(*) INTO n FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = spec[1];
     IF n <> 1 THEN RAISE EXCEPTION '0069: platform.% debe existir exactamente una vez (hay %)', spec[1], n; END IF;
     SELECT p.oid, p.prosecdef, p.proconfig, p.proacl, p.proowner, p.prosrc, pg_catalog.pg_get_userbyid(p.proowner) AS owner INTO t

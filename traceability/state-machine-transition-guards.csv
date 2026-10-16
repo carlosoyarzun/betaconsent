@@ -194,7 +194,7 @@ revocation,RH2,GRD-RV-19,guards,TEST-CNS-911;TEST-CNS-967,
 revocation,RH2,GRD-RV-23,guards,TEST-CNS-816,
 revocation,RH2,GRD-RV-28,guards,UNCOVERED,sin test que cite GRD-RV-28 / RH2 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 revocation,RH2,GRD-RC-10,guards,UNCOVERED,sin test que cite GRD-RC-10 / RH2 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-revocation,RH2,GRD-RC-12,guards,TEST-CNS-1023;TEST-CNS-1024,
+revocation,RH2,GRD-RC-12,guards,UNCOVERED,"Prueba retirada con el codigo de web que cubria (ADR-010 rev. 5, 6d parte 2: sesion CASE y rutas de caso salen de web); cobertura nueva en TEST-CNS-1700+ (platform) o pendiente de reescritura"
 revocation,RH2,GRD-RC-15,guards,TEST-CNS-982,
 revocation,R3,GRD-CM-02,guards,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-489;TEST-CNS-715;TEST-CNS-717); ninguno cubre revocation R3
 revocation,R3,GRD-CM-06,guards,TEST-CNS-452;TEST-CNS-462;TEST-CNS-464,
@@ -277,7 +277,7 @@ revocation,RH2v,GRD-RV-23,guards,TEST-CNS-816,
 revocation,RH2v,GRD-RV-27,guards,TEST-CNS-595,
 revocation,RH2v,GRD-RV-28,guards,UNCOVERED,sin test que cite GRD-RV-28 / RH2v en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 revocation,RH2v,GRD-RC-10,guards,UNCOVERED,sin test que cite GRD-RC-10 / RH2v en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-revocation,RH2v,GRD-RC-12,guards,TEST-CNS-1023;TEST-CNS-1024,
+revocation,RH2v,GRD-RC-12,guards,UNCOVERED,"Prueba retirada con el codigo de web que cubria (ADR-010 rev. 5, 6d parte 2: sesion CASE y rutas de caso salen de web); cobertura nueva en TEST-CNS-1700+ (platform) o pendiente de reescritura"
 revocation,RH2v,GRD-RC-15,guards,TEST-CNS-633;TEST-CNS-634;TEST-CNS-664;TEST-CNS-982;TEST-CNS-1008,
 revocation,RV0,GRD-CM-06,guards,TEST-CNS-452;TEST-CNS-462;TEST-CNS-464,
 revocation,RV0,GRD-RV-02,guards,TEST-CNS-701,
@@ -288,10 +288,10 @@ revocation,RV0,GRD-RV-20,byTrigger:LIMIT_REACHED,TEST-CNS-706,
 revocation,RV0,GRD-CM-10,byTrigger:LIMIT_REACHED,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-454;TEST-CNS-468;TEST-CNS-469); ninguno cubre revocation RV0
 revocation,RV0,GRD-RV-22,byTrigger:CASE_CONTACT,UNCOVERED,sin test que cite GRD-RV-22 / RV0 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 revocation,RV0,GRD-RV-22,byTrigger:SCHOOL_REPORTED,UNCOVERED,sin test que cite GRD-RV-22 / RV0 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,RC0,GRD-CM-01,guards,TEST-CNS-458;TEST-CNS-459;TEST-CNS-637;TEST-CNS-642;TEST-CNS-671;TEST-CNS-1165;TEST-CNS-1166;TEST-CNS-1169;TEST-CNS-1176,
+rights-case,RC0,GRD-CM-01,guards,TEST-CNS-458;TEST-CNS-459,
 rights-case,RC0,GRD-CM-02,guards,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-489;TEST-CNS-715;TEST-CNS-717); ninguno cubre rights-case RC0
-rights-case,RC0,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
-rights-case,RC0,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC0,GRD-CM-07,guards,TEST-CNS-457,
+rights-case,RC0,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC0,GRD-RC-01,guards,UNCOVERED,sin test que cite GRD-RC-01 / RC0 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC0,GRD-RC-02,guards,TEST-CNS-832,
 rights-case,RC0,GRD-RC-03,guards,UNCOVERED,sin test que cite GRD-RC-03 / RC0 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
@@ -299,38 +299,38 @@ rights-case,RC1,GRD-CM-06,guards,TEST-CNS-461;TEST-CNS-462,
 rights-case,RC1,GRD-RC-01,guards,UNCOVERED,sin test que cite GRD-RC-01 / RC1 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC1,GRD-RC-02,guards,TEST-CNS-832,
 rights-case,RC1,GRD-RC-04,guards,UNCOVERED,sin test que cite GRD-RC-04 / RC1 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,RC1,GRD-CM-01,bySource:BEARER,TEST-CNS-458;TEST-CNS-459;TEST-CNS-637;TEST-CNS-642;TEST-CNS-671;TEST-CNS-1165;TEST-CNS-1166;TEST-CNS-1169;TEST-CNS-1176,
-rights-case,RC1,GRD-CM-10,bySource:BEARER,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC1,GRD-CM-01,bySource:BEARER,TEST-CNS-458;TEST-CNS-459,
+rights-case,RC1,GRD-CM-10,bySource:BEARER,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC1,GRD-RC-05,bySource:BEARER,UNCOVERED,sin test que cite GRD-RC-05 / RC1 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC1,GRD-RC-14,bySource:BEARER,TEST-CNS-458;TEST-CNS-459,
 rights-case,RC1,GRD-RV-16,bySource:SYSTEM,UNCOVERED,sin test que cite GRD-RV-16 / RC1 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC1,GRD-RC-16,bySource:SYSTEM,UNCOVERED,sin test que cite GRD-RC-16 / RC1 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC1,GRD-CM-15,bySource:SYSTEM,TEST-CNS-456;TEST-CNS-460,
-rights-case,RC1c,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC1c,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC2,GRD-RC-06,guards,UNCOVERED,sin test que cite GRD-RC-06 / RC2 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC2,GRD-RV-22,guards,UNCOVERED,sin test que cite GRD-RV-22 / RC2 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC2,GRD-RV-17,guards,UNCOVERED,sin test que cite GRD-RV-17 / RC2 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC2u,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC2u,GRD-RC-07,guards,UNCOVERED,sin test que cite GRD-RC-07 / RC2u en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC2u,GRD-RC-14,guards,TEST-CNS-458;TEST-CNS-459,
-rights-case,RC3,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC3,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC3,GRD-RC-08,guards,UNCOVERED,sin test que cite GRD-RC-08 / RC3 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC3,GRD-RC-13,guards,UNCOVERED,sin test que cite GRD-RC-13 / RC3 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC3,GRD-RC-14,guards,TEST-CNS-458;TEST-CNS-459,
-rights-case,RC3a,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC3a,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC3a,GRD-RC-08,guards,UNCOVERED,sin test que cite GRD-RC-08 / RC3a en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC3a,GRD-RC-14,guards,TEST-CNS-458;TEST-CNS-459,
 rights-case,RC3a,GRD-RV-27,guards,TEST-CNS-595,
-rights-case,RC4.RESOLVED,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC4.RESOLVED,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC4.RESOLVED,GRD-RC-09,guards,UNCOVERED,sin test que cite GRD-RC-09 / RC4.RESOLVED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC4.RESOLVED,GRD-RC-10,guards,UNCOVERED,sin test que cite GRD-RC-10 / RC4.RESOLVED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,RC4.WITHDRAWN,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC4.WITHDRAWN,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC4.WITHDRAWN,GRD-RC-09,guards,UNCOVERED,sin test que cite GRD-RC-09 / RC4.WITHDRAWN en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC4.WITHDRAWN,GRD-RC-10,guards,UNCOVERED,sin test que cite GRD-RC-10 / RC4.WITHDRAWN en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,RC5,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC5,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC5,GRD-RC-09,guards,UNCOVERED,sin test que cite GRD-RC-09 / RC5 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC5,GRD-RC-10,guards,UNCOVERED,sin test que cite GRD-RC-10 / RC5 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,RC6,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-641;TEST-CNS-672;TEST-CNS-1166;TEST-CNS-1168;TEST-CNS-1177,
+rights-case,RC6,GRD-CM-10,guards,TEST-CNS-454;TEST-CNS-468;TEST-CNS-469,
 rights-case,RC6,GRD-RC-09,guards,UNCOVERED,sin test que cite GRD-RC-09 / RC6 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC6,GRD-RC-10,guards,UNCOVERED,sin test que cite GRD-RC-10 / RC6 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 tenant-context.Tenant,TN1,GRD-CM-07,guards,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-457;TEST-CNS-475;TEST-CNS-477); ninguno cubre tenant-context.Tenant TN1
@@ -380,26 +380,26 @@ tenant-context.ConsentContextReadiness,CX2,GRD-TC-05,guards,UNCOVERED,sin test q
 tenant-context.ConsentContextReadiness,CX2,GRD-TC-06,guards,UNCOVERED,sin test que cite GRD-TC-06 / CX2 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,RC1,GRD-CM-07,bySource:BEARER,TEST-CNS-457,
 rights-case,RC2,GRD-CM-15,guards,TEST-CNS-456,
-rights-case,RC2u,GRD-CM-01,guards,TEST-CNS-458;TEST-CNS-459;TEST-CNS-637;TEST-CNS-642;TEST-CNS-671;TEST-CNS-1165;TEST-CNS-1166;TEST-CNS-1169;TEST-CNS-1176,
+rights-case,RC2u,GRD-CM-01,guards,TEST-CNS-458;TEST-CNS-459,
 rights-case,RC2u,GRD-CM-06,guards,TEST-CNS-461;TEST-CNS-462,
-rights-case,RC2u,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC2u,GRD-CM-07,guards,TEST-CNS-457,
 rights-case,RC2u,GRD-RV-20,guards,TEST-CNS-706,
 rights-case,RC3,GRD-CM-01,guards,TEST-CNS-458;TEST-CNS-459,
 rights-case,RC3,GRD-CM-06,guards,TEST-CNS-462,
-rights-case,RC3,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC3,GRD-CM-07,guards,TEST-CNS-457,
 rights-case,RC3,GRD-RV-20,guards,TEST-CNS-706,
 rights-case,RC3a,GRD-CM-01,guards,TEST-CNS-458;TEST-CNS-459,
 rights-case,RC3a,GRD-CM-06,guards,TEST-CNS-461;TEST-CNS-462,
-rights-case,RC3a,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC3a,GRD-CM-07,guards,TEST-CNS-457,
 rights-case,RC3a,GRD-RV-20,guards,TEST-CNS-706,
 rights-case,RC4.RESOLVED,GRD-CM-06,guards,TEST-CNS-461;TEST-CNS-462,
-rights-case,RC4.RESOLVED,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC4.RESOLVED,GRD-CM-07,guards,TEST-CNS-457,
 rights-case,RC4.WITHDRAWN,GRD-CM-06,guards,TEST-CNS-461;TEST-CNS-462,
-rights-case,RC4.WITHDRAWN,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC4.WITHDRAWN,GRD-CM-07,guards,TEST-CNS-457,
 rights-case,RC5,GRD-CM-06,guards,TEST-CNS-461,
-rights-case,RC5,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC5,GRD-CM-07,guards,TEST-CNS-457,
 rights-case,RC6,GRD-CM-06,guards,TEST-CNS-461,
-rights-case,RC6,GRD-CM-07,guards,TEST-CNS-457;TEST-CNS-638;TEST-CNS-640;TEST-CNS-645;TEST-CNS-667;TEST-CNS-668;TEST-CNS-985;TEST-CNS-1018;TEST-CNS-1176;TEST-CNS-1183,
+rights-case,RC6,GRD-CM-07,guards,TEST-CNS-457,
 revocation,RC3,GRD-CM-01,guards,TEST-CNS-458,
 revocation,R12,GRD-CM-01,guards,TEST-CNS-458,
 revocation,RH2,GRD-CM-01,guards,TEST-CNS-464,

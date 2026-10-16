@@ -1142,11 +1142,34 @@ export async function evaluateRecoveryTokenEligibilityByHash(
 export async function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): Promise<RecoveryRevokeOutcome> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved) return { kind: "UNIFORM" }; // hash sin token: respuesta uniforme, sin tx ni evento.
-  return inTx(ports, resolved.tenantId, async (p) => {
-    const record = await p.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
-    if (!record || record.tokenHash !== tokenHash) return { kind: "UNIFORM" };
-    return revokeWithRecoveryLinkTx(p, resolved.tenantId, record.chainRef, record.revokedDecisionRef, tokenHash, resolved.recoveryRef);
-  });
+  return guardedRecoveryRevoke(ports, resolved.tenantId, (attemptRef) =>
+    inTx(ports, resolved.tenantId, async (p) => {
+      const record = await p.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+      if (!record || record.tokenHash !== tokenHash) return { kind: "UNIFORM" };
+      return revokeWithRecoveryLinkTx(p, resolved.tenantId, record.chainRef, record.revokedDecisionRef, tokenHash, resolved.recoveryRef, attemptRef);
+    }),
+  );
+}
+
+/**
+ * ADR-010 rev. 5 §4.2.a (G-3) para R1r-R3r: la ref de la Revocation nueva se genera UNA vez (no por intento) y se registra la ref realmente usada (la existente o la nueva) apenas se conoce, para que tras un commit
+ * ambiguo se lea el estado de ESA ref antes de reintentar: APPLIED = resultado real (CONFIRMED con su ref); si no, se reintenta la tx completa (token sin consumir si todo se revirtio); agotado = alerta + error uniforme.
+ */
+function guardedRecoveryRevoke(
+  ports: RevocationPorts,
+  tenantId: string,
+  run: (attemptRef: { readonly fresh: string; used: (ref: string) => void }) => Promise<RecoveryRevokeOutcome>,
+): Promise<RecoveryRevokeOutcome> {
+  const fresh: string = randomUUID();
+  let used: string = fresh;
+  const attempt = (): Promise<RecoveryRevokeOutcome> => run({ fresh, used: (ref) => { used = ref; } });
+  if (ports.applyGuard === undefined) return attempt();
+  return runBoundedApply<RecoveryRevokeOutcome>(
+    ports.applyGuard,
+    { tenantId, revocationRef: () => used },
+    attempt,
+    async (ref) => ((await readAppliedRecord(ports, tenantId, ref)) === null ? null : { kind: "CONFIRMED", revocationRef: ref }),
+  );
 }
 
 /**
@@ -1189,7 +1212,7 @@ async function revokeWithRecoveryLinkResolving(
 ): Promise<RecoveryRevokeOutcome> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved || resolved.tenantId !== tenantId) return { kind: "UNIFORM" }; // GRD-RV-06 onFail: ERR-RV-05
-  return inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef));
+  return guardedRecoveryRevoke(ports, tenantId, (attemptRef) => inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef, attemptRef)));
 }
 
 async function revokeWithRecoveryLinkTx(
@@ -1199,6 +1222,7 @@ async function revokeWithRecoveryLinkTx(
   revokedDecisionRef: string,
   tokenHash: string,
   recoveryRef: string,
+  attemptRef?: { readonly fresh: string; used: (ref: string) => void },
 ): Promise<RecoveryRevokeOutcome> {
   const eligibility = await evaluateRecoveryTokenEligibilityResolved(ports, tenantId, chainRef, revokedDecisionRef, tokenHash, recoveryRef);
   if (!eligibility) {
@@ -1222,7 +1246,8 @@ async function revokeWithRecoveryLinkTx(
     const base = existing ? await revocationSequence(ports, tenantId, existing.revocationRef) : 0;
     let linked;
     try {
-      linked = await ports.revocationTransitions.revokeWithRecoveryLink({ recoveryRef: tokenRecord.recoveryRef, newRevocationRef: randomUUID(), expectedSequence: base });
+      linked = await ports.revocationTransitions.revokeWithRecoveryLink({ recoveryRef: tokenRecord.recoveryRef, newRevocationRef: attemptRef?.fresh ?? randomUUID(), expectedSequence: base });
+      attemptRef?.used(linked.revocationRef);
     } catch (error) {
       if (error instanceof DomainError && error.code === "ERR-RV-05") return { kind: "UNIFORM" }; // token usado o vencido entre la lectura y el lock
       throw error;

@@ -9,9 +9,6 @@ import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { createInMemoryDownstreamStub } from "../../../src/infra/adapters/in-memory-downstream-stub.adapter.ts";
 import { createInMemoryRightsCaseRepository } from "../../../src/infra/adapters/in-memory-rights-case-repository.adapter.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
-import { handleApproveCaseVerification } from "../../../src/server/entrypoints/http/case-confirmation.handler.ts";
-import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
-import { issueCaseSession } from "../../../src/server/entrypoints/http/case-session.ts";
 import { loadRightsCaseHttpConfig } from "../../../src/server/entrypoints/http/config.ts";
 import { deriveOtpChannelRefKey, opaqueChannelRef } from "../../../src/server/modules/otp-challenge/otp-challenge.ts";
 import { opaqueUuidV4 } from "../../../src/server/modules/common/opaque-ref.ts";
@@ -24,30 +21,7 @@ import { makeX6Env } from "../../contract/x6-revocation-scenarios.ts";
 const T = "tenant-x6-1004";
 const code = (c: string) => (e: unknown) => e instanceof DomainError && e.code === c;
 
-test("TEST-CNS-1004 P2-1: la aprobación RH2 HTTP solo queda ATTESTED en LOCAL; en otro entorno es PENDING y no transiciona", async () => {
-  for (const [environment, expected, state] of [["LOCAL", "ATTESTED", "VERIFIED"], ["DEV", "PENDING", "REQUESTED"], ["STAGING", "PENDING", "REQUESTED"], ["PRODUCTION", "PENDING", "REQUESTED"]] as const) {
-    const rightsCaseRepo = createInMemoryRightsCaseRepository();
-    const env = makeX6Env({ extra: { rightsCaseRepo } });
-    const revocationRef = fixtureUuid(`r-${environment}`);
-    const caseRef = fixtureUuid(`c-${environment}`);
-    const proposalRef = fixtureUuid(`p-${environment}`);
-    await env.ports.revocationRepo.save({ revocationRef, tenantId: T, chainRef: "chain-1004", caseRef, revokedDecisionRef: fixtureUuid("d-1004"), status: "REQUESTED" });
-    await rightsCaseRepo.save({ caseRef, tenantId: T, chainRef: "chain-1004", revokedDecisionRef: fixtureUuid("d-1004"), status: "IN_VERIFICATION", revocationRef });
-    await proposeCaseVerification(env.ports, RH2_ROSTER, T, revocationRef, caseRef, { principalRef: RH2_OPERATOR }, { proposalRef, verificationScriptVersion: "guion-1" });
-
-    const config = loadRightsCaseHttpConfig({ allowedOrigin: "http://consola.test.localhost" });
-    const key = randomBytes(32);
-    const sessions = createInMemoryCaseSessionStore();
-    const issued = await issueCaseSession({ sessions, caseSessionKey: key }, { tenantId: T, caseRef, principalRef: RH2_APPROVER, role: "APPROVER" });
-    const csrf = issued.csrfToken;
-    const cookie = `${config.caseSessionCookieName}=${issued.cookieValue}; ${config.caseCsrfCookieName}=${csrf}`;
-    const request = { originHeader: config.allowedOrigin, csrfHeaderToken: csrf, cookieHeader: cookie, body: { stepUpAssertion: "stub" } };
-    const result = await handleApproveCaseVerification(request, caseRef, proposalRef, { revocation: env.ports, staffIdentity: RH2_ROSTER, sessions }, config, key, environment as Environment);
-    assert.equal(result.status, 200, environment);
-    assert.deepEqual(result.body, { attestation: expected, revocationState: state }, environment);
-    assert.equal((await env.ports.revocationRepo.findByRef(T, revocationRef))?.status, state, environment);
-  }
-});
+// TEST-CNS-1004 (aprobacion RH2 por el handler HTTP de web) se retiro: RH2 vive en el proceso platform (ADR-010 rev. 5, 6d parte 2; TEST-CNS-1700+).
 
 test("TEST-CNS-1005 P2-3: una propuesta RH2 pendiente con otro proposalRef no se reemplaza en silencio (ERR-CM-06); la misma es idempotente", async () => {
   const env = makeX6Env();

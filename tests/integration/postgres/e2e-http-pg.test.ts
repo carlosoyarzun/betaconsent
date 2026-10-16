@@ -94,7 +94,6 @@ async function boot(ctx: PgTestContext, guestChannel: { send(message: never): Pr
     environment: "LOCAL",
     staffIdentity,
     staffConsole: bundle.staffConsole,
-    caseSessions: bundle.caseSessions,
     storeMode: "postgres",
     devOutboxSink: () => store.uow.withTenantTx(T, (tx) => listOutboxEnvelopes(tx)),
   });

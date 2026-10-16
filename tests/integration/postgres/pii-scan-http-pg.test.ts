@@ -71,7 +71,7 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
     decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
-  const { ports, revocationPorts, staffConsole, caseSessions } = bundle;
+  const { ports, revocationPorts, staffConsole } = bundle;
   const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: SCAN_ORIGIN },
     ports,
@@ -80,7 +80,6 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
     environment: "LOCAL",
     staffIdentity,
     staffConsole,
-    caseSessions,
     storeMode: "postgres",
     devOutboxSink: () => store.uow.withTenantTx(T, (tx) => listOutboxEnvelopes(tx)),
   });

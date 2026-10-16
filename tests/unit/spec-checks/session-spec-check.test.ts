@@ -17,7 +17,7 @@ test("TEST-CNS-1187 session-spec-check: specs/session.spec.yaml parsea, sus test
 });
 
 test("TEST-CNS-1187 session-spec-check: detecta testId inexistente, guard sin tests ni nota, guard duplicado y archivo inexistente", () => {
-  const withBadTest = SPEC.replace("TEST-CNS-1140, TEST-CNS-1160]", "TEST-CNS-1140, TEST-CNS-9999]");
+  const withBadTest = SPEC.replace("testIds: [TEST-CNS-1140]", "testIds: [TEST-CNS-1140, TEST-CNS-9999]");
   assert.ok(checkSessionSpec(withBadTest, MATRIX, exists).some((e) => e.includes("TEST-CNS-9999")));
   const noTests = SPEC.replace(/(id: GRD-SE-02[\s\S]*?testIds: )\[[^\]]*\]/, "$1[]");
   assert.ok(checkSessionSpec(noTests, MATRIX, exists).some((e) => e.includes("GRD-SE-02") && e.includes("sin tests")));

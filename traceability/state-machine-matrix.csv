@@ -328,14 +328,14 @@ revocation,event,REVOCATION_ESCALATED,DEC-BR-017 §6;SM-CNS-001 §5 R9;AUDIT F-A
 revocation,event,RECOVERY_TOKEN_ISSUED,DEC-BR-017 §6 (fuera del ledger);SM-CNS-001 §5.1 RV0,TEST-CNS-579;TEST-CNS-966,
 revocation,config,CFG-RV-VOCABULARY,DEC-BR-017 §6;ADR-002 §10;REQ-CNS-TBD-05 AC-05.1,UNCOVERED,sin test que cite CFG-RV-VOCABULARY en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 revocation,config,CFG-RV-MANAGEMENT-LINK,"SM-CNS-001 §5.0;ADR-006 §6.1;DEC-BR-017 §1;SEC-CNS-006 P-13, P-14",UNCOVERED,sin test que cite CFG-RV-MANAGEMENT-LINK en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,state,OPEN,"SM-CNS-001 §5.2 RC0, RC1;DEC-BR-017 §4",TEST-CNS-474;TEST-CNS-1023;TEST-CNS-1024,
+rights-case,state,OPEN,"SM-CNS-001 §5.2 RC0, RC1;DEC-BR-017 §4",TEST-CNS-474,
 rights-case,state,CONTACTING,"SM-CNS-001 §5.2 RC2, RC2u",UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-847); ninguno cubre rights-case
 rights-case,state,IN_VERIFICATION,SM-CNS-001 §5.2 RC3,UNCOVERED,sin test que cite IN_VERIFICATION en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,state,RESOLVED,SM-CNS-001 §5.2 RC4,UNCOVERED,sin test que cite RESOLVED en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,state,WITHDRAWN,SM-CNS-001 §5.2 RC4,TEST-CNS-1018,
+rights-case,state,WITHDRAWN,SM-CNS-001 §5.2 RC4,UNCOVERED,"Prueba retirada con el codigo de web que cubria (ADR-010 rev. 5, 6d parte 2: sesion CASE y rutas de caso salen de web); cobertura nueva en TEST-CNS-1700+ (platform) o pendiente de reescritura"
 rights-case,flag,FLAG-overdue,SM-CNS-001 §5.2;SEC-CNS-006 P-20;REQ-CNS-TBD-06 AC-06.4,UNCOVERED,sin test que cite FLAG-overdue en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,transition,RC0,SM-CNS-001 §5.2 RC0;DEC-BR-017 §8;REQ-CNS-TBD-08 AC-08.2;SEC-CNS-006 P-35;LD-03;AUDIT F-A10;SEC-CNS-012 P2-10,UNCOVERED,sin test que cite RC0 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,transition,RC1,"SM-CNS-001 §5.2 RC1 (SM:152), §5 R9;DEC-BR-017 §3, §4, §5;CARLOS r3 R5-4, R6-3, R14-C;REQ-CNS-TBD-06 AC-06.1, AC-06.5;RULE-CNS-TBD-02;AUDIT F-A03, F-A11;SEC-CNS-012 re-verificación rev. 4 N2-01",TEST-CNS-457;TEST-CNS-644,
+rights-case,transition,RC1,"SM-CNS-001 §5.2 RC1 (SM:152), §5 R9;DEC-BR-017 §3, §4, §5;CARLOS r3 R5-4, R6-3, R14-C;REQ-CNS-TBD-06 AC-06.1, AC-06.5;RULE-CNS-TBD-02;AUDIT F-A03, F-A11;SEC-CNS-012 re-verificación rev. 4 N2-01",TEST-CNS-457,
 rights-case,transition,RC1c,SM-CNS-001 v7 §5.2 RC1c;DEC-BR-018 R13-2;DEC-BR-017 §7;REQ-CNS-TBD-05 AC-05.3;LD-03;LD-04;SEC-CNS-012 P1-02,UNCOVERED,sin test que cite RC1c en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,transition,RC2,"SM-CNS-001 §5.2 RC2, §5.1 RV0 (SM:138);DEC-BR-017 §3 (S3-12), §8;SEC-CNS-012 P1-03",TEST-CNS-456,
 rights-case,transition,RC2u,"SM-CNS-001 §5.2 RC2u;CARLOS r3 R6-3, R7-2;DEC-BR-017 §3;F-011",TEST-CNS-454;TEST-CNS-468;TEST-CNS-469;TEST-CNS-470,
@@ -351,7 +351,7 @@ rights-case,invariant,INV-15,SM-CNS-001 §7 INV-15;CARLOS r3 R7-5;ADR-006 §6.3;
 rights-case,invariant,INV-RC-01,"SM-CNS-001 §5.2;DEC-BR-017 §4, §5;RULE-CNS-TBD-02;ADR-002 §10",UNCOVERED,sin test que cite INV-RC-01 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,invariant,INV-RC-02,SM-CNS-001 §5.2;ADR-002 §10;SEC-CNS-005 TS-24,UNCOVERED,sin test que cite INV-RC-02 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,invariant,INV-RC-03,"DEC-BR-017 §3, §4;CARLOS r3 R7-2;SEC-CNS-005 TS-24d",UNCOVERED,sin test que cite INV-RC-03 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,invariant,INV-RC-04,SM-CNS-001 §5.2 (S4-16);ADR-002 §10;ADR-006 §6.3;DEC-BR-014 X6,TEST-CNS-917;TEST-CNS-918;TEST-CNS-919,
+rights-case,invariant,INV-RC-04,SM-CNS-001 §5.2 (S4-16);ADR-002 §10;ADR-006 §6.3;DEC-BR-014 X6,TEST-CNS-917;TEST-CNS-918,
 rights-case,invariant,INV-RC-06,DEC-BR-018 R13-1;SM-CNS-001 v7 §5.2,UNCOVERED,sin test que cite INV-RC-06 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,invariant,INV-RC-05,"DEC-BR-017 §7, §8;CARLOS r3 C;REQ-CNS-TBD-08 AC-08.2",UNCOVERED,sin test que cite INV-RC-05 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,guard,GRD-RC-01,SM-CNS-001 §5.2;ADR-002 §10;CARLOS r3 (a);SEC-CNS-005 TS-24,UNCOVERED,sin test que cite GRD-RC-01 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
@@ -368,8 +368,8 @@ rights-case,guard,GRD-RC-11,SEC-CNS-006 P-20;LD-04;CARLOS r3 R7-2,UNCOVERED,sin 
 rights-case,guard,GRD-RC-13,"SM-CNS-001 v7 §5.2 RC3, RC3a;DEC-BR-018 R13-1;INV-16",UNCOVERED,sin test que cite GRD-RC-13 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,guard,GRD-RC-14,SEC-CNS-012 re-verificación N-01;SEC-CNS-012 re-verificación rev. 4 N2-03;SM-CNS-001 v7 §5.2 (v7b);SM-CNS-001 R0.4 (resolución en servidor),TEST-CNS-458;TEST-CNS-459,
 rights-case,guard,GRD-RC-16,"SEC-CNS-012 re-verificación rev. 4 N2-01;SM-CNS-001 v7 §5.2 RC1 (SM:152: 'SYSTEM_GUARD solo cuando lo abre R9'), §5 R9;DEC-BR-017 §5;RULE-CNS-TBD-02;ADR-006 §6",UNCOVERED,sin test que cite GRD-RC-16 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,guard,GRD-RC-15,"DEC-BR-018 R14-B;SEC-CNS-006 P-38 (texto R14-B, derivado D-01)",TEST-CNS-643;TEST-CNS-673,
-rights-case,guard,GRD-RC-12,SEC-CNS-006 P-36;ADR-006 §6.3;CARLOS r3 R6-4;INV-13,TEST-CNS-1023;TEST-CNS-1024,
+rights-case,guard,GRD-RC-15,"DEC-BR-018 R14-B;SEC-CNS-006 P-38 (texto R14-B, derivado D-01)",UNCOVERED,"Prueba retirada con el codigo de web que cubria (ADR-010 rev. 5, 6d parte 2: sesion CASE y rutas de caso salen de web); cobertura nueva en TEST-CNS-1700+ (platform) o pendiente de reescritura"
+rights-case,guard,GRD-RC-12,SEC-CNS-006 P-36;ADR-006 §6.3;CARLOS r3 R6-4;INV-13,UNCOVERED,"Prueba retirada con el codigo de web que cubria (ADR-010 rev. 5, 6d parte 2: sesion CASE y rutas de caso salen de web); cobertura nueva en TEST-CNS-1700+ (platform) o pendiente de reescritura"
 rights-case,error,ERR-RC-01,REQ-CNS-TBD-06 AC-06.1;REQ-CNS-TBD-07 AC-07.1,UNCOVERED,sin test que cite ERR-RC-01 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,error,ERR-RC-02,ADR-002 §10;REQ-CNS-TBD-06 AC-06.5;SEC-CNS-005 TS-24c,UNCOVERED,sin test que cite ERR-RC-02 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,error,ERR-RC-03,SM-CNS-001 §5.2 RC4,UNCOVERED,sin test que cite ERR-RC-03 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
@@ -378,7 +378,7 @@ rights-case,error,ERR-RC-05,"SEC-CNS-006 P-36;SEC-CNS-005 TS-15b, TS-16c",UNCOVE
 rights-case,error,ERR-RC-06,"DEC-BR-017 §8;REQ-CNS-TBD-08 AC-08.1, AC-08.2",UNCOVERED,sin test que cite ERR-RC-06 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,error,ERR-RC-07,SEC-CNS-012 P2-10;LD-20,UNCOVERED,sin test que cite ERR-RC-07 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,error,ERR-RC-09,SEC-CNS-012 re-verificación N-01,UNCOVERED,sin test que cite ERR-RC-09 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
-rights-case,error,ERR-RC-10,DEC-BR-018 R14-B,TEST-CNS-643,
+rights-case,error,ERR-RC-10,DEC-BR-018 R14-B,UNCOVERED,"Prueba retirada con el codigo de web que cubria (ADR-010 rev. 5, 6d parte 2: sesion CASE y rutas de caso salen de web); cobertura nueva en TEST-CNS-1700+ (platform) o pendiente de reescritura"
 rights-case,error,ERR-RC-11,SEC-CNS-012 re-verificación rev. 4 N2-01;DEC-BR-017 §5;RULE-CNS-TBD-02,UNCOVERED,sin test que cite ERR-RC-11 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,error,ERR-RC-08,SEC-CNS-012 P1-02;LD-03;LD-04,UNCOVERED,sin test que cite ERR-RC-08 en tests/ ni en test-matrix.csv (cobertura no demostrable por cita)
 rights-case,event,RIGHTS_CASE_OPENED,DEC-BR-017 §6,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-844); ninguno cubre rights-case
@@ -431,8 +431,8 @@ tenant-context,event,SCHOOL_PARTICIPATION_STATUS_CHANGED,SM-CNS-001 §6 (SM:172)
 tenant-context,event,ENROLLMENT_STATUS_CHANGED,SM-CNS-001 §6 (SM:173);SM-CNS-001 R0.1,UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-710;TEST-CNS-1002); ninguno cubre tenant-context
 tenant-context,event,CONSENT_CONTEXT_STATUS_CHANGED,[N-SM] §1 'Audit',UNCOVERED,citado solo por tests de otras maquinas (TEST-CNS-912); ninguno cubre tenant-context
 revocation,invariant,INV-RV-12,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04, INV-DBR-05;GRD-CM-15",TEST-CNS-1373;TEST-CNS-1374;TEST-CNS-1375;TEST-CNS-1376,
-revocation,open_item,OPEN-RV-16,"ADR-010 rev. 4 §4.2 (Q-18 a, Carlos 2026-10-11);F-A10-01",UNCOVERED,"decision tomada (transition_owner); implementacion y prueba en ADR-010 PR-5"
-rights-case,invariant,INV-RC-07,"ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04",TEST-CNS-1381;TEST-CNS-1382;TEST-CNS-1383;TEST-CNS-1385,
+revocation,open_item,OPEN-RV-16,"ADR-010 rev. 4 §4.2 (Q-18 a, Carlos 2026-10-11);F-A10-01",UNCOVERED,decision tomada (transition_owner); implementacion y prueba en ADR-010 PR-5
+rights-case,invariant,INV-RC-07,ADR-010 rev. 4 §4.2 (Q-18);specs/db-roles.spec.yaml INV-DBR-04,TEST-CNS-1381;TEST-CNS-1382;TEST-CNS-1383;TEST-CNS-1385,
 db-roles,invariant,INV-DBR-01,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",TEST-CNS-744;TEST-CNS-1349;TEST-CNS-1350;TEST-CNS-1348;TEST-CNS-747;TEST-CNS-1344;TEST-CNS-1352;TEST-CNS-1353;TEST-CNS-1363;TEST-CNS-1367,
 db-roles,invariant,INV-DBR-02,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",UNCOVERED,"sin test; spec PROPOSED de ADR-010 PR-1, implementacion y pruebas en PR-2..PR-7"
 db-roles,invariant,INV-DBR-03,"ADR-010 rev. 4 §4.1, §4.2, §4.3;specs/db-roles.spec.yaml",TEST-CNS-1343;TEST-CNS-1344;TEST-CNS-1345;TEST-CNS-1346;TEST-CNS-1347;TEST-CNS-1349;TEST-CNS-1230,

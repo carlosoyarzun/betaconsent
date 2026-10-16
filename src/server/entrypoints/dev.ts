@@ -276,7 +276,6 @@ const server = createConsentFlowHttpServer({
   environment: "LOCAL",
   staffIdentity,
   staffConsole,
-  ...(pgBundle ? { caseSessions: pgBundle.caseSessions } : {}),
   devStaffConsole: {
     principalRef: LOCAL_ONLY_DEV_STAFF_ADMIN_PRINCIPAL_REF,
     students: LOCAL_ONLY_DEV_STAFF_STUDENTS,
@@ -319,26 +318,9 @@ server.listen(port, "127.0.0.1", () => {
   // D-03: comprobante (sin enlace) y mensaje aparte con el enlace de gestión, tras enviar una decisión.
   console.log(`Leer los mensajes al canal verificado (comprobante y enlace de gestión): GET ${baseUrl}/__dev/message-sink (y ?view=N para ver el HTML del mensaje N; solo LOCAL).`);
   console.log(`Leer los eventos del outbox: GET ${baseUrl}/__dev/outbox-sink (solo existe con CNS_ENVIRONMENT=LOCAL).`);
-  // CA-128 (API-CNS-138 + API-CNS-139, RH3 completo): caso ya abierto con RH2 atestado
-  // (RH3_CASE_REF). Cuatro ojos: registra 7647258d-b4b5-41c0-b8f1-34030bb08f80 y co-firma otro RIGHTS_OPERATOR
-  // distinto (d0c8c95a-8a9b-400d-b5ad-009a4bc46fe9; un APPROVER no co-firma, revocation.spec RH3). Cada persona
-  // usa su propio cookie jar.
-  const staffLogin = (principalRef: string, jar: string): string =>
-    `  curl -i -c ${jar} -X POST ${baseUrl}/__dev/staff-login -H 'content-type: application/json' -d '{"tenantId":"${TENANT_ID}","caseRef":"${RH3_CASE_REF}","principalRef":"${principalRef}"}'`;
-  console.log(`RH3 paso 1 (API-CNS-138, sin efecto hasta co-firma): caso ${RH3_CASE_REF}. Probar con curl:`);
-  console.log(staffLogin("7647258d-b4b5-41c0-b8f1-34030bb08f80", "/tmp/cns-case-op1.txt"));
-  console.log(`  # copia el valor de __Host-cns-case-csrf del Set-Cookie de arriba en <CSRF1>, luego:`);
-  console.log(
-    `  curl -i -b /tmp/cns-case-op1.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF1>" -H 'content-type: application/json' -d '{"confirmationGivenOnCasePage":true}'`,
-  );
-  console.log(`RH3 paso 2 (API-CNS-139, co-firma por un segundo RIGHTS_OPERATOR distinto -> CONFIRMED):`);
-  console.log(staffLogin("d0c8c95a-8a9b-400d-b5ad-009a4bc46fe9", "/tmp/cns-case-op2.txt"));
-  console.log(`  # copia el valor de __Host-cns-case-csrf de este segundo login en <CSRF2>, luego:`);
-  console.log(
-    `  curl -i -b /tmp/cns-case-op2.txt -X POST ${baseUrl}/platform/rights-cases/${RH3_CASE_REF}/confirmation/cosign -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF2>" -H 'content-type: application/json' -d '{}'`,
-  );
-  console.log(`Logout de la sesion CASE (API-CNS-193, revoca el sid en servidor; <CSRF1> del login de ese cookie jar):`);
-  console.log(`  curl -i -b /tmp/cns-case-op1.txt -X POST ${baseUrl}/platform/case-session/logout -H "origin: ${allowedOrigin}" -H "x-csrf-token: <CSRF1>"`);
+  // ADR-010 rev. 5 (6d parte 2, opcion A de Carlos 2026-10-15): se ELIMINO el dev-login CASE y `/platform/*` ya no se sirve en este proceso (404). RH2/RH3 y los grants viven en el proceso `platform`
+  // (src/server/entrypoints/platform/), con login OIDC contra el IdP sintetico y sesion PLATFORM/CASE de la base.
+  console.log(`RH2/RH3 y grants de caso: solo en el proceso platform (GET /platform/auth/login?kind=PLATFORM|CASE); este proceso responde 404 en /platform/* (RH3_CASE_REF=${RH3_CASE_REF}).`);
   // CA-125: flujo iniciado por el colegio (login TENANT_ADMIN -> enrollment -> invitación -> sink -> /i/{token}).
   // Todos los pasos usan el mismo cookie jar; <CSRF> es el valor de __Host-cns-staff-csrf del Set-Cookie del
   // login; <ENROLLMENT_REF>/<INVITATION_REF> vienen de las respuestas JSON. El token NUNCA está en esas
