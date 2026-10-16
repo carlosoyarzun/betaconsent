@@ -9,7 +9,7 @@
 --                            Defensa en profundidad (no es el control; el cliente puede anularla): default_transaction_read_only = on y timeouts finitos. El control son los privilegios.
 --
 -- LOGIN/NOLOGIN: esta migracion corre en CADA deploy, asi que NO fija el atributo en el ALTER ROLE ni lo asierta (si lo fijara, PR-7f no podria darle LOGIN sin editar una migracion mergeada): el rol nace NOLOGIN (CREATE) y
--- PR-7f lo pasa a LOGIN con su propia migracion de cluster. Que siga NOLOGIN hasta PR-7f lo afirma TEST-CNS-1779. La aserción final falla cerrado si el rol gana una membresia o un atributo peligroso.
+-- PR-7f lo pasa a LOGIN con su propia migracion de cluster. Que siga NOLOGIN hasta PR-7f lo afirma TEST-CNS-1774. La aserción final falla cerrado si el rol gana una membresia o un atributo peligroso.
 
 DO $roles$
 BEGIN

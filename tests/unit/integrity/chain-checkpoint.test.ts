@@ -1,4 +1,4 @@
-// Gobierna: ADR-010 rev. 6 §3 (fila PR-7: checkpoints y cabeza por tenant; el calculo de la raiz Merkle pasa al chain-verifier, sin firma), F-PR6E-05, plan PR-7 v3 (PR-7b, T-6, T-16); C-10 (Carlos, 2026-10-17); C-7 pendiente (sin firma).
+// Gobierna: ADR-010 rev. 6 §3 (fila PR-7: checkpoints y cabeza por tenant; el calculo de la raiz Merkle pasa al chain-verifier, sin firma), F-PR6E-05, plan PR-7 v3 (PR-7b, T-6, T-16); C-10 (Carlos, 2026-10-16); C-7 pendiente (sin firma).
 // TEST-CNS-1770 (raiz Merkle: vectores dorados calculados con una implementacion independiente en Python, estable ante el orden, formato fijo), TEST-CNS-1771 (testigos de cola, copia local frente a la base, anomalias sin duplicados).
 // Sin Postgres. SYNTHETIC ONLY.
 

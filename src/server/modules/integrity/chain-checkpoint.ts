@@ -1,5 +1,5 @@
 // Gobierna: ADR-010 rev. 6 §3 (fila PR-7: checkpoints y cabeza por tenant persistidos por el chain-verifier; el calculo de la raiz Merkle pasa al chain-verifier, sin firma), F-PR6E-05 (deteccion de truncamiento de cola),
-// F-PR6E-06, D-1 (b); plan PR-7 v3 (PR-7b, T-6, T-16); C-10 (Carlos, 2026-10-17). specs/db-roles.spec.yaml (integrity_chain_verifier).
+// F-PR6E-06, D-1 (b); plan PR-7 v3 (PR-7b, T-6, T-16); C-10 (Carlos, 2026-10-16). specs/db-roles.spec.yaml (integrity_chain_verifier).
 //
 // Logica PURA (sin E/S, sin Postgres): (1) raiz Merkle estilo RFC 6962 sobre las cabezas por tenant; (2) comparacion de las cabezas observadas con las previas (checkpoint de la base y copia local) para detectar
 // truncamiento o reescritura de la cola, un tenant desaparecido y una copia local en desacuerdo con la base. Estas anomalias son exit 2 del chain-verifier. NO firma ni publica nada (C-7 pendiente: F-R6-1).

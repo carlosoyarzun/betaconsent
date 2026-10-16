@@ -1,5 +1,5 @@
 // Gobierna: ADR-010 rev. 6 §3 (fila PR-7: checkpoints y cabeza por tenant persistidos por el chain-verifier con INSERT solo para integrity_chain_verifier; raiz Merkle en el chain-verifier, sin firma; ancla y
-// persistencia de la conciliacion como DDL antes del revoke), §4.5.1, F-PR6E-05 (truncamiento de cola), D-4 (retiro del CLI), plan PR-7 v3 (PR-7b: T-2, T-3, T-4, T-6, T-16, T-17), C-10 (Carlos, 2026-10-17), C-7 PENDIENTE
+// persistencia de la conciliacion como DDL antes del revoke), §4.5.1, F-PR6E-05 (truncamiento de cola), D-4 (retiro del CLI), plan PR-7 v3 (PR-7b: T-2, T-3, T-4, T-6, T-16, T-17), C-10 (Carlos, 2026-10-16), C-7 PENDIENTE
 // (sin firma ni publicacion); db/migrations/0075-0079; specs/db-roles.spec.yaml rev. 0.7. SYNTHETIC ONLY.
 // TEST-CNS-1774 (forma exacta de 0075-0079: ACL por rol, RLS, triggers ENABLE ALWAYS, funciones; 0079 falla cerrado ante un privilegio de mas), 1775 (la corrida persiste chain_run + checkpoints y la raiz coincide con una
 // implementacion independiente; solo el chain-verifier inserta: 42501 para el resto), 1776 (el trigger rechaza cabezas inexistentes, regresivas o con otro hash; append-only incluso para superusuario), 1781 (CHECKs de chain_run;
@@ -363,6 +363,40 @@ pgTest("TEST-CNS-1781 pg: CHECKs de chain_run (raiz solo con exit 0, hojas <= te
   }
   assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_run")).rows[0]!.n), before, "tx unica: la falla no deja chain_run huerfano");
   assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_checkpoint")).rows[0]!.n), beforeCkp, "ningun checkpoint sembrado");
+});
+
+pgTest("TEST-CNS-1783 pg: P2-2 el reporte se imprime antes de persistir y una falla de persistencia con anomalias sigue siendo exit 2; P2-4 el chain-verifier no arranca si integrity_anchor_signer puede hacer LOGIN", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  await driveInvitation(ctx, A, "1782-a");
+  const dir = await mkStateDir();
+  const env = { CNS_CHAIN_VERIFIER_STATE_DIR: dir };
+  try {
+    await writeFile(join(dir, "heads.json"), "no es json", { mode: 0o600 }); // copia local corrupta: anomalia global (exit 2)
+    await admin.query("REVOKE INSERT (verified_events) ON integrity.chain_checkpoint FROM integrity_chain_verifier");
+    try {
+      const m = runMain(ctx, env);
+      assert.equal(m.status, 2, `${m.stdout}${m.stderr}`);
+      assert.match(m.stderr, /chain_verify_run ok=false/, "el reporte con la anomalia se imprimio");
+      assert.match(m.stderr, /chain_verify_persist_failed/);
+      // Sin anomalias, la misma falla de persistencia es exit 1.
+      await rm(join(dir, "heads.json"), { force: true });
+      assert.equal(runMain(ctx).status, 1);
+    } finally {
+      await admin.query("GRANT INSERT (verified_events) ON integrity.chain_checkpoint TO integrity_chain_verifier");
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  // P2-4.
+  await admin.query("ALTER ROLE integrity_anchor_signer LOGIN");
+  try {
+    await assert.rejects(() => runVerifier(ctx), (e: unknown) => codeOf(e) === "ANCHOR_SIGNER_CAN_LOGIN");
+    const m = runMain(ctx);
+    assert.equal(m.status, 1);
+    assert.equal(m.stderr.trim(), "chain-verifier: no verifica (name=ChainVerifierSignerLoginError code=ANCHOR_SIGNER_CAN_LOGIN)");
+  } finally {
+    await admin.query("ALTER ROLE integrity_anchor_signer NOLOGIN");
+  }
 });
 
 pgTest("TEST-CNS-1778 pg: copia local de cabezas (StateDirectory 0600): LOCAL la siembra; la base por delante (caida entre commit y copia) es valida y se actualiza; una copia lax o corrupta = exit 2 sin sanarse; la copia sigue a la base", async (ctx) => {

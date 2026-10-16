@@ -239,9 +239,9 @@ Decision de Carlos (G-3): nunca informar fallo de algo que si se aplico; commit 
 | SEC-6F-06 | P2 | Comentarios de tests de 6e atribuian el recomputo al "verifier". | RESUELTO en este PR: "chain-verifier" en adr010-pr6e-reconciler.test.ts | PR-6f |
 | SEC-6F-07 | P2 | (a) El filtro de `aggregate_id` en el log admitia texto libre alfanumerico; (b) un tenant con filas sin eslabon (chain_seq NULL) y sin ningun eslabon 1 se reporta ok. | (a) RESUELTO en este PR: solo UUID, el resto `?`. (b) OPEN antes de REAL_DATA: hoy protegido por el CHECK `audit_event_chain_required` en nuevas filas | PR-7 / REAL_DATA |
 
-## PR-7b (lampone-dev, 2026-10-17): checkpoints, conciliacion persistida, ancla (DDL) y retiro del CLI
+## PR-7b (lampone-dev, 2026-10-16): checkpoints, conciliacion persistida, ancla (DDL) y retiro del CLI
 
-Gobierna: ADR-010 rev. 6 §3 fila PR-7, D-4, C-10 (Carlos, 2026-10-17); C-7 PENDIENTE. Migraciones 0075-0079. Tests TEST-CNS-1770..1782.
+Gobierna: ADR-010 rev. 6 §3 fila PR-7, D-4, C-10 (Carlos, 2026-10-16); C-7 PENDIENTE. Migraciones 0075-0079. Tests TEST-CNS-1770..1783.
 
 | ID | Sev. | Hallazgo | Estado | Dueno |
 |---|---|---|---|---|
@@ -253,5 +253,8 @@ Gobierna: ADR-010 rev. 6 §3 fila PR-7, D-4, C-10 (Carlos, 2026-10-17); C-7 PEND
 | F-PR7B-04 | P2 | Los checkpoints son append-only sin purga (T-4): una anomalia de truncamiento queda para siempre en la base y el proceso la reporta en cada corrida hasta que un humano reconozca el hallazgo. No hay mecanismo de "acuse"; definir con la ceremonia | OPEN: decision de Carlos | Carlos |
 | F-PR7B-05 | P2 | El reconciler gana su primera escritura (INSERT de conteos en `integrity.reconcile_run`); se ajusta INV/`mustNot` de db-roles rev. 0.7. Sin SELECT, sin ids ni PII | RESUELTO en PR-7b (spec y TEST-CNS-1610/1779) | PR-7b |
 | F-PR7B-06 | P2 | Las aserciones globales de 0073 (una sola policy del rol, sin escritura en ninguna relacion) eran exactas solo al migrar; 0079 las reemplaza como aserción vigente; TEST-CNS-1739 ya no re-ejecuta 0073 | RESUELTO en PR-7b | PR-7b |
-| F-PR7B-07 | P2 | Si la persistencia (chain_run/checkpoints/reconcile_run) falla tras un recomputo con hallazgos, el proceso sale con exit 1 y el reporte de hallazgos no se imprime (fail-closed, el journal muestra solo name/code) | OPEN: aceptable IT0; evaluar imprimir antes de persistir en 7e | lampone-dev |
+| F-PR7B-07 | P2 | (P2-2 de la revision de seguridad) Si la persistencia falla tras un recomputo con hallazgos, el exit pasaba a 1 y el reporte no se imprimia | RESUELTO en PR-7b: el reporte se imprime antes de persistir; con anomalias la falla de persistencia sigue siendo exit 2 (sin sanear la copia local); sin anomalias exit 1. TEST-CNS-1783 | lampone-dev |
 | F-PR7B-08 | P2 | Regex de CHECK de Postgres admite repeticiones <= 255: `anchor_signature_shape` usa {16,255} (la firma Ed25519 en base64 = 88 caracteres) | RESUELTO en 0078 (rama no mergeada) | PR-7b |
+| F-PR7B-09 | P2 | (P2-1) El firmante de 7f debe verificar lo que firma | OPEN, criterio de aceptacion de 7f: el firmante recalcula la raiz Merkle y leaf_count desde `integrity.chain_checkpoint WHERE run_id = ...` y rechaza firmar si no coinciden con chain_run | lampone-dev (7f) |
+| F-PR7B-10 | P2 | (P2-5) Restaurar PITR deja la copia local de cabezas ADELANTADA a la base (CHECKPOINT_STATE_MISMATCH permanente); purgar o dar de baja un tenant produce TENANT_MISSING permanente | OPEN: ambos casos van al runbook de 7e. La retencion del ledger frente a los checkpoints (append-only) es LEGAL DECISION LD-15 / P-34 (Carlos) | lampone-dev (7e) / Carlos |
+| F-PR7B-11 | P2 | (P2-4) integrity_anchor_signer debe seguir NOLOGIN hasta 7f | RESUELTO en PR-7b: el chain-verifier lo comprueba al arrancar (exit 1, ANCHOR_SIGNER_CAN_LOGIN); cita de 0075 corregida a TEST-CNS-1774. TEST-CNS-1783 | lampone-dev |

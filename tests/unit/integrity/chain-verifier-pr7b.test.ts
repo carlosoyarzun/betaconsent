@@ -1,4 +1,4 @@
-// Gobierna: ADR-010 rev. 6 §3 (fila PR-7: checkpoints y cabeza por tenant), F-PR6E-05, D-4 (retiro de ledger-verify-cli.ts, Carlos 2026-10-17), plan PR-7 v3 (PR-7b, T-16); C-10 (Carlos, 2026-10-17); C-7 pendiente (sin firma ni publicacion).
+// Gobierna: ADR-010 rev. 6 §3 (fila PR-7: checkpoints y cabeza por tenant), F-PR6E-05, D-4 (retiro de ledger-verify-cli.ts, Carlos 2026-10-16), plan PR-7 v3 (PR-7b, T-16); C-10 (Carlos, 2026-10-16); C-7 pendiente (sin firma ni publicacion).
 // TEST-CNS-1773 (configuracion de la copia local y log de anomalias sin PII ni hashes), TEST-CNS-1782 (unidad systemd con StateDirectory; el CLI retirado no existe; el chain-verifier no importa firma ni egress). Sin Postgres. SYNTHETIC ONLY.
 
 import assert from "node:assert/strict";

@@ -9,8 +9,8 @@ let code: number = CHAIN_VERIFIER_EXIT.ERROR;
 try {
   const proc = await startChainVerifierProcess();
   try {
-    const report = await proc.run();
-    for (const line of formatChainReport(report)) (report.ok ? console.log : console.error)(line);
+    // El reporte se imprime antes de persistir (P2-2); si la persistencia falla con anomalias el exit sigue siendo 2.
+    const report = await proc.run({ onReport: (r) => { for (const line of formatChainReport(r)) (r.ok ? console.log : console.error)(line); } });
     code = exitCodeFor(report);
   } finally {
     await proc.stop();

@@ -1,6 +1,6 @@
 -- scope: database
 -- Gobierna: ADR-010 rev. 6 §3 (fila PR-7: persistencia de checkpoints y cabeza por tenant por el chain-verifier; el calculo de la raiz pasa al chain-verifier), §4.5.1 (DDL de integrity.* como integrity_owner antes del revoke),
--- F-PR6E-05 (deteccion de truncamiento de cola), D-1 (b), D-3; plan PR-7 v3 (PR-7b, T-2, T-3, T-4, T-6); C-10 (Carlos, 2026-10-17); specs/db-roles.spec.yaml (integrity_chain_verifier, integrity_anchor_signer).
+-- F-PR6E-05 (deteccion de truncamiento de cola), D-1 (b), D-3; plan PR-7 v3 (PR-7b, T-2, T-3, T-4, T-6); C-10 (Carlos, 2026-10-16); specs/db-roles.spec.yaml (integrity_chain_verifier, integrity_anchor_signer).
 -- 0072/0073 estan mergeadas y son inmutables (regla de Carlos, 2026-10-01): este cambio va en migracion nueva. 0075 (cluster) crea integrity_anchor_signer.
 --
 -- Tablas del chain-verifier (dueno integrity_owner; sin tenant_id en chain_run; sin PII: tenant = colegio, hashes y conteos):

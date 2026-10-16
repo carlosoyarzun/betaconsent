@@ -3,7 +3,7 @@
 // lista blanca; HMAC y ancla fuera), db/migrations/0013_ledger_chain.sql, common.spec.yaml
 // ledgerEnvelope. TEST-CNS-913 (verificador contra mutaciones reales, CHECK/UNIQUE de la cadena y
 // lista blanca = CHECK), 914 (concurrencia por tenant), 915 (inmutabilidad para migrator y
-// superusuario), 920 (filas sin eslabon: ahora por el chain-verifier). TEST-CNS-916 (CLI ledger-verify-cli) RETIRADO en PR-7b (ADR-010 rev. 6 D-4, Carlos 2026-10-17; F-PR7-11):
+// superusuario), 920 (filas sin eslabon: ahora por el chain-verifier). TEST-CNS-916 (CLI ledger-verify-cli) RETIRADO en PR-7b (ADR-010 rev. 6 D-4, Carlos 2026-10-16; F-PR7-11):
 // lo sustituye TEST-CNS-1775..1778 (checkpoints y truncamiento de cola). Requiere Postgres real (harness.ts); skip sin entorno. Solo datos sinteticos.
 
 import { payloadFor, invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { startChainVerifierProcess } from "../../../src/server/entrypoints/chain-verifier/chain-verify-process.ts";
+import { exitCodeFor as chainExitCodeFor, summarizeChainAudit } from "../../../src/server/modules/integrity/ledger-chain-audit.ts";
 import { verifyLedgerChain } from "../../../src/server/modules/common/ledger-chain.ts";
 import { LEDGER_EVENT_TYPES } from "../../../src/server/modules/common/ledger-event-types.ts";
 import type { LedgerEventInput } from "../../../src/server/ports/ledger.port.ts";
@@ -230,12 +231,19 @@ pgTest("TEST-CNS-920 pg: el chain-verifier (reemplaza al CLI retirado, D-4) marc
   const run = async () => {
     const proc = await startChainVerifierProcess({ env: { CNS_ENVIRONMENT: "LOCAL", CNS_DATABASE_URL: ctx.urlFor("integrity_chain_verifier") } });
     try {
-      return (await proc.run()).results.find((r) => r.tenantId === t);
+      const report = await proc.run();
+      const result = report.results.find((r) => r.tenantId === t);
+      const tenantAnomalies = report.anomalies.filter((a) => a.tenantId === t);
+      // Exit del proceso restringido a este tenant (la base compartida puede tener otros tenants corrompidos por otros tests).
+      return { result, exit: chainExitCodeFor(summarizeChainAudit(result === undefined ? [] : [result], tenantAnomalies)), tenantAnomalies: tenantAnomalies.length };
     } finally {
       await proc.stop();
     }
   };
-  const legacyOnly = await run();
+  const legacyRun = await run();
+  const legacyOnly = legacyRun.result;
+  assert.equal(legacyRun.tenantAnomalies, 0, "solo con legado el tenant no tiene anomalias");
+  assert.equal(legacyRun.exit, 0, "solo con legado: exit 0 para el tenant");
   assert.equal(legacyOnly?.broken, null);
   assert.equal(legacyOnly?.unchainedAfterStart, 0, "el legado previo al inicio de la cadena no cuenta");
 
@@ -250,8 +258,9 @@ pgTest("TEST-CNS-920 pg: el chain-verifier (reemplaza al CLI retirado, D-4) marc
   } finally {
     await admin.query("ALTER TABLE integrity.audit_event ADD CONSTRAINT audit_event_chain_required CHECK (chain_seq IS NOT NULL) NOT VALID");
   }
-  const evaded = await run();
-  assert.equal(evaded?.unchainedAfterStart, 1, "la fila sin eslabon posterior se detecta (exit 2 del proceso)");
+  const evadedRun = await run();
+  assert.equal(evadedRun.result?.unchainedAfterStart, 1, "la fila sin eslabon posterior se detecta");
+  assert.equal(evadedRun.exit, 2, "exit 2 del proceso (chainExitCodeFor)");
 });
 
 pgTest("TEST-CNS-921 pg: app_rw no puede falsear occurred_at ni environment: la base los fuerza (occurred_at = now() de la tx, environment = catalogo); eventHash v2 los cubre", async (ctx) => {

@@ -3,7 +3,7 @@
 //
 // PR-7b (rev. 6, F-PR6E-05): tras el snapshot RR READ ONLY (sin cambios) abre una tx corta READ WRITE y persiste `integrity.chain_run` + un checkpoint por tenant OK (unico INSERT del rol; chain-checkpoint-store.ts), calcula la
 // raiz Merkle (SIN firma ni clave ni egress; C-7 pendiente) y detecta truncamiento de cola, tenant desaparecido y copia local en desacuerdo (exit 2). Copia de las ultimas cabezas en el StateDirectory 0600 del uid del proceso
-// (CNS_CHAIN_VERIFIER_STATE_DIR; obligatoria fuera de LOCAL). C-10 (Carlos, 2026-10-17): antes de datos reales pasa a incremental desde la ultima cabeza publicada externamente (7f) + recomputo completo diario; en IT0b queda hourly (D-3).
+// (CNS_CHAIN_VERIFIER_STATE_DIR; obligatoria fuera de LOCAL). C-10 (Carlos, 2026-10-16): antes de datos reales pasa a incremental desde la ultima cabeza publicada externamente (7f) + recomputo completo diario; en IT0b queda hourly (D-3).
 //
 // Logica del proceso chain-verifier (sin HTTP, sin egress, SIN K_sub ni IdP: no importa ningun modulo OIDC ni del verifier). ENTRYPOINT (ADR-001 §11): puede importar adaptadores. Un pool UNICO del rol
 // `integrity_chain_verifier` con chequeos de arranque (expectedRole, session_user = current_user, sin superusuario, sin GUC app.* ni role del cliente, URL saneada con assertSafeConnectionUrl, catalogo/environment):
@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 
 import { ChainHeadStateFile } from "../../../infra/adapters/chain-state/chain-head-state-file.ts";
-import { persistChainRun } from "../../../infra/adapters/postgres/chain-checkpoint-store.ts";
+import { anchorSignerIsNoLogin, persistChainRun } from "../../../infra/adapters/postgres/chain-checkpoint-store.ts";
 import { forEachTenantChainInSnapshot } from "../../../infra/adapters/postgres/chain-verifier-reader.ts";
 import { openProcessPool, parseRuntimeEnvironment } from "../../../infra/adapters/postgres/runtime-process.ts";
 import { compareLocalHeads, merkleRoot, uniqueAnomalies, witnessHolds } from "../../modules/integrity/chain-checkpoint.ts";
@@ -90,9 +90,23 @@ export function parseChainVerifierConfig(env: Readonly<Record<string, string | u
   return { batchSize, allowEmpty, stateDir };
 }
 
+export interface ChainVerifierRunOptions {
+  /** Se invoca con el reporte ANTES de persistirlo (P2-2): una falla de persistencia no puede esconder las anomalias detectadas. */
+  readonly onReport?: (report: ChainAuditReport) => void;
+}
+
+/** integrity_anchor_signer debe seguir NOLOGIN hasta PR-7f (P2-4): si alguien lo habilito, el proceso no arranca. */
+export class ChainVerifierSignerLoginError extends Error {
+  readonly code = "ANCHOR_SIGNER_CAN_LOGIN";
+  constructor() {
+    super("integrity_anchor_signer no esta en NOLOGIN (o no existe) antes de PR-7f. Abortando (ADR-010 rev. 6, fail-closed)");
+    this.name = "ChainVerifierSignerLoginError";
+  }
+}
+
 export interface ChainVerifierProcess {
   /** Una corrida completa. Lanza ante un error de arranque, de precondicion o de lectura (el llamador sale con ERROR). */
-  run(): Promise<ChainAuditReport>;
+  run(options?: ChainVerifierRunOptions): Promise<ChainAuditReport>;
   stop(): Promise<void>;
 }
 
@@ -110,9 +124,15 @@ export async function startChainVerifierProcess(options: StartChainVerifierProce
     await pool.end();
     throw new ChainVerifierConfigError("CNS_CHAIN_VERIFIER_STATE_DIR es obligatorio fuera de LOCAL (copia local de cabezas)");
   }
+  try {
+    if (!(await anchorSignerIsNoLogin(pool))) throw new ChainVerifierSignerLoginError();
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
   const stateFile = config.stateDir === undefined ? null : new ChainHeadStateFile(config.stateDir, environment);
   return {
-    async run() {
+    async run(runOptions: ChainVerifierRunOptions = {}) {
       const startedAt = new Date();
       const local: LocalHeadState | null = stateFile === null ? null : await stateFile.read();
       const localHeads: ReadonlyMap<string, HeadRef> = local?.status === "PRESENT" ? local.heads : new Map<string, HeadRef>();
@@ -161,21 +181,29 @@ export async function startChainVerifierProcess(options: StartChainVerifierProce
         checkpoints.push({ tenantId: r.tenantId, chainSeq: r.head, eventHash: r.headHash, verifiedEvents: r.verified });
       }
       const merkle = report.ok ? merkleRoot(heads) : null;
-      await persistChainRun(
-        pool,
-        {
-          runId: randomUUID(),
-          startedAt,
-          environment,
-          tenants: report.tenants,
-          events: report.events,
-          exitCode: report.ok ? 0 : 2,
-          leafCount: merkle?.leafCount ?? 0,
-          merkleRoot: merkle?.root ?? null,
-          merkleFormat: merkle?.format ?? null,
-        },
-        checkpoints,
-      );
+      runOptions.onReport?.(report);
+      try {
+        await persistChainRun(
+          pool,
+          {
+            runId: randomUUID(),
+            startedAt,
+            environment,
+            tenants: report.tenants,
+            events: report.events,
+            exitCode: report.ok ? 0 : 2,
+            leafCount: merkle?.leafCount ?? 0,
+            merkleRoot: merkle?.root ?? null,
+            merkleFormat: merkle?.format ?? null,
+          },
+          checkpoints,
+        );
+      } catch (error) {
+        // P2-2: con anomalias el resultado es exit 2 aunque falle la persistencia (no se degrada a exit 1); sin anomalias, la falla es exit 1.
+        if (report.ok) throw error;
+        console.error("chain_verify_persist_failed (el reporte anterior sigue vigente: exit 2)");
+        return report;
+      }
       // La copia local se escribe DESPUES del commit: la base puede ir por delante, nunca por detras (compareLocalHeads). Los tenants no actualizados conservan su cabeza anterior.
       // Con una anomalia GLOBAL (copia ilegible o ausente fuera de LOCAL) NO se reescribe: sanar la copia sin intervencion borraria el hallazgo en la corrida siguiente (decision humana).
       if (stateFile !== null && !report.anomalies.some((a) => a.tenantId === null)) {
