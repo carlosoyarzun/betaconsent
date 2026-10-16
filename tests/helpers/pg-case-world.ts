@@ -7,12 +7,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Client, Pool } from "pg";
+import type { Client, Pool, PoolClient } from "pg";
 import { createApplyGuardConfig } from "../../src/infra/adapters/postgres/apply-guard.adapter.ts";
 import { createPgOidcAuthorization } from "../../src/infra/adapters/postgres/oidc-exchange.adapter.ts";
 import { createPgPlatformCase } from "../../src/infra/adapters/postgres/platform-case.adapter.ts";
 import { createPgPlatformSessionStore } from "../../src/infra/adapters/postgres/platform-session.adapter.ts";
 import { createPool } from "../../src/infra/adapters/postgres/pool.ts";
+import type { PoolLike } from "../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../src/infra/adapters/postgres/unit-of-work.ts";
 import { seedRh3DevCase } from "../../src/server/entrypoints/dev-rh3-seed.ts";
 import type { Rh3DevRefs } from "../../src/server/entrypoints/dev-rh3-seed.ts";
@@ -132,8 +133,10 @@ export interface PlatformHttp {
 export interface PlatformHttpOptions {
   /** Guardia de R4 (G-3). Por defecto: 3 intentos, sin espera, alerta por la sesion CASE (la fabrica de platform-process). */
   readonly applyGuard?: Partial<{ maxAttempts: number; log: (line: string) => void }>;
-  /** Envuelve el puerto de casos (p. ej. para inyectar un commit ambiguo). */
+  /** Envuelve el puerto de casos (p. ej. para observar o decorar llamadas). */
   readonly wrapCases?: (cases: PlatformCasePort) => PlatformCasePort;
+  /** Pool que usa SOLO el adaptador de casos (las sesiones usan el pool real): p. ej. `ambiguousCommitPool` para inyectar un commit ambiguo. */
+  readonly casePool?: (pool: Pool) => PoolLike;
 }
 
 /** Proceso platform en memoria del test (puerto efimero) sobre un pool de platform_rw REAL: sesiones, step-up y acciones de caso contra Postgres. */
@@ -144,7 +147,7 @@ export async function startPlatformHttp(ctx: PgTestContext, options: PlatformHtt
     CNS_PLATFORM_P49_MAX: "100000", CNS_PLATFORM_P50_MAX: "100000", CNS_PLATFORM_IDP_AUTHORIZATION_ENDPOINT: "http://127.0.0.1:9000/authorize", CNS_PLATFORM_IDP_CLIENT_ID: "consent-platform",
     CNS_PLATFORM_REDIRECT_URI: `${origin}/platform/auth/callback`,
   }, "LOCAL");
-  const base: PlatformCasePort = createPgPlatformCase(pool, {
+  const base: PlatformCasePort = createPgPlatformCase(options.casePool === undefined ? pool : options.casePool(pool), {
     applyGuard: createApplyGuardConfig(async () => {}, { maxAttempts: options.applyGuard?.maxAttempts ?? 3, sleep: async () => {}, log: options.applyGuard?.log ?? (() => {}) }),
   });
   const cases = options.wrapCases === undefined ? base : options.wrapCases(base);
@@ -180,3 +183,89 @@ export const casePath = (caseRef: string) => ({
   cosign: `/platform/rights-cases/${caseRef}/confirmation/cosign`,
   close: `/platform/rights-cases/${caseRef}/close`,
 });
+
+/** Lleva el caso a RH2 atestada (propuesta del operador 1 + aprobacion del APPROVER) por las rutas HTTP de platform. */
+export async function attestRh2(admin: Client, http: PlatformHttp, w: CaseWorld, label = "rh2"): Promise<string> {
+  const proposalRef = fixtureUuid(`world-${w.label}-${label}`);
+  await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+  const proposed = await http.post(casePath(w.caseRef).proposals, w.op1.caseSession.sid, { proposalRef, verificationScriptVersion: "guion-1" });
+  if (proposed.status !== 201) throw new Error(`propuesta RH2 rechazada: ${proposed.status} ${proposed.body}`);
+  await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+  const approved = await http.post(casePath(w.caseRef).approval(proposalRef), w.approver.platform.sid, {}, { kind: "PLATFORM" });
+  if (approved.status !== 200) throw new Error(`aprobacion RH2 rechazada: ${approved.status} ${approved.body}`);
+  return proposalRef;
+}
+
+/** RH2 atestada + RH3 paso 1 (registro del operador 1): deja la Revocation VERIFIED lista para la co-firma del operador 2. */
+export async function recordRh3(admin: Client, http: PlatformHttp, w: CaseWorld): Promise<void> {
+  await attestRh2(admin, http, w);
+  const recorded = await http.post(casePath(w.caseRef).confirmation, w.op1.caseSession.sid, { confirmationGivenOnCasePage: true });
+  if (recorded.status !== 200) throw new Error(`registro RH3 rechazado: ${recorded.status} ${recorded.body}`);
+}
+
+export interface OutboxFailure {
+  /** Intentos de insercion en app.outbox del tenant observados (incluye los que fallaron y se revirtieron). */
+  attempts(): Promise<number>;
+  remove(): Promise<void>;
+}
+
+/**
+ * Fallo inyectado: trigger BEFORE INSERT en app.outbox (el ULTIMO paso de R4/C6) que lanza `sqlstate` en los primeros `failures` intentos del tenant. El contador es una SECUENCIA (no transaccional:
+ * sobrevive al rollback de cada intento). Solo en la base descartable del archivo de test. `failures` grande = fallo permanente.
+ */
+export async function injectOutboxFailure(admin: Client, o: { name: string; tenantId: string; failures: number; sqlstate: string }): Promise<OutboxFailure> {
+  if (!/^[a-z0-9_]+$/.test(o.name) || !/^[0-9A-Z]{5}$/.test(o.sqlstate) || !/^[0-9a-f-]{36}$/.test(o.tenantId)) throw new Error("parametros de inyeccion invalidos");
+  await admin.query("CREATE SCHEMA IF NOT EXISTS qa_inject");
+  await admin.query("GRANT USAGE ON SCHEMA qa_inject TO PUBLIC");
+  await admin.query(`CREATE SEQUENCE qa_inject.${o.name}_seq`);
+  await admin.query(`GRANT USAGE ON SEQUENCE qa_inject.${o.name}_seq TO PUBLIC`);
+  await admin.query(`CREATE OR REPLACE FUNCTION qa_inject.fail_fn() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $f$
+    BEGIN
+      IF nextval(TG_ARGV[0]::regclass) <= TG_ARGV[1]::integer THEN RAISE EXCEPTION 'fallo inyectado' USING ERRCODE = TG_ARGV[2]; END IF;
+      RETURN NEW;
+    END $f$`);
+  await admin.query("GRANT EXECUTE ON FUNCTION qa_inject.fail_fn() TO PUBLIC");
+  await admin.query(`CREATE TRIGGER ${o.name}_trg BEFORE INSERT ON app.outbox FOR EACH ROW WHEN (NEW.tenant_id = '${o.tenantId}') EXECUTE FUNCTION qa_inject.fail_fn('qa_inject.${o.name}_seq', '${o.failures}', '${o.sqlstate}')`);
+  return {
+    async attempts() {
+      const r = (await admin.query<{ last_value: string; is_called: boolean }>(`SELECT last_value, is_called FROM qa_inject.${o.name}_seq`)).rows[0]!;
+      return r.is_called ? Number(r.last_value) : 0;
+    },
+    async remove() {
+      await admin.query(`DROP TRIGGER IF EXISTS ${o.name}_trg ON app.outbox`);
+    },
+  };
+}
+
+/**
+ * Commit ambiguo: el COMMIT SI se ejecuta en la base, pero al cliente le llega una conexion perdida (SQLSTATE 08006). Se arma con `times` cuantos COMMIT consecutivos fallan asi. Envuelve el pool que
+ * recibe el adaptador de casos (opcion `casePool` de startPlatformHttp).
+ */
+export function ambiguousCommitPool(times: number): { wrap: (pool: Pool) => PoolLike; fired(): number } {
+  let remaining = times;
+  let fired = 0;
+  const PATCHED = Symbol.for("qa.ambiguousCommit");
+  return {
+    fired: () => fired,
+    wrap: (pool) => ({
+      async connect(): Promise<PoolClient> {
+        const client = await pool.connect();
+        const tagged = client as PoolClient & { [PATCHED]?: boolean };
+        if (tagged[PATCHED] !== true) {
+          tagged[PATCHED] = true;
+          const original = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+          (client as unknown as { query: unknown }).query = async (...args: unknown[]): Promise<unknown> => {
+            if (args[0] === "COMMIT" && remaining > 0) {
+              remaining -= 1;
+              fired += 1;
+              await original("COMMIT");
+              throw Object.assign(new Error("connection terminated unexpectedly"), { code: "08006" });
+            }
+            return original(...args);
+          };
+        }
+        return client;
+      },
+    }),
+  };
+}
