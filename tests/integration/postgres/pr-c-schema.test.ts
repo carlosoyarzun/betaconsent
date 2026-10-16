@@ -373,7 +373,8 @@ pgTest("TEST-CNS-812 pg: email solo de dominios reservados (P1-5): funcion app.i
        FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid AND c.relkind IN ('r', 'p')
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'integrity', 'ops', 'tenant_resolve') AND a.attnum > 0 AND NOT a.attisdropped
-        AND (a.attname ~* '^(rut|run|rol_unico)$' OR a.attname ~* '(^|_)(rut|run)(_|$)')`,
+        AND (a.attname ~* '^(rut|run|rol_unico)$' OR a.attname ~* '(^|_)(rut|run)(_|$)')
+        AND NOT (a.attname = 'run_id' AND n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint', 'reconcile_run', 'anchor'))`, // PR-7b: run_id = id de CORRIDA del chain-verifier/reconciler (uuid), no el RUN chileno
   );
   assert.deepEqual(rut.rows, []);
 
