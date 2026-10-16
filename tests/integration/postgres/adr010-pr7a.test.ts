@@ -93,8 +93,8 @@ pgTest("TEST-CNS-1764 pg: chain-verifier, reconciler y verifier arrancan con CNS
   await driveInvitation(ctx, T, "1764");
   await setCatalog(admin, "STAGING");
   try {
-    for (const role of ["integrity_chain_verifier", "integrity_reconciler", "integrity_verifier"] as const) {
-      const process = role === "integrity_chain_verifier" ? "chain-verifier" : role === "integrity_reconciler" ? "reconciler" : "verifier";
+    for (const role of ["integrity_chain_verifier", "integrity_reconciler", "integrity_verifier", "platform_rw"] as const) {
+      const process = role === "integrity_chain_verifier" ? "chain-verifier" : role === "integrity_reconciler" ? "reconciler" : role === "platform_rw" ? "platform" : "verifier";
       const pool = await openProcessPool({ process, environment: "STAGING", env: ENV_STAGING(ctx, role), max: 1 });
       await pool.end();
       const direct = await runStartupChecks(await ctx.connectAs(role), { expectedRole: role, expectedEnvironment: "STAGING", roleMode: "IT0B_SYNTHETIC", retentionProfile: "NOT_APPLICABLE" });

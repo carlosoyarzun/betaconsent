@@ -41,13 +41,33 @@ export function isRolledBackRetryable(error: unknown): boolean {
   return typeof code === "string" && (code.startsWith("40") || code === "55P03");
 }
 
-/** Ejecuta UNA tx completa (`attempt` abre, ejecuta y confirma o revierte) con reintentos acotados solo ante errores de tx revertida. Cualquier otro error, o agotar el tope, se relanza tal cual. */
-export async function retryRolledBack<T>(attempt: () => Promise<T>, maxAttempts: number = MAX_ROLLED_BACK_ATTEMPTS): Promise<T> {
+export interface RetryRolledBackOptions {
+  readonly maxAttempts?: number;
+  /** Espera entre intentos (inyectable en tests); por defecto setTimeout. */
+  readonly sleep?: (ms: number) => Promise<void>;
+  /** Aleatoriedad del jitter en [0, 1) (inyectable en tests). */
+  readonly random?: () => number;
+  /** Base de la espera exponencial en ms. */
+  readonly baseDelayMs?: number;
+}
+
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ejecuta UNA tx completa (`attempt` abre, ejecuta y confirma o revierte) con reintentos acotados solo ante errores de tx revertida. Entre intentos espera base * 2^(n-1) * (0.5 + random) ms (backoff exponencial
+ * con jitter: evita reintentos sincronizados contra el mismo lock). Cualquier otro error, o agotar el tope, se relanza tal cual.
+ */
+export async function retryRolledBack<T>(attempt: () => Promise<T>, options: RetryRolledBackOptions = {}): Promise<T> {
+  const maxAttempts = options.maxAttempts ?? MAX_ROLLED_BACK_ATTEMPTS;
+  const sleep = options.sleep ?? defaultSleep;
+  const random = options.random ?? Math.random;
+  const base = options.baseDelayMs ?? 25;
   for (let n = 1; ; n++) {
     try {
       return await attempt();
     } catch (error) {
       if (n >= maxAttempts || !isRolledBackRetryable(error)) throw error;
+      await sleep(Math.round(base * 2 ** (n - 1) * (0.5 + random())));
     }
   }
 }

@@ -30,13 +30,21 @@ test("TEST-CNS-1760 clasificacion: 08/40/53/57/55P03 y sockets = indisponibilida
   for (const c of ["08006", "53300", "57P01", "42501"]) assert.equal(isRolledBackRetryable(sqlstate(c)), false, c);
 
   let n = 0;
-  assert.equal(await retryRolledBack(async () => { n++; if (n < 3) throw sqlstate("40001"); return "ok"; }), "ok");
+  assert.equal(await retryRolledBack(async () => { n++; if (n < 3) throw sqlstate("40001"); return "ok"; }, { sleep: async () => {} }), "ok");
   assert.equal(n, 3);
+  // Espera inyectable con backoff exponencial y jitter entre intentos (no tras el ultimo ni ante errores no reintentables).
+  const waits: number[] = [];
   n = 0;
-  await assert.rejects(() => retryRolledBack(async () => { n++; throw sqlstate("55P03"); }), (e: unknown) => (e as { code?: string }).code === "55P03");
+  await assert.rejects(() => retryRolledBack(async () => { n++; throw sqlstate("40P01"); }, { sleep: async (ms) => { waits.push(ms); }, random: () => 0.5, baseDelayMs: 20 }));
+  assert.deepEqual(waits, [20, 40], "2 esperas para 3 intentos: base * 2^(n-1) * (0.5 + random)");
+  waits.length = 0;
+  await assert.rejects(() => retryRolledBack(async () => { throw sqlstate("42501"); }, { sleep: async (ms) => { waits.push(ms); } }));
+  assert.deepEqual(waits, []);
+  n = 0;
+  await assert.rejects(() => retryRolledBack(async () => { n++; throw sqlstate("55P03"); }, { sleep: async () => {} }), (e: unknown) => (e as { code?: string }).code === "55P03");
   assert.equal(n, MAX_ROLLED_BACK_ATTEMPTS);
   n = 0;
-  await assert.rejects(() => retryRolledBack(async () => { n++; throw sqlstate("08006"); }));
+  await assert.rejects(() => retryRolledBack(async () => { n++; throw sqlstate("08006"); }, { sleep: async () => {} }));
   assert.equal(n, 1, "una conexion perdida (commit ambiguo) no se reintenta aqui");
 });
 
