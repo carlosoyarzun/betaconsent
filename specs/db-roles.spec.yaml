@@ -119,7 +119,7 @@ roles:
       - {object: app.idempotency_key, privileges: ["SELECT", "INSERT(columnas)", "UPDATE(columnas)"], status: "MAIN (0012:40-43)"}
       - {object: ops.access_log, privileges: ["SELECT", "INSERT(columnas)"], status: "MAIN (0014:62-63); se mantiene (Q-17: lecturas del roster STAFF)"}
       - {object: app.staff_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0021:66-69); se mantiene con RLS por tenant (Q-17)"}
-      - {object: app.case_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0022:65-68); PR-5 REVOKE ALL (pasa a platform)"}
+      - {object: app.case_session, privileges: [SELECT, "INSERT(columnas)", "UPDATE(last_seen_at, revoked_at)", DELETE], status: "MAIN (0022:65-68); REVOKE ALL y DROP de sus 4 policies en 0071 (ADR-010 rev. 5 6d parte 2; la unica sesion CASE es platform.platform_session; sin dev-login CASE)"}
       - {object: ops.security_event, privileges: ["INSERT(columnas 0025:78, 0029:105)", "INSERT(delivery_kind, receipt_ref) (0045)"], policy: "security_event_app_rw_insert (0029:96-103; 0045 la altera con ALTER POLICY y suma GUEST_MESSAGE_DELIVERY_FAILED)", status: "MAIN; 0045 (SEC-CNS-PR94 P2-A, Carlos 2026-10-14): tipo GUEST_MESSAGE_DELIVERY_FAILED (fallo de entrega post-commit de RECEIPT/MANAGEMENT_LINK; solo delivery_kind y receipt_ref UUIDv4 opaca; sin PII ni token), CHECK security_event_type_enum/otp_shape/delivery_kind_enum/receipt_ref_uuidv4/delivery_cols_only_for_type; DDL como security_event_owner, sin cambio de dueno ni de las 4 policies; PR-5: la policy conserva OTP_*, RECOVERY_TOKEN_ISSUED, MANAGEMENT_TOKEN_ROTATED, STAFF_LOGIN, STAFF_LOGOUT y SESSION_REVOKED_BY_ROTATION con session_kind STAFF; quita CASE_LOGIN, CASE_LOGOUT y la rotación CASE (a platform_rw)"}
       - {object: ops.otp_budget, privileges: [SELECT, "INSERT(columnas)", "UPDATE(failures, window_start, expires_at)"], status: "MAIN (0032:89-100)"}
     functions:
@@ -150,7 +150,7 @@ roles:
     settings: ["idle_in_transaction_session_timeout = 10s (0000:54)"]
     egress: none   # ADR-010 §4.3.2, Q14
     memberOf:
-      - {role: rights_operator, inherit: false, set: true, status: PR-5}
+      - {role: rights_operator, inherit: false, set: true, status: "PR-5 (declarado); 0068 (ADR-010 rev. 5 6d parte 2: GRANT rights_operator TO platform_rw WITH INHERIT FALSE, SET TRUE, sin ADMIN; unico miembro de rights_operator; aplica en IT0B_SYNTHETIC y REAL_DATA)"}
     schemas:
       - {schema: app, privileges: [USAGE], status: "MAIN (0001:28)"}
       - {schema: integrity, privileges: [USAGE], status: "MAIN (0001:28); revisar si sigue haciendo falta tras PR-5"}
@@ -180,7 +180,8 @@ roles:
       - {name: "platform.revoke_session_internal(sid_hash, kind, cause) (INTERNA, sin EXECUTE de runtime)", status: "MAIN (0053)"}
       - {name: "platform.begin_oidc_authorization (v2 de 0054): LOGIN_CASE valida EN LA BASE la platform_session PLATFORM vigente (GUC de transacción app.session_sid) y toma el principal de esa fila (F-PR6-36)", status: "MAIN (0054, PR-6c)"}
       - {object: "platform.platform_session / platform.rights_case_grant / platform.grant_request", privileges: [], note: "tablas de grant_owner (0052), FORCE RLS, sin privilegios de runtime; platform_session: append-only salvo last_seen_at y una revocación, techo de 4 h / 15 min (P-36/P-25), nada se borra (LD-15); rights_case_grant: CHECK <= 4 h (P-23); grant_request: expira a 1 h (P-37), vencida no aprobable; sin camino de escritura de runtime hasta request_grant/approve_grant con step-up (GRD-RC-12, 6d, F-PR6-40)", status: "MAIN (0052, PR-6c)"}
-      - {name: "case_state.approve_case_verification", status: "PR-5 (aprobador PRIVACY_LEGAL/SECURITY en sesión PLATFORM; dueño transition_owner)"}
+      - {name: "case_state.approve_case_verification", status: "PR-5 (aprobador PRIVACY_LEGAL/SECURITY en sesión PLATFORM; dueño transition_owner); 0070: unico EXECUTE directo de case_state para platform_rw (las demas de operador solo via SET LOCAL ROLE rights_operator); actor y tenant desde la sesion PLATFORM (platform.require_platform_actor), step-up en la misma tx y cruce GRD-RC-10 por platform.record_rh2_approval (RV004 = ERR-RV-07)"}
+      - {name: "platform.require_case_actor / platform.require_platform_actor / platform.record_rh2_approval (INTERNAS, dueño transition_owner/grant_owner segun 0069; EXECUTE solo transition_owner; sin EXECUTE de runtime)", status: "0069 (6d parte 2); platform.approve_grant v3 con motivo RH_TWO_APPROVER (GRD-RC-10, F-6D2-QA-03)"}
       - {name: "platform.issue_step_up_nonce(action, target_ref, ttl) (dueño grant_owner; REQUEST_GRANT / APPROVE_GRANT; el principal sale de la sesión PLATFORM validada por la base (GUC app.session_sid), nunca de un parámetro; NULL ante DENY con evidencia en authorization_check)", status: "PR-6d parte 1 (0061)"}
       - {name: "platform.request_grant(case_ref, p51_max, p51_window) / platform.approve_grant(case_ref, request_ref, valid_seconds, p51_max, p51_window) (dueño grant_owner; sin principal ni tenant como parámetro; step-up consumido en la misma tx; P-23 <= 4 h (defecto 2 h), P-37 1 h, aprobador distinto del solicitante; tenant del caso REAL; eventos en platform.session_event, sin ledger)", status: "PR-6d parte 1 (0062)"}
       - {name: "platform.session_principal(sid) / platform.rights_case_of(case_ref) / platform.consume_step_up(principal, action, target_ref, p51_max, p51_window) (INTERNAS, sin EXECUTE de runtime)", status: "PR-6d parte 1 (0060/0061)"}
@@ -218,7 +219,7 @@ roles:
       - {name: "ops.purge_p34(text, interval)", status: "MAIN (0031:270, 0033:206)"}
       - {name: "ops.purge_run_summary(uuid)", status: "MAIN (0031:302)"}
       - {name: "ops.retention_status()", status: "MAIN (0031:286)"}
-      - {name: "case_state.<funciones SYSTEM> (R4+C6, R5, R6, R7, R9+RC1 SYSTEM, RC2+RV0 SYSTEM; transitions.md §D)", status: "PR-5 (GRD-CM-15: EXECUTE solo worker; dueño transition_owner, que escribe el ledger). PR-6a (0042): R5–R7 solo worker; R4 sigue con EXECUTE app_rw hasta la enmienda P6-2"}
+      - {name: "case_state.<funciones SYSTEM> (R4+C6, R5, R6, R7, R9+RC1 SYSTEM, RC2+RV0 SYSTEM; transitions.md §D)", status: "PR-5 (GRD-CM-15: EXECUTE solo worker; dueño transition_owner, que escribe el ledger). PR-6a (0042): R5–R7 solo worker; 0070 (ADR-010 rev. 5 6d parte 2): case_state.apply_revocation solo EXECUTE worker (respaldo de CONFIRMED sin APPLIED; F-A10-26 cerrado: app_rw sin EXECUTE) y case_state.r4_apply INTERNA (R4 + C6 sin EXECUTE de runtime, la llaman confirm_revocation y cosign_case_confirmation en la misma tx, excepcion declarada a GRD-CM-15, 0066); case_state.seed_local_revocation / seed_local_rights_case sin EXECUTE de app_rw (F-A10-28; siembras LOCAL solo por rol de seed)"}
       - {name: "platform.purge_expired_oidc_exchange() (dueño grant_owner; borra solo filas con expires_at <= now())", status: "MAIN (0036)"}
     mustNot: ["DML directo en ledger, app.revocation, app.rights_case: el worker escribe ledger SOLO a través de las funciones SYSTEM (F-A10-02, Q-18)", "Aserciones ATTESTED", "Sesiones"]
     verifiedBy:
@@ -289,9 +290,11 @@ roles:
       - {name: "case_state.record_case_confirmation", status: PR-5}
       - {name: "case_state.cosign_case_confirmation", status: PR-5}
       - {name: "case_state.close_case", status: PR-5}
+      - {name: "case_state.read_case_apply_state", status: "0070 (6d parte 2): lectura de estado SIN efectos para el reintento acotado de RH3 (F-6D2-QA-02)"}
+      - {name: "case_state.alert_apply_exhausted", status: "0070 (6d parte 2): alerta R4_RETRIES_EXHAUSTED de RH3 (G-3)"}
     tables: [{object: "vistas case_scope() (rights-case.spec.yaml:422)", privileges: [SELECT], status: PR-5}]
     mustNot: ["DML directo", "CREATE", "Ser asumido por app_rw, worker o integrity_verifier"]
-    verifiedBy: {newTests: ["TEST-CNS-TBD-DBR-06: catálogo de rights_operator = exactamente las 5 funciones y las vistas case_scope"]}
+    verifiedBy: {newTests: ["TEST-CNS-TBD-DBR-06: catálogo de rights_operator = exactamente las 7 funciones (propose, withdraw, record, cosign, close, read_case_apply_state, alert_apply_exhausted) y las vistas case_scope; ACL exacta asertada en 0070"]}
 
   - id: staff_roster_reader
     class: SCOPED

@@ -381,37 +381,6 @@ paths:
         '404': {$ref: '#/components/responses/UniformNotFound'}
         '409': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
-  /platform/consent-contexts/{contextRef}/reactivate:
-    post:
-      operationId: reactivateConsentContext
-      x-api-id: API-CNS-107
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: CX2 — reactivar ConsentContext (PAUSED → ACTIVE), solo HUMAN
-      x-governed-by: ["tenant-context.spec CX2", "SM-CNS-001 §6", "CARLOS r3 R7-1", "DEC-BR-015:45", "ADR-006 §2", "SEC-CNS-005 T-62, TS-16j"]
-      x-state-transition: {machine: ConsentContextReadiness, id: CX2, from: PAUSED, to: ACTIVE}
-      x-route-class: PLATFORM
-      x-eligibility: "no evalúa la fórmula; nunca toca ConsentDecision ni la vía de revocación"
-      x-actor: {actorType: HUMAN, actorRole: CONTEXT_OWNER, alt: "PRIVACY_LEGAL (OPEN-TC-06)", note: "nunca SYSTEM_GUARD, modelo ni agente"}
-      x-guards: [GRD-CM-07, GRD-CM-10, GRD-TC-05, GRD-TC-06]
-      x-idempotency: "(contextRef, sequence)"
-      x-pending: ["OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "OPEN-TC-05 / ADR-011 / DEC-BR-009 (almacén de auditoría PLATFORM; reasonCode sin enum)", "OPEN-TC-01", "OPEN-TC-03"]
-      security: [{platformSession: []}]
-      parameters: [{$ref: '#/components/parameters/ContextRef'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKeyOptional'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ReactivateContextRequest'}
-      responses:
-        '200':
-          description: Contexto ACTIVE.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ContextReactivated'}
-        '403': {$ref: '#/components/responses/CsrfRejected'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        '409': {$ref: '#/components/responses/Problem'}
   # ---------------------------------------------------------------------------
   # invitation (I1, I2, I3, I3r, I9 por INVITER, I4). I5–I8 internos: x-not-exposed.
   # ---------------------------------------------------------------------------
@@ -971,9 +940,9 @@ paths:
       operationId: confirmRevocation
       x-api-id: API-CNS-132
       tags: [bearer-rights]
-      summary: R3 — confirmar retiro total (VERIFIED → CONFIRMED); encola APPLY_REVOCATION (R4) en la misma tx
+      summary: R3 — confirmar retiro total (VERIFIED → CONFIRMED); R4 + C6 en la MISMA tx (G-3, atomica; reintentos acotados)
       x-governed-by: ["revocation.spec R3", "SM-CNS-001 §5 R3", "DEC-BR-017 §1", "SEC-CNS-012 P1-01, P1-05"]
-      x-state-transition: {machine: Revocation, id: R3, from: VERIFIED, to: CONFIRMED, sideEffects: ["job durable APPLY_REVOCATION (R4 + consent-decision C6)"]}
+      x-state-transition: {machine: Revocation, id: R3, from: VERIFIED, to: CONFIRMED, sideEffects: ["R4 + consent-decision C6 en la misma tx (case_state.confirm_revocation, 0066)"]}
       x-route-class: RIGHTS
       x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
       x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, authPath: OTP}
@@ -989,13 +958,15 @@ paths:
             schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ConfirmRevocationRequest'}
       responses:
         '200':
-          description: Revocation CONFIRMED.
+          description: Revocation aplicada (R3 + R4 en una tx).
           content:
             application/json:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RevocationAck'}
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
+        '503':
+          description: "G-3 (ADR-010 rev. 5 §4.2.a): agotados los reintentos acotados de R3/R3r + R4 (o Revocation CONFIRMED sin APPLIED). Error uniforme GUARD_EVALUATOR_UNAVAILABLE {code, status, correlationId}, Cache-Control no-store, SIN acuse de aplicacion exitosa ni texto para el titular (LEGAL DECISION F-PR6-25); la alerta R4_RETRIES_EXHAUSTED queda registrada. Si la Revocation quedo APPLIED se devuelve el resultado real, nunca 503."
         4XX: {$ref: '#/components/responses/RightsProblem'}
   /manage/revocation/withdraw:
     post:
@@ -1106,178 +1077,8 @@ paths:
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
-        4XX: {$ref: '#/components/responses/RightsProblem'}
-  /platform/rights-cases/{caseRef}/verification-proposals:
-    post:
-      operationId: proposeCaseVerification
-      x-api-id: API-CNS-136
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: RH2/RH2v paso 1 — propose_case_verification (RIGHTS_OPERATOR, sesión CASE, step-up)
-      description: El sistema registra el guion; no evalúa la suficiencia de la verificación (LD-02; INV-CM-07). Sin efecto sobre Revocation hasta la aprobación. Dotación nominal atestada mínima de 4 personas (≥2 RIGHTS_OPERATOR distintos y ≥2 aprobadores distintos, sin reutilización entre roles; GRD-RC-15, R14-B); si no, ERR-RC-10 y el caso sigue abierto.
-      x-governed-by: ["revocation.spec RH2, RH2v", "SEC-CNS-013", "SM-CNS-001 §5.2 RH2, v7 RH2v", "DEC-BR-017 §3", "ADR-006 §6.3", "ADR-002 §5", "CARLOS r3 R6-4, R6-5, R7-4, R7-5, R13-1", "SEC-CNS-006 P-36, P-38", "AUDIT F-A08"]
-      x-state-transition: {machine: Revocation, id: [RH2, RH2v], step: propose, effect: none}
-      x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, proposer: "RIGHTS_OPERATOR con sesión CASE del caso (verifiedByRef)", note: "GRD-CM-07 se aplica al ejecutor (verifiedByRef), derivado de la sesión y principal_kind HUMAN; actorType/actorRole del evento los fija la spec, nunca un parámetro (SEC-CNS-013)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15] # GRD-RV-27 solo en RH2v
-      x-errors: [ERR-RV-07, ERR-RV-08, ERR-RV-19, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13] # ERR-RV-19 solo en RH2v
-      x-idempotency: "(revocationRef, proposal_ref)"
-      x-pending: ["LD-02 (suficiencia de la verificación humana)", "APR-IDP (PENDING — Carlos / studio)"]
-      security: [{caseSession: []}]
-      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ProposeCaseVerificationRequest'}
-      responses:
-        '201':
-          description: Propuesta registrada.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ProposalAck'}
-        '403': {$ref: '#/components/responses/RightsProblem'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        4XX: {$ref: '#/components/responses/RightsProblem'}
-  /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/approval:
-    post:
-      operationId: approveCaseVerification
-      x-api-id: API-CNS-137
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: RH2/RH2v paso 2 — approve_case_verification (PRIVACY_LEGAL o SECURITY, tercer humano) → REQUESTED|VERIFIED → VERIFIED
-      description: REVOCATION_VERIFIED solo con ambas aserciones ATTESTED por integrity_verifier (INV-13); PENDING = sin efecto. En la misma tx se proyectan verifiedAuthPath y verifiedRecoveryMethod (SEC N2-02, GRD-RV-29). Dotación mínima de 4 personas (GRD-RC-15, R14-B; ERR-RC-10).
-      x-governed-by: ["revocation.spec RH2, RH2v", "SEC-CNS-013", "GRD-RV-09", "GRD-RC-15", "ADR-006 §6.3", "SEC-CNS-006 P-36, P-38", "CARLOS r3 R14-B"]
-      x-state-transition:
-        - {machine: Revocation, id: RH2, from: REQUESTED, to: VERIFIED}
-        - {machine: Revocation, id: RH2v, from: VERIFIED, to: VERIFIED}
-      x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {recordedActor: {actorType: HUMAN, actorRole: DECISION_MAKER}, approver: "PRIVACY_LEGAL o SECURITY en su propia sesión PLATFORM (secondApproverRef)", note: "GRD-CM-07 se aplica al ejecutor (secondApproverRef), derivado de la sesión y principal_kind HUMAN (SEC-CNS-013)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-23, GRD-RV-27, GRD-RV-28, GRD-RC-10, GRD-RC-12, GRD-RC-15] # GRD-RV-27 solo en RH2v
-      x-errors: [ERR-RV-07, ERR-RV-08, ERR-RV-19, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-RC-10, ERR-RV-13] # ERR-RV-19 solo en RH2v
-      x-idempotency: "(revocationRef, proposal_ref)"
-      x-pending: ["APR-IDP", "OPEN-TC-06 (PRIVACY_LEGAL fuera del enum actorRole)", "LD-02"]
-      security: [{platformSession: []}]
-      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/ProposalRef'}, {$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ApproveCaseVerificationRequest'}
-      responses:
-        '200':
-          description: Aprobación registrada; revocationState informa si hubo efecto.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ApprovalAck'}
-        '403': {$ref: '#/components/responses/RightsProblem'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        4XX: {$ref: '#/components/responses/RightsProblem'}
-  /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal:
-    post:
-      operationId: withdrawCaseVerificationProposal
-      x-api-id: API-CNS-140
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: RH2 retiro — withdraw_case_verification_proposal (solo el RIGHTS_OPERATOR proponente, solo propuesta PENDING)
-      description: La propuesta queda WITHDRAWN (terminal, no aprobable) y se registra REVOCATION_PROPOSAL_WITHDRAWN (solo refs). NO cambia el estado de la Revocation ni produce FAILED (INV-6); queda disponible para una nueva propuesta. Cualquier otro principal, o una propuesta ya no PENDING, falla cerrado (ERR-RV-07 / ERR-CM-06).
-      x-governed-by: ["revocation.spec RH2", "GRD-RV-09", "CA-128 X6 P2 (Carlos, 2026-10-01)", "SEC-CNS-013"]
-      x-state-transition: {machine: Revocation, id: RH2w, from: REQUESTED, to: REQUESTED, effect: none}
-      x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {recordedActor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}, withdrawer: "RIGHTS_OPERATOR con sesión CASE del caso, igual a proposedByRef (withdrawnByRef)", note: "withdrawnByRef se deriva de la sesión CASE y principal_kind HUMAN, nunca del body (GRD-CM-07)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-09, GRD-RV-19, GRD-RV-28, GRD-RC-12]
-      x-errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13, ERR-RC-05]
-      x-idempotency: "(revocationRef, proposal_ref)"
-      security: [{caseSession: []}]
-      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/ProposalRef'}, {$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/WithdrawCaseVerificationProposalRequest'}
-      responses:
-        '200':
-          description: Propuesta retirada (WITHDRAWN); la Revocation sigue REQUESTED.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ProposalWithdrawalAck'}
-        '403': {$ref: '#/components/responses/RightsProblem'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        '409': {$ref: '#/components/responses/RightsProblem', description: "Propuesta ya no PENDING o proposalRef retirada (ERR-CM-06); sin efecto."}
-        4XX: {$ref: '#/components/responses/RightsProblem'}
-  /platform/rights-cases/{caseRef}/confirmation:
-    post:
-      operationId: recordCaseConfirmation
-      x-api-id: API-CNS-138
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: RH3 paso 1 — record_case_confirmation (RIGHTS_OPERATOR, sesión CASE); sin efecto sin co-firma
-      description: Interino IT0 (R13-4, R14-B) — cuatro ojos, dos RIGHTS_OPERATOR distintos (registra uno, co-firma otro; cualquiera de los dos puede ser el proponente de RH2, AUDIT-H01-rev4 M-04), ninguno aprobador de RH2/RH2v ni de un grant del caso; mínimo 4 personas (≥2 RIGHTS_OPERATOR y ≥2 aprobadores distintos, GRD-RC-15) sin reutilización entre roles. recordedByRef se deriva de la sesión CASE, nunca del body (GRD-CM-07). La regla definitiva es LEGAL DECISION LD-03.
-      x-governed-by: ["revocation.spec RH3", "SEC-CNS-013", "SM-CNS-001 §5.2 RH3 (v7)", "CARLOS r3 R13-4, R14-A, R14-B", "SEC-CNS-012 N-04, P1-07", "ADR-006 §6.3", "LD-03", "DEC-BR-018 R14-B (A-02, A-03, A-32: 4 personas y co-firma RH3)"]
-      x-state-transition: {machine: Revocation, id: RH3, step: record, effect: none}
-      x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, recordedByRef: "RIGHTS_OPERATOR desde su sesión CASE", note: "GRD-CM-07 se aplica al ejecutor (recordedByRef), derivado de la sesión y principal_kind HUMAN (SEC-CNS-013)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
-      x-errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-RV-20, ERR-RV-04, ERR-RC-10, ERR-CM-01, ERR-CM-10]
-      x-errors-note: "ERR-RC-05 huérfano: su guard GRD-RC-12 se quitó de RH3 por OPEN-RV-10; se conserva hasta que Carlos lo resuelva. ERR-RV-20 = RH3_NOT_BOUND_TO_RH2 (sin RH2/RH2v ATTESTED de la misma revocationRef y caseRef posterior al último RC3/RC3a)."
-      x-idempotency: "revocationRef"
-      x-pending: ["OPEN-RV-10 (step-up de record/cosign; GRD-RC-12 retirado)", "LD-03 (LEGAL DECISION: quién escribe la confirmación)"]
-      security: [{caseSession: []}]
-      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RecordCaseConfirmationRequest'}
-      responses:
-        '200':
-          description: Registro sin efecto hasta co-firma.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}
-        '403': {$ref: '#/components/responses/RightsProblem'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        '409': {$ref: '#/components/responses/RightsProblem', description: "RH3_NOT_BOUND_TO_RH2 (ERR-RV-20), RH3_FOUR_EYES_REQUIRED (ERR-RV-18), ROSTER_INSUFFICIENT (ERR-RC-10); sin efecto, el caso sigue abierto."}
-        4XX: {$ref: '#/components/responses/RightsProblem'}
-  /platform/rights-cases/{caseRef}/confirmation/cosign:
-    post:
-      operationId: cosignCaseConfirmation
-      x-api-id: API-CNS-139
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: RH3 paso 2 — cosign_case_confirmation por un segundo RIGHTS_OPERATOR distinto (VERIFIED → CONFIRMED)
-      description: Sin co-firma de un segundo RIGHTS_OPERATOR distinto no hay efecto (INV-17). Encola APPLY_REVOCATION en la misma tx. REVOCATION_CONFIRMED registra recordedByRef y cosignedByRef (refs opacas UUIDv4 del principal de plataforma, distintas entre sí e iguales a las columnas de la confirmación; INV-RV-11, F-R14-04); sin cosignedByRef el append falla y no hay efecto. cosignedByRef se deriva de la sesión CASE del co-firmante, nunca del body (GRD-CM-07).
-      x-governed-by: ["revocation.spec RH3, REVOCATION_CONFIRMED, INV-RV-11", "SEC-CNS-013", "CARLOS r3 R14-B", "INV-17", "F-R14-04", "LD-03", "DEC-BR-018 R14-B, OPEN-RV-11 (A-57, A-58: cosignedByRef en REVOCATION_CONFIRMED)"]
-      x-state-transition: {machine: Revocation, id: RH3, from: VERIFIED, to: CONFIRMED, step: cosign, sideEffects: ["job durable APPLY_REVOCATION"]}
-      x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {actorType: HUMAN, actorRole: DECISION_MAKER, cosignedByRef: "segundo RIGHTS_OPERATOR distinto, sesión CASE propia", note: "GRD-CM-07 se aplica al ejecutor (cosignedByRef), derivado de la sesión y principal_kind HUMAN; el co-firmante va en payload.cosignedByRef, no en el sobre del actor (SEC-CNS-013, F-R14-04)"}
-      x-guards: [GRD-CM-01, GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RV-07, GRD-RV-10, GRD-RV-23, GRD-RV-24, GRD-RV-26, GRD-RV-28, GRD-RC-10, GRD-RC-15]
-      x-errors: [ERR-RV-08, ERR-RV-18, ERR-RC-04, ERR-RC-05, ERR-CM-09, ERR-RV-20, ERR-RV-04, ERR-RC-10, ERR-CM-01, ERR-CM-10]
-      x-errors-note: "ERR-RC-05 huérfano: su guard GRD-RC-12 se quitó de RH3 por OPEN-RV-10; se conserva hasta que Carlos lo resuelva. ERR-RV-20 = RH3_NOT_BOUND_TO_RH2 (sin RH2/RH2v ATTESTED de la misma revocationRef y caseRef posterior al último RC3/RC3a)."
-      x-idempotency: "revocationRef"
-      x-changeNote: "2026-09-28 (Carlos, opción (a)): CaseConfirmationAck.revocationState admite APPLIED; tras la co-firma con R4 exitoso la ack devuelve APPLIED (CA-127)."
-      x-pending: ["OPEN-RV-10", "LD-03"]
-      security: [{caseSession: []}]
-      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CosignCaseConfirmationRequest'}
-      responses:
-        '200':
-          description: Co-firma registrada; revocationState = APPLIED si se cumplen los cuatro ojos y R4 se aplica de forma síncrona (IT0); si R4 falla, error propagado y Revocation en CONFIRMED.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CaseConfirmationAck'}
-        '403': {$ref: '#/components/responses/RightsProblem'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        '409': {$ref: '#/components/responses/RightsProblem', description: "RH3_NOT_BOUND_TO_RH2 (ERR-RV-20), RH3_FOUR_EYES_REQUIRED (ERR-RV-18), ROSTER_INSUFFICIENT (ERR-RC-10); sin efecto, el caso sigue abierto."}
+        '503':
+          description: "G-3 (ADR-010 rev. 5 §4.2.a): agotados los reintentos acotados de R3/R3r + R4 (o Revocation CONFIRMED sin APPLIED). Error uniforme GUARD_EVALUATOR_UNAVAILABLE {code, status, correlationId}, Cache-Control no-store, SIN acuse de aplicacion exitosa ni texto para el titular (LEGAL DECISION F-PR6-25); la alerta R4_RETRIES_EXHAUSTED queda registrada. Si la Revocation quedo APPLIED se devuelve el resultado real, nunca 503."
         4XX: {$ref: '#/components/responses/RightsProblem'}
   # ---------------------------------------------------------------------------
   # rights-case (RC0, RC1, RC2u, RC3/RC3a, RC4/RC5/RC6). RC2 worker; RC1c deshabilitada.
@@ -1305,39 +1106,6 @@ paths:
       responses:
         '200':
           description: Sesión revocada en servidor (o ya no había sesión válida). Cache-Control no-store; Set-Cookie Max-Age=0 para __Host-cns-staff, __Host-cns-staff-csrf y __Host-cns-staff-flash.
-          content:
-            application/json:
-              schema: {type: object, additionalProperties: false}
-        '403': {$ref: '#/components/responses/CsrfRejected'}
-        '503':
-          description: CA-141 (ERR-SE-04, ERR-CM-12 GUARD_EVALUATOR_UNAVAILABLE) — no se pudo escribir el evento de seguridad del logout. La sesión NO se revoca y NO hay Set-Cookie ni borrado de cookies (fail-closed); reintentar.
-          content:
-            application/problem+json:
-              schema: {$ref: '../schemas/common.schema.json#/$defs/Problem'}
-  /platform/case-session/logout:
-    post:
-      operationId: logoutCaseSession
-      x-api-id: API-CNS-193
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: Cerrar la sesión CASE (CA-139) — revoca el sid en servidor y borra las cookies
-      description: >-
-        Revoca en servidor el sid de la cookie CASE (la cookie copiada o robada deja de servir de inmediato en API-CNS-136/137/138/139/140) y responde
-        Set-Cookie con Max-Age=0 para __Host-cns-case y __Host-cns-case-csrf. Idempotente: sin sesión válida solo borra cookies. Si la cookie trae una
-        sesión firmada, el token CSRF debe ser el de ESA sesión (403 si no; no revoca en ese caso).
-      x-governed-by: ["CA-139", "SEC-CNS-018 rev. 2 D-3", "common.spec GRD-CM-10"]
-      x-route-class: RIGHTS
-      x-guards: [GRD-CM-10]
-      security: [{caseSession: []}]
-      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/EmptyCommand'}
-      responses:
-        '200':
-          description: Sesión revocada en servidor (o ya no había sesión válida). Cache-Control no-store; Set-Cookie Max-Age=0 para __Host-cns-case y __Host-cns-case-csrf.
           content:
             application/json:
               schema: {type: object, additionalProperties: false}
@@ -1497,42 +1265,8 @@ paths:
         '202': {$ref: '#/components/responses/UniformAccepted'}
         '403': {$ref: '#/components/responses/RightsProblem'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
-  /platform/rights-cases/{caseRef}/close:
-    post:
-      operationId: closeRightsCase
-      x-api-id: API-CNS-148
-      x-moved-to: consent-platform.openapi.yaml  # ADR-010 PR-1: el contrato vive en el proceso platform; este archivo conserva el detalle hasta PR-3..PR-6
-      tags: [platform]
-      summary: RC4/RC5/RC6 — close_case (IN_VERIFICATION|CONTACTING → RESOLVED|WITHDRAWN)
-      description: RESOLVED solo tras R4 APPLIED; WITHDRAWN solo tras REVOCATION_FAILED WITHDRAWN_BY_REQUESTER del ciclo vigente (GRD-RC-09). Ningún timer cierra el caso.
-      x-governed-by: ["rights-case.spec RC4.RESOLVED, RC4.WITHDRAWN, RC5, RC6", "SM-CNS-001 §5.2 RC4, v7 RC5, RC6", "ADR-006 §6.3", "CARLOS r3 R13-1", "AUDIT F-A01", "SEC-CNS-013"]
-      x-state-transition:
-        - {machine: RightsCase, id: RC4.RESOLVED, from: IN_VERIFICATION, to: RESOLVED}
-        - {machine: RightsCase, id: RC4.WITHDRAWN, from: IN_VERIFICATION, to: WITHDRAWN}
-        - {machine: RightsCase, id: RC5, from: CONTACTING, to: RESOLVED}
-        - {machine: RightsCase, id: RC6, from: CONTACTING, to: WITHDRAWN}
-      x-route-class: RIGHTS
-      x-eligibility: "eligibility_to_revoke (GRD-CM-06)"
-      x-actor: {actorType: HUMAN, actorRole: RIGHTS_OPERATOR}
-      x-guards: [GRD-CM-06, GRD-CM-07, GRD-CM-10, GRD-RC-09, GRD-RC-10]
-      x-errors: [ERR-RC-03, ERR-RC-04, ERR-CM-09, ERR-CM-01, ERR-CM-10]
-      x-idempotency: "caseRef"
-      security: [{caseSession: []}]
-      parameters: [{$ref: '#/components/parameters/CaseRef'}, {$ref: '#/components/parameters/CsrfToken'}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/CloseRightsCaseRequest'}
-      responses:
-        '200':
-          description: Caso cerrado.
-          content:
-            application/json:
-              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/RightsCaseClosed'}
-        '403': {$ref: '#/components/responses/RightsProblem'}
-        '404': {$ref: '#/components/responses/UniformNotFound'}
-        4XX: {$ref: '#/components/responses/RightsProblem'}
+x-moved-to-platform:
+  - "ADR-010 rev. 5 6d parte 2 (opcion A de Carlos, 2026-10-15): el proceso web ya NO sirve /platform/* (404; tests/integration/consent-flow/web-no-platform-routes.test.ts) ni emite sesion CASE (dev-login CASE eliminado; /__dev/staff-login solo emite STAFF TENANT_ADMIN). Las operaciones API-CNS-136, 137, 138, 139, 140, 148, 193 y /platform/consent-contexts/{contextRef}/reactivate viven solo en consent-platform.openapi.yaml."
 x-not-exposed:
   - {id: RC2, machine: RightsCase, reason: "worker SYSTEM_GUARD (primera acción; RV0 fuente SYSTEM al canal ligado con trigger CASE_CONTACT/SCHOOL_REPORTED); fuente = rol worker (GRD-CM-15, SEC-CNS-013 N-4c-02)", guards: [GRD-RC-06, GRD-RV-22, GRD-RV-17, GRD-CM-15]}
   - {id: "RV0 (fuente SYSTEM)", machine: Revocation, reason: "triggers CASE_CONTACT/SCHOOL_REPORTED dentro de la tx de RC2; sin POST, credencial ni handle; token ligado al revokedDecisionRef del caso (GRD-RV-22, SEC N2-04); fuente = rol worker (GRD-CM-15, SEC-CNS-013 N-4c-01)", guards: [GRD-CM-06, GRD-RV-02, GRD-RV-17, GRD-RV-22, GRD-CM-15]}
@@ -1549,7 +1283,7 @@ x-not-exposed:
   - {id: [V4, V5, V6, V6r, V6c, V6a], machine: DecisionMakerVerification, reason: "internas/worker; V6a es contabilidad del padre"}
   - {id: [C4, C7, C8, M3], machine: ConsentDecision, reason: "deshabilitadas (F-025; EXT-E / F-023; EXT-E / Q-16; LD-01)"}
   - {id: C6, machine: ConsentDecision, reason: "interna: mismo lote que Revocation R4"}
-  - {id: [R4, R5, R6, R7, R9], machine: Revocation, reason: "worker (APPLY_REVOCATION, consent.revoked, ACK, erasure.confirmed, TTL P-19). R4 acceptsIntegrityFailure: GRD-RV-29 deriva authPath/recoveryMethod/actor de la proyección verificada sin rechazar (SEC N2-02, INV-RV-07). R9 abre rights-case RC1 fuente SYSTEM en la misma tx (SEC N2-01).", pending: ["OPEN-CT-02 (firma/transporte outbox, ACK y erasure.confirmed)", "F-CT-04 (consent.revoked sin subjectRef)"]}
+  - {id: [R4, R5, R6, R7, R9], machine: Revocation, reason: "R4 en linea con R3/R3r/RH3 (G-3; respaldo del worker solo para CONFIRMED sin APPLIED); R5-R7 y R9: worker (consent.revoked, ACK, erasure.confirmed, TTL P-19). R4 acceptsIntegrityFailure: GRD-RV-29 deriva authPath/recoveryMethod/actor de la proyección verificada sin rechazar (SEC N2-02, INV-RV-07). R9 abre rights-case RC1 fuente SYSTEM en la misma tx (SEC N2-01).", pending: ["OPEN-CT-02 (firma/transporte outbox, ACK y erasure.confirmed)", "F-CT-04 (consent.revoked sin subjectRef)"]}
   - {id: R8h, machine: Revocation, reason: "deshabilitada (R13-4; LD-03)"}
 x-pending-global:
   - "LD-15 (retención de eventos de seguridad emitidos por V1/V2/V3/RV0)"

@@ -45,7 +45,7 @@ codeRefs:
 scope:
   included:
     - "Sesion STAFF (roles TENANT_ADMIN, RIGHTS_OPERATOR, APPROVER; tenant derivado del roster atestado)"
-    - "Sesion CASE (roles RIGHTS_OPERATOR, APPROVER; ligada a un caseRef)"
+    - "Sesion CASE (roles RIGHTS_OPERATOR, APPROVER; ligada a un caseRef). ADR-010 rev. 5 6d parte 2 (0071, P6-4): la sesion CASE de `web` (dev-login, app.case_session, cookie __Host-cns-case) YA NO EXISTE en el codigo ni para app_rw (REVOKE ALL y DROP de sus policies); la unica sesion CASE es platform.platform_session del proceso `platform` (ver bloque platformSession). Las reglas CASE de este documento describen el comportamiento historico de CA-139 (PR #54) y no se ejecutan; se conservan por trazabilidad."
   excluded:
     - "Sesion PLATFORM (platformSession) y consent-session / recovery-handle / link-handle: otros mecanismos"
     - "IdP real, step-up criptografico y MFA: APR-IDP PENDING (Carlos / studio)"
@@ -223,7 +223,7 @@ guards:
   - id: GRD-SE-13
     name: issuance_only_dev_login_local
     applies: [STAFF, CASE]
-    rule: "Unica via de emision hoy: dev-login, solo LOCAL (GRD-CM-13), con el mismo emisor (issueStaffSession / issueCaseSession) y sin privilegios extra. Almacen y logs sin sid, cookie, correo ni PII. CASE: storeMode=postgres exige `caseSessions` inyectado (fail-closed; nunca sesion en memoria sobre una base real)."
+    rule: "Unica via de emision hoy: dev-login, solo LOCAL (GRD-CM-13), con el mismo emisor (issueStaffSession) y sin privilegios extra; para CASE (issueCaseSession) solo historico: eliminado en 6d parte 2 (0071, P6-4), la sesion CASE vive en `platform`. Almacen y logs sin sid, cookie, correo ni PII. CASE: storeMode=postgres exige `caseSessions` inyectado (fail-closed; nunca sesion en memoria sobre una base real)."
     onFail: "404 uniforme fuera de LOCAL; arranque falla sin caseSessions"
     governedBy: ["GRD-CM-13", "DEC-BR-014 §4", "APR-IDP PENDING", "CA-138", "CA-139"]
     testIds: [TEST-CNS-1150]

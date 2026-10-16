@@ -205,34 +205,18 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
-  /platform/case-session/dev-login:
-    post:
-      operationId: caseSessionDevLogin
-      tags: [platform]
-      summary: "caseSessionDevLogin - x-local-only."
-      x-roles: "solo LOCAL (GRD-CM-13)"
-      x-step-up: "none"
-      x-db-role: "platform_rw"
-      x-db-function: "(igual que openCaseSession, con asercion sintetica)"
-      x-delivery: "MAIN (codigo), PR-5"
-      x-local-only: true
-      responses:
-        '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
-        '404':
-          description: Respuesta uniforme.
   /platform/step-up:
     post:
       operationId: issueStepUp
       x-api-id: API-CNS-TBD-P07
       tags: [platform]
-      summary: "issueStepUp - Sesion platformSession (P-36, 4.3.1, Q11). PR-6d parte 1: acciones REQUEST_GRANT y APPROVE_GRANT. Body {action, targetRef} (REQUEST_GRANT: caseRef; APPROVE_GRANT: grantRequestRef). El principal sale de la sesion validada en la base, NUNCA de la request. Origin = mismo origen. P-50. P-51 (5 / 10 min) en la base."
+      summary: "issueStepUp - Sesion platformSession (P-36, 4.3.1, Q11). PR-6d parte 1: acciones REQUEST_GRANT y APPROVE_GRANT. Body {action, targetRef} (REQUEST_GRANT: caseRef; APPROVE_GRANT: grantRequestRef; PROPOSE_/APPROVE_/WITHDRAW_CASE_VERIFICATION: proposalRef, step-up RH2 de 6d parte 2). El principal sale de la sesion validada en la base, NUNCA de la request. Origin = mismo origen. P-50. P-51 (5 / 10 min) en la base."
       x-session: platformSession
-      x-roles: "RIGHTS_OPERATOR (REQUEST_GRANT), APPROVER (APPROVE_GRANT)"
+      x-roles: "RIGHTS_OPERATOR (REQUEST_GRANT, PROPOSE_CASE_VERIFICATION, WITHDRAW_CASE_VERIFICATION), APPROVER (APPROVE_GRANT, APPROVE_CASE_VERIFICATION)"
       x-step-up: "(body: action + destino opaco; 303 al IdP con max_age=0 + prompt=login y el nonce emitido por la base, ligado a operador, accion y sha256(destino))"
       x-db-role: "platform_rw"
       x-db-function: "platform.issue_step_up_nonce + platform.begin_oidc_authorization(STEP_UP)"
-      x-delivery: "PR-6d parte 1 (REQUEST_GRANT, APPROVE_GRANT); el resto de acciones, 6d parte 2"
+      x-delivery: "PR-6d parte 1 (REQUEST_GRANT, APPROVE_GRANT); 6d parte 2 (acciones de RH2)"
       security: [{platformSession: []}]
       requestBody:
         required: true
@@ -243,7 +227,7 @@ paths:
               required: [action, targetRef]
               additionalProperties: false
               properties:
-                action: {type: string, enum: [REQUEST_GRANT, APPROVE_GRANT]}
+                action: {type: string, enum: [REQUEST_GRANT, APPROVE_GRANT, PROPOSE_CASE_VERIFICATION, APPROVE_CASE_VERIFICATION, WITHDRAW_CASE_VERIFICATION]}
                 targetRef: {type: string, format: uuid}
       responses:
         '303':
@@ -281,16 +265,41 @@ paths:
       x-step-up: "PROPOSE_CASE_VERIFICATION"
       x-db-role: "platform_rw->rights_operator"
       x-db-function: "case_state.propose_case_verification"
-      x-delivery: "PR-5"
+      x-delivery: "PR-5; 6d parte 2 (0066-0071): actor, tenant y Revocation derivados de la sesion en la base; una transaccion por accion"
       x-moved-from: consent-it0.openapi.yaml
       security: [{caseSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposalRef, verificationScriptVersion]
+              additionalProperties: false
+              properties:
+                proposalRef: {type: string, format: uuid}
+                verificationScriptVersion: {type: string, pattern: '^[A-Za-z0-9._-]{1,32}$'}
       responses:
-        '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '201':
+          description: "RH2 paso 1 registrado (sin efecto sobre la Revocation). Step-up PROPOSE_CASE_VERIFICATION (destino proposalRef) consumido en la misma tx."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  proposalRef: {type: string, format: uuid}
+                  attestation: {type: string, enum: [PENDING]}
+        '403':
+          description: "ERR-RV-07 RH2_SEPARATION_OF_DUTIES_VIOLATION o ERR-CM-10 ACTOR_NOT_ALLOWED (code + status + correlationId + rightsPathsAvailable)."
+        '409':
+          description: "Guard de dominio (ERR-CM-06 INVALID_TRANSITION, ERR-RV-18 RH3_FOUR_EYES_REQUIRED, ERR-RV-20 RH3_NOT_BOUND_TO_RH2, ERR-RC-10 ROSTER_INSUFFICIENT, ERR-RC-03 CASE_CLOSE_PRECONDITION_FAILED); un cuerpo con claves ajenas tambien es 409."
+        '429':
+          description: "P-50 (limite del operador)."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
   /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/approval:
     post:
       operationId: approveCaseVerification
@@ -302,17 +311,32 @@ paths:
       x-step-up: "APPROVE_CASE_VERIFICATION"
       x-db-role: "platform_rw"
       x-db-function: "case_state.approve_case_verification"
-      x-delivery: "PR-5"
+      x-delivery: "PR-5; 6d parte 2 (0066-0071): actor, tenant y Revocation derivados de la sesion en la base; una transaccion por accion"
       x-moved-from: consent-it0.openapi.yaml
       security: [{platformSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
         - {name: proposalRef, in: path, required: true, schema: {type: string, format: uuid}}
+      x-step-up-detail: "RH2 exige step-up APPROVE_CASE_VERIFICATION (destino proposalRef) del APPROVER, consumido en la misma tx (GRD-RC-12); cruce GRD-RC-10: el aprobador no es aprobador ni receptor de ningun grant del caso (ERR-RV-07, 403)."
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: "RH2 aprobada: Revocation VERIFIED (HUMAN_ASSISTED)."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  attestation: {type: string, enum: [ATTESTED]}
+                  revocationState: {type: string, enum: [VERIFIED]}
+        '403':
+          description: "ERR-RV-07 RH2_SEPARATION_OF_DUTIES_VIOLATION o ERR-CM-10 ACTOR_NOT_ALLOWED (code + status + correlationId + rightsPathsAvailable)."
+        '409':
+          description: "Guard de dominio (ERR-CM-06 INVALID_TRANSITION, ERR-RV-18 RH3_FOUR_EYES_REQUIRED, ERR-RV-20 RH3_NOT_BOUND_TO_RH2, ERR-RC-10 ROSTER_INSUFFICIENT, ERR-RC-03 CASE_CLOSE_PRECONDITION_FAILED); un cuerpo con claves ajenas tambien es 409."
+        '429':
+          description: "P-50 (limite del operador)."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
   /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal:
     post:
       operationId: withdrawCaseVerificationProposal
@@ -324,17 +348,32 @@ paths:
       x-step-up: "WITHDRAW_CASE_VERIFICATION_PROPOSAL"
       x-db-role: "platform_rw->rights_operator"
       x-db-function: "case_state.withdraw_case_verification_proposal"
-      x-delivery: "PR-5"
+      x-delivery: "PR-5; 6d parte 2 (0066-0071): actor, tenant y Revocation derivados de la sesion en la base; una transaccion por accion"
       x-moved-from: consent-it0.openapi.yaml
       security: [{caseSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
         - {name: proposalRef, in: path, required: true, schema: {type: string, format: uuid}}
+      x-idempotency: "Replay idempotente (F-6D2-QA-01): repetir el retiro por el mismo proponente devuelve el mismo resultado sin segundo evento."
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: "RH2w: propuesta WITHDRAWN; la Revocation sigue REQUESTED."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  proposalState: {type: string, enum: [WITHDRAWN]}
+                  revocationState: {type: string, enum: [REQUESTED]}
+        '403':
+          description: "ERR-RV-07 RH2_SEPARATION_OF_DUTIES_VIOLATION o ERR-CM-10 ACTOR_NOT_ALLOWED (code + status + correlationId + rightsPathsAvailable)."
+        '409':
+          description: "Guard de dominio (ERR-CM-06 INVALID_TRANSITION, ERR-RV-18 RH3_FOUR_EYES_REQUIRED, ERR-RV-20 RH3_NOT_BOUND_TO_RH2, ERR-RC-10 ROSTER_INSUFFICIENT, ERR-RC-03 CASE_CLOSE_PRECONDITION_FAILED); un cuerpo con claves ajenas tambien es 409."
+        '429':
+          description: "P-50 (limite del operador)."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
   /platform/rights-cases/{caseRef}/confirmation:
     post:
       operationId: recordCaseConfirmation
@@ -346,16 +385,40 @@ paths:
       x-step-up: "none (OPEN-RV-10, LD-03)"
       x-db-role: "platform_rw->rights_operator"
       x-db-function: "case_state.record_case_confirmation"
-      x-delivery: "PR-5"
+      x-delivery: "PR-5; 6d parte 2 (0066-0071): actor, tenant y Revocation derivados de la sesion en la base; una transaccion por accion"
       x-moved-from: consent-it0.openapi.yaml
       security: [{caseSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmationGivenOnCasePage]
+              additionalProperties: false
+              properties:
+                confirmationGivenOnCasePage: {type: boolean, enum: [true]}
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: "RH3 paso 1 registrado; sin efecto hasta la co-firma."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  cosign: {type: string, enum: [AWAITING_COSIGN]}
+                  revocationState: {type: string, enum: [VERIFIED]}
+        '403':
+          description: "ERR-RV-07 RH2_SEPARATION_OF_DUTIES_VIOLATION o ERR-CM-10 ACTOR_NOT_ALLOWED (code + status + correlationId + rightsPathsAvailable)."
+        '409':
+          description: "Guard de dominio (ERR-CM-06 INVALID_TRANSITION, ERR-RV-18 RH3_FOUR_EYES_REQUIRED, ERR-RV-20 RH3_NOT_BOUND_TO_RH2, ERR-RC-10 ROSTER_INSUFFICIENT, ERR-RC-03 CASE_CLOSE_PRECONDITION_FAILED); un cuerpo con claves ajenas tambien es 409."
+        '429':
+          description: "P-50 (limite del operador)."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
   /platform/rights-cases/{caseRef}/confirmation/cosign:
     post:
       operationId: cosignCaseConfirmation
@@ -367,16 +430,38 @@ paths:
       x-step-up: "none (OPEN-RV-10, LD-03)"
       x-db-role: "platform_rw->rights_operator"
       x-db-function: "case_state.cosign_case_confirmation"
-      x-delivery: "PR-5"
+      x-delivery: "PR-5; 6d parte 2 (0066-0071): actor, tenant y Revocation derivados de la sesion en la base; una transaccion por accion"
       x-moved-from: consent-it0.openapi.yaml
       security: [{caseSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      description: "RH3 paso 2 + R4 + C6 en UNA transaccion (case_state.cosign_case_confirmation; G-3). Reintentos acotados de la tx completa ante errores transitorios; antes de cada reintento se lee el estado sin efectos."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, maxProperties: 0}
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: "Co-firma aplicada (o replay real de la misma co-firma): Revocation APPLIED con su recibo."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  cosign: {type: string, enum: [COSIGNED]}
+                  revocationState: {type: string, enum: [APPLIED]}
+        '403':
+          description: "ERR-RV-07 RH2_SEPARATION_OF_DUTIES_VIOLATION o ERR-CM-10 ACTOR_NOT_ALLOWED (code + status + correlationId + rightsPathsAvailable)."
+        '409':
+          description: "Guard de dominio (ERR-CM-06 INVALID_TRANSITION, ERR-RV-18 RH3_FOUR_EYES_REQUIRED, ERR-RV-20 RH3_NOT_BOUND_TO_RH2, ERR-RC-10 ROSTER_INSUFFICIENT, ERR-RC-03 CASE_CLOSE_PRECONDITION_FAILED); un cuerpo con claves ajenas tambien es 409."
+        '429':
+          description: "P-50 (limite del operador)."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
+        '503':
+          description: "G-3 (ADR-010 rev. 5 §4.2.a): agotados los reintentos acotados de R3/RH3 + R4. Error uniforme GUARD_EVALUATOR_UNAVAILABLE {code, status, correlationId}; SIN acuse de aplicacion exitosa; la alerta R4_RETRIES_EXHAUSTED queda registrada y el caso pendiente (Revocation sin APPLIED). Nunca se devuelve 503 si la Revocation quedo APPLIED: se lee el estado (read_case_apply_state) y se devuelve el resultado real."
   /platform/rights-cases/{caseRef}/close:
     post:
       operationId: closeRightsCase
@@ -388,16 +473,39 @@ paths:
       x-step-up: "none"
       x-db-role: "platform_rw->rights_operator"
       x-db-function: "case_state.close_case"
-      x-delivery: "PR-5"
+      x-delivery: "PR-5; 6d parte 2 (0066-0071): actor, tenant y Revocation derivados de la sesion en la base; una transaccion por accion"
       x-moved-from: consent-it0.openapi.yaml
       security: [{caseSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              additionalProperties: false
+              properties:
+                outcome: {type: string, enum: [RESOLVED, WITHDRAWN]}
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: "Caso cerrado (RC4/RC5/RC6)."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  caseState: {type: string, enum: [RESOLVED, WITHDRAWN]}
+        '403':
+          description: "ERR-RV-07 RH2_SEPARATION_OF_DUTIES_VIOLATION o ERR-CM-10 ACTOR_NOT_ALLOWED (code + status + correlationId + rightsPathsAvailable)."
+        '409':
+          description: "Guard de dominio (ERR-CM-06 INVALID_TRANSITION, ERR-RV-18 RH3_FOUR_EYES_REQUIRED, ERR-RV-20 RH3_NOT_BOUND_TO_RH2, ERR-RC-10 ROSTER_INSUFFICIENT, ERR-RC-03 CASE_CLOSE_PRECONDITION_FAILED); un cuerpo con claves ajenas tambien es 409."
+        '429':
+          description: "P-50 (limite del operador)."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
   /platform/rights-cases/{caseRef}/grant-requests:
     post:
       operationId: requestCaseGrant
