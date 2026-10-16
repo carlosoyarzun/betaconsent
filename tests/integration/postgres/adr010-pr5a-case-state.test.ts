@@ -196,7 +196,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
   assert.deepEqual(fns.map((f) => f.n), [
     "alert_apply_exhausted", "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "cancel_invitation_subject_mismatch", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
     "cosign_case_confirmation", "current_sequence", "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
-    "propose_case_verification", "r4_apply", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
+    "propose_case_verification", "r4_apply", "read_case_apply_state", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
     "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_rights_case", "verify_revocation_otp",
     "withdraw_case_verification_proposal", "withdraw_revocation",
   ]); // ADR-010 PR-5b (0038) agrega las funciones de RightsCase
