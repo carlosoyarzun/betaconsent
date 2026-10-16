@@ -46,6 +46,8 @@ const EVENT_SELECT =
   "SELECT tenant_id::text AS tenant_id, chain_seq::float8 AS chain_seq, aggregate_type, aggregate_id, sequence, event_type, actor_type, actor_role, recorded_by_ref, cosigned_by_ref, idempotency_key_hash, " +
   `to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at_txt, environment, payload, payload_hash, previous_event_hash, event_hash ` +
   "FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq > $2::bigint ORDER BY chain_seq LIMIT $3::int";
+/** Toma el lock de lectura sobre el ledger sin leer filas ni columnas distintas de las concedidas (SEC-6F-01). */
+const LOCK_SQL = "SELECT tenant_id FROM integrity.audit_event LIMIT 0";
 const TENANTS_SQL = "SELECT DISTINCT tenant_id::text AS tenant_id FROM integrity.audit_event ORDER BY 1";
 /** Filas sin eslabon (chain_seq NULL) posteriores al inicio de la cadena (primer eslabon del tenant): las anteriores a 0013 son legado fuera de la cadena (misma consulta que ledger-verify-cli.ts). */
 const UNCHAINED_SQL =
@@ -170,7 +172,11 @@ export async function forEachTenantChainInSnapshot(pool: PoolLike, visit: (input
   try {
     await client.query("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY");
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    let visited: number;
     try {
+      // SEC-6F-01: PRIMERA sentencia de la tx. Toma ACCESS SHARE sobre la tabla y bloquea CREATE/DROP/ALTER POLICY y NO FORCE RLS (ACCESS EXCLUSIVE) hasta el ROLLBACK:
+      // lo asertado abajo no puede cambiar durante la corrida (sin esto, una policy alterada a mitad de camino daria exit 0 con filas filtradas).
+      await client.query(LOCK_SQL);
       const { catalogEnvironment } = await assertChainReadable(client);
       const tenants = (await client.query<{ tenant_id: string }>(TENANTS_SQL)).rows.map((r) => r.tenant_id);
       options.onReadable?.({ catalogEnvironment, tenants: tenants.length });
@@ -178,10 +184,19 @@ export async function forEachTenantChainInSnapshot(pool: PoolLike, visit: (input
         const unchained = (await client.query<{ n: number }>(UNCHAINED_SQL, [tenantId])).rows[0]?.n ?? 0;
         await visit({ tenantId, unchainedAfterStart: unchained, batches: readTenantBatches(client, tenantId, options.batchSize) });
       }
-      return tenants.length;
+      visited = tenants.length;
     } finally {
       await client.query("ROLLBACK");
     }
+    // Defensa en profundidad: tras liberar el lock se repite la asercion en una tx nueva; si la policy, FORCE RLS o los privilegios cambiaron entre las dos, exit 1 (fail-closed).
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    try {
+      await client.query(LOCK_SQL);
+      await assertChainReadable(client);
+    } finally {
+      await client.query("ROLLBACK");
+    }
+    return visited;
   } finally {
     client.release();
   }

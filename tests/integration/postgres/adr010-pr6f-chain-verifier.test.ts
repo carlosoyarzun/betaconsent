@@ -276,7 +276,7 @@ pgTest("TEST-CNS-1748 pg: sin SELECT en ninguna otra tabla, vista, secuencia o f
   assert.equal((await admin.query("SELECT 1 FROM pg_default_acl d WHERE d.defaclacl::text LIKE '%integrity_chain_verifier%'")).rowCount, 0, "default privileges vacios para el rol");
   const ver = await ctx.connectAs("integrity_chain_verifier");
   for (const t of ["app.invitation", "app.consent_decision", "app.outbox", "app.rights_case", "ops.security_event", "platform.principal_identity", "platform.oidc_exchange", "case_state.x", "pii.x", "tenant_resolve.handle"]) {
-    await assert.rejects(() => ver.query(`SELECT 1 FROM ${t}`), (e: unknown) => ["42501", "42P01"].includes(codeOf(e) ?? ""), t);
+    await assert.rejects(() => ver.query(`SELECT 1 FROM ${t}`), (e: unknown) => (t === "case_state.x" || t === "pii.x" ? ["42501", "42P01", "3F000"] : ["42501"]).includes(codeOf(e) ?? ""), t);
   }
   for (const s of ["platform", "case_state", "ledger_gen", "tenant_resolve", "pii"]) {
     assert.equal((await admin.query("SELECT has_schema_privilege('integrity_chain_verifier', oid, 'USAGE') AS u FROM pg_namespace WHERE nspname = $1", [s])).rows[0]?.u ?? false, false, s);
@@ -408,6 +408,20 @@ pgTest("TEST-CNS-1750 pg: policy borrada, con USING distinto de true, con una RE
     assert.equal(main.stderr.trim(), `chain-verifier: no verifica (name=ChainVerifierPreconditionError code=${code})`, label);
     await restore();
   };
+  // SEC-6F-01: mientras la tx del verifier esta abierta, el DDL concurrente sobre la policy / FORCE RLS espera (lock_timeout 55P03): lo asertado no cambia durante la corrida.
+  const holder = await ctx.connectAs("integrity_chain_verifier");
+  await holder.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  try {
+    await holder.query("SELECT tenant_id FROM integrity.audit_event LIMIT 0");
+    await admin.query("SET lock_timeout = '300ms'");
+    for (const ddl of [`DROP POLICY ${POL} ON integrity.audit_event`, `ALTER POLICY ${POL} ON integrity.audit_event USING (false)`, "ALTER TABLE integrity.audit_event NO FORCE ROW LEVEL SECURITY",
+      "CREATE POLICY x_restrictive ON integrity.audit_event AS RESTRICTIVE FOR SELECT TO integrity_chain_verifier USING (false)"]) {
+      await assert.rejects(() => admin.query(ddl), (e: unknown) => codeOf(e) === "55P03", ddl);
+    }
+  } finally {
+    await admin.query("RESET lock_timeout");
+    await holder.query("ROLLBACK");
+  }
   await admin.query(`DROP POLICY ${POL} ON integrity.audit_event`);
   await expectExit1("policy borrada", "POLICY_MISSING_OR_ALTERED");
   await admin.query(`DROP POLICY ${POL} ON integrity.audit_event`);
@@ -424,5 +438,5 @@ pgTest("TEST-CNS-1750 pg: policy borrada, con USING distinto de true, con una RE
   // Restaurada: vuelve a verificar y la cadena integra (los tenants corrompidos en el test anterior dan exit 2, no 1).
   const after = await runVerifier(ctx);
   assert.ok(after.tenants > 0);
-  assert.notEqual(runMain(ctx).status, 1);
+  assert.equal(runMain(ctx).status, 2, "restaurada: vuelve a verificar; los tenants corrompidos del test anterior dan exit 2");
 });

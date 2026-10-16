@@ -61,5 +61,6 @@ BEGIN
   IF NOT ('default_transaction_read_only=on' = ANY (cfg)) THEN RAISE EXCEPTION '0072: integrity_chain_verifier debe fijar default_transaction_read_only = on'; END IF;
   IF NOT ('idle_in_transaction_session_timeout=120s' = ANY (cfg)) THEN RAISE EXCEPTION '0072: integrity_chain_verifier debe fijar un idle_in_transaction_session_timeout finito (120s)'; END IF;
   IF NOT ('statement_timeout=120s' = ANY (cfg)) THEN RAISE EXCEPTION '0072: integrity_chain_verifier debe fijar un statement_timeout finito (120s)'; END IF;
+  IF pg_catalog.cardinality(cfg) <> 3 THEN RAISE EXCEPTION '0072: integrity_chain_verifier debe tener exactamente 3 settings (sin settings extra)'; END IF;
 END
 $assert72$;

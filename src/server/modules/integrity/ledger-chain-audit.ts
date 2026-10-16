@@ -80,13 +80,11 @@ export function exitCodeFor(report: ChainAuditReport): number {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-/** Ref opaca de un agregado: solo letras, digitos, `_` y `-` (sin espacios, `=`, `:` ni controles) y nunca una secuencia hex larga (podria ser un hash o un secreto). Si no, se enmascara. */
-const OPAQUE_AGGREGATE = /^[0-9A-Za-z_-]{1,64}$/;
-const LONG_HEX = /[0-9a-fA-F]{32,}/;
+/** SEC-6F-07a: el aggregate_id solo sale si es un UUID (las refs reales lo son); cualquier otro texto libre se enmascara (`?`). */
 const REASON = /^[A-Z_]{1,40}$/;
 
 const safeTenant = (value: string): string => (UUID.test(value) ? value : "?");
-const safeAggregate = (value: string): string => (OPAQUE_AGGREGATE.test(value) && !LONG_HEX.test(value) ? value : "?");
+const safeAggregate = (value: string): string => (UUID.test(value) ? value : "?");
 const safeInt = (value: number): string => (Number.isSafeInteger(value) && value >= 0 ? String(value) : "?");
 
 /**

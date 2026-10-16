@@ -136,10 +136,10 @@ test("TEST-CNS-1752 aggregate_id hostil (\\n, ANSI, linea falsa `chain_verify_ru
     assert.equal(lines.filter((l) => l.startsWith("chain_verify_run ")).length, 1, "una sola linea de resumen");
     for (const l of lines) assert.ok(!/[\u0000-\u001f\u007f\u2028\u2029]/.test(l), `sin controles: ${JSON.stringify(l)}`);
   }
-  // Un id opaco legitimo si sale (localizar la rotura es el objetivo).
-  const ok = sentinelChain(3, TENANT_A, () => "tenant-1616").map((x, i) => (i === 1 ? { ...x, payload: { subjectRef: "otro" } } : x));
+  // Un UUID (forma de las refs reales) si sale; un id opaco no-UUID se enmascara (localizar la rotura es el objetivo).
+  const ok = sentinelChain(3, TENANT_A, () => TENANT_B).map((x, i) => (i === 1 ? { ...x, payload: { subjectRef: "otro" } } : x));
   const lines = formatChainReport(summarizeChainAudit([await audit(TENANT_A, ok)]));
-  assert.ok(lines.find((l) => l.startsWith("chain_verify_break "))!.includes("aggregate=tenant-1616"));
+  assert.ok(lines.find((l) => l.startsWith("chain_verify_break "))!.includes(`aggregate=${TENANT_B}`));
   // Un tenant_id que no es uuid (no deberia ocurrir: columna uuid) tambien se enmascara.
   const odd = formatChainReport(summarizeChainAudit([{ tenantId: "x\ny", events: 1, verified: 1, head: 1, broken: null, unchainedAfterStart: 0 }]));
   assert.ok(odd.some((l) => l.includes("tenant=?")));
