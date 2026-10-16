@@ -12,6 +12,7 @@ import type { CaseOutcome, PlatformCasePort } from "../../../server/ports/platfo
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
 import { mapTransitionError } from "./revocation-transitions.adapter.ts";
+import { retryRolledBack } from "./transient-error.ts";
 
 const SID_RE = /^[0-9a-f]{64}$/;
 
@@ -23,7 +24,12 @@ export interface PlatformCaseAdapterOptions {
 }
 
 export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapterOptions = {}): PlatformCasePort {
-  async function exec(sid: string, actor: Actor, sql: string, params: readonly unknown[]): Promise<CaseOutcome> {
+  // PR-7a: una tx revertida (clase 40, 55P03) se reintenta con tope; agotado, se relanza el error crudo (el borde responde 503 uniforme).
+  function exec(sid: string, actor: Actor, sql: string, params: readonly unknown[]): Promise<CaseOutcome> {
+    return retryRolledBack(() => execOnce(sid, actor, sql, params));
+  }
+
+  async function execOnce(sid: string, actor: Actor, sql: string, params: readonly unknown[]): Promise<CaseOutcome> {
     if (!SID_RE.test(sid)) return { ok: false, reason: "NOT_FOUND" };
     const client = await acquireCleanClient(pool);
     let broken = false;
