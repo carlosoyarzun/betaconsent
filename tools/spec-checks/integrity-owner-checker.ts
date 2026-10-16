@@ -67,7 +67,7 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
  * ADR-010 PR-3: 0035 crea el esquema platform y sus objetos con SET LOCAL ROLE de platform_schema_owner, membership_owner y grant_owner
  * (patron 0027); la allowlist es POR ROL (una entrada que el rol no usa se marca obsoleta).
  */
-export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner", "ledger_gen_owner", "ledger_writer"];
+export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner", "ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner"];
 const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
 const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
 const M0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
@@ -96,6 +96,8 @@ const M0060 = "db/migrations/0060_adr010_pr6d1_step_up_session_principal.sql";
 const M0061 = "db/migrations/0061_adr010_pr6d1_step_up_nonce_functions.sql";
 const M0062 = "db/migrations/0062_adr010_pr6d1_request_approve_grant.sql";
 const M0063 = "db/migrations/0063_adr010_pr6d1_validate_case_tenant.sql";
+/** 0064 (cluster): rol rights_case_lookup_owner (dueño de app.rights_case_tenant_of); 0059 lo asume con SET LOCAL ROLE para crear la funcion. */
+const M0064 = "db/migrations/0064_adr010_pr6d1_rights_case_lookup_role.sql";
 /** ADR-010 PR-5a: TEST-CNS-1373 asume transition_owner (SET LOCAL ROLE) para probar que el trigger exige el efecto de la funcion. */
 const T5A = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
 /** ADR-010 PR-5b: TEST-CNS-1381 asume transition_owner (SET LOCAL ROLE) para probar el trigger TRG-RC-01 por efecto y la policy que protege los terminales. */
@@ -127,6 +129,8 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // 0046 (PR-b): GRANT de ambos roles a consent_owner WITH INHERIT FALSE, SET TRUE (F-PR6-11; solo IT0B_SYNTHETIC). 0047/0048/0049: ledger_gen_owner crea el esquema ledger_gen y reparte USAGE/CREATE temporal;
   // ledger_writer crea sus funciones guard_*/emit_*/ledger_append/seed_local_catalog_event (SET LOCAL ROLE, patron 0037). Los tests de PR-b asumen ledger_writer para sus vectores y asserts.
   ledger_gen_owner: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"] },
+  // 0064 (PR-6d parte 1): GRANT a consent_owner WITH INHERIT FALSE, SET TRUE (solo IT0B_SYNTHETIC); 0059 crea app.rights_case_tenant_of como ese rol (SET LOCAL ROLE).
+  rights_case_lookup_owner: { [M0064]: ["grant-membership"], [M0059]: ["set-role"] },
   ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"], [T5B]: ["set-role"], [T_PRB3]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */

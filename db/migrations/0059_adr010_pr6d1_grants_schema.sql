@@ -2,14 +2,14 @@
 -- Gobierna: ADR-010 rev. 5 (enmienda rev. c, aceptada por Carlos el 2026-10-15) §5.1 (step-up: el principal sale de la sesion validada), §6 (Grants P6-3: grant_request / rights_case_grant completos, P-23, P-37),
 -- §10 filas 6c y 6d, §11.3 G-5..G-7; GRD-RC-10 y GRD-RC-12 (specs/state-machines/rights-case.spec.yaml); SEC-CNS-006 rev. 5 §1 (P-23, P-37, P-51, P-52; ACCEPTED 2026-09-26);
 -- registers/findings-register-IT0.md F-PR6-39, F-PR6-40 (tenant y case_ref derivados del caso real). Decision de Carlos (2026-10-15, opcion A): lo de 6c no entregado pasa a 6d.
--- Depende de 0050-0054. 0000-0058 estan mergeadas y son inmutables; esta migracion es nueva (primera de PR-6d parte 1; las funciones llegan en 0060-0063).
+-- Depende de 0050-0054 y del rol de cluster de 0064 (los archivos cluster corren antes que los de database). 0000-0058 estan mergeadas y son inmutables; esta migracion es nueva (primera de PR-6d parte 1; las funciones llegan en 0060-0063).
 --
 -- Que cambia (patron 0052: SET LOCAL ROLE del owner, CREATE temporal concedido y revocado, $assert$ final):
---   consent_owner : app.rights_case_tenant_of(case_ref) (SECURITY DEFINER del dueño de app.rights_case; EXECUTE solo grant_owner): devuelve (tenant_id, status) del caso REAL solo si hay EXACTAMENTE una fila con
---                   ese case_ref (inexistente o ambiguo = 0 filas). Es la unica via por la que request_grant, approve_grant, open_case_session y validate_session derivan el tenant (F-PR6-40, F-PR6-45): nunca de un
---                   parametro ni de la request. grant_owner NO tiene privilegio ni policy sobre app.rights_case; solo USAGE sobre app y EXECUTE de las dos funciones de app que le corresponden:
---                   app.current_tenant_id() (0035:36) y app.rights_case_tenant_of(text) (assert con la lista exacta). Como el dueño tiene FORCE RLS y es NOBYPASSRLS, la funcion necesita UNA policy de SELECT
---                   TO consent_owner (el dueño no la tenia): es la unica via cross-tenant, sin acceso de tabla para ningun runtime (FINDING F-PR6-45).
+--   rights_case_lookup_owner (rol NOLOGIN dedicado, creado en 0064 (cluster); sin miembros salvo consent_owner con SET sin herencia, como los demas owners): dueño de app.rights_case_tenant_of(case_ref) (SECURITY DEFINER;
+--                   EXECUTE solo grant_owner). Devuelve (tenant_id, status) del caso REAL solo si hay EXACTAMENTE una fila con ese case_ref (inexistente o ambiguo = 0 filas). Tiene SELECT SOLO de (tenant_id,
+--                   case_ref, status) de app.rights_case y UNA policy de SELECT `TO rights_case_lookup_owner`. Es la unica via por la que request_grant, approve_grant, open_case_session y validate_session derivan
+--                   el tenant (F-PR6-40, F-PR6-45): nunca de un parametro ni de la request. NO hay policy para consent_owner (consent_migrator hereda sus privilegios) ni para grant_owner; grant_owner solo tiene
+--                   USAGE sobre app y EXECUTE de EXACTAMENTE dos funciones de app: app.current_tenant_id() (0035:36) y app.rights_case_tenant_of(text) (assert con la lista exacta).
 --   grant_owner   : * platform.session_event: tipos nuevos STEP_UP_REJECTED (intento de confirmacion fallido, cuenta para P-51), GRANT_REQUESTED, GRANT_APPROVED y GRANT_REJECTED (incluye la solicitud
 --                     vencida, P-37: "vencida no aprobable y se registra"); columna request_ref. Sin IP (F-PR6-31).
 --                   * platform.grant_request: UNIQUE (request_ref, tenant_id, case_ref, operator_principal_ref) para que el grant la referencie por FK compuesta.
@@ -19,13 +19,17 @@
 --   La tabla rights_case_grant estaba SIN camino de escritura de runtime desde 0052: la migracion aborta si trae filas (solo podian ser siembras de test; nunca hay datos reales).
 -- Idempotencia: el runner aplica cada migracion una vez (checksum); las sentencias no se repiten.
 
--- 0. app.rights_case_tenant_of (como consent_owner, dueño de la tabla).
+-- 0. app.rights_case_tenant_of (dueño rights_case_lookup_owner; los grants sobre app.rights_case los da consent_owner, dueño de la tabla).
 SET LOCAL ROLE consent_owner;
 GRANT USAGE ON SCHEMA app TO grant_owner;
--- El dueño tiene FORCE RLS y NOBYPASSRLS: la funcion definer solo ve filas si hay una policy TO consent_owner. Ningun runtime la usa (ningun otro rol es consent_owner).
+GRANT USAGE ON SCHEMA app TO rights_case_lookup_owner;
+GRANT CREATE ON SCHEMA app TO rights_case_lookup_owner; -- temporal: se revoca al final
+GRANT SELECT (tenant_id, case_ref, status) ON app.rights_case TO rights_case_lookup_owner;
 DROP POLICY IF EXISTS rights_case_owner_lookup_select ON app.rights_case;
-CREATE POLICY rights_case_owner_lookup_select ON app.rights_case FOR SELECT TO consent_owner USING (true);
+DROP POLICY IF EXISTS rights_case_lookup_select ON app.rights_case;
+CREATE POLICY rights_case_lookup_select ON app.rights_case FOR SELECT TO rights_case_lookup_owner USING (true);
 
+SET LOCAL ROLE rights_case_lookup_owner;
 CREATE FUNCTION app.rights_case_tenant_of(p_case_ref text)
   RETURNS TABLE (o_tenant_id uuid, o_status text)
   LANGUAGE plpgsql VOLATILE SECURITY DEFINER
@@ -45,6 +49,9 @@ END
 $$;
 REVOKE ALL ON FUNCTION app.rights_case_tenant_of(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.rights_case_tenant_of(text) TO grant_owner;
+
+SET LOCAL ROLE consent_owner;
+REVOKE CREATE ON SCHEMA app FROM rights_case_lookup_owner;
 
 -- 1. CREATE temporal para grant_owner (se revoca al final).
 SET LOCAL ROLE platform_schema_owner;
@@ -151,12 +158,28 @@ BEGIN
   IF pg_catalog.has_table_privilege('grant_owner', rel.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR pg_catalog.has_any_column_privilege('grant_owner', rel.oid, 'SELECT,INSERT,UPDATE,REFERENCES') THEN
     RAISE EXCEPTION '0059: grant_owner tiene privilegios sobre app.rights_case (solo via app.rights_case_tenant_of)';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = rel.oid AND p.polroles @> ARRAY[(SELECT g.oid FROM pg_catalog.pg_roles g WHERE g.rolname = 'grant_owner')]::oid[]) THEN
-    RAISE EXCEPTION '0059: hay una policy de grant_owner sobre app.rights_case';
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = rel.oid AND p.polroles && ARRAY[(SELECT g.oid FROM pg_catalog.pg_roles g WHERE g.rolname = 'grant_owner'), (SELECT g.oid FROM pg_catalog.pg_roles g WHERE g.rolname = 'consent_owner')]::oid[]) THEN
+    RAISE EXCEPTION '0059: hay una policy de grant_owner o consent_owner sobre app.rights_case (el dueño y su herencia no leen cross-tenant)';
   END IF;
-  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = rel.oid AND p.polname = 'rights_case_owner_lookup_select' AND p.polcmd = 'r'
-         AND p.polroles = ARRAY[(SELECT g.oid FROM pg_catalog.pg_roles g WHERE g.rolname = 'consent_owner')]::oid[]) <> 1 THEN
-    RAISE EXCEPTION '0059: falta la policy de SELECT TO consent_owner en app.rights_case';
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = rel.oid AND p.polname = 'rights_case_lookup_select' AND p.polcmd = 'r'
+         AND p.polroles = ARRAY[(SELECT g.oid FROM pg_catalog.pg_roles g WHERE g.rolname = 'rights_case_lookup_owner')]::oid[]) <> 1 THEN
+    RAISE EXCEPTION '0059: falta la policy de SELECT TO rights_case_lookup_owner en app.rights_case';
+  END IF;
+  -- rights_case_lookup_owner: solo SELECT por columnas (tenant_id, case_ref, status); ningun otro privilegio; sin CREATE en app; sin membresias salvo consent_owner (SET, sin herencia ni ADMIN).
+  IF pg_catalog.has_table_privilege('rights_case_lookup_owner', rel.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR pg_catalog.has_any_column_privilege('rights_case_lookup_owner', rel.oid, 'INSERT,UPDATE,REFERENCES') THEN
+    RAISE EXCEPTION '0059: rights_case_lookup_owner tiene mas privilegios de los previstos sobre app.rights_case';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = rel.oid AND a.attnum > 0 AND NOT a.attisdropped
+              AND (a.attname IN ('tenant_id', 'case_ref', 'status')) <> pg_catalog.has_column_privilege('rights_case_lookup_owner', rel.oid, a.attnum, 'SELECT')) THEN
+    RAISE EXCEPTION '0059: rights_case_lookup_owner debe leer exactamente (tenant_id, case_ref, status)';
+  END IF;
+  IF pg_catalog.has_schema_privilege('rights_case_lookup_owner', 'app', 'CREATE') THEN RAISE EXCEPTION '0059: rights_case_lookup_owner conserva CREATE en app'; END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles x ON x.oid = m.roleid WHERE x.rolname = 'rights_case_lookup_owner'
+              AND NOT (m.member = (SELECT g.oid FROM pg_catalog.pg_roles g WHERE g.rolname = 'consent_owner') AND NOT m.inherit_option AND m.set_option AND NOT m.admin_option)) THEN
+    RAISE EXCEPTION '0059: rights_case_lookup_owner solo puede tener a consent_owner como miembro (SET, sin herencia ni ADMIN)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles x ON x.oid = m.member WHERE x.rolname = 'rights_case_lookup_owner') THEN
+    RAISE EXCEPTION '0059: rights_case_lookup_owner no debe ser miembro de ningun rol';
   END IF;
   -- Lista exacta de EXECUTE de grant_owner en el esquema app.
   SELECT pg_catalog.string_agg(p.proname::pg_catalog.text || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')', ',' ORDER BY p.proname::pg_catalog.text COLLATE "C") INTO def
@@ -167,11 +190,11 @@ BEGIN
   END IF;
   SELECT p.oid, p.prosecdef, p.proconfig, p.proacl, p.proowner, p.prosrc INTO rel FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'app' AND p.proname = 'rights_case_tenant_of';
-  IF pg_catalog.pg_get_userbyid(rel.proowner) <> 'consent_owner' OR NOT rel.prosecdef OR rel.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp']
+  IF pg_catalog.pg_get_userbyid(rel.proowner) <> 'rights_case_lookup_owner' OR NOT rel.prosecdef OR rel.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp']
      OR pg_catalog.has_function_privilege('public', rel.oid, 'EXECUTE') OR rel.prosrc ~* '\mexecute\M' THEN
     RAISE EXCEPTION '0059: app.rights_case_tenant_of: dueño/SECURITY DEFINER/search_path/ACL incorrectos';
   END IF;
-  FOREACH r IN ARRAY ARRAY['app_rw', 'platform_rw', 'worker', 'integrity_verifier', 'integrity_reconciler', 'membership_owner', 'transition_owner'] LOOP
+  FOREACH r IN ARRAY ARRAY['app_rw', 'platform_rw', 'worker', 'integrity_verifier', 'integrity_reconciler', 'membership_owner', 'transition_owner', 'consent_owner', 'consent_migrator'] LOOP
     IF pg_catalog.has_function_privilege(r, rel.oid, 'EXECUTE') THEN RAISE EXCEPTION '0059: % puede ejecutar app.rights_case_tenant_of', r; END IF;
   END LOOP;
   -- session_event: tipos y request_ref.
