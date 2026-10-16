@@ -67,10 +67,10 @@ export async function persistChainRun(pool: PoolLike, run: ChainRunRecord, check
 }
 
 /** P2-4: `true` si integrity_anchor_signer existe y es NOLOGIN (pg_roles es legible por cualquier rol). El chain-verifier no arranca de otro modo hasta PR-7f. */
-export async function anchorSignerIsNoLogin(pool: PoolLike): Promise<boolean> {
+export async function anchorSignerIsNoLogin(pool: PoolLike, roleName = "integrity_anchor_signer"): Promise<boolean> {
   const client: PoolClient = await acquireCleanClient(pool);
   try {
-    const r = await client.query<{ rolcanlogin: boolean }>("SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = 'integrity_anchor_signer'");
+    const r = await client.query<{ rolcanlogin: boolean }>("SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = $1", [roleName]);
     return r.rowCount === 1 && r.rows[0]?.rolcanlogin === false;
   } finally {
     client.release();

@@ -21,6 +21,7 @@ import type { Client } from "pg";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { ChainVerifierPreconditionError } from "../../../src/infra/adapters/postgres/chain-verifier-reader.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
+import { anchorSignerIsNoLogin } from "../../../src/infra/adapters/postgres/chain-checkpoint-store.ts";
 import { startChainVerifierProcess } from "../../../src/server/entrypoints/chain-verifier/chain-verify-process.ts";
 import { exitCodeFor, RECONCILER_EXIT, startReconcilerProcess } from "../../../src/server/entrypoints/reconciler/reconciler-process.ts";
 import { exitCodeFor as chainExitCodeFor, type ChainAuditReport } from "../../../src/server/modules/integrity/ledger-chain-audit.ts";
@@ -365,7 +366,7 @@ pgTest("TEST-CNS-1781 pg: CHECKs de chain_run (raiz solo con exit 0, hojas <= te
   assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_checkpoint")).rows[0]!.n), beforeCkp, "ningun checkpoint sembrado");
 });
 
-pgTest("TEST-CNS-1783 pg: P2-2 el reporte se imprime antes de persistir y una falla de persistencia con anomalias sigue siendo exit 2; P2-4 el chain-verifier no arranca si integrity_anchor_signer puede hacer LOGIN", async (ctx) => {
+pgTest("TEST-CNS-1783 pg: P2-2 el reporte se imprime antes de persistir y una falla de persistencia con anomalias sigue siendo exit 2; P2-4 el chequeo de arranque rechaza un rol con LOGIN o inexistente", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   await driveInvitation(ctx, A, "1782-a");
   const dir = await mkStateDir();
@@ -387,15 +388,20 @@ pgTest("TEST-CNS-1783 pg: P2-2 el reporte se imprime antes de persistir y una fa
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
-  // P2-4.
-  await admin.query("ALTER ROLE integrity_anchor_signer LOGIN");
+  // P2-4. No se altera integrity_anchor_signer (rol global del cluster; los tests corren en paralelo): se prueba el chequeo con roles temporales de nombre unico.
+  const pool = createPool({ connectionString: ctx.urlFor("integrity_chain_verifier"), max: 1 });
+  const tmp = `tmp_p24_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   try {
-    await assert.rejects(() => runVerifier(ctx), (e: unknown) => codeOf(e) === "ANCHOR_SIGNER_CAN_LOGIN");
-    const m = runMain(ctx);
-    assert.equal(m.status, 1);
-    assert.equal(m.stderr.trim(), "chain-verifier: no verifica (name=ChainVerifierSignerLoginError code=ANCHOR_SIGNER_CAN_LOGIN)");
+    assert.equal(await anchorSignerIsNoLogin(pool), true, "el signer real es NOLOGIN");
+    await admin.query(`CREATE ROLE ${tmp} LOGIN`);
+    assert.equal(await anchorSignerIsNoLogin(pool, tmp), false, "un rol con LOGIN no pasa");
+    await admin.query(`ALTER ROLE ${tmp} NOLOGIN`);
+    assert.equal(await anchorSignerIsNoLogin(pool, tmp), true);
+    assert.equal(await anchorSignerIsNoLogin(pool, "rol_inexistente_p24"), false, "un rol inexistente no pasa (fail-closed)");
+    assert.equal((await runVerifier(ctx)).tenants > 0, true, "con el signer NOLOGIN el chain-verifier arranca");
   } finally {
-    await admin.query("ALTER ROLE integrity_anchor_signer NOLOGIN");
+    await pool.end();
+    await admin.query(`DROP ROLE IF EXISTS ${tmp}`);
   }
 });
 
