@@ -71,7 +71,7 @@ export class StartupCheckError extends Error {
  */
 export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]>> = {
   app_rw: ["request_membership"],
-  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event", "open_platform_session", "open_case_session", "validate_session", "revoke_session", "issue_step_up_nonce", "request_grant", "approve_grant"],
+  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event", "open_platform_session", "open_case_session", "validate_session", "revoke_session", "issue_step_up_nonce", "request_grant", "approve_grant", "alert_case_apply_exhausted"],
   worker: ["purge_expired_oidc_exchange"],
   integrity_verifier: ["claim_oidc_exchange", "record_assertion", "record_login_assertion"],
   // ADR-010 rev. 5 PR-6e (G-9, P2(e)): el reconciler solo lee (SELECT por columnas); sin EXECUTE en platform ni acceso a sus tablas.
@@ -186,22 +186,22 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 }
 
 /**
- * ADR-010 PR-5a (F-A10-26, mitigacion): en IT0 el EXECUTE de las funciones de operador (FN-RV-07..11, FN-RC-06 close_case), SYSTEM (FN-RV-12..15) y de siembra de
- * `case_state` se concede tambien a app_rw porque el codigo corre en el proceso web (entrypoints worker/platform: PR-6). Ese interino solo es
- * admisible en LOCAL/CI: fuera de LOCAL el proceso NO arranca si su rol puede ejecutarlas (salvo `worker` y sus funciones SYSTEM). Fail-closed.
+ * ADR-010 rev. 5 PR-6d parte 2 (F-A10-26 CERRADO POR PRIVILEGIO, F-X8-15): se RETIRA la excepcion LOCAL del interino de PR-5a. En CUALQUIER entorno el proceso NO arranca si su rol de conexion puede ejecutar una funcion de
+ * `case_state` de operador, SYSTEM, siembra o interna que no le corresponde. Permitido: `worker` -> funciones SYSTEM (apply_revocation como respaldo, R5-R7); `platform_rw` -> approve_case_verification (con sesion PLATFORM; las demas
+ * de operador solo tras SET LOCAL ROLE rights_operator, que NO cuenta aqui porque la membresia no hereda). Fail-closed si no se puede verificar.
  */
-async function checkTransitionExecuteIsolation(db: Queryable, environment: string, failures: string[]): Promise<void> {
-  if (environment === "LOCAL") return;
+async function checkTransitionExecuteIsolation(db: Queryable, _environment: string, failures: string[]): Promise<void> {
   try {
     const r = await db.query<{ name: string }>(
       `SELECT p.proname::pg_catalog.text AS name
          FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'case_state' AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')
           AND p.proname = ANY($1::text[])
-          AND NOT (current_user = 'worker' AND p.proname = ANY($2::text[]))`,
+          AND NOT (current_user = 'worker' AND p.proname = ANY($2::text[]))
+          AND NOT (current_user = 'platform_rw' AND p.proname = 'approve_case_verification')`,
       [INTERIM_EXECUTE_FUNCTIONS, SYSTEM_TRANSITION_FUNCTIONS],
     );
-    for (const row of r.rows) failures.push(`el rol de la conexión puede ejecutar case_state.${row.name} fuera de LOCAL (F-A10-26: EXECUTE interino de IT0 solo LOCAL/CI)`);
+    for (const row of r.rows) failures.push(`el rol de la conexión puede ejecutar case_state.${row.name} (F-A10-26: operador, SYSTEM, siembra e internas no son alcanzables por este rol)`);
   } catch {
     failures.push("no se pudo verificar el EXECUTE de las funciones case_state (F-A10-26)");
   }
@@ -210,6 +210,8 @@ async function checkTransitionExecuteIsolation(db: Queryable, environment: strin
 const SYSTEM_TRANSITION_FUNCTIONS: readonly string[] = ["apply_revocation", "mark_downstream_emitted", "record_downstream_ack", "record_erasure_attestation"];
 const INTERIM_EXECUTE_FUNCTIONS: readonly string[] = [
   ...SYSTEM_TRANSITION_FUNCTIONS,
+  "r4_apply",
+  "current_sequence",
   "propose_case_verification",
   "approve_case_verification",
   "withdraw_case_verification_proposal",

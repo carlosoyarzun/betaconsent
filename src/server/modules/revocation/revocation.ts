@@ -162,15 +162,7 @@ export async function proposeCaseVerificationTx(
       throw new DomainError("ERR-CM-06");
     }
     if (p.revocationTransitions) {
-      await p.revocationTransitions.proposeCaseVerification({
-        revocationRef,
-        caseRef,
-        proposalRef: input.proposalRef,
-        proposedByRef: actor.principalRef,
-        verificationScriptVersion: input.verificationScriptVersion,
-        expectedSequence: base,
-      });
-      return reloadRevocation(p, tenantId, revocationRef);
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
     }
     const proposed: RevocationRecord = {
       ...found,
@@ -234,8 +226,7 @@ export async function approveCaseVerificationTx(
     const secondApproverRef = actor.principalRef;
     if (!verifiedByRef || !secondApproverRef) throw new DomainError("ERR-RV-13"); // HUMAN_ASSISTED exige ambos refs
     if (p.revocationTransitions) {
-      await p.revocationTransitions.approveCaseVerification({ revocationRef, caseRef, proposalRef, approverRef: secondApproverRef, expectedSequence: base });
-      return { record: await reloadRevocation(p, tenantId, revocationRef), attestation: "ATTESTED" };
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
     }
     const verified: RevocationRecord = {
       ...found,
@@ -317,9 +308,8 @@ export async function withdrawCaseVerificationProposalTx(
   if (actor.principalRef !== found.proposal.proposedByRef) throw new DomainError("ERR-RV-07"); // solo el proponente retira
   if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // propuesta ya no PENDING (aprobada/Revocation avanzada)
   if (p.revocationTransitions) {
-    await p.revocationTransitions.withdrawCaseVerificationProposal({ revocationRef, caseRef, proposalRef, actorRef: actor.principalRef, expectedSequence: base });
-    return reloadRevocation(p, tenantId, revocationRef);
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   const { proposal: _withdrawn, ...rest } = found;
   const withdrawn: RevocationRecord = rest;
   await p.revocationRepo.save(withdrawn);
@@ -422,9 +412,8 @@ async function recordCaseConfirmationPendingCosignTx(
   await assertNominalRosterMinimum(staffIdentity);
 
   if (ports.revocationTransitions) {
-    await ports.revocationTransitions.recordCaseConfirmation({ revocationRef, caseRef, recordedByRef: ctx.recordedByPrincipalRef, expectedSequence: base });
-    return reloadRevocation(ports, tenantId, revocationRef);
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   // Paso 1 literal (effect: none): registra recordedByRef, sin tocar `status` ni emitir evento.
   const recorded: RevocationRecord = {
     ...found,
@@ -502,9 +491,8 @@ async function cosignCaseConfirmationTx(
   }
 
   if (ports.revocationTransitions) {
-    const cosigned = await ports.revocationTransitions.cosignCaseConfirmation({ revocationRef, caseRef, cosignedByRef: ctx.cosignedByPrincipalRef, expectedSequence: base });
-    return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, cosigned.sequence));
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
   await ports.revocationRepo.save(confirmed);
   const confirmedEvent = await ports.ledger.append({
@@ -804,10 +792,8 @@ async function applyRevocationTx(
     throw new DomainError("ERR-CM-06");
   }
   if (ports.revocationTransitions) {
-    // ADR-010 PR-5a: CONSENT_REVOKED + RECEIPT_CREATED + outbox + C6 + APPLIED los escribe case_state.apply_revocation en la misma tx.
-    await ports.revocationTransitions.apply({ revocationRef, expectedSequence: lastSequence });
-    return reloadRevocation(ports, tenantId, revocationRef);
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   // SEC-CNS-013 P2-3 / SEC-CNS-015 P1-1: `lastSequence` se capturo ANTES del lock y de la decision de
   // estado; si el agregado avanzo desde entonces el append falla con LedgerSequenceConflictError.
   const rev = await ports.ledger.append({

@@ -40,42 +40,6 @@ export interface RevocationTransitionsPort {
     readonly attach: boolean;
     readonly expectedSequence: number;
   }): Promise<TransitionResult>;
-  /** FN-RV-07 RH2 paso 1. */
-  proposeCaseVerification(input: {
-    readonly revocationRef: string;
-    readonly caseRef: string;
-    readonly proposalRef: string;
-    readonly proposedByRef: string;
-    readonly verificationScriptVersion: string;
-    readonly expectedSequence: number;
-  }): Promise<void>;
-  /** FN-RV-08 RH2 paso 2. */
-  approveCaseVerification(input: {
-    readonly revocationRef: string;
-    readonly caseRef: string;
-    readonly proposalRef: string;
-    readonly approverRef: string;
-    readonly expectedSequence: number;
-  }): Promise<TransitionResult>;
-  /** FN-RV-09 RH2w. */
-  withdrawCaseVerificationProposal(input: {
-    readonly revocationRef: string;
-    readonly caseRef: string;
-    readonly proposalRef: string;
-    readonly actorRef: string;
-    readonly expectedSequence: number;
-  }): Promise<TransitionResult>;
-  /** FN-RV-10 RH3 paso 1. */
-  recordCaseConfirmation(input: { readonly revocationRef: string; readonly caseRef: string; readonly recordedByRef: string; readonly expectedSequence: number }): Promise<void>;
-  /** FN-RV-11 RH3 paso 2. */
-  cosignCaseConfirmation(input: {
-    readonly revocationRef: string;
-    readonly caseRef: string;
-    readonly cosignedByRef: string;
-    readonly expectedSequence: number;
-  }): Promise<TransitionResult>;
-  /** FN-RV-12 R4 + C6. */
-  apply(input: { readonly revocationRef: string; readonly expectedSequence: number }): Promise<TransitionResult>;
   /** FN-RV-13 R5. */
   markDownstreamEmitted(input: { readonly revocationRef: string; readonly subscriptionRefs: readonly string[]; readonly expectedSequence: number }): Promise<TransitionResult>;
   /** FN-RV-14 R6. */

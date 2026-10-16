@@ -53,11 +53,6 @@ function flakyUow(real: UnitOfWorkPort, fail: { on: boolean }): UnitOfWorkPort {
                     if (fail.on) throw new Error("R4 falló (simulado)");
                     return confirmed;
                   },
-                  async apply(input: { readonly revocationRef: string; readonly expectedSequence: number }) {
-                    const applied = await tx.revocationTransitions!.apply(input);
-                    if (fail.on) throw new Error("R4 falló (simulado)");
-                    return applied;
-                  },
                 },
               }
             : {}),

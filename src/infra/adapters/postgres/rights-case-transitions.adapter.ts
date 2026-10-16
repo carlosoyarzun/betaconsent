@@ -34,9 +34,5 @@ export function createPgRightsCaseTransitions(tx: TenantTx): RightsCaseTransitio
       const r = await run<{ sequence: number; changed: boolean }>("SELECT case_state.confirm_case_return($1::text, $2::integer) AS r", [i.caseRef, i.expectedSequence]);
       return { sequence: Number(r.sequence), changed: r.changed };
     },
-    async close(i) {
-      const r = await run<{ sequence: number }>("SELECT case_state.close_case($1::text, $2::text, $3::integer, $4::text) AS r", [i.caseRef, i.outcome, i.expectedSequence, i.operatorRef]);
-      return { sequence: Number(r.sequence) };
-    },
   };
 }

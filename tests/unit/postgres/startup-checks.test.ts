@@ -306,15 +306,15 @@ test("TEST-CNS-1361 ADR-010 PR-3 P2-7: no arranca si pg_db_role_setting fija una
   }
 });
 
-test("TEST-CNS-1377 F-A10-26: fuera de LOCAL no arranca si el rol puede ejecutar funciones case_state de operador/SYSTEM/siembra; en LOCAL (CI) arranca; fail-closed si no se puede verificar", async () => {
+test("TEST-CNS-1377 F-A10-26 (cerrado por privilegio, 6d parte 2): en TODO entorno, incluido LOCAL, no arranca si el rol puede ejecutar funciones case_state de operador/SYSTEM/siembra; fail-closed si no se puede verificar", async () => {
   const exec = { transitionExecute: ["apply_revocation", "cosign_case_confirmation"] };
   const stag = { data_class: "SYNTHETIC", environment: "STAGING" };
   const bad = await runStartupChecks(db({ ...exec, catalog: [stag] }), { expectedEnvironment: "STAGING" });
   assert.equal(bad.ok, false);
-  assert.match(bad.failures.join("\n"), /case_state\.apply_revocation fuera de LOCAL/);
-  assert.match(bad.failures.join("\n"), /case_state\.cosign_case_confirmation fuera de LOCAL/);
+  assert.match(bad.failures.join("\n"), /case_state\.apply_revocation \(F-A10-26/);
+  assert.match(bad.failures.join("\n"), /case_state\.cosign_case_confirmation \(F-A10-26/);
   assert.doesNotMatch((await runStartupChecks(db({ catalog: [stag] }), { expectedEnvironment: "STAGING" })).failures.join("\n"), /case_state/, "sin EXECUTE interino: no hay falla de case_state");
-  assert.equal((await runStartupChecks(db(exec), { expectedEnvironment: "LOCAL" })).ok, true, "LOCAL/CI: el interino es admisible");
+  assert.equal((await runStartupChecks(db(exec), { expectedEnvironment: "LOCAL" })).ok, false, "6d parte 2: la excepcion LOCAL se retiro (F-X8-15)");
   const unknown = await runStartupChecks(db({ transitionExecute: "error", catalog: [stag] }), { expectedEnvironment: "STAGING" });
   assert.match(unknown.failures.join("\n"), /no se pudo verificar el EXECUTE de las funciones case_state/);
 });

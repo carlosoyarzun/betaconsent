@@ -385,11 +385,8 @@ export function closeCase(
     if (!closable) throw new DomainError("ERR-RC-03");
     const closed: RightsCaseRecord = { ...found, status: outcome };
     if (p.rightsCaseTransitions) {
-      if (operatorRef === undefined) throw new DomainError("ERR-CM-10"); // sin sesion CASE no se atribuye el cierre a un operador anonimo
-      // ADR-010 PR-5b: cierre + RIGHTS_CASE_CLOSED (actor HUMAN RIGHTS_OPERATOR) los escribe case_state.close_case (FN-RC-06); la base impone
-      // GRD-RC-09 (R4 APPLIED o R8 de la Revocation del caso): sin ella, ERR-RC-03.
-      await p.rightsCaseTransitions.close({ caseRef, outcome, operatorRef, expectedSequence: base });
-      return closed;
+      // ADR-010 rev. 5 (6d parte 2): con la base el cierre (FN-RC-06) lo hace SOLO case_state.close_case(case_ref, outcome) por el proceso platform (sesion CASE, GRD-RC-10); este camino es in-memory.
+      throw new Error("close_case con la base solo se ejecuta por el proceso platform (ADR-010 rev. 5, 6d parte 2)");
     }
     await p.rightsCaseRepo.save(closed);
     await p.ledger.append({
