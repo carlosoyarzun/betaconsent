@@ -3,8 +3,8 @@
 //
 // Logica del proceso reconciler (sin HTTP, sin egress, sin escrituras). ENTRYPOINT (ADR-001 §11): puede importar adaptadores. Un pool UNICO del rol `integrity_reconciler` con chequeos de arranque
 // (expectedRole, session_user = current_user, sin superusuario, sin GUC app.* ni role del cliente, URL saneada con assertSafeConnectionUrl, catalogo/environment): un rol equivocado NO arranca.
-// Cada corrida recomputa la cadena SHA-256 por tenant y concilia estado <-> ledger (modules/integrity/ledger-reconciliation.ts) en un snapshot. No corrige ni escribe nada: la persistencia de la
-// conciliacion llega en PR-7 (§4.2.c). Cero PII y cero secretos en logs: solo ids opacos, tipos de evento, enums y conteos; nunca payloads ni hashes.
+// Cada corrida concilia estado <-> ledger (modules/integrity/ledger-reconciliation.ts) en un snapshot. NO recomputa la cadena SHA-256: no lee hashes ni payload (7 columnas, 0057) y el recomputo es del proceso
+// `chain-verifier` (entrypoints/chain-verifier/, ADR-010 rev. 6, F-PR6E-06; F-06-A). No corrige ni escribe nada: la persistencia de la conciliacion llega en PR-7 (§4.2.c). Cero PII y cero secretos en logs: solo ids opacos, tipos de evento, enums y conteos; nunca payloads ni hashes.
 
 import { openProcessPool, parseRuntimeEnvironment } from "../../../infra/adapters/postgres/runtime-process.ts";
 import { forEachTenantInSnapshot } from "../../../infra/adapters/postgres/reconciler-reader.ts";
