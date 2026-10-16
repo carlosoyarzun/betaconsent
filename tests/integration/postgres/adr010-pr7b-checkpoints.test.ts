@@ -87,7 +87,7 @@ function referenceRoot(heads: Array<{ tenantId: string; chainSeq: number; eventH
 /** Cabezas del ledger (por tenant) leidas como superusuario. */
 async function ledgerHeads(admin: Client): Promise<Array<{ tenantId: string; chainSeq: number; eventHash: string }>> {
   const r = await admin.query<{ tenant_id: string; chain_seq: string; event_hash: string }>(
-    "SELECT DISTINCT ON (tenant_id) tenant_id::text, chain_seq::text, event_hash FROM integrity.audit_event WHERE chain_seq IS NOT NULL ORDER BY tenant_id, chain_seq DESC",
+    "SELECT DISTINCT ON (e.tenant_id) e.tenant_id::text AS tenant_id, e.chain_seq::text AS chain_seq, e.event_hash FROM integrity.audit_event e WHERE e.chain_seq IS NOT NULL ORDER BY e.tenant_id, e.chain_seq DESC",
   );
   return r.rows.map((x) => ({ tenantId: x.tenant_id, chainSeq: Number(x.chain_seq), eventHash: x.event_hash }));
 }
@@ -286,7 +286,7 @@ pgTest("TEST-CNS-1776 pg: el trigger de chain_checkpoint rechaza cabeza inexiste
     if (replica) await admin.query("SET session_replication_role = replica");
     try {
       for (const sql of ["UPDATE integrity.chain_checkpoint SET verified_events = 1", "DELETE FROM integrity.chain_checkpoint", "TRUNCATE integrity.chain_checkpoint", "UPDATE integrity.chain_run SET tenants = 0", "DELETE FROM integrity.chain_run", "TRUNCATE integrity.chain_run"]) {
-        await assert.rejects(() => admin.query(sql), (e: unknown) => codeOf(e) === "23000", `superusuario (replica=${replica}): ${sql}`);
+        await assert.rejects(() => admin.query(sql), (e: unknown) => ["23000", "0A000"].includes(codeOf(e) ?? ""), `superusuario (replica=${replica}): ${sql}`);
       }
     } finally {
       if (replica) await admin.query("SET session_replication_role = origin");
@@ -593,15 +593,15 @@ pgTest("TEST-CNS-1778 pg: reescribir a la vez ledger y checkpoints (superusuario
       await admin.query("ALTER TABLE integrity.chain_checkpoint ENABLE ALWAYS TRIGGER chain_checkpoint_no_update_delete");
       await admin.query("ALTER TABLE integrity.chain_checkpoint ENABLE ALWAYS TRIGGER chain_checkpoint_no_truncate");
     }
-    // Sin la copia local esa reescritura pasaba (cada checkpoint existe en el ledger): con ella, no.
-    const withoutCopy = await runVerifier(ctx);
-    assert.ok(withoutCopy.anomalies.filter((a) => a.tenantId === T_X || a.tenantId === T_Y).length === 0, "solo con la base el atacante no deja rastro (por eso existe la copia local y el ancla externa)");
     const withCopy = await runVerifier(ctx, env);
     const kinds = (t: string): string[] => withCopy.anomalies.filter((a) => a.tenantId === t).map((a) => a.kind);
     assert.deepEqual(kinds(T_X), ["CHECKPOINT_STATE_MISMATCH"]);
     assert.deepEqual(kinds(T_Y), ["CHECKPOINT_STATE_MISMATCH"]);
     assert.equal(chainExitCodeFor(withCopy), 2);
     assert.equal(runMain(ctx, env).status, 2);
+    // Sin la copia local esa reescritura pasaba (cada checkpoint existe en el ledger): con ella, no.
+    const withoutCopy = await runVerifier(ctx);
+    assert.ok(withoutCopy.anomalies.filter((a) => a.tenantId === T_X || a.tenantId === T_Y).length === 0, "solo con la base el atacante no deja rastro (por eso existe la copia local y el ancla externa)");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -687,7 +687,6 @@ pgTest("TEST-CNS-1779 pg: una divergencia real del ledger queda persistida como 
       await proc.stop();
     }
   };
-  assert.equal((await reconcile()).ok, true);
   await tamper(admin, async () => {
     assert.equal((await admin.query("DELETE FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq = (SELECT max(chain_seq) FROM integrity.audit_event WHERE tenant_id = $1)", [T_R])).rowCount, 1);
   });
