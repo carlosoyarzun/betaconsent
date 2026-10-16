@@ -31,6 +31,8 @@ import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 import { lastLedgerSequence } from "../common/ledger-append.ts";
 import type { SecurityEventPort } from "../../ports/security-event.port.ts";
+import { RevocationApplyUnavailableError, runBoundedApply } from "./apply-guard.ts";
+import type { ApplyGuardConfig } from "./apply-guard.ts";
 
 /** LEGAL DECISION LD-02 / OPEN-RV-01 (revocation.spec `assuranceLevel`): el valor "suficiente" lo decide
  * Carlos; hasta entonces el contrato (ledger-event-payloads REVOCATION_VERIFIED, x-pending) admite solo un
@@ -62,6 +64,8 @@ export interface RevocationPorts {
   /** X6 / R5-1 (CA-128): stub interno del consumidor downstream (único EventSubscription de IT0).
    * Opcional: sin él, R5/R6/R7 (downstream.ts) fallan cerrado con ERR-CM-12. */
   readonly downstreamStub?: DownstreamStubPort;
+  /** ADR-010 rev. 5 §4.2.a (G-3, 6d): reintentos acotados de la tx completa R3/R3r + R4, alerta de agotamiento y commit ambiguo (apply-guard.ts). Ausente (in-memory, tests de dominio) = un solo intento, sin alerta. */
+  readonly applyGuard?: ApplyGuardConfig;
 }
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, los repos/ledger/outbox del bag se
@@ -667,13 +671,28 @@ async function verifyRevocationOtpTx(
  * estado intermedio (revocation.spec.yaml R4 "nunca visible al usuario"), así que aplicarlo en
  * el mismo request síncrono es equivalente en efecto observable para IT0 in-memory. */
 export function confirmRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
-  return inTx(ports, tenantId, (p) => confirmRevocationTx(p, tenantId, revocationRef));
+  const attempt = (): Promise<RevocationRecord> => inTx(ports, tenantId, (p) => confirmRevocationTx(p, tenantId, revocationRef));
+  if (ports.applyGuard === undefined) return attempt();
+  // ADR-010 rev. 5 §4.2.a (G-3): la tx completa R3 + R4 + C6 se reintenta acotadamente; commit ambiguo = leer estado antes de reintentar; agotamiento = alerta + error uniforme, nunca acuse de exito.
+  return runBoundedApply(ports.applyGuard, { tenantId, revocationRef: () => revocationRef }, attempt, (ref) => readAppliedRecord(ports, tenantId, ref));
 }
+
+/** APPLIED o posterior (el worker pudo avanzar R5-R7): resultado REAL de la solicitud ya aplicada. Lectura en una tx nueva; null si aun no esta aplicada. */
+async function readAppliedRecord(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord | null> {
+  const found = await ports.uow.inTenant(tenantId, (tx) => tx.revocationRepo.findByRef(tenantId, revocationRef));
+  return found !== null && found !== undefined && APPLIED_OR_LATER.has(found.status) ? found : null;
+}
+const APPLIED_OR_LATER: ReadonlySet<string> = new Set(["APPLIED", "DOWNSTREAM_PENDING", "DELIVERED", "COMPLETED"]);
 
 async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
   const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
-  if (found.status === "CONFIRMED" || found.status === "APPLIED") {
+  if (found.status === "APPLIED") {
+    return found;
+  }
+  if (found.status === "CONFIRMED") {
+    // Con la base (R4 atomica con R3, 0066) una CONFIRMED visible sin APPLIED es una anomalia (fila anterior a 0066): la aplica el worker de respaldo, nunca esta ruta. Sin acuse de exito (G-3).
+    if (ports.revocationTransitions) throw new RevocationApplyUnavailableError();
     return found;
   }
   if (found.status !== "VERIFIED") {
@@ -684,8 +703,11 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
     throw new DomainError("ERR-CM-06");
   }
   if (ports.revocationTransitions) {
-    const confirmedByFn = await ports.revocationTransitions.confirm({ revocationRef, expectedSequence: base });
-    return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, confirmedByFn.sequence));
+    // ADR-010 rev. 5 §4.2.a (0066): case_state.confirm_revocation hace R3/R3r + R4 + C6 en la MISMA tx (excepcion unica a GRD-CM-15); si R4 falla se revierte todo. La fila que queda es APPLIED.
+    await ports.revocationTransitions.confirm({ revocationRef, expectedSequence: base });
+    const applied = await reloadRevocation(ports, tenantId, revocationRef);
+    if (applied.status !== "APPLIED") throw new RevocationApplyUnavailableError(); // nunca acuse de exito sin APPLIED
+    return applied;
   }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED" };
   await ports.revocationRepo.save(confirmed);
