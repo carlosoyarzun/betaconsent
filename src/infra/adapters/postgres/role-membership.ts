@@ -43,6 +43,7 @@ export const CONSENT_OWNER_SET_ROLES: readonly string[] = [
   "transition_owner",
   "ledger_gen_owner",
   "ledger_writer",
+  "rights_case_lookup_owner", // ADR-010 rev. 5 PR-6d parte 1 (0064, F-PR6-45): dueño de app.rights_case_tenant_of
 ];
 
 /** Owners NOLOGIN de los que ningun rol de runtime puede ser miembro (spec INV-DBR-01; incluye consent_owner y outbox_claimer). */
@@ -60,6 +61,7 @@ export const OWNER_ROLES: readonly string[] = [
   "transition_owner",
   "ledger_gen_owner", // ADR-010 rev. 5 PR-b (LG-8, F-PR6-11): doce owners cubiertos
   "ledger_writer",
+  "rights_case_lookup_owner",
 ];
 
 /** Roles de runtime (INV-DBR-01). */
