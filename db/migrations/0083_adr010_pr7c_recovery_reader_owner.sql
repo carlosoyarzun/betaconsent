@@ -23,9 +23,24 @@ DROP POLICY IF EXISTS revocation_recovery_reader_select ON case_state.revocation
 CREATE POLICY revocation_recovery_reader_select ON case_state.revocation FOR SELECT TO revocation_recovery_reader USING (status = 'CONFIRMED');
 
 -- 2. La funcion vieja (de transition_owner) se elimina y se recrea como dueño revocation_recovery_reader.
+-- (Idempotente: en una reaplicacion la funcion ya es de revocation_recovery_reader y la borra su propio dueño.)
 SET LOCAL ROLE consent_owner;
-SET LOCAL ROLE transition_owner;
-DROP FUNCTION IF EXISTS case_state.list_confirmed_unapplied(integer, text[]);
+DO $drop$
+DECLARE
+  o text;
+BEGIN
+  SELECT pg_catalog.pg_get_userbyid(p.proowner)::pg_catalog.text INTO o FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
+   WHERE s.nspname = 'case_state' AND p.proname = 'list_confirmed_unapplied';
+  IF o = 'transition_owner' THEN
+    SET LOCAL ROLE transition_owner;
+    DROP FUNCTION case_state.list_confirmed_unapplied(integer, text[]);
+  ELSIF o = 'revocation_recovery_reader' THEN
+    SET LOCAL ROLE revocation_recovery_reader;
+    DROP FUNCTION case_state.list_confirmed_unapplied(integer, text[]);
+  END IF;
+  SET LOCAL ROLE consent_owner;
+END
+$drop$;
 
 SET LOCAL ROLE consent_owner;
 SET LOCAL ROLE revocation_recovery_reader;

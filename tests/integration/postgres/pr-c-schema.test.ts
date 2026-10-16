@@ -41,7 +41,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     assert.deepEqual(rel, { rls: true, force: true, owner: tableOwner(table) }, qname); // PR-7c (0081): revocation es de case_state_owner
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = $2 AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$' AND policyname !~ '_worker_recovery_select$' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = $2 AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$' AND policyname !~ '_worker_recovery_select$' AND policyname !~ '_recovery_reader_select$' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
       [table, tableSchema(table)],
     )).rows;
     // ADR-010 PR-5a: app_rw solo lee case_state.revocation (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_* abajo).

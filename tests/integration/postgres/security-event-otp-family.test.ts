@@ -290,15 +290,16 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
     await migrator.query("ROLLBACK");
   }
 
-  // R-21-1 / F-2 (P2, aceptado IT0b): consent_owner es dueno del ESQUEMA ops, asi que SI puede DROP de la tabla aunque no sea su dueno.
-  // Aserto positivo para que este test cambie cuando ADR-010 §4.5 cierre el residual.
+  // R-21-1 / F-2 CERRADO (ADR-010 rev. 6 PR-7c, 0082): consent_owner ya no es dueño del esquema ops (lo es ops_schema_owner), asi que NO puede DROP de la tabla ni del esquema.
   const dropper = await ctx.connectAs("consent_migrator");
   await dropper.query("BEGIN");
   try {
     await dropper.query("SET LOCAL ROLE consent_owner");
-    await dropper.query("SAVEPOINT d");
-    await assert.doesNotReject(() => dropper.query("DROP TABLE ops.security_event"), "R-21-1: el dueno del esquema puede DROP");
-    await dropper.query("ROLLBACK TO d");
+    for (const sql of ["DROP TABLE ops.security_event", "DROP SCHEMA ops CASCADE"]) {
+      await dropper.query("SAVEPOINT d");
+      await assert.rejects(() => dropper.query(sql), (e: unknown) => codeOf(e) === "42501", `R-21-1: ${sql}`);
+      await dropper.query("ROLLBACK TO d");
+    }
   } finally {
     await dropper.query("ROLLBACK");
   }

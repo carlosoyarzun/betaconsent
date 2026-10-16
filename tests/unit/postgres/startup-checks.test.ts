@@ -8,6 +8,7 @@ import { assertStartupChecks, runStartupChecks, StartupCheckError } from "../../
 import { EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import type { DbRoleMode, MembershipEdge } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { applyClusterScope, parseMigration } from "../../../src/infra/adapters/postgres/migrate.ts";
+import { CONSENT_OWNER_INVENTORY_ALLOWLIST } from "../../../src/infra/adapters/postgres/consent-owner-inventory.allowlist.ts";
 import { FakeClient } from "./fakes.ts";
 
 // ADR-010 PR-2: el modo de roles lo declara el deploy; fuera de LOCAL/DEV es obligatorio. Los dobles de abajo asumen el modo vigente (IT0B).
@@ -43,10 +44,16 @@ interface Scenario {
   sessionUser?: string;
   sessionSuper?: boolean | null;
   clientGucs?: string[] | "error";
+  // ADR-010 rev. 6 PR-7c (F-PR7-01): filas del inventario de consent_owner (por defecto, la allowlist exacta).
+  inventory?: string[] | "error";
 }
 
 function db(s: Scenario = {}): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("V2|trigger|")) {
+      if (s.inventory === "error") return new Error("boom");
+      return { rows: (s.inventory ?? [...CONSENT_OWNER_INVENTORY_ALLOWLIST]).map((line) => ({ line })) };
+    }
     if (text.includes("u.rolname AS member")) {
       if (s.membershipsError) return new Error("boom");
       return { rows: (s.memberships ?? EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC).map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin })) };

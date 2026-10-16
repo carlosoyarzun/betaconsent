@@ -23,7 +23,8 @@
 
 import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { Queryable } from "./pool.ts";
-import { checkRoleMemberships, OWNER_ROLES, resolveDbRoleMode, RoleModeError } from "./role-membership.ts";
+import { checkConsentOwnerInventory } from "./consent-owner-inventory.ts";
+import { checkRoleMemberships, OWNER_ROLES, REAL_DATA_BLOCKERS, resolveDbRoleMode, RoleModeError } from "./role-membership.ts";
 import type { DbRoleMode } from "./role-membership.ts";
 
 /** F-7: tolerancia entre el reloj de la BD (vista del roster) y el del proceso (dominio). */
@@ -140,9 +141,18 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
   try {
     // El modo lo declara el deploy (CNS_DB_ROLE_MODE), el mismo que usa el runner; vacio solo vale en LOCAL/DEV. Sin modo valido, no arranca.
     const roleMode = options.roleMode ?? resolveDbRoleMode(process.env, options.expectedEnvironment);
+    // ADR-010 rev. 6 PR-7c (C-3): REAL_DATA no arranca mientras F-PR7-01 siga abierto (aunque la aserción de membresía del modo estuviera activa).
+    if (roleMode === "REAL_DATA" && REAL_DATA_BLOCKERS.length > 0) failures.push(`el modo REAL_DATA está bloqueado mientras sigan abiertos: ${REAL_DATA_BLOCKERS.join(", ")} (el migrador aún es dueño de objetos compartidos)`);
     for (const problem of await checkRoleMemberships(db, roleMode)) failures.push(`${problem} (INV-DBR-03)`);
   } catch (error) {
     failures.push(error instanceof RoleModeError ? `${error.message} (INV-DBR-03)` : "no se pudo verificar la membresía de los roles (INV-DBR-03)");
+  }
+
+  // F-PR7-01 (C-3): inventario por catalogo de lo que consent_owner controla y otros owners ejecutan; igualdad exacta con la allowlist versionada. Fail-closed si no se puede leer.
+  try {
+    for (const problem of await checkConsentOwnerInventory(db)) failures.push(problem);
+  } catch {
+    failures.push("no se pudo verificar el inventario de consent_owner (F-PR7-01)");
   }
 
   await checkStaffRosterRoles(db, me?.rolname, failures);

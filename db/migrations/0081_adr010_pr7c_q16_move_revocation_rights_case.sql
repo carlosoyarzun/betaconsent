@@ -185,7 +185,7 @@ BEGIN
     FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n2 ON n2.oid = p.pronamespace
    WHERE p.prosrc ~ '\mcase_state\.(revocation|rights_case)\M';
   -- (Funciones que ya nombraban case_state.revocation antes —ninguna en 0037-0070— entrarian en la huella posterior y no en la anterior: la comparacion lo detectaria.)
-  IF digest_after IS DISTINCT FROM pg_catalog.current_setting('cns.pr7c_fn_digest', true) THEN
+  IF pg_catalog.current_setting('cns.pr7c_fn_digest', true) <> '' AND digest_after IS DISTINCT FROM pg_catalog.current_setting('cns.pr7c_fn_digest', true) THEN -- (en una reaplicacion no hay funciones con el nombre viejo: huella vacia, nada que comparar)
     RAISE EXCEPTION '0081: la huella de las funciones recreadas cambio (dueño, SECURITY DEFINER, search_path, ACL, volatilidad o firma)';
   END IF;
   -- Los CREATE temporales quedaron revocados.

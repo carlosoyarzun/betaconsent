@@ -38,7 +38,7 @@ test("TEST-CNS-1343 la lista exacta de IT0B_SYNTHETIC cubre Q-19 y no incluye lo
   // ADR-010 rev. 5 PR-b (LG-8, F-PR6-11): ledger_gen_owner y ledger_writer suman dos owners con SET sin INHERIT.
   for (const role of ["ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner"]) assert.ok(CONSENT_OWNER_SET_ROLES.includes(role) && OWNER_ROLES.includes(role), role);
   // 1 (migrator->consent_owner) + 1 (migrator->outbox_claimer) + 12 (consent_owner -> owners; ADR-010 6d parte 1 suma rights_case_lookup_owner) + 1 (app_rw -> reader).
-  assert.equal(it0b.length, 16); // + platform_rw -> rights_operator (0068, ADR-010 6d parte 2)
+  assert.equal(it0b.length, 20); // ADR-010 rev. 6 PR-7c (0080): + app_schema_owner, ops_schema_owner, shared_fn_owner, revocation_recovery_reader; + platform_rw -> rights_operator (0068, ADR-010 6d parte 2)
   // platform_rw -> rights_operator (0068) existe; ddl_breakglass llega en PR-7.
   assert.ok(it0b.some((e) => e.member === "platform_rw" && e.role === "rights_operator" && !e.inherit && e.set));
   assert.ok(!it0b.some((e) => e.member === "ddl_breakglass"));
