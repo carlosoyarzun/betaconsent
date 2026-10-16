@@ -137,6 +137,10 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   const reconcilerPolicies = all.filter((p) => p.roles.includes("integrity_reconciler"));
   assert.deepEqual(reconcilerPolicies.map((p) => p.k).sort(), RECONCILER_POLICIES);
   for (const p of reconcilerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_reconciler"], "true", null], p.k);
+  // ADR-010 rev. 6 PR-6f (0073, D-1 (b)): lectura cross-tenant EXPLICITA del chain-verifier (NOBYPASSRLS), una sola policy, solo SELECT, solo TO integrity_chain_verifier, USING (true).
+  const chainVerifierPolicies = all.filter((p) => p.roles.includes("integrity_chain_verifier"));
+  assert.deepEqual(chainVerifierPolicies.map((p) => p.k), ["integrity.audit_event/audit_event_chain_verifier_select"]);
+  for (const p of chainVerifierPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_chain_verifier"], "true", null], p.k);
   // ADR-010 rev. 5 PR-6d parte 1 (0059/0064, F-PR6-40/45): ni grant_owner ni consent_owner tienen policy sobre app. La unica lectura cross-tenant nueva es TO rights_case_lookup_owner (rol NOLOGIN dedicado, dueño de
   // app.rights_case_tenant_of; EXECUTE solo grant_owner): ningun rol de runtime la usa. Lista EXACTA y cerrada.
   assert.equal(all.filter((p) => p.roles.includes("grant_owner") && p.k.startsWith("app.")).length, 0, "grant_owner sin policies sobre app");
@@ -151,7 +155,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   assert.equal(recoveryPolicies[0]!.qual, "((status = 'CONFIRMED'::text) AND (current_setting('case_state.effect'::text, true) = 'list_confirmed_unapplied'::text))");
   assert.equal(all.filter((p) => p.k.startsWith("app.revocation/") && p.roles.includes("worker") && !p.qual?.includes("current_tenant_id")).length, 0, "el worker no tiene policy cross-tenant");
   for (const p of all) {
-    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p) || recoveryPolicies.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || chainVerifierPolicies.includes(p) || grantOwnerPolicies.includes(p) || recoveryPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

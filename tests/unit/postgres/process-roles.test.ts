@@ -21,9 +21,9 @@ import { startWorkerProcess } from "../../../src/server/entrypoints/worker/worke
 const PROCESSES = Object.keys(RUNTIME_PROCESS_ROLES) as RuntimeProcess[];
 const urlFor = (role: string): string => `postgresql://${role}:s3cr3t-pw@127.0.0.1:1/db`;
 
-test("TEST-CNS-1396 INV-DBR-02: web=app_rw, platform=platform_rw, worker=worker, verifier=integrity_verifier, reconciler=integrity_reconciler (un rol por proceso, sin repetidos)", () => {
-  assert.deepEqual({ ...RUNTIME_PROCESS_ROLES }, { web: "app_rw", platform: "platform_rw", worker: "worker", verifier: "integrity_verifier", reconciler: "integrity_reconciler" });
-  assert.equal(new Set(Object.values(RUNTIME_PROCESS_ROLES)).size, 5);
+test("TEST-CNS-1396 INV-DBR-02: web=app_rw, platform=platform_rw, worker=worker, verifier=integrity_verifier, reconciler=integrity_reconciler, chain-verifier=integrity_chain_verifier (un rol por proceso, sin repetidos)", () => {
+  assert.deepEqual({ ...RUNTIME_PROCESS_ROLES }, { web: "app_rw", platform: "platform_rw", worker: "worker", verifier: "integrity_verifier", reconciler: "integrity_reconciler", "chain-verifier": "integrity_chain_verifier" });
+  assert.equal(new Set(Object.values(RUNTIME_PROCESS_ROLES)).size, 6);
   for (const p of PROCESSES) assert.equal(expectedRoleFor(p), RUNTIME_PROCESS_ROLES[p]);
 });
 
