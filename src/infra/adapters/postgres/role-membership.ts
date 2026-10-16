@@ -65,7 +65,7 @@ export const OWNER_ROLES: readonly string[] = [
 ];
 
 /** Roles de runtime (INV-DBR-01). */
-export const RUNTIME_ROLES: readonly string[] = ["app_rw", "platform_rw", "worker", "integrity_verifier", "integrity_reconciler"]; // ADR-010 rev. 5 PR-6e (G-9): sexto rol de runtime
+export const RUNTIME_ROLES: readonly string[] = ["app_rw", "platform_rw", "worker", "integrity_verifier", "integrity_reconciler", "integrity_chain_verifier"]; // ADR-010 rev. 5 PR-6e (G-9): sexto rol; rev. 6 PR-6f (D-1 (b)): septimo rol de runtime
 
 /** Roles cuyas membresías (como miembro o como rol concedido) gobierna la aserción. */
 export const GOVERNED_ROLES: readonly string[] = [

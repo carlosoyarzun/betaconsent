@@ -1,0 +1,56 @@
+# Gobierna: ADR-010 rev. 6 §1 (septimo proceso y credencial: chain-verifier -> integrity_chain_verifier; D-1 (b), Carlos 2026-10-16), §2 (exit 0 cadena integra, 2 cadena rota o eslabon faltante, 1 error; log sin PII),
+# §3 fila PR-6f (C12: usuario de SO propio distinto de consent-verifier, IPAddressDeny=any mas solo localhost, Type=oneshot sin Restart, OnFailure, env root:root 0600 sin K_sub), F-PR6E-06, SEC-06-1, SEC-06-6;
+# INV-DBR-02; ADR-003 rev. 7 (host dedicado de LectorPro, sin proveedor cloud).
+# ARTEFACTO de IT0 (EXIT-LOCAL, solo datos sinteticos): NO se instala ni se ejecuta en este repo; sin despliegue. Un usuario de SO por proceso (consent-chain-verifier, DISTINTO de consent-verifier: con el mismo uid
+# /proc/<pid>/environ del verifier OIDC expondria K_sub, SEC-06-6), un rol LOGIN de Postgres por proceso.
+# La credencial va SOLO en /etc/consent/chain-verifier.env (root:root, modo 0600: systemd la lee como root antes de bajar privilegios); nunca en el repo. Plantilla: infra/systemd/chain-verifier.env.example.
+# Una corrida por activacion (Type=oneshot, la dispara consent-chain-verifier.timer). Exit 0 = cadena integra; 2 = cadena rota o eslabon faltante (el servicio queda "failed" y el journal trae el detalle sin PII); 1 = arranque,
+# configuracion, precondicion (policy/FORCE RLS) o lectura fallida, o ledger vacio. Lee payload y refs de actor (LG-9, LEGAL DECISION abierta): por eso NO tiene egress ni secretos ajenos; este es el trip-wire C3 (TEST-CNS-1756).
+[Unit]
+Description=Consent App - Proceso chain-verifier (recomputo de la cadena SHA-256 por tenant; solo lectura; sin HTTP; sin egress) (rol integrity_chain_verifier)
+After=network.target postgresql.service
+Wants=postgresql.service
+# Una cadena rota (exit 2) o un fallo de arranque/precondicion (exit 1) deja el servicio en "failed" y dispara la unidad de alerta LOCAL (journal, sin egress).
+OnFailure=consent-chain-verifier-alert.service
+
+[Service]
+Type=oneshot
+User=consent-chain-verifier
+Group=consent-chain-verifier
+WorkingDirectory=/opt/consent-app
+EnvironmentFile=/etc/consent/chain-verifier.env
+ExecStart=/usr/bin/node /opt/consent-app/src/server/entrypoints/chain-verifier/main.ts
+# Sin Restart: una cadena rota (exit 2) es un hallazgo, no una falla transitoria; reintentar no la corrige. La siguiente corrida la dispara el timer.
+TimeoutStartSec=30min
+# Ningun SuccessExitStatus: todo exit != 0 (1 error, 2 cadena rota) es fallo y activa OnFailure=.
+
+# Aislamiento del proceso
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+RestrictRealtime=true
+RemoveIPC=true
+
+# Red: sin salidas a internet y sin egress de ningun tipo (D-1 (b), SEC-06-1: el proceso que lee seudonimos cross-tenant no tiene egress). Solo loopback (Postgres en el mismo host dedicado; si la base va en otro
+# host, el IPAddressAllow se completa en la primera historia de infraestructura y TEST-CNS-1756 lo vuelve a exigir).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost

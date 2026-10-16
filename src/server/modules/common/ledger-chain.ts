@@ -126,7 +126,8 @@ export type ChainBreakReason =
   | "PAYLOAD_HASH_MISMATCH" // payload mutado
   | "EVENT_HASH_MISMATCH" // algun campo del sobre mutado
   | "MALFORMED_HASH" // hash que no es sha256 hex
-  | "EVENT_TYPE_NOT_ALLOWED"; // fuera de la lista blanca (CHECK de BD saltado)
+  | "EVENT_TYPE_NOT_ALLOWED" // fuera de la lista blanca (CHECK de BD saltado)
+  | "MALFORMED_PAYLOAD"; // payload que canonicalJson no puede canonicalizar (numero no entero/no seguro): rotura del tenant, no excepcion (ADR-010 rev. 6, SEC-06-4)
 
 export type LedgerChainReport =
   | { readonly ok: true; readonly verified: number }
@@ -136,28 +137,77 @@ export type LedgerChainReport =
       readonly brokenAt: { readonly chainSeq: number; readonly aggregateId: string; readonly sequence: number; readonly reason: ChainBreakReason };
     };
 
-/** Funcion pura: recomputa la cadena de UN tenant (filas ya ordenadas por chainSeq) y reporta el primer eslabon roto. */
-export function verifyChainRows(rows: readonly ChainRow[]): LedgerChainReport {
+/** Primer eslabon roto de una cadena (sin payload ni hashes: solo posicion y motivo). */
+export interface ChainBreak {
+  readonly chainSeq: number;
+  readonly aggregateId: string;
+  readonly sequence: number;
+  readonly reason: ChainBreakReason;
+}
+
+/**
+ * Verificador INCREMENTAL de la cadena de UN tenant (oraculo unico TS; ADR-010 rev. 6 §2): consume los eslabones por lotes, en orden de chainSeq, sin acumular la cadena en memoria. Misma semantica y
+ * mismas `ChainBreakReason` que `verifyChainRows` (que lo usa). Tras el primer eslabon roto deja de verificar (el estado queda fijo y `push` devuelve esa misma rotura).
+ * Un payload que `canonicalJson` no puede canonicalizar (numero no entero o no seguro) NO lanza: es la rotura MALFORMED_PAYLOAD de ese tenant (SEC-06-4, C8), para que un tenant no tape a los demas.
+ */
+export interface IncrementalChainVerifier {
+  /** Procesa el siguiente eslabon. Devuelve la rotura (la primera, o null si el eslabon es correcto). */
+  push(row: ChainRow): ChainBreak | null;
+  /** Eslabones correctos antes del primero roto. */
+  readonly verified: number;
+  /** Primer eslabon roto, si lo hay. */
+  readonly broken: ChainBreak | null;
+  report(): LedgerChainReport;
+}
+
+export function createChainVerifier(): IncrementalChainVerifier {
   let previous = LEDGER_GENESIS_HASH;
   let expectedSeq = 1;
   let verified = 0;
-  for (const row of rows) {
-    const fail = (reason: ChainBreakReason): LedgerChainReport => ({
-      ok: false,
-      verified,
-      brokenAt: { chainSeq: row.chainSeq, aggregateId: row.aggregateId, sequence: row.sequence, reason },
-    });
-    if (row.chainSeq !== expectedSeq) return fail("CHAIN_SEQ_GAP");
-    if (!HEX64.test(row.payloadHash) || !HEX64.test(row.previousEventHash) || !HEX64.test(row.eventHash)) return fail("MALFORMED_HASH");
-    if (row.previousEventHash !== previous) return fail("PREVIOUS_HASH_MISMATCH");
-    if (computePayloadHash(row.payload) !== row.payloadHash) return fail("PAYLOAD_HASH_MISMATCH");
-    if (computeEventHash(row) !== row.eventHash) return fail("EVENT_HASH_MISMATCH");
-    if (!isLedgerEventType(row.eventType)) return fail("EVENT_TYPE_NOT_ALLOWED");
-    previous = row.eventHash;
-    expectedSeq += 1;
-    verified += 1;
-  }
-  return { ok: true, verified };
+  let broken: ChainBreak | null = null;
+  const verifier: IncrementalChainVerifier = {
+    push(row: ChainRow): ChainBreak | null {
+      if (broken !== null) return broken;
+      const fail = (reason: ChainBreakReason): ChainBreak => {
+        broken = { chainSeq: row.chainSeq, aggregateId: row.aggregateId, sequence: row.sequence, reason };
+        return broken;
+      };
+      if (row.chainSeq !== expectedSeq) return fail("CHAIN_SEQ_GAP");
+      if (!HEX64.test(row.payloadHash) || !HEX64.test(row.previousEventHash) || !HEX64.test(row.eventHash)) return fail("MALFORMED_HASH");
+      if (row.previousEventHash !== previous) return fail("PREVIOUS_HASH_MISMATCH");
+      let payloadHash: string;
+      try {
+        payloadHash = computePayloadHash(row.payload);
+      } catch (error) {
+        if (error instanceof TypeError) return fail("MALFORMED_PAYLOAD");
+        throw error;
+      }
+      if (payloadHash !== row.payloadHash) return fail("PAYLOAD_HASH_MISMATCH");
+      if (computeEventHash(row) !== row.eventHash) return fail("EVENT_HASH_MISMATCH");
+      if (!isLedgerEventType(row.eventType)) return fail("EVENT_TYPE_NOT_ALLOWED");
+      previous = row.eventHash;
+      expectedSeq += 1;
+      verified += 1;
+      return null;
+    },
+    get verified() {
+      return verified;
+    },
+    get broken() {
+      return broken;
+    },
+    report(): LedgerChainReport {
+      return broken === null ? { ok: true, verified } : { ok: false, verified, brokenAt: broken };
+    },
+  };
+  return verifier;
+}
+
+/** Funcion pura: recomputa la cadena de UN tenant (filas ya ordenadas por chainSeq) y reporta el primer eslabon roto. */
+export function verifyChainRows(rows: readonly ChainRow[]): LedgerChainReport {
+  const verifier = createChainVerifier();
+  for (const row of rows) if (verifier.push(row) !== null) break;
+  return verifier.report();
 }
 
 /** Lectura minima que necesita el verificador (la implementa LedgerPort). */

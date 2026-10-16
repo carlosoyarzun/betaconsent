@@ -136,8 +136,8 @@ export async function applyClusterScope(
   return applied;
 }
 
-export type RoleName = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier" | "integrity_reconciler";
-const ROLE_NAMES: readonly RoleName[] = ["consent_migrator", "app_rw", "worker", "platform_rw", "integrity_verifier", "integrity_reconciler"];
+export type RoleName = "consent_migrator" | "app_rw" | "worker" | "platform_rw" | "integrity_verifier" | "integrity_reconciler" | "integrity_chain_verifier";
+const ROLE_NAMES: readonly RoleName[] = ["consent_migrator", "app_rw", "worker", "platform_rw", "integrity_verifier", "integrity_reconciler", "integrity_chain_verifier"];
 
 /**
  * Fija contraseñas de roles LOGIN (las recibe del entorno; jamás del repo). Un rol sin

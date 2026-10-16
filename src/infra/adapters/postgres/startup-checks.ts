@@ -76,6 +76,8 @@ export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]
   integrity_verifier: ["claim_oidc_exchange", "record_assertion", "record_login_assertion"],
   // ADR-010 rev. 5 PR-6e (G-9, P2(e)): el reconciler solo lee (SELECT por columnas); sin EXECUTE en platform ni acceso a sus tablas.
   integrity_reconciler: [],
+  // ADR-010 rev. 6 PR-6f (D-1 (b)): el chain-verifier solo lee el ledger (SELECT por columnas); sin EXECUTE en ningun esquema (0073).
+  integrity_chain_verifier: [],
 };
 
 const ALLOWED_ENVIRONMENTS = new Set(["LOCAL", "DEV", "STAGING"]);

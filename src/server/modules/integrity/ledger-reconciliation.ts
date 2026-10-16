@@ -1,6 +1,6 @@
 // Gobierna: ADR-010 rev. 5 §2 (fila `integrity_reconciler`: SELECT cross-tenant de columnas SIN PII), §4.2.c (conciliacion de estado <-> ledger; P6-8: exit code + log sin PII; "el verifier conserva el
-// recomputo de la cadena y los checkpoints"), §10 fila 6e, G-9, INV-DBR-08; specs/ledger-derivation.spec.yaml (tabla OLD->NEW como oraculo; pares ledgerWriter 19 / transitionOwner 14, disjuntos).
-// Fix de seguridad PR #99 (P1-1): el reconciler NO lee payload, hashes ni refs de actor, asi que NO recomputa la cadena SHA-256 (eso es del verifier, OI-DBR-10 / F-PR6E-06).
+// recomputo de la cadena y los checkpoints"; ADR-010 rev. 6 §2: el recomputo es del `chain-verifier`), §10 fila 6e, G-9, INV-DBR-08; specs/ledger-derivation.spec.yaml (tabla OLD->NEW como oraculo; pares ledgerWriter 19 / transitionOwner 14, disjuntos).
+// Fix de seguridad PR #99 (P1-1): el reconciler NO lee payload, hashes ni refs de actor, asi que NO recomputa la cadena SHA-256 (eso es del chain-verifier, rev. 6; OI-DBR-10 / F-PR6E-06).
 //
 // Funcion PURA (sin Postgres, sin reloj, sin I/O): recibe lo que el proceso `reconciler` leyo y devuelve las DIVERGENCIAS. Cubre, sin payload:
 //   * huecos de chain_seq por tenant (1..n) y eventos sin eslabon (chain_seq NULL) posteriores al inicio de la cadena;

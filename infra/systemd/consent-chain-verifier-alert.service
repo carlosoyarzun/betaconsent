@@ -1,0 +1,29 @@
+# Gobierna: ADR-010 rev. 6 §3 fila PR-6f (OnFailure=consent-chain-verifier-alert.service); patron de consent-reconciler-alert.service (seguridad PR #99 P2-7). Unidad de ALERTA LOCAL del chain-verifier: se activa por
+# OnFailure= de consent-chain-verifier.service (exit 1 o 2). Solo escribe una linea de severidad `crit` en el journal local (sin PII, sin egress): el detalle (ids opacos, motivo, conteos) ya esta en el journal de
+# consent-chain-verifier.service. Quien monitorea el journal del host (alerta humana) es una decision de infraestructura PENDING (IT0b). ARTEFACTO de IT0: no se instala en este repo.
+[Unit]
+Description=Consent App - Alerta local: el chain-verifier fallo o encontro la cadena rota
+
+[Service]
+Type=oneshot
+User=consent-chain-verifier
+Group=consent-chain-verifier
+ExecStart=/usr/bin/logger -p user.crit -t consent-chain-verifier "ALERTA chain-verifier: fallo o cadena rota; ver journalctl -u consent-chain-verifier.service (sin PII)"
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+# Sin red: el logger usa el socket local de syslog/journal (AF_UNIX).
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any

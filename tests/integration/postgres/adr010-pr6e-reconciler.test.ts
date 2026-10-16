@@ -1,11 +1,11 @@
 // Gobierna: ADR-010 rev. 5 §2 (fila `integrity_reconciler`), §4.2.c (conciliacion: exit code != 0 y log sin PII), §10 fila 6e, G-9 (aprobado), F-PR6-29, P2(e), condicion de §15.3 / seguridad rev. c punto 7
 // (integrity_reconciler NOBYPASSRLS con policies de SELECT explicitas y assert), INV-DBR-01/02/03/08; db/migrations/0056-0058; specs/db-roles.spec.yaml. SYNTHETIC ONLY.
-// Seguridad PR #99 (P1-1): el reconciler NO lee payload, hashes ni refs de actor (7 columnas de integrity.audit_event) y NO recomputa la cadena (es del verifier, F-PR6E-06).
+// Seguridad PR #99 (P1-1): el reconciler NO lee payload, hashes ni refs de actor (7 columnas de integrity.audit_event) y NO recomputa la cadena (es del chain-verifier, F-PR6E-06).
 // TEST-CNS-1610 (privilegios exactos del rol: atributos, sin membresias, columnas, 4 policies, sin EXECUTE; el verifier sigue sin SELECT de principal_identity),
 // TEST-CNS-1611 (cross-tenant correcto: el reconciler ve todos los tenants sin GUC; app_rw solo el suyo; la conciliacion de datos coherentes da ok),
 // TEST-CNS-1612 (reconciler sin escritura ni lectura de payload y demas columnas con PII/hashes, ni tablas ajenas, funciones, SET ROLE ni session_replication_role: 42501),
 // TEST-CNS-1613 (arranque con rol equivocado rechazado: startup-checks y entrypoint; el rol correcto pasa),
-// TEST-CNS-1614 (division de tareas: un payload mutado NO lo ve el reconciler (lo detecta el verifier) y la salida no lo filtra), TEST-CNS-1615 (hueco: evento borrado -> chain_seq y sequence),
+// TEST-CNS-1614 (division de tareas: un payload mutado NO lo ve el reconciler (lo detecta el chain-verifier) y la salida no lo filtra), TEST-CNS-1615 (hueco: evento borrado -> chain_seq y sequence),
 // TEST-CNS-1616 (par fuera de la particion con cadena valida), TEST-CNS-1617 (los pares del oraculo coinciden con las policies de la base; CANCELLED <-> INVITATION_CANCELLED y REVOKED <-> CONSENT_REVOKED).
 // Los tests que corrompen el ledger usan tenants propios y van al final del archivo. Requiere Postgres real (harness.ts); skip sin entorno.
 
@@ -276,7 +276,7 @@ pgTest("TEST-CNS-1613 pg: arranque con rol equivocado rechazado (startup-checks 
   await assert.rejects(() => startReconcilerProcess({ env: { CNS_ENVIRONMENT: "DEV", CNS_DATABASE_URL: ctx.urlFor("integrity_reconciler") } }), /catálogo|catalogo|environment/);
 });
 
-pgTest("TEST-CNS-1614 pg: division de tareas (P1-1): un payload mutado en el ledger NO lo ve el reconciler (no lo lee; lo detecta el recomputo del verifier) y la salida del reconciler no lo filtra", async (ctx) => {
+pgTest("TEST-CNS-1614 pg: division de tareas (P1-1): un payload mutado en el ledger NO lo ve el reconciler (no lo lee; lo detecta el recomputo del chain-verifier) y la salida del reconciler no lo filtra", async (ctx) => {
   const C = fixtureUuid("t1614-c");
   const admin = await ctx.fixtureAdmin();
   await driveInvitation(ctx, C, "1614-c", "READY");

@@ -48,3 +48,6 @@ exportar `TEST_DATABASE_URL` antes de `npm run test:integration`; ver
 sobre la versión/digest de PostgreSQL (ADR-002 no la fija de forma exacta).
 
 Detalle completo, decisiones y openItems: `specs/test-framework.spec.yaml`.
+
+## Cluster Postgres local para la integracion
+El cluster de pruebas debe crearse con codificacion UTF8 (como postgres:16 en CI): `initdb -E UTF8`. TEST-CNS-1753 (paridad canonical_json SQL/TS) y los fixtures de texto dependen de ello.

@@ -69,3 +69,54 @@ test("TEST-CNS-1400 infra/systemd: ni proveedor cloud ni secretos en las unidade
     }
   }
 });
+
+// ADR-010 rev. 6 §3 fila PR-6f (C12, C3), D-3, SEC-06-6: unidades del chain-verifier.
+test("TEST-CNS-1746 infra/systemd: consent-chain-verifier.service es oneshot, sin Restart, con OnFailure a su alerta, usuario de SO propio distinto de consent-verifier, EnvironmentFile propia y sin red salvo localhost", () => {
+  const text = read("infra/systemd/consent-chain-verifier.service");
+  assert.equal(directive(text, "Type"), "oneshot");
+  assert.equal(directive(text, "Restart"), undefined);
+  assert.equal(directive(text, "SuccessExitStatus"), undefined);
+  assert.equal(directive(text, "OnFailure"), "consent-chain-verifier-alert.service");
+  assert.equal(directive(text, "User"), "consent-chain-verifier");
+  assert.equal(directive(text, "Group"), "consent-chain-verifier");
+  const verifier = read("infra/systemd/consent-verifier.service");
+  assert.notEqual(directive(text, "User"), directive(verifier, "User"), "SEC-06-6: uid distinto del verifier OIDC");
+  assert.equal(directive(text, "EnvironmentFile"), "/etc/consent/chain-verifier.env");
+  assert.notEqual(directive(text, "EnvironmentFile"), directive(verifier, "EnvironmentFile"));
+  assert.equal(directive(text, "NoNewPrivileges"), "true");
+  assert.equal(directive(text, "IPAddressDeny"), "any");
+  assert.equal(directive(text, "IPAddressAllow"), "localhost");
+  assert.equal(directive(text, "CapabilityBoundingSet"), "");
+  assert.equal(directive(text, "ExecStart"), "/usr/bin/node /opt/consent-app/src/server/entrypoints/chain-verifier/main.ts");
+  const alert = read("infra/systemd/consent-chain-verifier-alert.service");
+  assert.equal(directive(alert, "Type"), "oneshot");
+  assert.equal(directive(alert, "User"), "consent-chain-verifier");
+  assert.equal(directive(alert, "RestrictAddressFamilies"), "AF_UNIX");
+  assert.equal(directive(alert, "IPAddressDeny"), "any");
+});
+
+test("TEST-CNS-1746 infra/systemd: consent-chain-verifier.timer es hourly (D-3), persistente y dispara solo su servicio", () => {
+  const timer = read("infra/systemd/consent-chain-verifier.timer");
+  assert.equal(directive(timer, "OnCalendar"), "hourly");
+  assert.equal(directive(timer, "Persistent"), "true");
+  assert.equal(directive(timer, "Unit"), "consent-chain-verifier.service");
+  assert.equal(directive(timer, "WantedBy"), "timers.target");
+});
+
+test("TEST-CNS-1746 infra/systemd: chain-verifier.env.example solo activa CNS_ENVIRONMENT y CNS_DATABASE_URL (rol integrity_chain_verifier, sin credencial real); ni CNS_VERIFIER_* ni K_sub", () => {
+  const env = read("infra/systemd/chain-verifier.env.example");
+  const active = env.split("\n").filter((l) => l.trim() !== "" && !l.trimStart().startsWith("#"));
+  assert.deepEqual(active.map((l) => l.split("=")[0]), ["CNS_ENVIRONMENT", "CNS_DATABASE_URL"]);
+  assert.ok(directive(env, "CNS_DATABASE_URL")!.includes("<SECRETO>"));
+  for (const l of env.split("\n").filter((x) => x.startsWith("# CNS_"))) assert.match(l, /^# CNS_CHAIN_VERIFIER_[A-Z_]+=/);
+  assert.ok(!/CNS_VERIFIER_/.test(active.join("\n")));
+  assert.ok(!/K_sub|SUB_HMAC|HMAC_KEY/i.test(active.join("\n")));
+});
+
+test("TEST-CNS-1756 trip-wire C3: consent-chain-verifier.service no permite nada distinto de localhost; consent-verifier.service se rige por P-45 y no se evalua aqui", () => {
+  const text = read("infra/systemd/consent-chain-verifier.service");
+  assert.deepEqual([...text.matchAll(/^IPAddressAllow=(.*)$/gm)].map((m) => m[1]!.trim()), ["localhost"]);
+  assert.equal(directive(text, "IPAddressDeny"), "any");
+  assert.ok(!/^Environment=.*PROXY/im.test(text));
+  assert.ok(!/PROXY=/i.test(read("infra/systemd/chain-verifier.env.example")));
+});

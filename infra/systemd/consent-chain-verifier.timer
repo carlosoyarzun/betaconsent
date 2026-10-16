@@ -1,0 +1,12 @@
+# Gobierna: ADR-010 rev. 6 §4 D-3 (frecuencia `hourly`, baseline first, aprobada por Carlos el 2026-10-16 antes de STAGING; F-PR6E-05) y §3 fila PR-6f. ARTEFACTO de IT0: no se instala en este repo.
+# Quien monitorea el journal del host (alerta humana) es una decision de infraestructura PENDING (IT0b).
+[Unit]
+Description=Consent App - Corrida periodica del chain-verifier (hourly, D-3 de ADR-010 rev. 6)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=consent-chain-verifier.service
+
+[Install]
+WantedBy=timers.target
