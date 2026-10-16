@@ -207,7 +207,7 @@ test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los r
     [{ memberships: [...base, edge("app_rw", "transition_owner", false, true)] }, /no esperada.*app_rw -> transition_owner/],
     [{ memberships: [...base, edge("worker", "outbox_claimer", false, true)] }, /no esperada.*worker -> outbox_claimer/],
     [{ memberships: [...base, edge("integrity_verifier", "consent_owner", true, true)] }, /no esperada.*integrity_verifier -> consent_owner/],
-    [{ memberships: [...base, edge("platform_rw", "rights_operator", false, true)] }, /no esperada.*platform_rw -> rights_operator/], // llega en PR-5
+    [{ memberships: [...base, edge("platform_rw", "rights_operator", true, true)] }, /no esperada.*platform_rw -> rights_operator/], // 0068: solo INHERIT FALSE, SET TRUE
     [{ memberships: [...base, edge("ddl_breakglass", "grant_owner", false, true)] }, /no esperada.*ddl_breakglass/], // llega en PR-7
     [{ memberships: base.filter((e) => !(e.member === "consent_owner" && e.role === "security_event_owner")) }, /falta la membresía.*consent_owner -> security_event_owner/],
     [{ memberships: base.filter((e) => e.role !== "outbox_claimer") }, /falta la membresía.*consent_migrator -> outbox_claimer/],

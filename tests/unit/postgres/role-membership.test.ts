@@ -38,9 +38,10 @@ test("TEST-CNS-1343 la lista exacta de IT0B_SYNTHETIC cubre Q-19 y no incluye lo
   // ADR-010 rev. 5 PR-b (LG-8, F-PR6-11): ledger_gen_owner y ledger_writer suman dos owners con SET sin INHERIT.
   for (const role of ["ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner"]) assert.ok(CONSENT_OWNER_SET_ROLES.includes(role) && OWNER_ROLES.includes(role), role);
   // 1 (migrator->consent_owner) + 1 (migrator->outbox_claimer) + 12 (consent_owner -> owners; ADR-010 6d parte 1 suma rights_case_lookup_owner) + 1 (app_rw -> reader).
-  assert.equal(it0b.length, 15);
-  // Aun no existen: platform_rw -> rights_operator (PR-5) y ddl_breakglass (PR-7).
-  assert.ok(!it0b.some((e) => e.member === "platform_rw" || e.member === "ddl_breakglass" || e.role === "rights_operator"));
+  assert.equal(it0b.length, 16); // + platform_rw -> rights_operator (0068, ADR-010 6d parte 2)
+  // platform_rw -> rights_operator (0068) existe; ddl_breakglass llega en PR-7.
+  assert.ok(it0b.some((e) => e.member === "platform_rw" && e.role === "rights_operator" && !e.inherit && e.set));
+  assert.ok(!it0b.some((e) => e.member === "ddl_breakglass"));
   // Ninguna membresía de runtime en un owner.
   assert.ok(!it0b.some((e) => ["app_rw", "platform_rw", "worker", "integrity_verifier"].includes(e.member) && OWNER_ROLES.includes(e.role)));
   assert.ok(OWNER_ROLES.every((r) => GOVERNED_ROLES.includes(r)) && GOVERNED_ROLES.includes("integrity_verifier") && GOVERNED_ROLES.includes("rights_operator"));

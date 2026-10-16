@@ -86,10 +86,12 @@ export const EXPECTED_MEMBERSHIPS: Readonly<Record<DbRoleMode, readonly Membersh
     edge("consent_migrator", "outbox_claimer", false, true),
     ...CONSENT_OWNER_SET_ROLES.map((r) => edge("consent_owner", r, false, true)), // integrity_owner: solo hasta PR-7
     edge("app_rw", "staff_roster_reader", false, true),
+    edge("platform_rw", "rights_operator", false, true), // ADR-010 rev. 5 PR-6d parte 2 (0068)
   ],
   REAL_DATA: [
     edge("consent_migrator", "consent_owner", true, true),
     edge("app_rw", "staff_roster_reader", false, true),
+    edge("platform_rw", "rights_operator", false, true), // ADR-010 rev. 5 PR-6d parte 2 (0068)
   ],
 };
 
