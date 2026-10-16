@@ -38,7 +38,7 @@ pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSE
   const appRwPolicies = policies.filter((p) => p.roles.includes("app_rw"));
   assert.deepEqual(appRwPolicies.map((p) => p.cmd), ["INSERT"], "D-5: app_rw sin policy SELECT/UPDATE/DELETE");
   assert.match(appRwPolicies[0]!.with_check ?? "", /app\.current_tenant_id\(\)/);
-  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]], ["UPDATE", ["security_event_owner"]]]);
+  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["INSERT", ["security_event_owner"]], ["SELECT", ["security_event_owner"]], ["UPDATE", ["security_event_owner"]]]);
 
   for (const role of ["app_rw", "worker", "platform_rw"]) {
     for (const privilege of ["SELECT", "UPDATE"]) {
@@ -61,7 +61,7 @@ pgTest("TEST-CNS-1189 pg: ops.security_event con FORCE RLS, una sola policy INSE
   const columns = (await admin.query<{ attname: string }>(
     "SELECT attname FROM pg_attribute WHERE attrelid = 'ops.security_event'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attname",
   )).rows.map((r) => r.attname);
-  assert.deepEqual(columns, ["actor_ref", "actor_role", "case_ref", "chain_ref", "channel_ref", "data_class", "delivery_kind", "environment", "event_id", "event_seq", "event_type", "key_kind", "occurred_at", "otp_scope", "receipt_ref", "recovery_ref", "schema_version", "scope_class", "session_kind", "session_ref", "tenant_id", "trigger_kind", "verification_ref", "window_kind"]);
+  assert.deepEqual(columns, ["actor_ref", "actor_role", "alert_reason", "case_ref", "chain_ref", "channel_ref", "data_class", "delivery_kind", "environment", "event_id", "event_seq", "event_type", "key_kind", "occurred_at", "otp_scope", "receipt_ref", "recovery_ref", "revocation_ref", "schema_version", "scope_class", "session_kind", "session_ref", "tenant_id", "trigger_kind", "verification_ref", "window_kind"]);
   assert.ok(!columns.some((c) => /(^|_)(sid|hash|cookie|csrf|ip|agent|mail|name|rut|detail|message|payload)(_|$)/.test(c))); // por palabra: receipt_ref (0045) no es "ip"
 
   const triggers = (await admin.query<{ tgname: string; tgenabled: string }>(

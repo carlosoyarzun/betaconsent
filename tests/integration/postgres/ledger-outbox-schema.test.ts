@@ -82,7 +82,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
 
   // P2-1: TODA policy de tablas con RLS exige app.current_tenant_id(); unica excepcion explicita:
   // las del claim, solo TO outbox_claimer. Ninguna policy abierta al dueno.
-  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]]]);
+  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]], ["app.revocation/revocation_worker_recovery_select", ["worker"]]]);
   const all = (await admin.query<{ k: string; roles: string[]; qual: string | null; with_check: string | null }>(
     `SELECT p.schemaname || '.' || p.tablename || '/' || p.policyname AS k, p.roles::text[] AS roles, p.qual, p.with_check
        FROM pg_policies p JOIN pg_class c ON c.oid = (p.schemaname || '.' || p.tablename)::regclass
@@ -96,7 +96,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     "ops.purge_run/purge_run_owner_insert", "ops.purge_run/purge_run_owner_select", "ops.purge_run/purge_run_owner_update", "ops.purge_run/purge_run_purge_delete",
     "ops.retention_policy/retention_policy_owner_delete", "ops.retention_policy/retention_policy_owner_insert",
     "ops.retention_policy/retention_policy_owner_select", "ops.retention_policy/retention_policy_owner_update",
-    "ops.security_event/security_event_owner_update", "ops.security_event/security_event_purge_delete", "ops.security_event/security_event_purge_select",
+    "ops.security_event/security_event_alert_insert", "ops.security_event/security_event_owner_update", "ops.security_event/security_event_purge_delete", "ops.security_event/security_event_purge_select",
   ];
   const ownerOnly = all.filter((p) => p.roles.length === 1 && p.roles[0] === "security_event_owner");
   assert.deepEqual(ownerOnly.map((p) => p.k).sort(), PURGE_OWNER_POLICIES, "las policies TO security_event_owner son exactamente las de purga de 0031 y 0033");

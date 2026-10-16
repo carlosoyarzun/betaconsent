@@ -47,6 +47,12 @@ function flakyUow(real: UnitOfWorkPort, fail: { on: boolean }): UnitOfWorkPort {
             ? {
                 revocationTransitions: {
                   ...tx.revocationTransitions,
+                  async confirm(input: { readonly revocationRef: string; readonly expectedSequence: number }) {
+                    // ADR-010 rev. 5 (0066): R3 + R4 + C6 son UNA funcion; el fallo se inyecta tras ella (misma tx: todo revierte).
+                    const confirmed = await tx.revocationTransitions!.confirm(input);
+                    if (fail.on) throw new Error("R4 falló (simulado)");
+                    return confirmed;
+                  },
                   async apply(input: { readonly revocationRef: string; readonly expectedSequence: number }) {
                     const applied = await tx.revocationTransitions!.apply(input);
                     if (fail.on) throw new Error("R4 falló (simulado)");
