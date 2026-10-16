@@ -188,9 +188,10 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
 /**
  * ADR-010 rev. 5 PR-6d parte 2 (F-A10-26 CERRADO POR PRIVILEGIO, F-X8-15): se RETIRA la excepcion LOCAL del interino de PR-5a. En CUALQUIER entorno el proceso NO arranca si su rol de conexion puede ejecutar una funcion de
  * `case_state` de operador, SYSTEM, siembra o interna que no le corresponde. Permitido: `worker` -> funciones SYSTEM (apply_revocation como respaldo, R5-R7); `platform_rw` -> approve_case_verification (con sesion PLATFORM; las demas
- * de operador solo tras SET LOCAL ROLE rights_operator, que NO cuenta aqui porque la membresia no hereda). Fail-closed si no se puede verificar.
+ * de operador solo tras SET LOCAL ROLE rights_operator, que NO cuenta aqui porque la membresia no hereda). Excepcion unica (F-A10-28): las siembras seed_local_* en LOCAL (la base las revoca a app_rw en 0070; solo las bases
+ * descartables de los tests las devuelven, y la funcion falla fuera de LOCAL). Fail-closed si no se puede verificar.
  */
-async function checkTransitionExecuteIsolation(db: Queryable, _environment: string, failures: string[]): Promise<void> {
+async function checkTransitionExecuteIsolation(db: Queryable, environment: string, failures: string[]): Promise<void> {
   try {
     const r = await db.query<{ name: string }>(
       `SELECT p.proname::pg_catalog.text AS name
@@ -198,8 +199,9 @@ async function checkTransitionExecuteIsolation(db: Queryable, _environment: stri
         WHERE n.nspname = 'case_state' AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')
           AND p.proname = ANY($1::text[])
           AND NOT (current_user = 'worker' AND p.proname = ANY($2::text[]))
-          AND NOT (current_user = 'platform_rw' AND p.proname = 'approve_case_verification')`,
-      [INTERIM_EXECUTE_FUNCTIONS, SYSTEM_TRANSITION_FUNCTIONS],
+          AND NOT (current_user = 'platform_rw' AND p.proname = 'approve_case_verification')
+          AND NOT ($3::text = 'LOCAL' AND p.proname LIKE 'seed\\_local\\_%')`,
+      [INTERIM_EXECUTE_FUNCTIONS, SYSTEM_TRANSITION_FUNCTIONS, environment],
     );
     for (const row of r.rows) failures.push(`el rol de la conexión puede ejecutar case_state.${row.name} (F-A10-26: operador, SYSTEM, siembra e internas no son alcanzables por este rol)`);
   } catch {
