@@ -136,8 +136,12 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   const reconcilerPolicies = all.filter((p) => p.roles.includes("integrity_reconciler"));
   assert.deepEqual(reconcilerPolicies.map((p) => p.k).sort(), RECONCILER_POLICIES);
   for (const p of reconcilerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_reconciler"], "true", null], p.k);
+  // ADR-010 rev. 5 PR-6d parte 1 (0059, F-PR6-40): UNA lectura explicita de grant_owner sobre app.rights_case (solo columnas tenant_id, case_ref, status) para derivar el tenant del caso REAL.
+  const grantOwnerPolicies = all.filter((p) => p.roles.includes("grant_owner") && p.k.startsWith("app."));
+  assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["app.rights_case/rights_case_grant_owner_select"]);
+  for (const p of grantOwnerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["grant_owner"], "true", null], p.k);
   for (const p of all) {
-    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

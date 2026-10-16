@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { createPgOidcAuthorization, nonceBinding } from "../../src/infra/adapters/postgres/oidc-exchange.adapter.ts";
 import type { PoolLike } from "../../src/infra/adapters/postgres/pool.ts";
+import { stepUpSid } from "./step-up-enqueue.ts";
 import { PlatformDeniedError } from "../../src/server/ports/oidc-exchange.port.ts";
 import type { EnqueueExchangeInput, OidcExchangeQueuePort } from "../../src/server/ports/oidc-exchange.port.ts";
 
@@ -23,7 +24,7 @@ export function createPgOidcExchangeQueue(pool: PoolLike, stepUpLimit: StepUpLim
         state,
         bindingHex: nonceBinding(input.actionNonce),
         pkceVerifier: input.pkceVerifier,
-        principalRef: input.principalRef,
+        sessionSid: await stepUpSid(input.principalRef),
         ttlSeconds: input.ttlSeconds,
         maxAwaiting: null,
         stepUpLimit: { max: stepUpLimit.max, windowSeconds: stepUpLimit.windowSeconds },

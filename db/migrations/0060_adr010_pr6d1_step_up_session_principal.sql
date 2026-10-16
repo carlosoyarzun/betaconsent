@@ -77,6 +77,8 @@ DECLARE
   v_tenant      uuid;
   v_session_principal text;
 BEGIN
+  -- El principal de la sesion se resuelve ANTES de validar, para que la evidencia de un DENY temprano (p. ej. INVALID_TTL) lleve al operador de la sesion y no un valor declarado.
+  IF p_kind IN ('LOGIN_CASE', 'STEP_UP') AND v_sid ~ c_hex THEN v_session_principal := platform.session_principal(v_sid); END IF;
   <<decide>>
   BEGIN
     IF session_user <> 'platform_rw' THEN v_reason := 'CALLER_ROLE'; EXIT decide; END IF;
@@ -96,7 +98,6 @@ BEGIN
       -- fijado por el adapter desde la cookie) por sha256 (kind PLATFORM, no revocada, dentro de su vida absoluta y de inactividad). Un principal declarado distinto del de la sesion invalida la solicitud.
       -- En STEP_UP la evidencia es authorization_check (enum cerrado): "sin sesion" se registra como NO_PRINCIPAL.
       IF v_sid IS NULL OR v_sid !~ c_hex THEN v_reason := CASE WHEN p_kind = 'STEP_UP' THEN 'NO_PRINCIPAL' ELSE 'NO_SESSION' END; EXIT decide; END IF;
-      v_session_principal := platform.session_principal(v_sid);
       IF v_session_principal IS NULL THEN v_reason := CASE WHEN p_kind = 'STEP_UP' THEN 'NO_PRINCIPAL' ELSE 'NO_SESSION' END; EXIT decide; END IF;
       IF v_principal IS NOT NULL AND v_principal IS DISTINCT FROM v_session_principal THEN v_reason := 'INVALID_INPUT'; EXIT decide; END IF;
       v_principal := v_session_principal;
@@ -158,7 +159,7 @@ BEGIN
   END IF;
   IF p_kind = 'STEP_UP' THEN
     INSERT INTO platform.authorization_check (check_kind, tenant_id, action, principal_ref, resource_ref, decision, reason_code, policy_version)
-    VALUES ('ENQUEUE_EXCHANGE', v_tenant, v_action, CASE WHEN v_principal ~ c_principal THEN v_principal END, NULL,
+    VALUES ('ENQUEUE_EXCHANGE', v_tenant, v_action, CASE WHEN v_session_principal ~ c_principal THEN v_session_principal END, NULL,
             CASE WHEN v_reason IS NULL THEN 'ALLOW' ELSE 'DENY' END, COALESCE(v_reason, 'OK'), c_policy);
   END IF;
   RETURN v_ref;
