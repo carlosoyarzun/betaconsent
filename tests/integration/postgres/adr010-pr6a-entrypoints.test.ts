@@ -236,7 +236,8 @@ pgTest("TEST-CNS-1399 pg: el worker ejecuta R5-R7 hasta COMPLETED (stub interno,
   const refs: string[] = [];
   await withAppEnv(ctx, async (env, outside) => {
     // R1-R4 siguen en el web (app_rw): llegan a APPLIED y R4 encola consent.revoked en el outbox.
-    for (const path of ["OTP", "LINK", "CASE"] as const) refs.push((await revokeVia(env, T, `1399-${path}`, path)).revocationRef);
+    for (const path of ["OTP", "LINK"] as const) // la via CASE (RH2/RH3) solo corre en platform: TEST-CNS-1711
+    refs.push((await revokeVia(env, T, `1399-${path}`, path)).revocationRef);
     for (const ref of refs) assert.equal((await outside.revocationRepo.findByRef(T, ref))?.status, "APPLIED");
 
     // El web intenta R5: la base lo niega por privilegio y el estado no cambia.

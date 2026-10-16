@@ -112,6 +112,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     ["platform.session_event/session_event_owner_insert", "grant_owner"], ["platform.session_event/session_event_owner_select", "grant_owner"],
     // ADR-010 PR-6c (0052): platform_session y rights_case_grant (solo grant_owner).
     ["platform.platform_session/platform_session_owner_insert", "grant_owner"], ["platform.platform_session/platform_session_owner_select", "grant_owner"], ["platform.platform_session/platform_session_owner_update", "grant_owner"],
+    ["platform.case_verification/case_verification_owner_insert", "grant_owner"], ["platform.case_verification/case_verification_owner_select", "grant_owner"],
     ["platform.grant_request/grant_request_owner_insert", "grant_owner"], ["platform.grant_request/grant_request_owner_select", "grant_owner"], ["platform.grant_request/grant_request_owner_update", "grant_owner"],
     ["platform.rights_case_grant/rights_case_grant_owner_insert", "grant_owner"], ["platform.rights_case_grant/rights_case_grant_owner_select", "grant_owner"], ["platform.rights_case_grant/rights_case_grant_owner_update", "grant_owner"],
     ["platform.oidc_exchange/oidc_exchange_owner_delete", "grant_owner"], ["platform.oidc_exchange/oidc_exchange_owner_insert", "grant_owner"],

@@ -125,7 +125,7 @@ pgTest("TEST-CNS-1470 pg (permanente): las unicas funciones que mencionan ledger
   const admin = await ctx.connectAsSuperuser();
   const declared = [
     "case_state.approve_case_verification", "case_state.assert_sequence", "case_state.cancel_invitation_subject_mismatch", "case_state.close_case",
-    "case_state.confirm_case_return", "case_state.confirm_revocation", "case_state.cosign_case_confirmation", "case_state.express_revocation_intent_in_case", "case_state.ledger_append",
+    "case_state.confirm_case_return", "case_state.confirm_revocation", "case_state.cosign_case_confirmation", "case_state.current_sequence", "case_state.express_revocation_intent_in_case", "case_state.ledger_append",
     "case_state.mark_downstream_emitted", "case_state.open_rights_case_bearer", "case_state.r4_apply", "case_state.record_downstream_ack", "case_state.record_erasure_attestation", "case_state.request_revocation",
     "case_state.revoke_with_recovery_link", "case_state.verify_revocation_otp", "case_state.withdraw_case_verification_proposal", "case_state.withdraw_revocation",
     "integrity.audit_event_immutable", "integrity.audit_event_single_aggregate_type",

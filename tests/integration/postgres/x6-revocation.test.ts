@@ -17,6 +17,8 @@ import { REVOCATION_PATHS, revokeVia, type X6Env } from "../../contract/x6-revoc
 import { pgTest, enableLedgerMechanicsAppend, seedFixture } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
+/** ADR-010 rev. 5 (6d parte 2): en Postgres la via CASE (RH2/RH3) solo corre por el proceso platform (TEST-CNS-1711); las vias del titular (OTP, LINK) siguen aqui. */
+const PG_REVOCATION_PATHS = REVOCATION_PATHS.filter((p) => p !== "CASE");
 import { completeDownstreamAsWorker } from "./worker-env.ts";
 
 async function withEnv<R>(ctx: PgTestContext, body: (env: X6Env, outside: ReturnType<typeof pgOutsideTxPorts>) => Promise<R>): Promise<R> {
@@ -41,7 +43,7 @@ async function withEnv<R>(ctx: PgTestContext, body: (env: X6Env, outside: Return
   }
 }
 
-for (const path of REVOCATION_PATHS) {
+for (const path of PG_REVOCATION_PATHS) {
   pgTest(`TEST-CNS-969 pg (${path}): la revocación llega hasta COMPLETED con el stub interno; ledger sin huecos y un solo consent.revoked`, async (ctx) => {
     const T = fixtureUuid(`t969-${path}`);
     await withEnv(ctx, async (env, outside) => {
@@ -99,7 +101,7 @@ pgTest("TEST-CNS-971 pg (INV-6): con SchoolParticipation SUSPENDED/CLOSED, Enrol
           codeHash: "0".repeat(64), attempts: 99, expiresAt: new Date("2000-01-01T00:00:00Z"), state: "LOCKED", resendCount: 5,
         });
       });
-      for (const path of REVOCATION_PATHS) {
+      for (const path of PG_REVOCATION_PATHS) {
         const { revocationRef } = await revokeVia(env, T, `971-${path}`, path);
         assert.equal((await outside.revocationRepo.findByRef(T, revocationRef))?.status, "APPLIED", path);
         const n = (await admin.query("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1 AND dedupe_key = $2", [T, `${revocationRef}:consent.revoked`])).rows[0]?.n;

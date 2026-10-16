@@ -12,7 +12,6 @@ import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { invitationRefPayload } from "../../contract/ledger-payload-fixtures.ts";
-import { closeCase } from "../../../src/server/modules/rights-case/rights-case.ts";
 import { DomainError } from "../../../src/server/modules/common/errors.ts";
 import { disableLedgerMechanicsAppend, enableLedgerMechanicsAppend, pgTest, seedFixture } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
@@ -137,7 +136,6 @@ pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED c
     const REV = fixtureUuid("rev1382");
     await fails(EXPR, [C, chain, D, REV], "RV002");
     await fails("SELECT case_state.confirm_case_return($1::text, 0::integer) AS r", [C], "RV409");
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 1::integer, 'op') AS r", [C], "RV002"); // OPEN no cierra
     await fails("SELECT case_state.confirm_case_return($1::text, 1::integer) AS r", [fixtureUuid("case-nope")], "RV001");
     // RC2u ok e idempotente.
     assert.equal((await run("SELECT case_state.confirm_case_return($1::text, 1::integer) AS r", [C])).rows[0]?.r?.changed, true);
@@ -159,20 +157,8 @@ pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED c
     // R12 (attach) sobre la Revocation ligada: ok; sobre otra: RV002.
     await run("SELECT case_state.express_revocation_intent_in_case($1::text, $2::text, $3::text, 'DECISION_MAKER', $4::text, true, 1) AS r", [C, chain, D, REV]);
     await fails("SELECT case_state.express_revocation_intent_in_case($1::text, $2::text, $3::text, 'DECISION_MAKER', $4::text, true, 2) AS r", [C, chain, D, fixtureUuid("otra")], "RV002");
-    // GRD-RC-09 (codigos exactos): sin R4 APPLIED, RESOLVED -> RC003; WITHDRAWN sin R8 -> RC003; outcome invalido -> RV002; secuencia vieja -> RV409.
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 2::integer, 'op1382') AS r", [C], "RC003");
-    await fails("SELECT case_state.close_case($1::text, 'WITHDRAWN', 2::integer, 'op1382') AS r", [C], "RC003");
-    await fails("SELECT case_state.close_case($1::text, 'OTRO', 2::integer, 'op1382') AS r", [C], "RV002");
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 0::integer, 'op1382') AS r", [C], "RV409");
-    await admin.query(SEED_RV);
-    await admin.query("UPDATE app.revocation SET status = 'APPLIED', verified_auth_path = 'OTP' WHERE tenant_id = $1 AND revocation_ref = $2", [T, REV]);
-    await admin.query("RESET ALL");
-    await run("SELECT case_state.close_case($1::text, 'RESOLVED', 2::integer, 'op1382') AS r", [C]);
-    assert.deepEqual(await events(C), ["RIGHTS_CASE_OPENED", "RIGHTS_CASE_CONTACTING", "RIGHTS_CASE_CLOSED"]);
-    // Terminal: ninguna funcion lo mueve (RV002), ni siquiera RC2u idempotente.
-    await fails("SELECT case_state.close_case($1::text, 'RESOLVED', 3::integer, 'op1382') AS r", [C], "RV002");
-    await fails("SELECT case_state.confirm_case_return($1::text, 3::integer) AS r", [C], "RV002");
-    assert.equal((await admin.query<{ status: string }>("SELECT status FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T, C])).rows[0]?.status, "RESOLVED");
+    // ADR-010 rev. 5 (6d parte 2): close_case ya no lo ejecuta app_rw (solo platform_rw + rights_operator con sesion CASE): GRD-RC-09, D6 y el terminal se prueban en TEST-CNS-1711.
+    assert.deepEqual(await events(C), ["RIGHTS_CASE_OPENED", "RIGHTS_CASE_CONTACTING"]);
   } finally {
     await pool.end();
   }
@@ -200,7 +186,6 @@ pgTest("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de Righ
     const uow = new PgUnitOfWork(pool);
     for (const [sql, code] of [
       ["SELECT case_state.confirm_case_return('cA-open', 0)", "RV001"],
-      ["SELECT case_state.close_case('cA-contacting', 'RESOLVED', 0, 'op1383')", "RV001"],
       ["SELECT case_state.express_revocation_intent_in_case('cA-contacting', 'cA2', 'dA2', 'DECISION_MAKER', 'rB', false, 0)", "RV001"],
       ["SELECT case_state.open_rights_case_bearer('cB', 'cA', '" + D + "', 'CHANNEL_UNREACHABLE')", "RC001"], // la decision y la cadena de A no existen en B
     ] as const) {
@@ -294,9 +279,6 @@ pgTest("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREAC
     await uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.confirm_case_return('c-real', 1)"));
     const again = await uow.withTenantTx(T, (tx) => tx.query<{ r: { changed: boolean; sequence: number } }>("SELECT case_state.confirm_case_return('c-real', 1) AS r"));
     assert.deepEqual(again.rows[0]?.r, { changed: false, sequence: 2 });
-    // close_case: ref del operador obligatoria (RC010), sin atribuir a un operador anonimo.
-    await fails("SELECT case_state.close_case('c-iv', 'RESOLVED', 0, NULL)", "RC010");
-    await fails("SELECT case_state.close_case('c-iv', 'RESOLVED', 0, '')", "RC010");
     // RC3 sobre un caso ya IN_VERIFICATION con Revocation: RV409 (el UoW reejecuta y la segunda unidad converge por R12), no RV002.
     await fails("SELECT case_state.express_revocation_intent_in_case('c-iv', 'ch1386', 'dy', 'DECISION_MAKER', 'rv-nueva', false, 0)", "RV409");
   } finally {
@@ -357,54 +339,7 @@ pgTest("TEST-CNS-1387 pg: INV-DBR-07 como particion de pares (PR-b): app_rw sin 
   await admin.query(row("Invitation", "ok-i", "INVITATION_OPENED", 17, `'${T}'::uuid`, 2));
 });
 
-pgTest("TEST-CNS-1388 pg: D6: close_case solo acepta como cierre una Revocation creada en o despues de la apertura del caso (no la de un ciclo anterior)", async (ctx) => {
-  const T = fixtureUuid("t1388");
-  const admin = await ctx.connectAsSuperuser();
-  // Caso 1: la Revocation APPLIED es ANTERIOR al caso (mismo chain/decision, ciclo previo) -> RC003.
-  await admin.query(SEED_RV);
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r-old', 'ch-old', 'd-old', 'APPLIED', 'OTP')", [T]);
-  await admin.query(SEED_RC);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-new', 'ch-old', 'd-old', 'CONTACTING', 'LIMIT_REACHED')", [T]);
-  // Caso 2: el caso existe y la Revocation APPLIED se crea DESPUES -> cierra.
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-ok', 'ch-ok', 'd-ok', 'CONTACTING', 'LIMIT_REACHED')", [T]);
-  await admin.query(SEED_RV);
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r-ok', 'ch-ok', 'd-ok', 'APPLIED', 'OTP')", [T]);
-  await admin.query("RESET ALL");
-  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
-  try {
-    const uow = new PgUnitOfWork(pool);
-    await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.close_case('c-new', 'RESOLVED', 0, 'op1388')")), (e: unknown) => codeOf(e) === "RC003");
-    await uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.close_case('c-ok', 'RESOLVED', 0, 'op1388')"));
-    assert.deepEqual((await admin.query<{ case_ref: string; status: string }>("SELECT case_ref, status FROM app.rights_case WHERE tenant_id = $1 ORDER BY 1", [T])).rows, [
-      { case_ref: "c-new", status: "CONTACTING" }, { case_ref: "c-ok", status: "RESOLVED" },
-    ]);
-  } finally {
-    await pool.end();
-  }
-});
-
-pgTest("TEST-CNS-1390 pg: el dominio sobre Postgres: closeCase sin Revocation del ciclo da ERR-RC-03, sin ref de operador ERR-CM-10, y con la Revocation APPLIED cierra y escribe RIGHTS_CASE_CLOSED con recorded_by_ref (D1)", async (ctx) => {
-  const T = fixtureUuid("t1390");
-  const admin = await ctx.connectAsSuperuser();
-  await admin.query(SEED_RC);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-1390', 'ch1390', 'd1390', 'CONTACTING', 'LIMIT_REACHED')", [T]);
-  await admin.query("RESET ALL");
-  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
-  try {
-    const uow = new PgUnitOfWork(pool);
-    const ports = { ...pgOutsideTxPorts(uow), uow };
-    await assert.rejects(() => closeCase(ports, T, "c-1390", "RESOLVED", "op-1390"), (e: unknown) => e instanceof DomainError && e.code === "ERR-RC-03");
-    await admin.query(SEED_RV);
-    await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r-1390', 'ch1390', 'd1390', 'APPLIED', 'OTP')", [T]);
-    await admin.query("RESET ALL");
-    await assert.rejects(() => closeCase(ports, T, "c-1390", "RESOLVED"), (e: unknown) => e instanceof DomainError && e.code === "ERR-CM-10");
-    assert.equal((await closeCase(ports, T, "c-1390", "RESOLVED", "op-1390")).status, "RESOLVED");
-    const ev = await admin.query<{ recorded_by_ref: string; actor_role: string }>("SELECT recorded_by_ref, actor_role FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = 'c-1390'", [T]);
-    assert.deepEqual(ev.rows, [{ recorded_by_ref: "op-1390", actor_role: "RIGHTS_OPERATOR" }]);
-  } finally {
-    await pool.end();
-  }
-});
+// TEST-CNS-1388 (D6) y TEST-CNS-1390 (closeCase por el dominio con app_rw) se retiraron: close_case solo por platform con sesion CASE; cobertura en TEST-CNS-1711.
 
 pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggregate_id: app_rw (Invitation:X, sin commit; INSERT de mecanica del harness) contra RC3 sobre la misma X, en ambos ordenes, nunca deja dos aggregate_type para X", async (ctx) => {
   const T = fixtureUuid("t1391");

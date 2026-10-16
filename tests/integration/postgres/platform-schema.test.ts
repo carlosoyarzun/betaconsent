@@ -127,10 +127,15 @@ const EXPECTED_EXECUTE: Record<string, string[]> = {
   issue_step_up_nonce: ["platform_rw"],
   request_grant: ["platform_rw"],
   approve_grant: ["platform_rw"],
-  consume_step_up: [],
+  consume_step_up: ["transition_owner"],
   session_principal: [],
   rights_case_of: [],
   rights_case_grant_insert_guard: [],
+  // ADR-010 PR-6d parte 2 (0069): actor desde la sesion (solo transition_owner), cruce GRD-RC-10 y step-up RH2.
+  require_case_actor: ["transition_owner"],
+  require_platform_actor: ["transition_owner"],
+  record_rh2_approval: ["transition_owner"],
+  case_verification_guard: [],
 };
 const FUNCTION_OWNERS: Record<string, string> = {
   request_membership: "membership_owner", approve_membership: "membership_owner", request_role_assignment: "membership_owner", approve_role_assignment: "membership_owner",
@@ -143,12 +148,12 @@ const FUNCTION_OWNERS: Record<string, string> = {
   open_platform_session: "grant_owner", open_case_session: "grant_owner", validate_session: "grant_owner", revoke_session: "grant_owner", revoke_session_internal: "grant_owner",
   platform_session_guard: "grant_owner", rights_case_grant_guard: "grant_owner", grant_request_guard: "grant_owner",
   issue_step_up_nonce: "grant_owner", request_grant: "grant_owner", approve_grant: "grant_owner", consume_step_up: "grant_owner", session_principal: "grant_owner", rights_case_of: "grant_owner",
-  rights_case_grant_insert_guard: "grant_owner",
+  rights_case_grant_insert_guard: "grant_owner", require_case_actor: "grant_owner", require_platform_actor: "grant_owner", record_rh2_approval: "grant_owner", case_verification_guard: "grant_owner",
 };
 const TABLE_OWNERS: Record<string, string> = {
   tenant_membership: "membership_owner", platform_role_assignment: "membership_owner", principal_identity: "membership_owner",
   action_nonce: "grant_owner", authorization_check: "grant_owner", oidc_exchange: "grant_owner", grant_assertion: "grant_owner",
-  login_assertion: "grant_owner", session_event: "grant_owner", platform_session: "grant_owner", rights_case_grant: "grant_owner", grant_request: "grant_owner",
+  login_assertion: "grant_owner", session_event: "grant_owner", platform_session: "grant_owner", rights_case_grant: "grant_owner", grant_request: "grant_owner", case_verification: "grant_owner",
 };
 
 pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 12 tablas de membership_owner/grant_owner con FORCE RLS y sin privilegios de runtime; 39 funciones con dueno, search_path fijo y EXECUTE exacto; triggers ENABLE ALWAYS; sin columnas con tokens de identificacion; startup-checks", async (ctx) => {
@@ -229,7 +234,7 @@ pgTest("TEST-CNS-1353 pg: esquema platform de platform_schema_owner; 12 tablas d
   )).rows;
   assert.deepEqual(triggers.map((t) => t.tgname), [
     "action_nonce_guard", "action_nonce_no_truncate", "authorization_check_append_only", "authorization_check_no_truncate",
-    "grant_assertion_immutable", "grant_assertion_no_truncate", "grant_request_guard", "grant_request_no_truncate", "login_assertion_guard", "login_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
+    "case_verification_no_mutation", "case_verification_no_truncate", "grant_assertion_immutable", "grant_assertion_no_truncate", "grant_request_guard", "grant_request_no_truncate", "login_assertion_guard", "login_assertion_no_truncate", "oidc_exchange_guard", "oidc_exchange_no_truncate",
     "platform_role_assignment_guard", "platform_role_assignment_no_truncate", "platform_session_guard", "platform_session_no_truncate",
     "principal_identity_guard", "principal_identity_no_truncate", "rights_case_grant_guard", "rights_case_grant_insert_guard", "rights_case_grant_no_truncate",
     "session_event_immutable", "session_event_no_truncate", "tenant_membership_guard", "tenant_membership_no_truncate",
