@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { casePath, seedAttestedStepUp, seedCaseWorld, startPlatformHttp } from "../../helpers/pg-case-world.ts";
+import { casePath, rh2Target, seedAttestedStepUp, seedCaseWorld, startPlatformHttp } from "../../helpers/pg-case-world.ts";
 import { pgTest } from "./harness.ts";
 
 pgTest("TEST-CNS-1711 pg platform HTTP: RH2 (propuesta + aprobacion con step-up y sesion PLATFORM), RH3 (registro + co-firma con R4 atomica) y cierre; el actor sale de la sesion", async (ctx) => {
@@ -13,13 +13,13 @@ pgTest("TEST-CNS-1711 pg platform HTTP: RH2 (propuesta + aprobacion con step-up 
   try {
     const p = casePath(w.caseRef);
     const proposalRef = fixtureUuid("proposal-1711");
-    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     const proposed = await http.post(p.proposals, w.op1.caseSession.sid, { proposalRef, verificationScriptVersion: "guion-1" });
     assert.equal(proposed.status, 201, proposed.body);
     const afterPropose = (await admin.query("SELECT status, proposed_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
     assert.deepEqual(afterPropose, { status: "REQUESTED", proposed_by_ref: w.op1.principal }, "el proponente es el principal de la sesion CASE");
 
-    await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     const approved = await http.post(p.approval(proposalRef), w.approver.platform.sid, {}, { kind: "PLATFORM" });
     assert.equal(approved.status, 200, approved.body);
     const afterApprove = (await admin.query("SELECT status, second_approver_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];

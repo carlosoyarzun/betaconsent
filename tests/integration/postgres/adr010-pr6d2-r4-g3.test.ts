@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import type { Client } from "pg";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
-import { recoverConfirmedRevocations } from "../../../src/server/entrypoints/worker/worker-process.ts";
+import { RecoveryBackoff, recoverConfirmedRevocations } from "../../../src/server/entrypoints/worker/worker-process.ts";
 import { ambiguousCommitPool, casePath, injectOutboxFailure, recordRh3, seedCaseWorld, seedConfirmedWithoutApplied, startPlatformHttp } from "../../helpers/pg-case-world.ts";
 import type { CaseWorld } from "../../helpers/pg-case-world.ts";
 import { pgTest } from "./harness.ts";
@@ -101,7 +101,7 @@ pgTest("TEST-CNS-1704 pg platform: agotados los reintentos (3) la tx queda rever
     assert.ok(logs.every((l) => !l.includes(w.op2.principal) && !l.includes(w.op2.caseSession.sid)), "el log de respaldo, si lo hubo, no lleva PII ni sid");
     // El worker solo recupera CONFIRMED sin APPLIED: esta Revocation sigue VERIFIED y no se toca.
     const recovered = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, () => {});
-    assert.deepEqual(recovered, { applied: 0, failed: 0 });
+    assert.deepEqual(recovered, { applied: 0, failed: 0, skipped: 0 });
     assert.equal((await revocation(admin, w)).status, "VERIFIED");
     // Pasada la falla, el operador reintenta y el caso se resuelve (sin duplicar la alerta ni los eventos).
     await failure.remove();
@@ -173,6 +173,8 @@ pgTest("TEST-CNS-1706 pg worker: el respaldo recupera SOLO las Revocation CONFIR
   const http = await startPlatformHttp(ctx);
   const workerPool = createPool({ connectionString: ctx.urlFor("worker"), max: 2 });
   const logs: string[] = [];
+  let clock = 1_000_000;
+  const backoff = new RecoveryBackoff(() => clock, 30_000, 3_600_000);
   try {
     await recordRh3(admin, http, a);
     await recordRh3(admin, http, b); // b queda VERIFIED (no CONFIRMED): el worker no la toca
@@ -182,8 +184,8 @@ pgTest("TEST-CNS-1706 pg worker: el respaldo recupera SOLO las Revocation CONFIR
     assert.equal((await revocation(admin, a)).status, "CONFIRMED");
     const failure = await injectOutboxFailure(admin, { name: "f1706", tenantId: c.tenantId, failures: 1_000, sqlstate: "40001" });
 
-    const first = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, (l) => logs.push(l));
-    assert.deepEqual(first, { applied: 1, failed: 1 }, "a se aplica; c falla sin detener el ciclo");
+    const first = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, (l) => logs.push(l), backoff);
+    assert.deepEqual(first, { applied: 1, failed: 1, skipped: 0 }, "a se aplica; c falla sin detener el ciclo");
     assert.equal((await revocation(admin, a)).status, "APPLIED");
     assert.deepEqual((await events(admin, a)).slice(-3), ["REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"]);
     assert.equal(countOf(await events(admin, a), "CONSENT_REVOKED"), 1);
@@ -199,15 +201,56 @@ pgTest("TEST-CNS-1706 pg worker: el respaldo recupera SOLO las Revocation CONFIR
     assert.ok(logs.length >= 1 && logs.every((l) => !l.includes(c.op1.principal) && !l.includes(c.op2.principal) && !l.includes(c.consentId)), `log sin PII: ${logs.join(" | ")}`);
 
     // Idempotencia: una segunda pasada no reaplica a (ya APPLIED); c sigue pendiente hasta que la falla cese.
-    const second = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, () => {});
-    assert.deepEqual(second, { applied: 0, failed: 1 });
+    clock += 31_000; // vence el backoff de c: se reintenta (falla de nuevo) SIN repetir la alerta R4_BACKUP_FAILED (P2-2)
+    const second = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, () => {}, backoff);
+    assert.deepEqual(second, { applied: 0, failed: 1, skipped: 0 });
+    assert.deepEqual(await alerts(admin, c), ["R4_BACKUP_FAILED"], "una sola alerta por fallo consecutivo");
     assert.equal(countOf(await events(admin, a), "CONSENT_REVOKED"), 1);
     assert.deepEqual(await alerts(admin, a), ["R4_BACKUP_APPLIED"]);
     await failure.remove();
-    const third = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, () => {});
-    assert.deepEqual(third, { applied: 1, failed: 0 });
+    const mid = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, () => {}, backoff);
+    assert.deepEqual(mid, { applied: 0, failed: 0, skipped: 1 }, "c esta en backoff: no se toca antes de tiempo");
+    clock += 120_000;
+    const third = await recoverConfirmedRevocations(workerPool, new PgUnitOfWork(workerPool), 20, () => {}, backoff);
+    assert.deepEqual(third, { applied: 1, failed: 0, skipped: 0 });
     assert.equal((await revocation(admin, c)).status, "APPLIED");
     assert.equal((await revocation(admin, b)).status, "VERIFIED");
+  } finally {
+    await workerPool.end();
+    await http.close();
+  }
+});
+
+pgTest("TEST-CNS-1722 pg worker (P2-2): filas que fallan siempre no bloquean a las nuevas ni generan R4_BACKUP_FAILED en cada ciclo (backoff por fila); con lote 2 y dos filas fallidas mas antiguas, la nueva se aplica en el ciclo siguiente", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const bad1 = await seedCaseWorld(ctx, "1722a");
+  const bad2 = await seedCaseWorld(ctx, "1722b");
+  const good = await seedCaseWorld(ctx, "1722c");
+  const http = await startPlatformHttp(ctx);
+  const workerPool = createPool({ connectionString: ctx.urlFor("worker"), max: 2 });
+  let clock = 5_000_000;
+  const backoff = new RecoveryBackoff(() => clock, 30_000, 3_600_000);
+  try {
+    for (const w of [bad1, bad2, good]) {
+      await recordRh3(admin, http, w);
+      await seedConfirmedWithoutApplied(admin, w);
+    }
+    // Solo esta ejecucion ve a las tres: las demas filas CONFIRMED de la base compartida las aportan otros tests del archivo (ya APPLIED).
+    const f1 = await injectOutboxFailure(admin, { name: "f1722a", tenantId: bad1.tenantId, failures: 1_000_000, sqlstate: "40001" });
+    const f2 = await injectOutboxFailure(admin, { name: "f1722b", tenantId: bad2.tenantId, failures: 1_000_000, sqlstate: "40001" });
+    const uow = new PgUnitOfWork(workerPool);
+    const c1 = await recoverConfirmedRevocations(workerPool, uow, 2, () => {}, backoff);
+    assert.deepEqual(c1, { applied: 0, failed: 2, skipped: 0 }, "el lote de 2 lo ocupan las dos mas antiguas, que fallan");
+    assert.equal((await revocation(admin, good)).status, "CONFIRMED");
+    const c2 = await recoverConfirmedRevocations(workerPool, uow, 2, () => {}, backoff);
+    assert.deepEqual(c2, { applied: 1, failed: 0, skipped: 2 }, "las fallidas quedan en backoff y la nueva pasa");
+    assert.equal((await revocation(admin, good)).status, "APPLIED");
+    clock += 31_000;
+    const c3 = await recoverConfirmedRevocations(workerPool, uow, 2, () => {}, backoff);
+    assert.deepEqual(c3, { applied: 0, failed: 2, skipped: 0 }, "pasado el backoff se reintentan");
+    for (const w of [bad1, bad2]) assert.deepEqual(await alerts(admin, w), ["R4_BACKUP_FAILED"], "una sola alerta por fila, no una por ciclo");
+    await f1.remove();
+    await f2.remove();
   } finally {
     await workerPool.end();
     await http.close();

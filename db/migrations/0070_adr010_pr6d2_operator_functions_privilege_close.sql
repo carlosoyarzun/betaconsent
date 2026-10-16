@@ -4,6 +4,7 @@
 -- GRD-RC-12), db-roles.spec.yaml (INV-DBR-06); registers/findings-register-IT0.md F-A10-26 (CIERRE POR PRIVILEGIO), F-A10-28, F-PR6-39 (parte 2), F-PR6-14/19/25. Depende de 0066-0069. 0037/0038/0039 son inmutables.
 --
 -- (La Revocation de cada accion sale del caso real: app.rights_case.revocation_ref bajo el tenant de la sesion; la request solo trae caseRef.)
+-- P2-6 (F-6D3-SEC-06): el step-up de RH2 se liga a (caseRef, proposalRef): el destino es el texto `<case_ref>:<proposal_ref>` (sha256 en el nonce); un step-up emitido para otro caso con la misma proposal_ref NO sirve.
 -- 1) Funciones de operador NUEVAS (transition_owner, SECURITY DEFINER, search_path fijo, sin SQL dinamico); las de firma antigua (con p_*_by_ref / p_operator_ref / p_expected_sequence) se ELIMINAN. Ninguna recibe principal ni
 --    tenant: el actor sale de platform.require_case_actor (sesion CASE) o platform.require_platform_actor (sesion PLATFORM, aprobador RH2) y FIJA app.tenant_id desde la sesion. Solo `session_user = platform_rw`. El control
 --    optimista de secuencia lo da el lock de la fila de la Revocation / del caso (todo escritor del agregado la bloquea primero) y se lee la secuencia bajo el lock. Un fallo de step-up (GRD-RC-12) NO lanza: devuelve
@@ -61,7 +62,7 @@ BEGIN
   -- La Revocation del caso sale del caso REAL (app.rights_case.revocation_ref, bajo el tenant de la sesion), nunca de la request.
   SELECT c.revocation_ref INTO v_revref FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
   IF v_revref IS NULL THEN RAISE EXCEPTION 'caso sin Revocation' USING ERRCODE = 'RV001'; END IF;
-  v_denied := platform.consume_step_up(v_actor, 'PROPOSE_CASE_VERIFICATION', p_proposal_ref, p_p51_max, p_p51_window_seconds);
+  v_denied := platform.consume_step_up(v_actor, 'PROPOSE_CASE_VERIFICATION', p_case_ref || ':' || p_proposal_ref, p_p51_max, p_p51_window_seconds);
   IF v_denied IS NOT NULL THEN RETURN pg_catalog.jsonb_build_object('denied', v_denied); END IF;
   v_rev := case_state.lock_revocation(v_revref);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref THEN RAISE EXCEPTION 'caso ajeno' USING ERRCODE = 'RV001'; END IF;
@@ -91,7 +92,7 @@ BEGIN
   -- La Revocation del caso sale del caso REAL (app.rights_case.revocation_ref, bajo el tenant de la sesion), nunca de la request.
   SELECT c.revocation_ref INTO v_revref FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
   IF v_revref IS NULL THEN RAISE EXCEPTION 'caso sin Revocation' USING ERRCODE = 'RV001'; END IF;
-  v_denied := platform.consume_step_up(v_actor, 'APPROVE_CASE_VERIFICATION', p_proposal_ref, p_p51_max, p_p51_window_seconds);
+  v_denied := platform.consume_step_up(v_actor, 'APPROVE_CASE_VERIFICATION', p_case_ref || ':' || p_proposal_ref, p_p51_max, p_p51_window_seconds);
   IF v_denied IS NOT NULL THEN RETURN pg_catalog.jsonb_build_object('denied', v_denied); END IF;
   v_rev := case_state.lock_revocation(v_revref);
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref OR v_rev.proposal_ref IS DISTINCT FROM p_proposal_ref THEN RAISE EXCEPTION 'propuesta ajena' USING ERRCODE = 'RV001'; END IF;
@@ -131,7 +132,7 @@ BEGIN
   -- La Revocation del caso sale del caso REAL (app.rights_case.revocation_ref, bajo el tenant de la sesion), nunca de la request.
   SELECT c.revocation_ref INTO v_revref FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
   IF v_revref IS NULL THEN RAISE EXCEPTION 'caso sin Revocation' USING ERRCODE = 'RV001'; END IF;
-  v_denied := platform.consume_step_up(v_actor, 'WITHDRAW_CASE_VERIFICATION', p_proposal_ref, p_p51_max, p_p51_window_seconds);
+  v_denied := platform.consume_step_up(v_actor, 'WITHDRAW_CASE_VERIFICATION', p_case_ref || ':' || p_proposal_ref, p_p51_max, p_p51_window_seconds);
   IF v_denied IS NOT NULL THEN RETURN pg_catalog.jsonb_build_object('denied', v_denied); END IF;
   v_rev := case_state.lock_revocation(v_revref);
   -- RH2w replay idempotente (F-6D2-QA-01): el MISMO proponente repite el retiro de una propuesta ya retirada -> mismo resultado, sin segundo evento ni cambio. Otro principal o una propuesta que nunca existio caen en 'propuesta ajena'.
@@ -229,7 +230,7 @@ END
 $fn$;
 
 -- Lectura de estado SIN EFECTOS para el reintento de RH3 (G-3, F-6D2-QA-02): la Revocation del caso real ya esta aplicada por la co-firma de ESTA sesion? Devuelve {applied, sequence} o {applied:false}. No escribe
--- en el ledger ni en app.*, no consume step-up; solo revalida la sesion CASE (require_case_actor, sin evento). Misma condicion que el replay de cosign_case_confirmation.
+-- en el ledger ni en app.*, no consume step-up; identifica la sesion CASE con platform.session_case_receipt_actor (P2-7: tolera una sesion vencida hace <15 min, no revocada; sin evento). Misma condicion que el replay de cosign_case_confirmation.
 CREATE FUNCTION case_state.read_case_apply_state(p_case_ref text) RETURNS jsonb
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
@@ -240,7 +241,7 @@ DECLARE
   v_rev app.revocation;
 BEGIN
   IF session_user <> 'platform_rw' THEN RAISE EXCEPTION 'llamador no autorizado' USING ERRCODE = 'RC004'; END IF;
-  v_actor := platform.require_case_actor(p_case_ref, 'RIGHTS_OPERATOR');
+  v_actor := platform.session_case_receipt_actor(p_case_ref);
   SELECT c.revocation_ref INTO v_revref FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
   IF v_revref IS NULL THEN RETURN pg_catalog.jsonb_build_object('applied', false); END IF;
   SELECT r.* INTO v_rev FROM app.revocation r WHERE r.tenant_id = app.current_tenant_id() AND r.revocation_ref = v_revref AND r.case_ref = p_case_ref;
@@ -378,7 +379,7 @@ BEGIN
   FOR f IN SELECT p.proname, p.prosrc, pg_catalog.pg_get_function_arguments(p.oid) AS args FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
             WHERE s.nspname = 'case_state' AND p.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation', 'cosign_case_confirmation', 'close_case', 'alert_apply_exhausted', 'read_case_apply_state') LOOP
     IF f.args ~* 'by_ref|operator_ref|actor_ref|principal|tenant|approver_ref' THEN RAISE EXCEPTION '0070: case_state.% no puede recibir actor, principal ni tenant (%)', f.proname, f.args; END IF;
-    IF f.prosrc !~ 'platform\.require_(case|platform)_actor\(' OR f.prosrc !~ 'session_user <> .platform_rw.' THEN RAISE EXCEPTION '0070: case_state.% perdio el actor desde la sesion o la restriccion de llamador', f.proname; END IF;
+    IF f.prosrc !~ (CASE WHEN f.proname = 'read_case_apply_state' THEN 'platform\.session_case_receipt_actor\(' ELSE 'platform\.require_(case|platform)_actor\(' END) OR f.prosrc !~ 'session_user <> .platform_rw.' THEN RAISE EXCEPTION '0070: case_state.% perdio el actor desde la sesion o la restriccion de llamador', f.proname; END IF;
     IF f.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal') AND f.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0070: case_state.% perdio el step-up (GRD-RC-12)', f.proname; END IF;
   END LOOP;
   SELECT p.prosrc INTO f FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = 'cosign_case_confirmation';

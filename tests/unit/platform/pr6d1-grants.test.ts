@@ -161,3 +161,21 @@ test("TEST-CNS-1660 grants: principal y tenant nunca de la request; validSeconds
     assert.equal((await send(base, "POST", path, withSession(sid), "{}")).status, 429);
   });
 });
+
+test("TEST-CNS-1721 step-up RH2 (P2-6): PROPOSE/APPROVE/WITHDRAW_CASE_VERIFICATION exigen caseRef y emiten el nonce ligado a `caseRef:proposalRef`; sin caseRef, con caseRef malformado o en otra accion = 404 sin emitir", async () => {
+  await withServer({}, async (base, sid, grants) => {
+    const post = (b: unknown): Promise<Res> => send(base, "POST", "/platform/step-up", withSession(sid), JSON.stringify(b));
+    for (const action of ["PROPOSE_CASE_VERIFICATION", "APPROVE_CASE_VERIFICATION", "WITHDRAW_CASE_VERIFICATION"]) {
+      assert.equal((await post({ action, targetRef: REF })).status, 404, `${action} sin caseRef`);
+      assert.equal((await post({ action, targetRef: REF, caseRef: "x" })).status, 404, `${action} con caseRef malformado`);
+    }
+    assert.equal((await post({ action: "REQUEST_GRANT", targetRef: CASE, caseRef: CASE })).status, 404, "caseRef solo en RH2");
+    assert.equal((await post({ action: "APPROVE_GRANT", targetRef: REQ, caseRef: CASE })).status, 404, "caseRef solo en RH2");
+    assert.deepEqual(grants.calls, []);
+    for (const action of ["PROPOSE_CASE_VERIFICATION", "APPROVE_CASE_VERIFICATION", "WITHDRAW_CASE_VERIFICATION"]) {
+      grants.calls = [];
+      assert.equal((await post({ action, targetRef: REF, caseRef: CASE })).status, 303, action);
+      assert.deepEqual(grants.calls, [{ op: "issue", input: { sid, action, targetRef: `${CASE}:${REF}`, ttlSeconds: 600 } }]);
+    }
+  });
+});

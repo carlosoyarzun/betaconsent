@@ -36,6 +36,9 @@ export type { SeededSession };
 const sha = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 
 /** Siembra (superusuario) un nonce de step-up ATTESTED con su asercion del IdP (auth_time = hace `authAgoSeconds`): stand-in del verifier. `target` = proposalRef (RH2) o el recurso de la accion. */
+/** P2-6: el destino del step-up de RH2 liga caso Y propuesta (`<caseRef>:<proposalRef>`; 0069/0070). */
+export const rh2Target = (caseRef: string, proposalRef: string): string => `${caseRef}:${proposalRef}`;
+
 export async function seedAttestedStepUp(admin: Client, principal: string, action: string, target: string, authAgoSeconds = 0): Promise<string> {
   const hash = sha(randomUUID());
   await admin.query(
@@ -187,10 +190,10 @@ export const casePath = (caseRef: string) => ({
 /** Lleva el caso a RH2 atestada (propuesta del operador 1 + aprobacion del APPROVER) por las rutas HTTP de platform. */
 export async function attestRh2(admin: Client, http: PlatformHttp, w: CaseWorld, label = "rh2"): Promise<string> {
   const proposalRef = fixtureUuid(`world-${w.label}-${label}`);
-  await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+  await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
   const proposed = await http.post(casePath(w.caseRef).proposals, w.op1.caseSession.sid, { proposalRef, verificationScriptVersion: "guion-1" });
   if (proposed.status !== 201) throw new Error(`propuesta RH2 rechazada: ${proposed.status} ${proposed.body}`);
-  await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+  await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
   const approved = await http.post(casePath(w.caseRef).approval(proposalRef), w.approver.platform.sid, {}, { kind: "PLATFORM" });
   if (approved.status !== 200) throw new Error(`aprobacion RH2 rechazada: ${approved.status} ${approved.body}`);
   return proposalRef;

@@ -10,11 +10,13 @@
 --   platform.require_case_actor(case_ref, role) -> principal  (EXECUTE solo transition_owner): valida EN LA BASE la sesion CASE (GUC app.session_sid; revalida rol, grant, sesion PLATFORM padre, caso real y Membership),
 --       exige que el caso de la sesion sea el pedido y FIJA app.tenant_id desde la sesion (nunca desde la request). Si no, SQLSTATE RC004 (404 uniforme).
 --   platform.require_platform_actor(role, case_ref) -> principal  (EXECUTE solo transition_owner): igual con la sesion PLATFORM y el rol (APPROVER) ACTIVE, sin Membership TENANT; el tenant sale del caso REAL (rights_case_of).
+--   platform.session_case_receipt_actor(case_ref) -> principal  (EXECUTE solo transition_owner; P2-7): identifica al co-firmante para la relectura de estado tras un commit ambiguo aunque la sesion CASE haya vencido (gracia 15 min, no revocada).
 --   platform.record_rh2_approval(revocation_ref, case_ref, proposal_ref, proposed_by, approver) (EXECUTE solo transition_owner): cruce GRD-RC-10 (el aprobador de RH2 no es aprobador NI receptor de un grant del caso) y registro.
 --   issue_step_up_nonce / consume_step_up REEMPLAZADAS: admiten tambien PROPOSE/APPROVE/WITHDRAW_CASE_VERIFICATION (RH2; GRD-RC-12). Propose y withdraw: RIGHTS_OPERATOR; approve: APPROVER. consume_step_up (interna) pasa a ser
 --       EXECUTE de transition_owner: la llaman las funciones de RH2 en la misma tx que el efecto.
 --   approve_grant REEMPLAZADA: rechaza (GRANT_REJECTED / RH_TWO_APPROVER) al aprobador de una RH2 del caso. rights_case_grant_insert_guard REEMPLAZADA: el mismo cruce como red de seguridad de la base (un grant no nace
 --       con aprobador = aprobador de RH2 del caso). Un test cubre ambos caminos; GRD-RC-10 sale de traceability/x8-exceptions.csv.
+--   P2-6 (F-6D3-SEC-06): el destino del step-up de RH2 es `<case_ref>:<proposal_ref>` (ligado a caso Y propuesta).
 -- Decision de Carlos 2026-10-15 (F-PR6-44, opcion A): sin renovaciones; request_grant ya rechaza GRANT_ACTIVE (0062).
 
 SET LOCAL ROLE platform_schema_owner;
@@ -135,6 +137,30 @@ BEGIN
 END
 $$;
 
+-- P2-7 (F-6D3-SEC-07): principal de la sesion CASE para la RELECTURA de estado tras un commit ambiguo (case_state.read_case_apply_state, 0070). Solo identifica a quien co-firmo: NO revalida rol, grant ni sesion padre
+-- ni exige que la sesion siga vigente (puede vencer entre el commit ambiguo y la relectura), pero SI exige: sid de ESA solicitud (GUC), sesion kind CASE del caso pedido, no revocada (logout/rotacion/padre revocado
+-- cortan) y vencida hace menos de 15 min (gracia acotada; pasado eso 404 como siempre). Fija app.tenant_id desde la sesion. La funcion que la llama solo devuelve {applied, sequence} de la Revocation que ESE principal co-firmo:
+-- no abre un oraculo para otro caso, otro principal ni otra sesion. Sin efectos, sin evento.
+CREATE FUNCTION platform.session_case_receipt_actor(p_case_ref text) RETURNS text
+  LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+DECLARE
+  v_sid text := NULLIF(pg_catalog.current_setting('app.session_sid', true), '');
+  v_s   record;
+BEGIN
+  IF session_user <> 'platform_rw' OR p_case_ref IS NULL OR v_sid IS NULL OR v_sid !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'sesion CASE no valida' USING ERRCODE = 'RC004';
+  END IF;
+  SELECT s.principal_ref, s.tenant_id INTO v_s FROM platform.platform_session s
+   WHERE s.sid_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_sid, 'UTF8')), 'hex') AND s.session_kind = 'CASE' AND s.case_ref = p_case_ref
+     AND s.revoked_at IS NULL AND s.expires_at > pg_catalog.now() - interval '15 minutes';
+  IF NOT FOUND THEN RAISE EXCEPTION 'sesion CASE no valida' USING ERRCODE = 'RC004'; END IF;
+  PERFORM pg_catalog.set_config('app.tenant_id', v_s.tenant_id::pg_catalog.text, true);
+  RETURN v_s.principal_ref;
+END
+$$;
+
 CREATE FUNCTION platform.record_rh2_approval(p_revocation_ref text, p_case_ref text, p_proposal_ref text, p_proposed_by text, p_approver text) RETURNS void
   LANGUAGE plpgsql VOLATILE SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
@@ -178,7 +204,8 @@ BEGIN
     -- El principal sale de la sesion PLATFORM validada por la base, nunca de la request (F-PR6-39).
     v_principal := platform.session_principal(v_sid);
     IF v_principal IS NULL OR v_principal !~ c_principal THEN v_reason := 'NO_PRINCIPAL'; v_principal := NULL; EXIT decide; END IF;
-    IF p_target_ref IS NULL OR p_target_ref !~ (CASE WHEN p_action <> 'APPROVE_GRANT' THEN c_principal ELSE c_uuid END) THEN v_reason := 'INVALID_RESOURCE'; EXIT decide; END IF;
+    IF p_target_ref IS NULL OR p_target_ref !~ (CASE WHEN p_action IN ('PROPOSE_CASE_VERIFICATION', 'APPROVE_CASE_VERIFICATION', 'WITHDRAW_CASE_VERIFICATION') THEN '^' || pg_catalog.substr(c_principal, 2, pg_catalog.length(c_principal) - 2) || ':' || pg_catalog.substr(c_principal, 2, pg_catalog.length(c_principal) - 2) || '$'
+                                                       WHEN p_action = 'REQUEST_GRANT' THEN c_principal ELSE c_uuid END) THEN v_reason := 'INVALID_RESOURCE'; EXIT decide; END IF;
     IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 600 THEN v_reason := 'INVALID_TTL'; EXIT decide; END IF;
     IF NOT EXISTS (SELECT 1 FROM platform.platform_role_assignment a
                     WHERE a.principal_ref = v_principal AND a.status = 'ACTIVE'
@@ -313,10 +340,6 @@ BEGIN
     IF v_req.expires_at <= pg_catalog.now() THEN v_reason := 'REQUEST_EXPIRED'; EXIT decide; END IF;
     -- GRD-RC-10: aprobador distinto del solicitante y del operador receptor.
     IF v_req.requested_by_ref = v_principal OR v_req.operator_principal_ref = v_principal THEN v_reason := 'SELF_APPROVAL'; EXIT decide; END IF;
-    -- GRD-RC-10 / INV-14 (F-PR6-43, condicion de merge de Carlos): el aprobador de una RH2 del caso (platform.case_verification) no aprueba ningun grant de ese caso.
-    IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = v_req.tenant_id AND cv.case_ref = p_case_ref AND cv.approved_by_ref = v_principal) THEN
-      v_reason := 'RH_TWO_APPROVER'; EXIT decide;
-    END IF;
     -- F-PR6-40: el tenant se RE-DERIVA del caso real y debe coincidir con el de la solicitud.
     SELECT c.o_tenant_id, c.o_status INTO v_tenant, v_status FROM platform.rights_case_of(p_case_ref) c;
     IF v_tenant IS NULL OR v_tenant <> v_req.tenant_id THEN v_reason := 'CASE_NOT_FOUND'; EXIT decide; END IF;
@@ -330,6 +353,11 @@ BEGIN
     -- GRD-RC-12: step-up APPROVE_GRANT (ligado a este aprobador y a ESTA solicitud) consumido en ESTA transaccion, justo antes del efecto.
     v_reason := platform.consume_step_up(v_principal, 'APPROVE_GRANT', p_request_ref::pg_catalog.text, p_p51_max, p_p51_window_seconds);
     IF v_reason IS NOT NULL THEN EXIT decide; END IF;
+    -- GRD-RC-10 / INV-14 (F-PR6-43, condicion de merge de Carlos; P2-5 / F-6D3-SEC-05): el aprobador de una RH2 del caso (platform.case_verification) no aprueba ningun grant de ese caso. La revision va DESPUES de
+    -- consume_step_up: este toma el advisory lock por operador (el mismo de approve_case_verification), asi que una RH2 concurrente del mismo principal ya esta confirmada y visible aqui; el rechazo deja GRANT_REJECTED (el nonce queda consumido).
+    IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = v_req.tenant_id AND cv.case_ref = p_case_ref AND cv.approved_by_ref = v_principal) THEN
+      v_reason := 'RH_TWO_APPROVER'; EXIT decide;
+    END IF;
     UPDATE platform.grant_request SET status = 'APPROVED', approved_by_ref = v_principal, approved_at = pg_catalog.now() WHERE request_ref = v_req.request_ref AND status = 'PENDING';
     IF NOT FOUND THEN v_reason := 'REQUEST_NOT_PENDING'; EXIT decide; END IF;
     INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at, request_ref, approved_by_ref)
@@ -350,9 +378,11 @@ $$;
 REVOKE ALL ON FUNCTION platform.require_case_actor(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.require_platform_actor(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.record_rh2_approval(text, text, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.session_case_receipt_actor(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.require_case_actor(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.require_platform_actor(text, text) TO transition_owner;
 GRANT EXECUTE ON FUNCTION platform.record_rh2_approval(text, text, text, text, text) TO transition_owner;
+GRANT EXECUTE ON FUNCTION platform.session_case_receipt_actor(text) TO transition_owner;
 -- consume_step_up (interna, 0061) la llaman ahora tambien las funciones de RH2 de transition_owner en la misma tx.
 GRANT EXECUTE ON FUNCTION platform.consume_step_up(text, text, text, integer, integer) TO transition_owner;
 

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { call } from "../../helpers/pg-login-flow.ts";
-import { attestRh2, casePath, seedAttestedStepUp, seedCaseWorld, seedOperator, seedPlatformSession, startPlatformHttp } from "../../helpers/pg-case-world.ts";
+import { attestRh2, casePath, rh2Target, seedAttestedStepUp, seedCaseWorld, seedOperator, seedPlatformSession, startPlatformHttp } from "../../helpers/pg-case-world.ts";
 import type { CaseWorld } from "../../helpers/pg-case-world.ts";
 import { seedApprovedGrant } from "../../helpers/pg-platform-session.ts";
 import { pgTest } from "./harness.ts";
@@ -62,9 +62,9 @@ pgTest("TEST-CNS-1707 pg: GRD-RC-10 / F-PR6-43 (condicion de merge de Carlos): e
     await seedAttestedStepUp(admin, b.approver.principal, "APPROVE_GRANT", reqB);
     assert.ok(typeof (await approveGrant(platform, b.approver.platform.sid, b.caseRef, reqB)) === "string");
     const proposalRef = fixtureUuid("proposal-1707b");
-    await seedAttestedStepUp(admin, b.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, b.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(b.caseRef, proposalRef));
     assert.equal((await http.cases.propose({ sid: b.op1.caseSession.sid, caseRef: b.caseRef, proposalRef, scriptVersion: "g", limit: LIMIT })).ok, true);
-    await seedAttestedStepUp(admin, b.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, b.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(b.caseRef, proposalRef));
     const refused = await http.cases.approve({ sid: b.approver.platform.sid, caseRef: b.caseRef, proposalRef, limit: LIMIT });
     assert.deepEqual(refused, { ok: false, reason: "ERR-RV-07" }, "el aprobador del grant no aprueba RH2 del caso (ERR-RV-07)");
     assert.deepEqual(await revRow(admin, b), { status: "REQUESTED", proposal_ref: proposalRef, second_approver_ref: null });
@@ -87,18 +87,18 @@ pgTest("TEST-CNS-1708 pg platform: RH2 exige step-up (misma tx, GRD-RC-12) y la 
     assert.equal((await propose(w.op1.caseSession.sid)).status, 404);
     assert.ok((await sessionEvents(admin, w.op1.principal, "STEP_UP_REJECTED")).some((e) => e.reason_code === "STEP_UP_MISSING"));
     // Step-up de otra accion, de otro destino, de otro principal y rancio (> 5 min desde auth_time, P-52).
-    await seedAttestedStepUp(admin, w.op1.principal, "WITHDRAW_CASE_VERIFICATION", proposalRef);
-    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", fixtureUuid("otra-propuesta"));
-    await seedAttestedStepUp(admin, w.op2.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.op1.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
+    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, fixtureUuid("otra-propuesta")));
+    await seedAttestedStepUp(admin, w.op2.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     assert.equal((await propose(w.op1.caseSession.sid)).status, 404);
     // Rancio (otro destino propio: una asercion rancia no consumida es la mas antigua y taparia a una vigente del mismo destino).
     const staleRef = fixtureUuid("proposal-1708-rancia");
-    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", staleRef, 400);
+    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, staleRef), 400);
     assert.equal((await http.post(p.proposals, w.op1.caseSession.sid, { proposalRef: staleRef, verificationScriptVersion: "g" })).status, 404);
     assert.ok((await sessionEvents(admin, w.op1.principal, "STEP_UP_REJECTED")).some((e) => e.reason_code === "ASSERTION_STALE"));
     assert.deepEqual(await revRow(admin, w), { status: "REQUESTED", proposal_ref: null, second_approver_ref: null });
     // Cookie del tipo equivocado y principal declarado en el cuerpo.
-    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     assert.equal((await propose(w.op1.platform.sid, "CASE")).status, 404, "sesion PLATFORM en la cookie CASE");
     assert.equal((await http.post(p.proposals, w.op1.caseSession.sid, { ...body, principalRef: w.op2.principal })).status, 409, "el principal nunca viene del cuerpo");
     // Con el step-up valido (el unico vigente y propio) la propuesta pasa y consume el nonce.
@@ -106,10 +106,10 @@ pgTest("TEST-CNS-1708 pg platform: RH2 exige step-up (misma tx, GRD-RC-12) y la 
 
     // Aprobacion: sin step-up, con sesion CASE, con sesion PLATFORM de quien no es APPROVER.
     assert.equal((await http.post(p.approval(proposalRef), w.approver.platform.sid, {}, { kind: "PLATFORM" })).status, 404, "sin step-up");
-    await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     assert.equal((await http.post(p.approval(proposalRef), w.op1.caseSession.sid, {}, { kind: "PLATFORM" })).status, 404, "una sesion CASE no aprueba");
     assert.equal((await http.post(p.approval(proposalRef), w.approver.platform.sid, {}, { kind: "CASE" })).status, 404, "la aprobacion no usa la cookie CASE");
-    await seedAttestedStepUp(admin, w.op1.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.op1.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     assert.equal((await http.post(p.approval(proposalRef), w.op1.platform.sid, {}, { kind: "PLATFORM" })).status, 404, "PLATFORM de un RIGHTS_OPERATOR no aprueba");
     assert.equal((await revRow(admin, w)).status, "REQUESTED");
     assert.equal((await http.post(p.approval(proposalRef), w.approver.platform.sid, {}, { kind: "PLATFORM" })).status, 200, "APPROVER con sesion PLATFORM y step-up propio");

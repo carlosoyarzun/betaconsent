@@ -662,7 +662,22 @@ export function confirmRevocation(ports: RevocationPorts, tenantId: string, revo
   const attempt = (): Promise<RevocationRecord> => inTx(ports, tenantId, (p) => confirmRevocationTx(p, tenantId, revocationRef));
   if (ports.applyGuard === undefined) return attempt();
   // ADR-010 rev. 5 §4.2.a (G-3): la tx completa R3 + R4 + C6 se reintenta acotadamente; commit ambiguo = leer estado antes de reintentar; agotamiento = alerta + error uniforme, nunca acuse de exito.
-  return runBoundedApply(ports.applyGuard, { tenantId, revocationRef: () => revocationRef }, attempt, (ref) => readAppliedRecord(ports, tenantId, ref));
+  // P1-a: si un intento posterior a un fallo transitorio ve la Revocation ya aplicada (o mas alla: el worker pudo avanzar R5-R7) NO se informa un fallo de algo que si se aplico: se devuelve el resultado real.
+  const guard = ports.applyGuard;
+  let sawTransient = false;
+  const guarded = async (): Promise<RevocationRecord> => {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (guard.isTransient(error)) sawTransient = true;
+      else if (sawTransient && error instanceof DomainError && error.code === "ERR-CM-06") {
+        const applied = await readAppliedRecord(ports, tenantId, revocationRef).catch(() => null);
+        if (applied !== null) return applied;
+      }
+      throw error;
+    }
+  };
+  return runBoundedApply(guard, { tenantId, revocationRef: () => revocationRef }, guarded, (ref) => readAppliedRecord(ports, tenantId, ref));
 }
 
 /** APPLIED o posterior (el worker pudo avanzar R5-R7): resultado REAL de la solicitud ya aplicada. Lectura en una tx nueva; null si aun no esta aplicada. */
@@ -1162,14 +1177,32 @@ function guardedRecoveryRevoke(
 ): Promise<RecoveryRevokeOutcome> {
   const fresh: string = randomUUID();
   let used: string = fresh;
-  const attempt = (): Promise<RecoveryRevokeOutcome> => run({ fresh, used: (ref) => { used = ref; } });
-  if (ports.applyGuard === undefined) return attempt();
-  return runBoundedApply<RecoveryRevokeOutcome>(
-    ports.applyGuard,
-    { tenantId, revocationRef: () => used },
-    attempt,
-    async (ref) => ((await readAppliedRecord(ports, tenantId, ref)) === null ? null : { kind: "CONFIRMED", revocationRef: ref }),
-  );
+  const guard = ports.applyGuard;
+  const rawAttempt = (): Promise<RecoveryRevokeOutcome> => run({ fresh, used: (ref) => { used = ref; } });
+  if (guard === undefined) return rawAttempt();
+  const readApplied = async (ref: string): Promise<RecoveryRevokeOutcome | null> => ((await readAppliedRecord(ports, tenantId, ref)) === null ? null : { kind: "CONFIRMED", revocationRef: ref });
+  // P1-a: tras un fallo transitorio (commit ambiguo) el intento siguiente puede ver la Revocation ya aplicada y responder UNIFORM (APPLIED, GRD-RV-27) o IN_PROGRESS: se lee el estado de la ref USADA y, si esta
+  // aplicada (o mas alla), se devuelve CONFIRMED con su ref (nunca un fallo de algo que si se aplico). Sin fallo previo el resultado del intento no se toca (sin oraculo para otro enlace).
+  let sawTransient = false;
+  const attempt = async (): Promise<RecoveryRevokeOutcome> => {
+    let outcome: RecoveryRevokeOutcome;
+    try {
+      outcome = await rawAttempt();
+    } catch (error) {
+      if (guard.isTransient(error)) sawTransient = true;
+      else if (sawTransient && error instanceof DomainError && error.code === "ERR-CM-06") {
+        const applied = await readApplied(used).catch(() => null);
+        if (applied !== null) return applied;
+      }
+      throw error;
+    }
+    if (sawTransient && (outcome.kind === "UNIFORM" || outcome.kind === "IN_PROGRESS")) {
+      const applied = await readApplied(used).catch(() => null);
+      if (applied !== null) return applied;
+    }
+    return outcome;
+  };
+  return runBoundedApply<RecoveryRevokeOutcome>(guard, { tenantId, revocationRef: () => used }, attempt, readApplied);
 }
 
 /**

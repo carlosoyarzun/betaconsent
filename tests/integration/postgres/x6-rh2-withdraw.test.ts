@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { seedAttestedStepUp, seedCaseWorld, startPlatformHttp } from "../../helpers/pg-case-world.ts";
+import { rh2Target, seedAttestedStepUp, seedCaseWorld, startPlatformHttp } from "../../helpers/pg-case-world.ts";
 import type { CaseWorld, PlatformHttp } from "../../helpers/pg-case-world.ts";
 import { pgTest } from "./harness.ts";
 
@@ -22,19 +22,19 @@ const ledgerOf = async (admin: Client, tenantId: string, revocationRef: string):
 
 /** RH2 paso 1 por platform (step-up sembrado para el proponente) y devuelve la propuesta. */
 async function propose(admin: Client, http: PlatformHttp, w: CaseWorld, proposalRef: string, script = "guion-1"): Promise<void> {
-  await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+  await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
   const r = await http.cases.propose({ sid: w.op1.caseSession.sid, caseRef: w.caseRef, proposalRef, scriptVersion: script, limit: LIMIT });
   assert.equal(r.ok, true, JSON.stringify(r));
 }
 
 async function withdraw(admin: Client, http: PlatformHttp, w: CaseWorld, who: "op1" | "op2", proposalRef: string) {
   const actor = w[who];
-  await seedAttestedStepUp(admin, actor.principal, "WITHDRAW_CASE_VERIFICATION", proposalRef);
+  await seedAttestedStepUp(admin, actor.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
   return http.cases.withdraw({ sid: actor.caseSession.sid, caseRef: w.caseRef, proposalRef, limit: LIMIT });
 }
 
 async function approve(admin: Client, http: PlatformHttp, w: CaseWorld, proposalRef: string) {
-  await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
+  await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
   return http.cases.approve({ sid: w.approver.platform.sid, caseRef: w.caseRef, proposalRef, limit: LIMIT });
 }
 
@@ -70,7 +70,7 @@ pgTest("TEST-CNS-1019 pg platform: retiro RH2 limpia la propuesta (columnas NULL
     assert.equal((await revocationRow(admin, w)).status, "VERIFIED");
     // VERIFIED: ya no PENDING; y una propuesta sobre una Revocation VERIFIED es transicion invalida (ERR-CM-06).
     assert.deepEqual(await withdraw(admin, http, w, "op1", next), { ok: false, reason: "ERR-CM-06" });
-    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", proposalRef);
+    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     assert.deepEqual(await http.cases.propose({ sid: w.op1.caseSession.sid, caseRef: w.caseRef, proposalRef, scriptVersion: "guion-1", limit: LIMIT }), { ok: false, reason: "ERR-CM-06" });
     assert.deepEqual((await ledgerOf(admin, w.tenantId, w.revocationRef)).map((e) => e.eventType), ["REVOCATION_REQUESTED", "REVOCATION_PROPOSAL_WITHDRAWN", "REVOCATION_VERIFIED"]);
     // 0017: el tipo nuevo esta en el CHECK; uno fuera de lista sigue rechazado.
@@ -114,12 +114,12 @@ pgTest("TEST-CNS-1020 pg platform: aislamiento cross-tenant del retiro RH2 (RLS 
     await propose(admin, http, a, pa);
     await propose(admin, http, b, pb);
     // La sesion CASE de B (su caso) sobre el caso de A: la base no la acepta (RC004 -> NOT_FOUND uniforme); el step-up queda sin efecto.
-    await seedAttestedStepUp(admin, b.op1.principal, "WITHDRAW_CASE_VERIFICATION", pa);
+    await seedAttestedStepUp(admin, b.op1.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(a.caseRef, pa));
     assert.deepEqual(await http.cases.withdraw({ sid: b.op1.caseSession.sid, caseRef: a.caseRef, proposalRef: pa, limit: LIMIT }), { ok: false, reason: "NOT_FOUND" });
     // Refs mezclados dentro del caso de B: la propuesta de A sobre la Revocation de B es ajena (ERR-CM-01).
     assert.deepEqual(await withdraw(admin, http, b, "op1", pa), { ok: false, reason: "ERR-CM-01" });
     // Operador de A sobre el caso de B: igual NOT_FOUND.
-    await seedAttestedStepUp(admin, a.op1.principal, "WITHDRAW_CASE_VERIFICATION", pb);
+    await seedAttestedStepUp(admin, a.op1.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(b.caseRef, pb));
     assert.deepEqual(await http.cases.withdraw({ sid: a.op1.caseSession.sid, caseRef: b.caseRef, proposalRef: pb, limit: LIMIT }), { ok: false, reason: "NOT_FOUND" });
     assert.equal((await revocationRow(admin, a)).proposal_ref, pa, "la propuesta de A sigue PENDING");
     assert.equal((await revocationRow(admin, b)).proposal_ref, pb, "la propuesta de B sigue PENDING");

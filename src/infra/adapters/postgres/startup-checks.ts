@@ -200,6 +200,7 @@ async function checkTransitionExecuteIsolation(db: Queryable, environment: strin
           AND p.proname = ANY($1::text[])
           AND NOT (current_user = 'worker' AND p.proname = ANY($2::text[]))
           AND NOT (current_user = 'platform_rw' AND p.proname = 'approve_case_verification')
+          AND NOT (current_user = 'worker' AND p.proname = 'list_confirmed_unapplied')
           AND NOT ($3::text = 'LOCAL' AND p.proname LIKE 'seed\\_local\\_%')`,
       [INTERIM_EXECUTE_FUNCTIONS, SYSTEM_TRANSITION_FUNCTIONS, environment],
     );
@@ -223,6 +224,9 @@ const INTERIM_EXECUTE_FUNCTIONS: readonly string[] = [
   // ADR-010 PR-5b (0038): cierre del caso (FN-RC-06, operador) y siembra LOCAL del contrato `save` de rights_case.
   "close_case",
   "alert_apply_exhausted",
+  // 0070 (P2-4): lectura de estado sin efectos de RH3 (solo rights_operator) y 0067 (P2-1): descubrimiento de CONFIRMED sin APPLIED (solo worker).
+  "read_case_apply_state",
+  "list_confirmed_unapplied",
   "seed_local_rights_case",
 ];
 

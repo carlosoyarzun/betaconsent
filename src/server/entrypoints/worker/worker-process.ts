@@ -83,19 +83,66 @@ export async function runDownstreamForRevocation(ports: RevocationPorts, stub: I
 export interface R4RecoveryResult {
   readonly applied: number;
   readonly failed: number;
+  /** Filas omitidas en este ciclo porque estan en backoff (P2-2). */
+  readonly skipped: number;
 }
 
 /**
- * Respaldo de R4 (ADR-010 rev. 5 §4.2.a, G-3): encuentra (cross-tenant, solo CONFIRMED: policy revocation_worker_recovery_select) las Revocation CONFIRMED sin APPLIED y las aplica con
- * case_state.apply_revocation en una tx de su tenant; cada aplicacion deja una alerta R4_BACKUP_APPLIED en la misma tx. Un fallo deja la Revocation como estaba, escribe R4_BACKUP_FAILED en una tx
- * aparte (si tambien falla, log sin PII) y no detiene el ciclo. Sin PII: refs opacas y codigos.
+ * Backoff por fila del respaldo de R4 (P2-2 / F-6D3-SEC-02): una Revocation que falla siempre no puede ocupar el lote ni generar R4_BACKUP_FAILED en cada ciclo. Estado en memoria del proceso (si el proceso
+ * reinicia se vuelve a intentar y a alertar una vez: aceptable, la Revocation sigue CONFIRMED sin acuse). Espera = base * 2^(fallos-1), tope `maxMs`. Solo refs opacas.
  */
-export async function recoverConfirmedRevocations(pool: ProcessPool, uow: PgUnitOfWork, batchSize = 20, log: (line: string) => void = (l) => console.error(l)): Promise<R4RecoveryResult> {
+export class RecoveryBackoff {
+  private readonly rows = new Map<string, { fails: number; nextAt: number }>();
+  private readonly now: () => number;
+  private readonly baseMs: number;
+  private readonly maxMs: number;
+  private readonly maxRows: number;
+  constructor(now: () => number = Date.now, baseMs = 30_000, maxMs = 3_600_000, maxRows = 1000) {
+    this.now = now;
+    this.baseMs = baseMs;
+    this.maxMs = maxMs;
+    this.maxRows = maxRows;
+  }
+  /** Refs que NO deben intentarse ahora (se pasan a la base como lista de omision). */
+  skipRefs(): string[] {
+    const t = this.now();
+    return [...this.rows.entries()].filter(([, v]) => v.nextAt > t).map(([k]) => k);
+  }
+  /** Registra un fallo; devuelve el numero de fallos consecutivos de la ref. */
+  failed(ref: string): number {
+    const fails = (this.rows.get(ref)?.fails ?? 0) + 1;
+    if (!this.rows.has(ref) && this.rows.size >= this.maxRows) {
+      const oldest = this.rows.keys().next().value;
+      if (oldest !== undefined) this.rows.delete(oldest);
+    }
+    this.rows.set(ref, { fails, nextAt: this.now() + Math.min(this.maxMs, this.baseMs * 2 ** (fails - 1)) });
+    return fails;
+  }
+  succeeded(ref: string): void {
+    this.rows.delete(ref);
+  }
+}
+
+const processBackoff = new RecoveryBackoff();
+
+/**
+ * Respaldo de R4 (ADR-010 rev. 5 §4.2.a, G-3): encuentra (cross-tenant, solo CONFIRMED, solo (tenant_id, revocation_ref): case_state.list_confirmed_unapplied, P2-1) las Revocation CONFIRMED sin APPLIED y las aplica con
+ * case_state.apply_revocation en una tx de su tenant; cada aplicacion deja una alerta R4_BACKUP_APPLIED en la misma tx. Un fallo deja la Revocation como estaba, la pone en backoff por fila (P2-2: no bloquea a las
+ * nuevas), escribe R4_BACKUP_FAILED en una tx aparte SOLO en el primer fallo consecutivo de esa ref (si tambien falla, log sin PII) y no detiene el ciclo. Sin PII: refs opacas y codigos.
+ */
+export async function recoverConfirmedRevocations(
+  pool: ProcessPool,
+  uow: PgUnitOfWork,
+  batchSize = 20,
+  log: (line: string) => void = (l) => console.error(l),
+  backoff: RecoveryBackoff = processBackoff,
+): Promise<R4RecoveryResult> {
   const client = await acquireCleanClient(pool);
   let pending: Array<{ tenant_id: string; revocation_ref: string }> = [];
+  const skip = backoff.skipRefs();
   try {
     pending = (await client.query<{ tenant_id: string; revocation_ref: string }>(
-      "SELECT tenant_id, revocation_ref FROM app.revocation WHERE status = 'CONFIRMED' ORDER BY created_at, revocation_ref LIMIT $1", [batchSize],
+      "SELECT o_tenant_id AS tenant_id, o_revocation_ref AS revocation_ref FROM case_state.list_confirmed_unapplied($1::integer, $2::text[])", [Math.min(Math.max(batchSize, 1), 100), skip],
     )).rows;
   } finally {
     client.release();
@@ -109,10 +156,13 @@ export async function recoverConfirmedRevocations(pool: ProcessPool, uow: PgUnit
         await tx.query("SELECT case_state.apply_revocation($1::text, $2::integer)", [row.revocation_ref, seq]);
         await tx.query("SELECT ops.record_revocation_apply_alert($1::text, 'R4_BACKUP_APPLIED')", [row.revocation_ref]);
       });
+      backoff.succeeded(row.revocation_ref);
       applied++;
     } catch (error) {
       failed++;
-      log(`worker_r4_backup_error name=${(error as Error).name}${typeof (error as { code?: unknown }).code === "string" ? ` code=${(error as { code: string }).code}` : ""}`);
+      const fails = backoff.failed(row.revocation_ref);
+      log(`worker_r4_backup_error name=${(error as Error).name}${typeof (error as { code?: unknown }).code === "string" ? ` code=${(error as { code: string }).code}` : ""} fails=${fails}`);
+      if (fails > 1) continue; // la alerta ya existe: no se repite en cada reintento espaciado
       try {
         await uow.withTenantTx(row.tenant_id, async (tx) => {
           await tx.query("SELECT ops.record_revocation_apply_alert($1::text, 'R4_BACKUP_FAILED')", [row.revocation_ref]);
@@ -122,7 +172,7 @@ export async function recoverConfirmedRevocations(pool: ProcessPool, uow: PgUnit
       }
     }
   }
-  return { applied, failed };
+  return { applied, failed, skipped: skip.length };
 }
 
 export interface WorkerCycleDeps {

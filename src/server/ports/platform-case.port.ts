@@ -11,9 +11,9 @@ export type CaseOutcome =
   | { readonly ok: false; readonly reason: "NOT_FOUND" | "STEP_UP" | string };
 
 export interface PlatformCasePort {
-  /** RH2 paso 1 (sesion CASE, RIGHTS_OPERATOR; step-up PROPOSE_CASE_VERIFICATION sobre proposalRef). */
+  /** RH2 paso 1 (sesion CASE, RIGHTS_OPERATOR; step-up PROPOSE_CASE_VERIFICATION sobre caseRef:proposalRef). */
   propose(input: { sid: string; caseRef: string; proposalRef: string; scriptVersion: string; limit: StepUpLimit }): Promise<CaseOutcome>;
-  /** RH2 paso 2 (sesion PLATFORM, APPROVER; step-up APPROVE_CASE_VERIFICATION sobre proposalRef). */
+  /** RH2 paso 2 (sesion PLATFORM, APPROVER; step-up APPROVE_CASE_VERIFICATION sobre caseRef:proposalRef). */
   approve(input: { sid: string; caseRef: string; proposalRef: string; limit: StepUpLimit }): Promise<CaseOutcome>;
   /** RH2w (sesion CASE; solo el proponente; step-up WITHDRAW_CASE_VERIFICATION). */
   withdraw(input: { sid: string; caseRef: string; proposalRef: string; limit: StepUpLimit }): Promise<CaseOutcome>;

@@ -210,7 +210,7 @@ paths:
       operationId: issueStepUp
       x-api-id: API-CNS-TBD-P07
       tags: [platform]
-      summary: "issueStepUp - Sesion platformSession (P-36, 4.3.1, Q11). PR-6d parte 1: acciones REQUEST_GRANT y APPROVE_GRANT. Body {action, targetRef} (REQUEST_GRANT: caseRef; APPROVE_GRANT: grantRequestRef; PROPOSE_/APPROVE_/WITHDRAW_CASE_VERIFICATION: proposalRef, step-up RH2 de 6d parte 2). El principal sale de la sesion validada en la base, NUNCA de la request. Origin = mismo origen. P-50. P-51 (5 / 10 min) en la base."
+      summary: "issueStepUp - Sesion platformSession (P-36, 4.3.1, Q11). PR-6d parte 1: acciones REQUEST_GRANT y APPROVE_GRANT. Body {action, targetRef} (REQUEST_GRANT: caseRef; APPROVE_GRANT: grantRequestRef; PROPOSE_/APPROVE_/WITHDRAW_CASE_VERIFICATION: targetRef = proposalRef MAS caseRef obligatorio; el step-up queda ligado a (caseRef, proposalRef), P2-6). El principal sale de la sesion validada en la base, NUNCA de la request. Origin = mismo origen. P-50. P-51 (5 / 10 min) en la base."
       x-session: platformSession
       x-roles: "RIGHTS_OPERATOR (REQUEST_GRANT, PROPOSE_CASE_VERIFICATION, WITHDRAW_CASE_VERIFICATION), APPROVER (APPROVE_GRANT, APPROVE_CASE_VERIFICATION)"
       x-step-up: "(body: action + destino opaco; 303 al IdP con max_age=0 + prompt=login y el nonce emitido por la base, ligado a operador, accion y sha256(destino))"
@@ -229,6 +229,7 @@ paths:
               properties:
                 action: {type: string, enum: [REQUEST_GRANT, APPROVE_GRANT, PROPOSE_CASE_VERIFICATION, APPROVE_CASE_VERIFICATION, WITHDRAW_CASE_VERIFICATION]}
                 targetRef: {type: string, format: uuid}
+                caseRef: {type: string, format: uuid, description: "Obligatorio SOLO en PROPOSE_/APPROVE_/WITHDRAW_CASE_VERIFICATION (liga el step-up al caso); prohibido en REQUEST_GRANT y APPROVE_GRANT."}
       responses:
         '303':
           description: "Location = autorizacion del IdP (max_age=0, prompt=login). Set-Cookie oidcState (Lax). Sin cuerpo."
@@ -317,7 +318,7 @@ paths:
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
         - {name: proposalRef, in: path, required: true, schema: {type: string, format: uuid}}
-      x-step-up-detail: "RH2 exige step-up APPROVE_CASE_VERIFICATION (destino proposalRef) del APPROVER, consumido en la misma tx (GRD-RC-12); cruce GRD-RC-10: el aprobador no es aprobador ni receptor de ningun grant del caso (ERR-RV-07, 403)."
+      x-step-up-detail: "RH2 exige step-up APPROVE_CASE_VERIFICATION (destino caseRef:proposalRef) del APPROVER, consumido en la misma tx (GRD-RC-12); cruce GRD-RC-10: el aprobador no es aprobador ni receptor de ningun grant del caso (ERR-RV-07, 403)."
       responses:
         '200':
           description: "RH2 aprobada: Revocation VERIFIED (HUMAN_ASSISTED)."
