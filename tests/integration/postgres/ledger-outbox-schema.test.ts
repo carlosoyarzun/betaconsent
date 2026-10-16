@@ -82,7 +82,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
 
   // P2-1: TODA policy de tablas con RLS exige app.current_tenant_id(); unica excepcion explicita:
   // las del claim, solo TO outbox_claimer. Ninguna policy abierta al dueno.
-  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]]]);
+  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]], ["app.revocation/revocation_worker_recovery_select", ["worker"]]]);
   const all = (await admin.query<{ k: string; roles: string[]; qual: string | null; with_check: string | null }>(
     `SELECT p.schemaname || '.' || p.tablename || '/' || p.policyname AS k, p.roles::text[] AS roles, p.qual, p.with_check
        FROM pg_policies p JOIN pg_class c ON c.oid = (p.schemaname || '.' || p.tablename)::regclass
@@ -96,7 +96,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     "ops.purge_run/purge_run_owner_insert", "ops.purge_run/purge_run_owner_select", "ops.purge_run/purge_run_owner_update", "ops.purge_run/purge_run_purge_delete",
     "ops.retention_policy/retention_policy_owner_delete", "ops.retention_policy/retention_policy_owner_insert",
     "ops.retention_policy/retention_policy_owner_select", "ops.retention_policy/retention_policy_owner_update",
-    "ops.security_event/security_event_owner_update", "ops.security_event/security_event_purge_delete", "ops.security_event/security_event_purge_select",
+    "ops.security_event/security_event_alert_insert", "ops.security_event/security_event_owner_update", "ops.security_event/security_event_purge_delete", "ops.security_event/security_event_purge_select",
   ];
   const ownerOnly = all.filter((p) => p.roles.length === 1 && p.roles[0] === "security_event_owner");
   assert.deepEqual(ownerOnly.map((p) => p.k).sort(), PURGE_OWNER_POLICIES, "las policies TO security_event_owner son exactamente las de purga de 0031 y 0033");
@@ -112,6 +112,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     ["platform.session_event/session_event_owner_insert", "grant_owner"], ["platform.session_event/session_event_owner_select", "grant_owner"],
     // ADR-010 PR-6c (0052): platform_session y rights_case_grant (solo grant_owner).
     ["platform.platform_session/platform_session_owner_insert", "grant_owner"], ["platform.platform_session/platform_session_owner_select", "grant_owner"], ["platform.platform_session/platform_session_owner_update", "grant_owner"],
+    ["platform.case_verification/case_verification_owner_insert", "grant_owner"], ["platform.case_verification/case_verification_owner_select", "grant_owner"],
     ["platform.grant_request/grant_request_owner_insert", "grant_owner"], ["platform.grant_request/grant_request_owner_select", "grant_owner"], ["platform.grant_request/grant_request_owner_update", "grant_owner"],
     ["platform.rights_case_grant/rights_case_grant_owner_insert", "grant_owner"], ["platform.rights_case_grant/rights_case_grant_owner_select", "grant_owner"], ["platform.rights_case_grant/rights_case_grant_owner_update", "grant_owner"],
     ["platform.oidc_exchange/oidc_exchange_owner_delete", "grant_owner"], ["platform.oidc_exchange/oidc_exchange_owner_insert", "grant_owner"],
@@ -142,8 +143,15 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   const grantOwnerPolicies = all.filter((p) => p.roles.includes("rights_case_lookup_owner"));
   assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["app.rights_case/rights_case_lookup_select"]);
   for (const p of grantOwnerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["rights_case_lookup_owner"], "true", null], p.k);
+  // ADR-010 rev. 5 6d parte 2 (0067, P2-1): UNICA excepcion cerrada y cross-tenant a proposito de transition_owner: solo filas CONFIRMED y solo bajo el efecto que fija case_state.list_confirmed_unapplied (la
+  // funcion que solo ejecuta `worker` y devuelve (tenant_id, revocation_ref)). Ningun rol de runtime tiene policy cross-tenant sobre app.revocation.
+  const recoveryPolicies = all.filter((p) => p.k === "app.revocation/revocation_transition_recovery_select");
+  assert.equal(recoveryPolicies.length, 1, "exactamente una policy de recuperacion");
+  assert.deepEqual([recoveryPolicies[0]!.roles, recoveryPolicies[0]!.with_check], [["transition_owner"], null]);
+  assert.equal(recoveryPolicies[0]!.qual, "((status = 'CONFIRMED'::text) AND (current_setting('case_state.effect'::text, true) = 'list_confirmed_unapplied'::text))");
+  assert.equal(all.filter((p) => p.k.startsWith("app.revocation/") && p.roles.includes("worker") && !p.qual?.includes("current_tenant_id")).length, 0, "el worker no tiene policy cross-tenant");
   for (const p of all) {
-    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || grantOwnerPolicies.includes(p) || recoveryPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

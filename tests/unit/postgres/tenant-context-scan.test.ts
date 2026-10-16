@@ -16,6 +16,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ALLOWED_FILE = "src/infra/adapters/postgres/unit-of-work.ts";
 const ALLOWED_SET_CONFIG = /set_config\(\s*'app\.tenant_id'\s*,\s*\$1\s*,\s*true\s*\)/g;
 
+/**
+ * ADR-010 rev. 5 PR-6d parte 2 (0069, requiere revision de Carlos: CODEOWNERS tests/unit): platform.require_case_actor / require_platform_actor / alert_case_apply_exhausted fijan app.tenant_id LOCAL a la tx
+ * con el tenant que sale de la sesion CASE/PLATFORM validada EN LA BASE (o del caso real), nunca de la request. Solo ese archivo y solo esa forma exacta (v_tenant, local); el resto sigue prohibido.
+ */
+const ALLOWED_SQL_TENANT_FROM_SESSION: Readonly<Record<string, RegExp>> = {
+  "db/migrations/0069_adr010_pr6d2_actor_from_session_rh2_cross.sql": /set_config\(\s*'app\.tenant_id'\s*,\s*v_tenant::pg_catalog\.text\s*,\s*true\s*\)/g,
+};
+
 const FORBIDDEN: Array<{ name: string; re: RegExp }> = [
   { name: "set_config('app.tenant_id', …) fuera de unit-of-work.ts", re: /set_config\s*\(\s*['"`]app\.tenant_id['"`]/gi },
   { name: "SET [SESSION|LOCAL] app.tenant_id", re: /\bSET\s+(SESSION\s+|LOCAL\s+)?app\.tenant_id\b/gi },
@@ -29,7 +37,9 @@ function stripComments(relPath: string, text: string): string {
 }
 
 export function scanText(relPath: string, rawText: string): string[] {
-  const text = stripComments(relPath, rawText);
+  let text = stripComments(relPath, rawText);
+  const allowedSql = ALLOWED_SQL_TENANT_FROM_SESSION[relPath];
+  if (allowedSql !== undefined) text = text.replace(allowedSql, "");
   const findings: string[] = [];
   if (relPath === ALLOWED_FILE) {
     const total = (text.match(/set_config\s*\(\s*['"`]app\.tenant_id['"`]/gi) ?? []).length;

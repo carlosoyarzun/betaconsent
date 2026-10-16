@@ -31,6 +31,8 @@ import type { UnitOfWorkPort } from "../../ports/unit-of-work.port.ts";
 import type { RecoveryTokenPolicy } from "./recovery-token-policy.config.ts";
 import { lastLedgerSequence } from "../common/ledger-append.ts";
 import type { SecurityEventPort } from "../../ports/security-event.port.ts";
+import { RevocationApplyUnavailableError, runBoundedApply } from "./apply-guard.ts";
+import type { ApplyGuardConfig } from "./apply-guard.ts";
 
 /** LEGAL DECISION LD-02 / OPEN-RV-01 (revocation.spec `assuranceLevel`): el valor "suficiente" lo decide
  * Carlos; hasta entonces el contrato (ledger-event-payloads REVOCATION_VERIFIED, x-pending) admite solo un
@@ -62,6 +64,8 @@ export interface RevocationPorts {
   /** X6 / R5-1 (CA-128): stub interno del consumidor downstream (único EventSubscription de IT0).
    * Opcional: sin él, R5/R6/R7 (downstream.ts) fallan cerrado con ERR-CM-12. */
   readonly downstreamStub?: DownstreamStubPort;
+  /** ADR-010 rev. 5 §4.2.a (G-3, 6d): reintentos acotados de la tx completa R3/R3r + R4, alerta de agotamiento y commit ambiguo (apply-guard.ts). Ausente (in-memory, tests de dominio) = un solo intento, sin alerta. */
+  readonly applyGuard?: ApplyGuardConfig;
 }
 
 /** Ejecuta `fn` en una unidad de trabajo del tenant; dentro, los repos/ledger/outbox del bag se
@@ -158,15 +162,7 @@ export async function proposeCaseVerificationTx(
       throw new DomainError("ERR-CM-06");
     }
     if (p.revocationTransitions) {
-      await p.revocationTransitions.proposeCaseVerification({
-        revocationRef,
-        caseRef,
-        proposalRef: input.proposalRef,
-        proposedByRef: actor.principalRef,
-        verificationScriptVersion: input.verificationScriptVersion,
-        expectedSequence: base,
-      });
-      return reloadRevocation(p, tenantId, revocationRef);
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
     }
     const proposed: RevocationRecord = {
       ...found,
@@ -230,8 +226,7 @@ export async function approveCaseVerificationTx(
     const secondApproverRef = actor.principalRef;
     if (!verifiedByRef || !secondApproverRef) throw new DomainError("ERR-RV-13"); // HUMAN_ASSISTED exige ambos refs
     if (p.revocationTransitions) {
-      await p.revocationTransitions.approveCaseVerification({ revocationRef, caseRef, proposalRef, approverRef: secondApproverRef, expectedSequence: base });
-      return { record: await reloadRevocation(p, tenantId, revocationRef), attestation: "ATTESTED" };
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
     }
     const verified: RevocationRecord = {
       ...found,
@@ -313,9 +308,8 @@ export async function withdrawCaseVerificationProposalTx(
   if (actor.principalRef !== found.proposal.proposedByRef) throw new DomainError("ERR-RV-07"); // solo el proponente retira
   if (found.status !== "REQUESTED") throw new DomainError("ERR-CM-06"); // propuesta ya no PENDING (aprobada/Revocation avanzada)
   if (p.revocationTransitions) {
-    await p.revocationTransitions.withdrawCaseVerificationProposal({ revocationRef, caseRef, proposalRef, actorRef: actor.principalRef, expectedSequence: base });
-    return reloadRevocation(p, tenantId, revocationRef);
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   const { proposal: _withdrawn, ...rest } = found;
   const withdrawn: RevocationRecord = rest;
   await p.revocationRepo.save(withdrawn);
@@ -418,9 +412,8 @@ async function recordCaseConfirmationPendingCosignTx(
   await assertNominalRosterMinimum(staffIdentity);
 
   if (ports.revocationTransitions) {
-    await ports.revocationTransitions.recordCaseConfirmation({ revocationRef, caseRef, recordedByRef: ctx.recordedByPrincipalRef, expectedSequence: base });
-    return reloadRevocation(ports, tenantId, revocationRef);
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   // Paso 1 literal (effect: none): registra recordedByRef, sin tocar `status` ni emitir evento.
   const recorded: RevocationRecord = {
     ...found,
@@ -498,9 +491,8 @@ async function cosignCaseConfirmationTx(
   }
 
   if (ports.revocationTransitions) {
-    const cosigned = await ports.revocationTransitions.cosignCaseConfirmation({ revocationRef, caseRef, cosignedByRef: ctx.cosignedByPrincipalRef, expectedSequence: base });
-    return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, cosigned.sequence));
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED", cosignedByRef: ctx.cosignedByPrincipalRef };
   await ports.revocationRepo.save(confirmed);
   const confirmedEvent = await ports.ledger.append({
@@ -667,13 +659,43 @@ async function verifyRevocationOtpTx(
  * estado intermedio (revocation.spec.yaml R4 "nunca visible al usuario"), así que aplicarlo en
  * el mismo request síncrono es equivalente en efecto observable para IT0 in-memory. */
 export function confirmRevocation(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
-  return inTx(ports, tenantId, (p) => confirmRevocationTx(p, tenantId, revocationRef));
+  const attempt = (): Promise<RevocationRecord> => inTx(ports, tenantId, (p) => confirmRevocationTx(p, tenantId, revocationRef));
+  if (ports.applyGuard === undefined) return attempt();
+  // ADR-010 rev. 5 §4.2.a (G-3): la tx completa R3 + R4 + C6 se reintenta acotadamente; commit ambiguo = leer estado antes de reintentar; agotamiento = alerta + error uniforme, nunca acuse de exito.
+  // P1-a: si un intento posterior a un fallo transitorio ve la Revocation ya aplicada (o mas alla: el worker pudo avanzar R5-R7) NO se informa un fallo de algo que si se aplico: se devuelve el resultado real.
+  const guard = ports.applyGuard;
+  let sawTransient = false;
+  const guarded = async (): Promise<RevocationRecord> => {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (guard.isTransient(error)) sawTransient = true;
+      else if (sawTransient && error instanceof DomainError && error.code === "ERR-CM-06") {
+        const applied = await readAppliedRecord(ports, tenantId, revocationRef).catch(() => null);
+        if (applied !== null) return applied;
+      }
+      throw error;
+    }
+  };
+  return runBoundedApply(guard, { tenantId, revocationRef: () => revocationRef }, guarded, (ref) => readAppliedRecord(ports, tenantId, ref));
 }
+
+/** APPLIED o posterior (el worker pudo avanzar R5-R7): resultado REAL de la solicitud ya aplicada. Lectura en una tx nueva; null si aun no esta aplicada. */
+async function readAppliedRecord(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord | null> {
+  const found = await ports.uow.inTenant(tenantId, (tx) => tx.revocationRepo.findByRef(tenantId, revocationRef));
+  return found !== null && found !== undefined && APPLIED_OR_LATER.has(found.status) ? found : null;
+}
+const APPLIED_OR_LATER: ReadonlySet<string> = new Set(["APPLIED", "DOWNSTREAM_PENDING", "DELIVERED", "COMPLETED"]);
 
 async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, revocationRef: string): Promise<RevocationRecord> {
   const base = await revocationSequence(ports, tenantId, revocationRef);
   const found = await requireRevocation(ports, tenantId, revocationRef);
-  if (found.status === "CONFIRMED" || found.status === "APPLIED") {
+  if (found.status === "APPLIED") {
+    return found;
+  }
+  if (found.status === "CONFIRMED") {
+    // Con la base (R4 atomica con R3, 0066) una CONFIRMED visible sin APPLIED es una anomalia (fila anterior a 0066): la aplica el worker de respaldo, nunca esta ruta. Sin acuse de exito (G-3).
+    if (ports.revocationTransitions) throw new RevocationApplyUnavailableError();
     return found;
   }
   if (found.status !== "VERIFIED") {
@@ -684,8 +706,11 @@ async function confirmRevocationTx(ports: RevocationPorts, tenantId: string, rev
     throw new DomainError("ERR-CM-06");
   }
   if (ports.revocationTransitions) {
-    const confirmedByFn = await ports.revocationTransitions.confirm({ revocationRef, expectedSequence: base });
-    return applyRevocationTx(ports, tenantId, revocationRef, Math.max(base, confirmedByFn.sequence));
+    // ADR-010 rev. 5 §4.2.a (0066): case_state.confirm_revocation hace R3/R3r + R4 + C6 en la MISMA tx (excepcion unica a GRD-CM-15); si R4 falla se revierte todo. La fila que queda es APPLIED.
+    await ports.revocationTransitions.confirm({ revocationRef, expectedSequence: base });
+    const applied = await reloadRevocation(ports, tenantId, revocationRef);
+    if (applied.status !== "APPLIED") throw new RevocationApplyUnavailableError(); // nunca acuse de exito sin APPLIED
+    return applied;
   }
   const confirmed: RevocationRecord = { ...found, status: "CONFIRMED" };
   await ports.revocationRepo.save(confirmed);
@@ -782,10 +807,8 @@ async function applyRevocationTx(
     throw new DomainError("ERR-CM-06");
   }
   if (ports.revocationTransitions) {
-    // ADR-010 PR-5a: CONSENT_REVOKED + RECEIPT_CREATED + outbox + C6 + APPLIED los escribe case_state.apply_revocation en la misma tx.
-    await ports.revocationTransitions.apply({ revocationRef, expectedSequence: lastSequence });
-    return reloadRevocation(ports, tenantId, revocationRef);
-  }
+      throw new Error("RH2/RH3/R4 con la base solo se ejecutan por el proceso platform y la funcion de la base (ADR-010 rev. 5, 6d parte 2); este camino es solo in-memory");
+    }
   // SEC-CNS-013 P2-3 / SEC-CNS-015 P1-1: `lastSequence` se capturo ANTES del lock y de la decision de
   // estado; si el agregado avanzo desde entonces el append falla con LedgerSequenceConflictError.
   const rev = await ports.ledger.append({
@@ -1134,11 +1157,52 @@ export async function evaluateRecoveryTokenEligibilityByHash(
 export async function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): Promise<RecoveryRevokeOutcome> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved) return { kind: "UNIFORM" }; // hash sin token: respuesta uniforme, sin tx ni evento.
-  return inTx(ports, resolved.tenantId, async (p) => {
-    const record = await p.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
-    if (!record || record.tokenHash !== tokenHash) return { kind: "UNIFORM" };
-    return revokeWithRecoveryLinkTx(p, resolved.tenantId, record.chainRef, record.revokedDecisionRef, tokenHash, resolved.recoveryRef);
-  });
+  return guardedRecoveryRevoke(ports, resolved.tenantId, (attemptRef) =>
+    inTx(ports, resolved.tenantId, async (p) => {
+      const record = await p.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
+      if (!record || record.tokenHash !== tokenHash) return { kind: "UNIFORM" };
+      return revokeWithRecoveryLinkTx(p, resolved.tenantId, record.chainRef, record.revokedDecisionRef, tokenHash, resolved.recoveryRef, attemptRef);
+    }),
+  );
+}
+
+/**
+ * ADR-010 rev. 5 §4.2.a (G-3) para R1r-R3r: la ref de la Revocation nueva se genera UNA vez (no por intento) y se registra la ref realmente usada (la existente o la nueva) apenas se conoce, para que tras un commit
+ * ambiguo se lea el estado de ESA ref antes de reintentar: APPLIED = resultado real (CONFIRMED con su ref); si no, se reintenta la tx completa (token sin consumir si todo se revirtio); agotado = alerta + error uniforme.
+ */
+function guardedRecoveryRevoke(
+  ports: RevocationPorts,
+  tenantId: string,
+  run: (attemptRef: { readonly fresh: string; used: (ref: string) => void }) => Promise<RecoveryRevokeOutcome>,
+): Promise<RecoveryRevokeOutcome> {
+  const fresh: string = randomUUID();
+  let used: string = fresh;
+  const guard = ports.applyGuard;
+  const rawAttempt = (): Promise<RecoveryRevokeOutcome> => run({ fresh, used: (ref) => { used = ref; } });
+  if (guard === undefined) return rawAttempt();
+  const readApplied = async (ref: string): Promise<RecoveryRevokeOutcome | null> => ((await readAppliedRecord(ports, tenantId, ref)) === null ? null : { kind: "CONFIRMED", revocationRef: ref });
+  // P1-a: tras un fallo transitorio (commit ambiguo) el intento siguiente puede ver la Revocation ya aplicada y responder UNIFORM (APPLIED, GRD-RV-27) o IN_PROGRESS: se lee el estado de la ref USADA y, si esta
+  // aplicada (o mas alla), se devuelve CONFIRMED con su ref (nunca un fallo de algo que si se aplico). Sin fallo previo el resultado del intento no se toca (sin oraculo para otro enlace).
+  let sawTransient = false;
+  const attempt = async (): Promise<RecoveryRevokeOutcome> => {
+    let outcome: RecoveryRevokeOutcome;
+    try {
+      outcome = await rawAttempt();
+    } catch (error) {
+      if (guard.isTransient(error)) sawTransient = true;
+      else if (sawTransient && error instanceof DomainError && error.code === "ERR-CM-06") {
+        const applied = await readApplied(used).catch(() => null);
+        if (applied !== null) return applied;
+      }
+      throw error;
+    }
+    if (sawTransient && (outcome.kind === "UNIFORM" || outcome.kind === "IN_PROGRESS")) {
+      const applied = await readApplied(used).catch(() => null);
+      if (applied !== null) return applied;
+    }
+    return outcome;
+  };
+  return runBoundedApply<RecoveryRevokeOutcome>(guard, { tenantId, revocationRef: () => used }, attempt, readApplied);
 }
 
 /**
@@ -1181,7 +1245,7 @@ async function revokeWithRecoveryLinkResolving(
 ): Promise<RecoveryRevokeOutcome> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved || resolved.tenantId !== tenantId) return { kind: "UNIFORM" }; // GRD-RV-06 onFail: ERR-RV-05
-  return inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef));
+  return guardedRecoveryRevoke(ports, tenantId, (attemptRef) => inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef, attemptRef)));
 }
 
 async function revokeWithRecoveryLinkTx(
@@ -1191,6 +1255,7 @@ async function revokeWithRecoveryLinkTx(
   revokedDecisionRef: string,
   tokenHash: string,
   recoveryRef: string,
+  attemptRef?: { readonly fresh: string; used: (ref: string) => void },
 ): Promise<RecoveryRevokeOutcome> {
   const eligibility = await evaluateRecoveryTokenEligibilityResolved(ports, tenantId, chainRef, revokedDecisionRef, tokenHash, recoveryRef);
   if (!eligibility) {
@@ -1214,7 +1279,8 @@ async function revokeWithRecoveryLinkTx(
     const base = existing ? await revocationSequence(ports, tenantId, existing.revocationRef) : 0;
     let linked;
     try {
-      linked = await ports.revocationTransitions.revokeWithRecoveryLink({ recoveryRef: tokenRecord.recoveryRef, newRevocationRef: randomUUID(), expectedSequence: base });
+      linked = await ports.revocationTransitions.revokeWithRecoveryLink({ recoveryRef: tokenRecord.recoveryRef, newRevocationRef: attemptRef?.fresh ?? randomUUID(), expectedSequence: base });
+      attemptRef?.used(linked.revocationRef);
     } catch (error) {
       if (error instanceof DomainError && error.code === "ERR-RV-05") return { kind: "UNIFORM" }; // token usado o vencido entre la lectura y el lock
       throw error;

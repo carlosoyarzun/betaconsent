@@ -57,14 +57,14 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
       (e: unknown) => codeOf(e) === "42501",
       "F-A10-06: app_rw no pone REVOKED",
     );
-    // Una funcion con el estado equivocado se rechaza en la base (RV002) aunque el dominio no lo evite.
+    // ADR-010 rev. 5 (6d parte 2, F-A10-26 cerrado por privilegio): app_rw ya no ejecuta cosign ni apply_revocation (42501), sea cual sea el estado.
     await assert.rejects(
-      () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.cosign_case_confirmation('r1373', 'case', 'y', 0)")),
-      (e: unknown) => codeOf(e) === "RV001" || codeOf(e) === "RV006", // caso ajeno / sin RH2 atestada
+      () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.cosign_case_confirmation('case')")),
+      (e: unknown) => codeOf(e) === "42501",
     );
     await assert.rejects(
       () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.apply_revocation('r1373', 0)")),
-      (e: unknown) => codeOf(e) === "RV002",
+      (e: unknown) => codeOf(e) === "42501",
     );
     // B1: des-revocar (REVOKED -> GRANTED) como app_rw no cambia nada (USING de la policy excluye REVOKED): 0 filas o 42501.
     await seedFixture(() => admin.query(
@@ -157,13 +157,14 @@ pgTest("TEST-CNS-1375 pg: vectores dorados TS<->SQL: case_state.canonical_json =
     const ports: RevocationPorts = { ...outside, recoveryLinkChannel: sink, recoveryTokenPolicy: { ttlMs: 60_000 }, uow, tenantResolver: createPgTenantResolver(pool), downstreamStub: stub };
     const env: X6Env = { ports, stub, sink };
     const T = fixtureUuid("t1375");
-    for (const path of ["OTP", "LINK", "CASE"] as const) {
+    for (const path of ["OTP", "LINK"] as const) // la via CASE (RH2/RH3) solo corre en platform: TEST-CNS-1711
+    {
       const { revocationRef } = await revokeVia(env, T, `1375-${path}`, path);
       await completeDownstreamAsWorker(ctx, env, T, revocationRef, `1375-${path}`); // ADR-010 PR-6a: R5-R7 solo worker
     }
     const report = await verifyLedgerChain({ readChain: (t) => outside.ledger.readChain(t) }, T);
     assert.equal(report.ok, true, JSON.stringify(report));
-    assert.ok(report.verified >= 20, `eslabones verificados: ${report.verified}`);
+    assert.ok(report.verified >= 18, `eslabones verificados: ${report.verified}`); // 9 por via (OTP, LINK); la via CASE (antes >= 20 con 3 vias) se cubre sobre platform en TEST-CNS-1711
   } finally {
     await pool.end();
   }
@@ -193,9 +194,9 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     "SELECT p.proname AS n, pg_get_userbyid(p.proowner) AS o, p.prosecdef AS d FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' ORDER BY 1",
   )).rows;
   assert.deepEqual(fns.map((f) => f.n), [
-    "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "cancel_invitation_subject_mismatch", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
-    "cosign_case_confirmation", "express_revocation_intent_in_case", "ledger_append", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
-    "propose_case_verification", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
+    "alert_apply_exhausted", "apply_revocation", "approve_case_verification", "assert_decision_revocable", "assert_sequence", "cancel_invitation_subject_mismatch", "canonical_json", "close_case", "confirm_case_return", "confirm_revocation",
+    "cosign_case_confirmation", "current_sequence", "express_revocation_intent_in_case", "ledger_append", "list_confirmed_unapplied", "lock_revocation", "lock_rights_case", "mark_downstream_emitted", "open_rights_case_bearer",
+    "propose_case_verification", "r4_apply", "read_case_apply_state", "record_case_confirmation", "record_downstream_ack", "record_erasure_attestation", "request_revocation", "revocation_transition_guard",
     "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_rights_case", "verify_revocation_otp",
     "withdraw_case_verification_proposal", "withdraw_revocation",
   ]); // ADR-010 PR-5b (0038) agrega las funciones de RightsCase
@@ -205,10 +206,12 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
   const ex = async (role: string, fn: string): Promise<boolean> =>
     (await admin.query<{ x: boolean }>("SELECT has_function_privilege($1, p.oid, 'EXECUTE') AS x FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = $2", [role, fn])).rows[0]?.x ?? false;
   for (const fn of ["apply_revocation", "mark_downstream_emitted", "record_downstream_ack", "record_erasure_attestation"]) assert.equal(await ex("worker", fn), true, fn);
-  for (const fn of ["request_revocation", "verify_revocation_otp", "confirm_revocation", "revoke_with_recovery_link", "withdraw_revocation", "cosign_case_confirmation"]) {
+  for (const fn of ["request_revocation", "verify_revocation_otp", "confirm_revocation", "revoke_with_recovery_link", "withdraw_revocation"]) {
     assert.equal(await ex("worker", fn), false, `worker ${fn}`);
     assert.equal(await ex("app_rw", fn), true, `app_rw ${fn}`);
   }
+  // 6d parte 2: operador y R4 fuera de app_rw (el catalogo exacto lo fija el assert de 0070 y TEST-CNS-1701).
+  for (const fn of ["cosign_case_confirmation", "apply_revocation", "approve_case_verification", "close_case", "r4_apply"]) assert.equal(await ex("app_rw", fn), false, `app_rw ${fn}`);
   for (const fn of ["ledger_append", "canonical_json", "lock_revocation", "revocation_transition_guard", "lock_rights_case", "rights_case_transition_guard"]) {
     for (const role of ["app_rw", "worker", "platform_rw", "integrity_verifier"]) assert.equal(await ex(role, fn), false, `${role} ${fn}`);
   }
@@ -242,9 +245,9 @@ pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el
     const uow = new PgUnitOfWork(pool);
     for (const [sql, state] of [
       ["SELECT case_state.withdraw_revocation('rA', 0)", "RV001"],
-      ["SELECT case_state.apply_revocation('rA', 0)", "RV001"],
+      ["SELECT case_state.apply_revocation('rA', 0)", "42501"],
       ["SELECT case_state.confirm_revocation('rA', 0)", "RV001"],
-      ["SELECT case_state.propose_case_verification('rA2', 'caseA', 'p', 'op', 'g', 0)", "RV001"],
+      ["SELECT case_state.propose_case_verification('caseA', 'p', 'g', 5, 600)", "42501"],
       ["SELECT case_state.revoke_with_recovery_link('recA', 'nueva', 0)", "RV007"],
     ] as const) {
       await assert.rejects(() => uow.withTenantTx(B, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === state, sql);

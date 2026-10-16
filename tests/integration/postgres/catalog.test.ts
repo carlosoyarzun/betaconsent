@@ -43,6 +43,7 @@ pgTest("TEST-CNS-744 pg: roles de runtime NOSUPERUSER, NOBYPASSRLS, sin CREATE, 
 
   for (const role of [...RUNTIME_ROLES, VERIFIER]) {
     for (const owner of [...OWNERS, "rights_operator"]) {
+      if (role === "platform_rw" && owner === "rights_operator") continue; // 0068: miembro INHERIT FALSE, SET TRUE (verificado por la asercion exacta de membresia)
       const m = (await admin.query<{ m: boolean }>("SELECT pg_has_role($1, $2, 'MEMBER') AS m", [role, owner])).rows[0];
       assert.equal(m?.m, false, `${role} es miembro de ${owner}`);
     }

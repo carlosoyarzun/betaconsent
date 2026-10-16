@@ -3,7 +3,6 @@
 
 import test from "node:test";
 
-import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
 import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import { createInMemoryStaffSessionStore } from "../../../src/infra/adapters/in-memory-staff-session-store.adapter.ts";
 import { runSessionSecurityEventsContract } from "./session-security-events.contract.ts";
@@ -12,11 +11,9 @@ runSessionSecurityEventsContract((name, body) => {
   test(name, async () => {
     const log = createInMemorySecurityEventLog();
     const staff = createInMemoryStaffSessionStore({ securityEvents: log });
-    const caseSessions = createInMemoryCaseSessionStore({ securityEvents: log });
-    const rowOf = (kind: "STAFF" | "CASE", tenantId: string, sidHash: string) => (kind === "STAFF" ? staff.rows() : caseSessions.rows()).find((r) => r.tenantId === tenantId && r.sidHash === sidHash);
+    const rowOf = (_kind: "STAFF" | "CASE", tenantId: string, sidHash: string) => staff.rows().find((r: { tenantId: string; sidHash: string }) => r.tenantId === tenantId && r.sidHash === sidHash);
     await body({
       staff,
-      caseSessions,
       events: async (tenantId) => log.list(tenantId).map((e) => ({ eventType: e.eventType, tenantId: e.tenantId, actorRef: e.actorRef, actorRole: e.actorRole, sessionKind: e.sessionKind, sessionRef: e.sessionRef, caseRef: e.caseRef ?? null })),
       sessionRefOf: async (kind, tenantId, sidHash) => rowOf(kind, tenantId, sidHash)?.sessionRef ?? null,
       revokedOf: async (kind, tenantId, sidHash) => { const r = rowOf(kind, tenantId, sidHash); return r === undefined ? null : r.revokedAtMs !== null; },

@@ -5,12 +5,11 @@
 // revierte TODO (revocation, ledger, outbox, decision y consumo del token) y el reintento llega a
 // APPLIED. TEST-CNS-818: la numeracion del ledger la fija R4 con expectedSequence. SYNTHETIC ONLY.
 
-import { attestHumanAssistedVerification } from "../../contract/rh2-helper.ts";
+import { injectOutboxFailure, recordRh3, seedCaseWorld, startPlatformHttp } from "../../helpers/pg-case-world.ts";
 import assert from "node:assert/strict";
 
-import { confirmRevocation, cosignCaseConfirmation, evaluateRecoveryTokenEligibilityByHash, hashRecoveryToken, issueRecoveryLinkBearer, recordCaseConfirmationPendingCosign, requestRevocation, revokeWithRecoveryLinkByHash, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
+import { confirmRevocation, evaluateRecoveryTokenEligibilityByHash, hashRecoveryToken, issueRecoveryLinkBearer, requestRevocation, revokeWithRecoveryLinkByHash, verifyRevocationOtp, type RevocationPorts } from "../../../src/server/modules/revocation/revocation.ts";
 import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
-import { createInMemoryStaffIdentityAdapter } from "../../../src/infra/adapters/in-memory-staff-identity.adapter.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { createPgTenantResolver } from "../../../src/infra/adapters/postgres/tenant-resolver.adapter.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
@@ -20,13 +19,6 @@ import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest } from "./harness.ts";
 import type { PgTestContext } from "./harness.ts";
 import { pgOutsideTxPorts } from "./outside-tx.ts";
-
-const staff = createInMemoryStaffIdentityAdapter([
-  { principalRef: fixtureUuid("staff-synthetic-01"), role: "RIGHTS_OPERATOR" },
-  { principalRef: fixtureUuid("staff-synthetic-02"), role: "RIGHTS_OPERATOR" },
-  { principalRef: fixtureUuid("staff-synthetic-03"), role: "APPROVER" },
-  { principalRef: fixtureUuid("staff-synthetic-04"), role: "APPROVER" },
-]);
 
 /** uow que falla al guardar la Revocation en APPLIED (ultimo paso de R4) mientras `fail.on`. */
 function flakyUow(real: UnitOfWorkPort, fail: { on: boolean }): UnitOfWorkPort {
@@ -47,10 +39,11 @@ function flakyUow(real: UnitOfWorkPort, fail: { on: boolean }): UnitOfWorkPort {
             ? {
                 revocationTransitions: {
                   ...tx.revocationTransitions,
-                  async apply(input: { readonly revocationRef: string; readonly expectedSequence: number }) {
-                    const applied = await tx.revocationTransitions!.apply(input);
+                  async confirm(input: { readonly revocationRef: string; readonly expectedSequence: number }) {
+                    // ADR-010 rev. 5 (0066): R3 + R4 + C6 son UNA funcion; el fallo se inyecta tras ella (misma tx: todo revierte).
+                    const confirmed = await tx.revocationTransitions!.confirm(input);
                     if (fail.on) throw new Error("R4 falló (simulado)");
-                    return applied;
+                    return confirmed;
                   },
                 },
               }
@@ -154,33 +147,37 @@ pgTest("TEST-CNS-816 pg E2E: recuperacion con fallo inyectado en R4 no consume e
   });
 });
 
-pgTest("TEST-CNS-817 pg E2E: RH3 cosign+R4 con fallo inyectado en R4 deja VERIFIED con el paso 1 registrado y el reintento de cosign llega a APPLIED", async (ctx) => {
-  const T = fixtureUuid("tenant-817");
-  const D = fixtureUuid("decision-817");
-  const REV = fixtureUuid("rev-817");
-  const CASE = fixtureUuid(`case-${REV}`);
-  await withPorts(ctx, T, D, fixtureUuid("chain-817"), async ({ ports, fail, outside, count }) => {
-    await outside.revocationRepo.save({ revocationRef: REV, tenantId: T, chainRef: fixtureUuid("chain-817"), caseRef: CASE, revokedDecisionRef: D, status: "REQUESTED" });
-    await attestHumanAssistedVerification(ports, T, REV, CASE);
-    await recordCaseConfirmationPendingCosign(ports, staff, T, REV, CASE, { recordedByPrincipalRef: fixtureUuid("staff-synthetic-01") });
-    const before = await events(ports, T, REV);
+pgTest("TEST-CNS-817 pg platform E2E: RH3 cosign+R4 con fallo inyectado en R4 (ultimo paso: outbox) deja VERIFIED con el paso 1 registrado, sin CONFIRMED/CONSENT_REVOKED/RECEIPT_CREATED ni outbox, y el reintento de cosign llega a APPLIED", async (ctx) => {
+  // ADR-010 rev. 5 (6d parte 2): RH3 solo corre por platform (sesion CASE, actor desde la sesion, R4 atomica en cosign_case_confirmation). El fallo se inyecta DENTRO de la base (trigger en app.outbox, paso final de R4):
+  // todo revierte; un error NO transitorio (XX000) no se reintenta y llega al llamador tal cual.
+  const admin = await ctx.fixtureAdmin();
+  const w = await seedCaseWorld(ctx, "817");
+  const http = await startPlatformHttp(ctx);
+  try {
+    await recordRh3(admin, http, w);
+    const events = async (): Promise<string[]> => (await admin.query<{ event_type: string }>("SELECT event_type FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 ORDER BY sequence", [w.tenantId, w.revocationRef])).rows.map((r) => r.event_type);
+    const outbox = async (): Promise<number> => (await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1", [w.tenantId])).rows[0]!.n;
+    const before = await events();
+    const failure = await injectOutboxFailure(admin, { name: "f817", tenantId: w.tenantId, failures: 1_000, sqlstate: "XX000" });
+    await assert.rejects(() => http.cases.cosign({ sid: w.op2.caseSession.sid, caseRef: w.caseRef }), /fallo inyectado/);
+    assert.equal(await failure.attempts(), 1, "un error no transitorio no se reintenta");
+    const rolled = (await admin.query("SELECT status, recorded_by_ref, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    assert.deepEqual(rolled, { status: "VERIFIED", recorded_by_ref: w.op1.principal, cosigned_by_ref: null }, "el paso 1 (anterior a la tx de la co-firma) se conserva; sin co-firma");
+    assert.deepEqual(await events(), before, "R3, R4 y C6 revierten juntos");
+    assert.equal(await outbox(), 0);
+    assert.equal((await admin.query("SELECT state FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2", [w.tenantId, w.consentId])).rows[0]?.state, "GRANTED");
 
-    await assert.rejects(() => cosignCaseConfirmation(ports, staff, T, REV, CASE, { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") }), /R4 falló/);
-    const rolled = await outside.revocationRepo.findByRef(T, REV);
-    assert.equal(rolled?.status, "VERIFIED");
-    assert.equal(rolled?.recordedByRef, fixtureUuid("staff-synthetic-01"), "el paso 1 (anterior a la unidad de trabajo) se conserva");
-    assert.equal(rolled?.cosignedByRef, undefined);
-    assert.deepEqual(await events(ports, T, REV), before);
-    assert.equal(await count("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1"), 0);
-
-    fail.on = false;
-    const retried = await cosignCaseConfirmation(ports, staff, T, REV, CASE, { cosignedByPrincipalRef: fixtureUuid("staff-synthetic-02") });
-    assert.equal(retried.status, "APPLIED");
-    assert.equal(retried.cosignedByRef, fixtureUuid("staff-synthetic-02"));
-    const types = await events(ports, T, REV);
+    await failure.remove();
+    const retried = await http.cases.cosign({ sid: w.op2.caseSession.sid, caseRef: w.caseRef });
+    assert.equal(retried.ok, true, JSON.stringify(retried));
+    const row = (await admin.query("SELECT status, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    assert.deepEqual(row, { status: "APPLIED", cosigned_by_ref: w.op2.principal });
+    const types = await events();
     for (const t of ["REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"]) assert.equal(types.filter((x) => x === t).length, 1, t);
-    assert.equal(await count("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1"), 1);
-  });
+    assert.equal(await outbox(), 1);
+  } finally {
+    await http.close();
+  }
 });
 
 pgTest("TEST-CNS-818 pg: R4 registra CONSENT_REVOKED y RECEIPT_CREATED con sequence = expectedSequence + 1 en el ledger real (R1..R4 numerados 1..5 sin huecos)", async (ctx) => {

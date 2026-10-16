@@ -40,7 +40,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$' AND policyname !~ '_worker_recovery_select$' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
       [table],
     )).rows;
     // ADR-010 PR-5a: app_rw solo lee app.revocation (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_* abajo).
@@ -93,7 +93,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     "invitation.invitation_transition_update:UPDATE",
     "outbox.outbox_transition_insert:INSERT", "outbox.outbox_transition_select:SELECT",
     "recovery_token.recovery_token_transition_select:SELECT", "recovery_token.recovery_token_transition_update:UPDATE",
-    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
+    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_recovery_select:SELECT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
     "rights_case.rights_case_transition_insert:INSERT", "rights_case.rights_case_transition_select:SELECT", "rights_case.rights_case_transition_update:UPDATE", // 0038 (PR-5b)
   ]);
   assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["consent_text_hash", "consent_version", "prior_steps_complete", "privacy_notice_version", "purposes", "receipt_ref", "relationship_ref", "state", "steps_recorded"]); // 0049 (PR-b): columnas de las que la base deriva el ledger, solo UPDATE

@@ -387,7 +387,8 @@ pgTest("TEST-CNS-1657 pg: privilegios de step-up y grants: ACL exacta, internas 
     `SELECT COALESCE(string_agg(DISTINCT pg_get_userbyid(a.grantee), ',' ORDER BY pg_get_userbyid(a.grantee)), '') AS r FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
        LEFT JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a ON a.grantee <> p.proowner WHERE n.nspname = 'platform' AND p.proname = $1`, [fn])).rows[0]!.r;
   for (const fn of ["issue_step_up_nonce", "request_grant", "approve_grant"]) assert.equal(await acl(fn), "platform_rw", fn);
-  for (const fn of ["session_principal", "rights_case_of", "consume_step_up", "rights_case_grant_insert_guard"]) assert.equal(await acl(fn), "", fn);
+  for (const fn of ["session_principal", "rights_case_of", "rights_case_grant_insert_guard"]) assert.equal(await acl(fn), "", fn);
+  assert.equal(await acl("consume_step_up"), "transition_owner", "consume_step_up: interna; solo transition_owner (RH2, 0069)");
   for (const c of [app, worker, verifier]) {
     await assert.rejects(c.query("SELECT platform.request_grant($1, 5, 600)", [fixtureUuid("x")]), (e) => codeOf(e) === "42501");
     await assert.rejects(c.query("SELECT platform.approve_grant($1, $2::uuid, NULL, 5, 600)", [fixtureUuid("x"), randomUUID()]), (e) => codeOf(e) === "42501");

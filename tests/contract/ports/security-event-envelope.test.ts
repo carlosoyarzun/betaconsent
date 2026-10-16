@@ -5,7 +5,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createInMemoryCaseSessionStore } from "../../../src/infra/adapters/in-memory-case-session-store.adapter.ts";
 import { createInMemorySecurityEventLog } from "../../../src/infra/adapters/in-memory-security-event.adapter.ts";
 import { createInMemoryStaffSessionStore } from "../../../src/infra/adapters/in-memory-staff-session-store.adapter.ts";
 import { readFileSync } from "node:fs";
@@ -33,7 +32,6 @@ export function toEnvelope(e: SecurityEventRecord): Record<string, unknown> {
 test("TEST-CNS-1202 contrato API-CNS-184: cada evento de sesion proyectado al sobre SecurityEvent valida; con PII, campo extra o forma incoherente se rechaza; no son transitorios del ledger", async () => {
   const log = createInMemorySecurityEventLog();
   const staff = createInMemoryStaffSessionStore({ securityEvents: log });
-  const cases = createInMemoryCaseSessionStore({ securityEvents: log });
   const T = fixtureUuid("t1202");
   const now = Date.now();
   const base = { issuedAtMs: now, expiresAtMs: now + 3_600_000 };
@@ -41,12 +39,8 @@ test("TEST-CNS-1202 contrato API-CNS-184: cada evento de sesion proyectado al so
   await staff.revoke(T, "a".repeat(64), now, "USER_LOGOUT");
   await staff.create({ tenantId: T, sidHash: "b".repeat(64), principalRef: fixtureUuid("p1202"), role: "APPROVER", ...base });
   await staff.revoke(T, "b".repeat(64), now, "ROTATION");
-  await cases.create({ tenantId: T, sidHash: "c".repeat(64), caseRef: fixtureUuid("c1202"), principalRef: "staff-synthetic-02", role: "RIGHTS_OPERATOR", ...base });
-  await cases.revoke(T, "c".repeat(64), now, "USER_LOGOUT");
-  await cases.create({ tenantId: T, sidHash: "d".repeat(64), caseRef: fixtureUuid("c1202"), principalRef: "staff-synthetic-02", role: "APPROVER", ...base });
-  await cases.revoke(T, "d".repeat(64), now, "ROTATION");
   const events = log.list(T);
-  assert.deepEqual(new Set(events.map((e) => e.eventType)), new Set(["STAFF_LOGIN", "STAFF_LOGOUT", "SESSION_REVOKED_BY_ROTATION", "CASE_LOGIN", "CASE_LOGOUT"]));
+  assert.deepEqual(new Set(events.map((e) => e.eventType)), new Set(["STAFF_LOGIN", "STAFF_LOGOUT", "SESSION_REVOKED_BY_ROTATION"]));
   for (const e of events) {
     const v = validateSecurityEvent(toEnvelope(e));
     assert.ok(v.ok, `${e.eventType}: ${v.errors.join("; ")}`);

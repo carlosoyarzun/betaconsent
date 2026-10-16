@@ -40,7 +40,7 @@ export interface GrantRoutesDeps extends OperatorLimitDeps {
 const MAX_BODY_BYTES = 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SID_RE = /^[0-9a-f]{64}$/;
-const ACTIONS: ReadonlySet<string> = new Set(["REQUEST_GRANT", "APPROVE_GRANT"]);
+const ACTIONS: ReadonlySet<string> = new Set(["REQUEST_GRANT", "APPROVE_GRANT", "PROPOSE_CASE_VERIFICATION", "APPROVE_CASE_VERIFICATION", "WITHDRAW_CASE_VERIFICATION"]);
 const b64u = (n: number): string => randomBytes(n).toString("base64url");
 const sha256Hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 
@@ -89,11 +89,16 @@ export async function handleGrantRoute(req: IncomingMessage, res: ServerResponse
     if (isStepUp) {
       const action = body.action;
       const targetRef = body.targetRef;
-      // Contrato (additionalProperties: false): solo {action, targetRef}; cualquier campo extra = 404 uniforme.
-      if (Object.keys(body).some((k) => k !== "action" && k !== "targetRef")) return notFound(res), true;
+      const caseRefBody = body.caseRef;
+      // Contrato (additionalProperties: false): solo {action, targetRef, caseRef?}; cualquier campo extra = 404 uniforme.
+      if (Object.keys(body).some((k) => k !== "action" && k !== "targetRef" && k !== "caseRef")) return notFound(res), true;
       if (deps.idp === undefined || typeof action !== "string" || !ACTIONS.has(action) || typeof targetRef !== "string") return notFound(res), true;
+      // P2-6: el step-up de RH2 se liga a (caseRef, proposalRef): `caseRef` es obligatorio para las tres acciones de RH2 y no se admite en las demas.
+      const isRh2 = action === "PROPOSE_CASE_VERIFICATION" || action === "APPROVE_CASE_VERIFICATION" || action === "WITHDRAW_CASE_VERIFICATION";
+      if (isRh2 ? typeof caseRefBody !== "string" || !CASE_REF_RE.test(caseRefBody) : caseRefBody !== undefined) return notFound(res), true;
       if (!(action === "REQUEST_GRANT" ? CASE_REF_RE.test(targetRef) : UUID_RE.test(targetRef))) return notFound(res), true;
-      const nonce = await deps.grants.issueStepUpNonce({ sid, action: action as CaseStepUpAction, targetRef, ttlSeconds: deps.flowTtlSeconds });
+      const boundTarget = isRh2 ? `${caseRefBody as string}:${targetRef}` : targetRef;
+      const nonce = await deps.grants.issueStepUpNonce({ sid, action: action as CaseStepUpAction, targetRef: boundTarget, ttlSeconds: deps.flowTtlSeconds });
       if (nonce === null) return notFound(res), true;
       const state = b64u(24);
       const verifier = b64u(48);

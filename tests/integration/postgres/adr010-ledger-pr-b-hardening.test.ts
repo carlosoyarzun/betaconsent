@@ -124,9 +124,9 @@ pgTest("TEST-CNS-1469 pg: con GUC tenant=A, un INSERT en integrity.audit_event c
 pgTest("TEST-CNS-1470 pg (permanente): las unicas funciones que mencionan ledger_append o integrity.audit_event son las declaradas; solo case_state.ledger_append y ledger_gen.ledger_append hacen INSERT directo; todo uso de tenant_resolve.handle desde ledger_gen filtra por NEW.tenant_id", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const declared = [
-    "case_state.apply_revocation", "case_state.approve_case_verification", "case_state.assert_sequence", "case_state.cancel_invitation_subject_mismatch", "case_state.close_case",
-    "case_state.confirm_case_return", "case_state.confirm_revocation", "case_state.cosign_case_confirmation", "case_state.express_revocation_intent_in_case", "case_state.ledger_append",
-    "case_state.mark_downstream_emitted", "case_state.open_rights_case_bearer", "case_state.record_downstream_ack", "case_state.record_erasure_attestation", "case_state.request_revocation",
+    "case_state.approve_case_verification", "case_state.assert_sequence", "case_state.cancel_invitation_subject_mismatch", "case_state.close_case",
+    "case_state.confirm_case_return", "case_state.confirm_revocation", "case_state.cosign_case_confirmation", "case_state.current_sequence", "case_state.express_revocation_intent_in_case", "case_state.ledger_append",
+    "case_state.mark_downstream_emitted", "case_state.open_rights_case_bearer", "case_state.r4_apply", "case_state.record_downstream_ack", "case_state.record_erasure_attestation", "case_state.request_revocation",
     "case_state.revoke_with_recovery_link", "case_state.verify_revocation_otp", "case_state.withdraw_case_verification_proposal", "case_state.withdraw_revocation",
     "integrity.audit_event_immutable", "integrity.audit_event_single_aggregate_type",
     "ledger_gen.emit_consent_decision", "ledger_gen.emit_enrollment", "ledger_gen.emit_invitation", "ledger_gen.emit_otp", "ledger_gen.ledger_append", "ledger_gen.seed_local_catalog_event",

@@ -22,6 +22,4 @@ export interface RightsCaseTransitionsPort {
   }): Promise<TransitionResult & { readonly caseRef: string; readonly created: boolean }>;
   /** FN-RC-02 RC2u (OPEN -> CONTACTING). Con el caso ya en CONTACTING no cambia nada (`changed: false`). */
   confirmReturn(input: { readonly caseRef: string; readonly expectedSequence: number }): Promise<TransitionResult & { readonly changed: boolean }>;
-  /** FN-RC-06 RC4.RESOLVED / RC4.WITHDRAWN / RC5 / RC6. */
-  close(input: { readonly caseRef: string; readonly outcome: "RESOLVED" | "WITHDRAWN"; readonly operatorRef: string; readonly expectedSequence: number }): Promise<TransitionResult>;
 }

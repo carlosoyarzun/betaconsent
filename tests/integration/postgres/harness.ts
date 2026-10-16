@@ -94,6 +94,28 @@ export async function enableLedgerMechanicsAppend(ctx: PgTestContext): Promise<v
   await admin.query("CREATE POLICY test_mechanics_app_rw_insert ON integrity.audit_event FOR INSERT TO app_rw WITH CHECK (tenant_id = app.current_tenant_id())");
 }
 
+/**
+ * ADR-010 rev. 5 PR-6d parte 2 (0070, F-A10-28): app_rw ya NO ejecuta case_state.seed_local_revocation / seed_local_rights_case. Los repos `save` de los tests de CONTRATO y de MECANICA (que siembran filas con app_rw
+ * dentro de una unidad de trabajo) las necesitan; este helper devuelve el EXECUTE SOLO en la base descartable de ESE archivo de test (nunca en una migracion), igual que `enableLedgerMechanicsAppend`. Los tests que
+ * afirman "app_rw sin EXECUTE de siembras" llaman `revokeLocalSeedFromAppRw` antes. Helper de tests, nunca de producto.
+ */
+export async function grantLocalSeedToAppRw(superuserUrl: string): Promise<void> {
+  const c = new pg.Client({ connectionString: superuserUrl });
+  await c.connect();
+  try {
+    await c.query("GRANT EXECUTE ON FUNCTION case_state.seed_local_revocation(uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) TO app_rw");
+    await c.query("GRANT EXECUTE ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) TO app_rw");
+  } finally {
+    await c.end();
+  }
+}
+
+export async function revokeLocalSeedFromAppRw(ctx: PgTestContext): Promise<void> {
+  const admin = await ctx.fixtureAdmin();
+  await admin.query("REVOKE EXECUTE ON FUNCTION case_state.seed_local_revocation(uuid, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text, text) FROM app_rw");
+  await admin.query("REVOKE EXECUTE ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) FROM app_rw");
+}
+
 let currentCtx: PgTestContext | undefined;
 
 /** Como `seedRaw` sobre la base del test en curso (para helpers de siembra que no reciben `ctx`). Solo tests. */
@@ -222,6 +244,11 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
     throw error;
   }
 
+  await grantLocalSeedToAppRw(((): string => {
+    const u = new URL(config.url);
+    u.pathname = `/${dbName}`;
+    return u.toString();
+  })());
   const passwordFor = (role: PgRole): string => (role === "consent_migrator" ? config.migratorPassword : config.appPassword);
   const ctx: PgTestContext = {
     dbName,

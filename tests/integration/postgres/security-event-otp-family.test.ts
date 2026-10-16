@@ -210,7 +210,7 @@ pgTest("TEST-CNS-1306 pg: app_rw inserta la familia OTP/RECOVERY/MANAGEMENT solo
   const appRwPolicies = policies.filter((p) => p.roles.includes("app_rw"));
   assert.deepEqual(appRwPolicies.map((p) => [p.polname, p.cmd, p.roles]), [["security_event_app_rw_insert", "INSERT", ["app_rw"]]]);
   assert.match(appRwPolicies[0]!.with_check ?? "", /app\.current_tenant_id\(\)/);
-  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["SELECT", ["security_event_owner"]], ["UPDATE", ["security_event_owner"]]]);
+  assert.deepEqual(policies.filter((p) => !p.roles.includes("app_rw")).map((p) => [p.cmd, p.roles]).sort(), [["DELETE", ["security_event_owner"]], ["INSERT", ["security_event_owner"]], ["SELECT", ["security_event_owner"]], ["UPDATE", ["security_event_owner"]]]);
   const insertable = (await admin.query<{ attname: string }>(
     `SELECT a.attname FROM pg_attribute a WHERE a.attrelid = 'ops.security_event'::regclass AND a.attnum > 0 AND NOT a.attisdropped
         AND has_column_privilege('app_rw', a.attrelid, a.attnum, 'INSERT') ORDER BY a.attname`,

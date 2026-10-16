@@ -2,7 +2,6 @@
 // 1195, 1196, 1197, 1200). El runtime (app_rw) solo INSERTA (D-5): los eventos y las filas se leen con la conexion del dueno/superusuario.
 // El fallo del evento se inyecta con un trigger de prueba en la base desechable de este archivo (nunca en las migraciones).
 
-import { createPgCaseSessionStore } from "../../../src/infra/adapters/postgres/case-session.adapter.ts";
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { createPgStaffSessionStore } from "../../../src/infra/adapters/postgres/staff-session.adapter.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
@@ -20,7 +19,6 @@ runSessionSecurityEventsContract((name, body) => {
       const table = (kind: "STAFF" | "CASE"): string => (kind === "STAFF" ? "app.staff_session" : "app.case_session");
       await body({
         staff: createPgStaffSessionStore(uow),
-        caseSessions: createPgCaseSessionStore(uow),
         events: async (tenantId) =>
           (await admin.query<{ event_type: string; tenant_id: string; actor_ref: string | null; actor_role: string | null; session_kind: string | null; session_ref: string | null; case_ref: string | null }>(
             "SELECT event_type, tenant_id, actor_ref, actor_role, session_kind, session_ref, case_ref FROM ops.security_event WHERE tenant_id = $1 ORDER BY event_seq",

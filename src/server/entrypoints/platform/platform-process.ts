@@ -9,13 +9,17 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createPgOidcAuthorization } from "../../../infra/adapters/postgres/oidc-exchange.adapter.ts";
+import { createApplyGuardConfig } from "../../../infra/adapters/postgres/apply-guard.adapter.ts";
+import { createPgPlatformCase } from "../../../infra/adapters/postgres/platform-case.adapter.ts";
 import { createPgPlatformGrants } from "../../../infra/adapters/postgres/platform-grant.adapter.ts";
 import { createPgPlatformSessionStore } from "../../../infra/adapters/postgres/platform-session.adapter.ts";
 import { openProcessPool, parseRuntimeEnvironment } from "../../../infra/adapters/postgres/runtime-process.ts";
 import type { OidcAuthorizationPort } from "../../ports/oidc-exchange.port.ts";
+import type { PlatformCasePort } from "../../ports/platform-case.port.ts";
 import type { PlatformGrantPort } from "../../ports/platform-grant.port.ts";
 import type { PlatformSessionPort } from "../../ports/platform-session.port.ts";
 import { handleAuthRoute } from "./auth-routes.ts";
+import { handleCaseRoute } from "./case-routes.ts";
 import { handleGrantRoute } from "./grant-routes.ts";
 import { handleSessionRoute } from "./session-routes.ts";
 import { loadPlatformSettings } from "./platform-settings.ts";
@@ -45,6 +49,8 @@ export interface PlatformHandlerDeps {
   readonly sessions: PlatformSessionPort;
   /** Step-up de caso y grants (PR-6d parte 1). Ausente = esas rutas no se sirven (404). */
   readonly grants?: PlatformGrantPort;
+  /** Acciones de operador/aprobador sobre el caso (PR-6d parte 2; `/platform/rights-cases/*` solo se sirve aqui). Ausente = esas rutas no se sirven (404). */
+  readonly cases?: PlatformCasePort;
   readonly settings: PlatformSettings;
   readonly now?: () => number;
   /** P-50 compartido (el proceso lo expone en `operatorLimiter`); por defecto se crea uno desde `settings.p50`. */
@@ -91,6 +97,15 @@ export function platformRequestHandler(deps?: PlatformHandlerDeps): Parameters<t
         flowTtlSeconds: 600,
         p50,
         p50WindowSeconds: deps.settings.p50.windowSeconds,
+      })) || (deps.cases === undefined ? false : await handleCaseRoute(req, res, {
+        authorization: deps.authorization,
+        sessions: deps.sessions,
+        cases: deps.cases,
+        allowedCidrs: deps.settings.allowedCidrs,
+        publicOrigin: deps.settings.publicOrigin,
+        p51: deps.settings.p51,
+        p50,
+        p50WindowSeconds: deps.settings.p50.windowSeconds,
       }))).then((handled) => {
         if (!handled && !res.headersSent) {
           res.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
@@ -126,7 +141,7 @@ export async function startPlatformProcess(options: StartPlatformProcessOptions 
   const settings = loadPlatformSettings(env, environment);
   const pool = await openProcessPool({ process: "platform", environment, env, max: 4 });
   const operatorLimiter = createSlidingLimiter({ max: settings.p50.max, windowMs: settings.p50.windowSeconds * 1000 });
-  const server = createServer(platformRequestHandler({ authorization: createPgOidcAuthorization(pool), sessions: createPgPlatformSessionStore(pool), grants: createPgPlatformGrants(pool), settings, p50: operatorLimiter }));
+  const server = createServer(platformRequestHandler({ authorization: createPgOidcAuthorization(pool), sessions: createPgPlatformSessionStore(pool), grants: createPgPlatformGrants(pool), cases: createPgPlatformCase(pool, { applyGuard: createApplyGuardConfig(async () => {}) }), settings, p50: operatorLimiter }));
   const requested = options.port ?? Number(env.CNS_PLATFORM_PORT ?? 8788);
   try {
     await new Promise<void>((resolve, reject) => {

@@ -207,7 +207,7 @@ test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los r
     [{ memberships: [...base, edge("app_rw", "transition_owner", false, true)] }, /no esperada.*app_rw -> transition_owner/],
     [{ memberships: [...base, edge("worker", "outbox_claimer", false, true)] }, /no esperada.*worker -> outbox_claimer/],
     [{ memberships: [...base, edge("integrity_verifier", "consent_owner", true, true)] }, /no esperada.*integrity_verifier -> consent_owner/],
-    [{ memberships: [...base, edge("platform_rw", "rights_operator", false, true)] }, /no esperada.*platform_rw -> rights_operator/], // llega en PR-5
+    [{ memberships: [...base, edge("platform_rw", "rights_operator", true, true)] }, /no esperada.*platform_rw -> rights_operator/], // 0068: solo INHERIT FALSE, SET TRUE
     [{ memberships: [...base, edge("ddl_breakglass", "grant_owner", false, true)] }, /no esperada.*ddl_breakglass/], // llega en PR-7
     [{ memberships: base.filter((e) => !(e.member === "consent_owner" && e.role === "security_event_owner")) }, /falta la membresía.*consent_owner -> security_event_owner/],
     [{ memberships: base.filter((e) => e.role !== "outbox_claimer") }, /falta la membresía.*consent_migrator -> outbox_claimer/],
@@ -306,15 +306,15 @@ test("TEST-CNS-1361 ADR-010 PR-3 P2-7: no arranca si pg_db_role_setting fija una
   }
 });
 
-test("TEST-CNS-1377 F-A10-26: fuera de LOCAL no arranca si el rol puede ejecutar funciones case_state de operador/SYSTEM/siembra; en LOCAL (CI) arranca; fail-closed si no se puede verificar", async () => {
+test("TEST-CNS-1377 F-A10-26 (cerrado por privilegio, 6d parte 2): en TODO entorno, incluido LOCAL, no arranca si el rol puede ejecutar funciones case_state de operador/SYSTEM/siembra; fail-closed si no se puede verificar", async () => {
   const exec = { transitionExecute: ["apply_revocation", "cosign_case_confirmation"] };
   const stag = { data_class: "SYNTHETIC", environment: "STAGING" };
   const bad = await runStartupChecks(db({ ...exec, catalog: [stag] }), { expectedEnvironment: "STAGING" });
   assert.equal(bad.ok, false);
-  assert.match(bad.failures.join("\n"), /case_state\.apply_revocation fuera de LOCAL/);
-  assert.match(bad.failures.join("\n"), /case_state\.cosign_case_confirmation fuera de LOCAL/);
+  assert.match(bad.failures.join("\n"), /case_state\.apply_revocation \(F-A10-26/);
+  assert.match(bad.failures.join("\n"), /case_state\.cosign_case_confirmation \(F-A10-26/);
   assert.doesNotMatch((await runStartupChecks(db({ catalog: [stag] }), { expectedEnvironment: "STAGING" })).failures.join("\n"), /case_state/, "sin EXECUTE interino: no hay falla de case_state");
-  assert.equal((await runStartupChecks(db(exec), { expectedEnvironment: "LOCAL" })).ok, true, "LOCAL/CI: el interino es admisible");
+  assert.equal((await runStartupChecks(db(exec), { expectedEnvironment: "LOCAL" })).ok, false, "6d parte 2: la excepcion LOCAL se retiro (F-X8-15)");
   const unknown = await runStartupChecks(db({ transitionExecute: "error", catalog: [stag] }), { expectedEnvironment: "STAGING" });
   assert.match(unknown.failures.join("\n"), /no se pudo verificar el EXECUTE de las funciones case_state/);
 });

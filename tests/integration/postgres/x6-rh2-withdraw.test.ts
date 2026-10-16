@@ -1,130 +1,134 @@
-// Gobierna: CA-128 X6 P2 (Carlos 2026-10-01), API-CNS-140 withdraw_case_verification_proposal, db/migrations/0016 (RLS FORCE por
-// tenant de app.revocation) y 0017 (REVOCATION_PROPOSAL_WITHDRAWN en la lista blanca del ledger), INV-6. SYNTHETIC ONLY.
-// TEST-CNS-1019 (retiro/propuesta nueva/aprobacion en Postgres real, ledger y CHECK), TEST-CNS-1020 (aislamiento cross-tenant),
-// TEST-CNS-1022 (retiro idempotente en Postgres real).
+// Gobierna: CA-128 X6 P2 (Carlos 2026-10-01), API-CNS-140 withdraw_case_verification_proposal, db/migrations/0016 (RLS FORCE por tenant de app.revocation), 0017 (REVOCATION_PROPOSAL_WITHDRAWN en la lista blanca
+// del ledger) y 0070 (ADR-010 rev. 5, 6d parte 2: la funcion corre solo por platform con sesion CASE, actor desde la sesion, step-up en la misma tx), INV-6. SYNTHETIC ONLY.
+// TEST-CNS-1019 (retiro/propuesta nueva/aprobacion en Postgres real, ledger y CHECK), TEST-CNS-1020 (aislamiento cross-tenant), TEST-CNS-1022 (repeticion del retiro en Postgres real).
+// Reescritos sobre platform (createPgPlatformCase del pool de platform_rw): mismas aserciones de estado, ledger, codigos de dominio y aislamiento que cuando corrian con app_rw y el actor declarado.
 // Requiere Postgres real (harness.ts); skip sin entorno.
 
 import assert from "node:assert/strict";
-
-import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
-import { createPgTenantResolver } from "../../../src/infra/adapters/postgres/tenant-resolver.adapter.ts";
-import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
-import { createInMemoryDownstreamStub } from "../../../src/infra/adapters/in-memory-downstream-stub.adapter.ts";
-import { createInMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
-import { DomainError } from "../../../src/server/modules/common/errors.ts";
-import {
-  approveCaseVerification,
-  proposeCaseVerification,
-  withdrawCaseVerificationProposal,
-  type RevocationPorts,
-} from "../../../src/server/modules/revocation/revocation.ts";
-import { RH2_APPROVER, RH2_OPERATOR, RH2_ROSTER } from "../../contract/rh2-helper.ts";
+import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { rh2Target, seedAttestedStepUp, seedCaseWorld, startPlatformHttp } from "../../helpers/pg-case-world.ts";
+import type { CaseWorld, PlatformHttp } from "../../helpers/pg-case-world.ts";
 import { pgTest } from "./harness.ts";
-import type { PgTestContext } from "./harness.ts";
-import { pgOutsideTxPorts } from "./outside-tx.ts";
 
-const code = (c: string) => (e: unknown) => e instanceof DomainError && e.code === c;
+const LIMIT = { max: 50, windowSeconds: 600 } as const;
 
-async function withPorts<R>(ctx: PgTestContext, body: (ports: RevocationPorts) => Promise<R>): Promise<R> {
-  const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 4 });
-  try {
-    const uow = new PgUnitOfWork(pool);
-    const ports: RevocationPorts = {
-      ...pgOutsideTxPorts(uow),
-      recoveryLinkChannel: createInMemoryRecoveryLinkChannelSink(),
-      recoveryTokenPolicy: { ttlMs: 60_000 },
-      uow,
-      tenantResolver: createPgTenantResolver(pool),
-      downstreamStub: createInMemoryDownstreamStub(),
-    };
-    return await body(ports);
-  } finally {
-    await pool.end();
-  }
+interface Ledger { eventType: string; payload: Record<string, unknown> }
+
+const ledgerOf = async (admin: Client, tenantId: string, revocationRef: string): Promise<Ledger[]> =>
+  (await admin.query<{ event_type: string; payload: Record<string, unknown> }>(
+    "SELECT event_type, payload FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_type = 'Revocation' AND aggregate_id = $2 ORDER BY sequence", [tenantId, revocationRef],
+  )).rows.map((r) => ({ eventType: r.event_type, payload: r.payload }));
+
+/** RH2 paso 1 por platform (step-up sembrado para el proponente) y devuelve la propuesta. */
+async function propose(admin: Client, http: PlatformHttp, w: CaseWorld, proposalRef: string, script = "guion-1"): Promise<void> {
+  await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
+  const r = await http.cases.propose({ sid: w.op1.caseSession.sid, caseRef: w.caseRef, proposalRef, scriptVersion: script, limit: LIMIT });
+  assert.equal(r.ok, true, JSON.stringify(r));
 }
 
-async function seed(ports: RevocationPorts, tenantId: string, label: string) {
-  const revocationRef = fixtureUuid(`r-${label}`);
-  const caseRef = fixtureUuid(`c-${label}`);
-  await ports.revocationRepo.save({ revocationRef, tenantId, chainRef: fixtureUuid(`chain-${label}`), caseRef, revokedDecisionRef: fixtureUuid(`d-${label}`), status: "REQUESTED" });
-  const proposalRef = fixtureUuid(`p-${label}`);
-  await proposeCaseVerification(ports, RH2_ROSTER, tenantId, revocationRef, caseRef, { principalRef: RH2_OPERATOR }, { proposalRef, verificationScriptVersion: "guion-1" });
-  return { revocationRef, caseRef, proposalRef };
+async function withdraw(admin: Client, http: PlatformHttp, w: CaseWorld, who: "op1" | "op2", proposalRef: string) {
+  const actor = w[who];
+  await seedAttestedStepUp(admin, actor.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
+  return http.cases.withdraw({ sid: actor.caseSession.sid, caseRef: w.caseRef, proposalRef, limit: LIMIT });
 }
 
-pgTest("TEST-CNS-1019 pg: retiro RH2 limpia la propuesta (columnas NULL), registra REVOCATION_PROPOSAL_WITHDRAWN (CHECK de 0017), no cambia el estado; aprobar tras retiro falla y una propuesta nueva se aprueba hasta VERIFIED", async (ctx) => {
-  const T = fixtureUuid("t1019");
-  const admin = await ctx.connectAsSuperuser();
+async function approve(admin: Client, http: PlatformHttp, w: CaseWorld, proposalRef: string) {
+  await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
+  return http.cases.approve({ sid: w.approver.platform.sid, caseRef: w.caseRef, proposalRef, limit: LIMIT });
+}
+
+const revocationRow = async (admin: Client, w: CaseWorld) =>
+  (await admin.query("SELECT status, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
+
+pgTest("TEST-CNS-1019 pg platform: retiro RH2 limpia la propuesta (columnas NULL), registra REVOCATION_PROPOSAL_WITHDRAWN (CHECK de 0017), no cambia el estado; aprobar tras retiro falla y una propuesta nueva se aprueba hasta VERIFIED", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const w = await seedCaseWorld(ctx, "1019");
+  const http = await startPlatformHttp(ctx);
   try {
-    await withPorts(ctx, async (ports) => {
-      const { revocationRef, caseRef, proposalRef } = await seed(ports, T, "1019");
-      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: fixtureUuid("rh2-operator-2") }), code("ERR-RV-07"));
-      assert.equal((await ports.revocationRepo.findByRef(T, revocationRef))?.proposal?.proposalRef, proposalRef);
+    const proposalRef = fixtureUuid("p-1019");
+    await propose(admin, http, w, proposalRef);
+    // Otro operador (sesion CASE propia, step-up propio) no es el proponente: ERR-RV-07, la propuesta sigue PENDING.
+    const other = await withdraw(admin, http, w, "op2", proposalRef);
+    assert.deepEqual(other, { ok: false, reason: "ERR-RV-07" });
+    assert.equal((await revocationRow(admin, w)).proposal_ref, proposalRef);
 
-      const record = await withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR });
-      assert.equal(record.status, "REQUESTED");
-      const row = (await admin.query("SELECT status, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [T, revocationRef])).rows[0];
-      assert.deepEqual(row, { status: "REQUESTED", proposal_ref: null, proposed_by_ref: null, verification_script_version: null, second_approver_ref: null });
-      const events = await ports.ledger.listByAggregate(T, "Revocation", revocationRef);
-      assert.deepEqual(events.map((e) => e.eventType), ["REVOCATION_PROPOSAL_WITHDRAWN"]);
-      assert.deepEqual(events[0]!.payload, { revocationRef, caseRef, proposalRef, verificationScriptVersion: "guion-1", withdrawnByRef: RH2_OPERATOR });
+    const done = await withdraw(admin, http, w, "op1", proposalRef);
+    assert.equal(done.ok, true, JSON.stringify(done));
+    assert.deepEqual(await revocationRow(admin, w), { status: "REQUESTED", proposal_ref: null, proposed_by_ref: null, verification_script_version: null, second_approver_ref: null });
+    const events = await ledgerOf(admin, w.tenantId, w.revocationRef);
+    assert.deepEqual(events.map((e) => e.eventType), ["REVOCATION_REQUESTED", "REVOCATION_PROPOSAL_WITHDRAWN"], "el caso sembrado ya trae R1; el retiro agrega un solo evento");
+    assert.deepEqual(events[1]!.payload, { revocationRef: w.revocationRef, caseRef: w.caseRef, proposalRef, verificationScriptVersion: "guion-1", withdrawnByRef: w.op1.principal });
 
-      await assert.rejects(() => approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_APPROVER }, true), code("ERR-CM-01"));
-      await assert.rejects(() => proposeCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, { principalRef: RH2_OPERATOR }, { proposalRef, verificationScriptVersion: "guion-1" }), code("ERR-CM-06"));
+    // Aprobar una propuesta ya retirada: propuesta ajena (ERR-CM-01).
+    assert.deepEqual(await approve(admin, http, w, proposalRef), { ok: false, reason: "ERR-CM-01" });
 
-      const next = fixtureUuid("p-1019-nueva");
-      await proposeCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, { principalRef: RH2_OPERATOR }, { proposalRef: next, verificationScriptVersion: "guion-2" });
-      const approved = await approveCaseVerification(ports, RH2_ROSTER, T, revocationRef, caseRef, next, { principalRef: RH2_APPROVER }, true);
-      assert.equal(approved.record.status, "VERIFIED");
-      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, next, { principalRef: RH2_OPERATOR }), code("ERR-CM-06"), "VERIFIED: ya no PENDING");
-      const types = (await ports.ledger.listByAggregate(T, "Revocation", revocationRef)).map((e) => e.eventType);
-      assert.deepEqual(types, ["REVOCATION_PROPOSAL_WITHDRAWN", "REVOCATION_VERIFIED"]);
-    });
-    // 0017: el tipo nuevo esta en el CHECK; uno fuera de lista sigue rechazado (23514).
+    const next = fixtureUuid("p-1019-nueva");
+    await propose(admin, http, w, next, "guion-2");
+    const approved = await approve(admin, http, w, next);
+    assert.equal(approved.ok, true, JSON.stringify(approved));
+    assert.equal((await revocationRow(admin, w)).status, "VERIFIED");
+    // VERIFIED: ya no PENDING; y una propuesta sobre una Revocation VERIFIED es transicion invalida (ERR-CM-06).
+    assert.deepEqual(await withdraw(admin, http, w, "op1", next), { ok: false, reason: "ERR-CM-06" });
+    await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
+    assert.deepEqual(await http.cases.propose({ sid: w.op1.caseSession.sid, caseRef: w.caseRef, proposalRef, scriptVersion: "guion-1", limit: LIMIT }), { ok: false, reason: "ERR-CM-06" });
+    assert.deepEqual((await ledgerOf(admin, w.tenantId, w.revocationRef)).map((e) => e.eventType), ["REVOCATION_REQUESTED", "REVOCATION_PROPOSAL_WITHDRAWN", "REVOCATION_VERIFIED"]);
+    // 0017: el tipo nuevo esta en el CHECK; uno fuera de lista sigue rechazado.
     const def = (await admin.query("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conrelid = 'integrity.audit_event'::regclass AND conname = 'audit_event_event_type_allowlist'")).rows[0]?.d as string;
     assert.ok(def.includes("REVOCATION_PROPOSAL_WITHDRAWN") && def.includes("REVOCATION_VERIFIED") && !def.includes("NOT_IN_VOCABULARY"));
   } finally {
-    await admin.end();
+    await http.close();
   }
 });
 
-pgTest("TEST-CNS-1022 pg: repetir el retiro RH2 por el mismo proponente es idempotente (sin segundo evento); otro principal ERR-CM-01", async (ctx) => {
-  const T = fixtureUuid("t1022");
-  await withPorts(ctx, async (ports) => {
-    const { revocationRef, caseRef, proposalRef } = await seed(ports, T, "1022");
-    await withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR });
-    const replay = await withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: RH2_OPERATOR });
-    assert.equal(replay.status, "REQUESTED");
-    assert.equal((await ports.ledger.listByAggregate(T, "Revocation", revocationRef)).length, 1, "sin segundo evento");
-    await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, T, revocationRef, caseRef, proposalRef, { principalRef: fixtureUuid("rh2-operator-2") }), code("ERR-CM-01"));
-  });
+pgTest("TEST-CNS-1022 pg platform: repetir el retiro RH2 no produce un segundo evento ni cambia la fila (replay idempotente de revocation.spec RH2w, F-6D2-QA-01 cerrado: mismo resultado, un solo evento); otro principal ERR-CM-01", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const w = await seedCaseWorld(ctx, "1022");
+  const http = await startPlatformHttp(ctx);
+  try {
+    const proposalRef = fixtureUuid("p-1022");
+    await propose(admin, http, w, proposalRef);
+    assert.equal((await withdraw(admin, http, w, "op1", proposalRef)).ok, true);
+    const first = (await ledgerOf(admin, w.tenantId, w.revocationRef)).length;
+    const replay = await withdraw(admin, http, w, "op1", proposalRef);
+    assert.equal(replay.ok, true, JSON.stringify(replay));
+    assert.equal(first, 2);
+    assert.equal((await ledgerOf(admin, w.tenantId, w.revocationRef)).length, 2, "sin segundo evento (REQUESTED + un solo retiro)");
+    assert.deepEqual(await revocationRow(admin, w), { status: "REQUESTED", proposal_ref: null, proposed_by_ref: null, verification_script_version: null, second_approver_ref: null });
+    assert.deepEqual(await withdraw(admin, http, w, "op2", proposalRef), { ok: false, reason: "ERR-CM-01" });
+    assert.equal((await ledgerOf(admin, w.tenantId, w.revocationRef)).length, 2);
+  } finally {
+    await http.close();
+  }
 });
 
-pgTest("TEST-CNS-1020 pg: aislamiento cross-tenant del retiro RH2 (RLS FORCE): el tenant B no ve ni retira la propuesta del tenant A (ERR-CM-01) y la fila de A queda intacta", async (ctx) => {
-  const A = fixtureUuid("t1020-a");
-  const B = fixtureUuid("t1020-b");
-  const admin = await ctx.connectAsSuperuser();
+pgTest("TEST-CNS-1020 pg platform: aislamiento cross-tenant del retiro RH2 (RLS FORCE + sesion CASE ligada al caso): el tenant B no ve ni retira la propuesta del tenant A y la fila de A queda intacta", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const a = await seedCaseWorld(ctx, "1020a");
+  const b = await seedCaseWorld(ctx, "1020b");
+  assert.notEqual(a.tenantId, b.tenantId);
+  const http = await startPlatformHttp(ctx);
   try {
-    await withPorts(ctx, async (ports) => {
-      const a = await seed(ports, A, "1020a");
-      const b = await seed(ports, B, "1020b");
-      // B intenta retirar la propuesta de A con los refs de A: invisible bajo RLS.
-      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, B, a.revocationRef, a.caseRef, a.proposalRef, { principalRef: RH2_OPERATOR }), code("ERR-CM-01"));
-      // Refs mezclados dentro del tenant B (caso/propuesta de A sobre revocacion de B): uniforme ERR-CM-01.
-      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, B, b.revocationRef, a.caseRef, a.proposalRef, { principalRef: RH2_OPERATOR }), code("ERR-CM-01"));
-      await assert.rejects(() => withdrawCaseVerificationProposal(ports, RH2_ROSTER, B, b.revocationRef, b.caseRef, a.proposalRef, { principalRef: RH2_OPERATOR }), code("ERR-CM-01"));
-      const intactA = (await admin.query("SELECT proposal_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [A, a.revocationRef])).rows[0];
-      assert.equal(intactA?.proposal_ref, a.proposalRef, "la propuesta de A sigue PENDING");
-      const intactB = (await admin.query("SELECT proposal_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [B, b.revocationRef])).rows[0];
-      assert.equal(intactB?.proposal_ref, b.proposalRef, "la propuesta de B sigue PENDING");
-      assert.equal((await admin.query("SELECT count(*)::int AS n FROM integrity.audit_event WHERE event_type = 'REVOCATION_PROPOSAL_WITHDRAWN' AND tenant_id = ANY($1)", [[A, B]])).rows[0]?.n, 0, "ningun retiro cruzado registrado");
-      // El retiro legitimo en A sigue funcionando y no toca a B.
-      await withdrawCaseVerificationProposal(ports, RH2_ROSTER, A, a.revocationRef, a.caseRef, a.proposalRef, { principalRef: RH2_OPERATOR });
-      assert.equal((await ports.revocationRepo.findByRef(B, b.revocationRef))?.proposal?.proposalRef, b.proposalRef);
-      assert.equal((await ports.ledger.listByAggregate(B, "Revocation", b.revocationRef)).length, 0);
-    });
+    const pa = fixtureUuid("p-1020a");
+    const pb = fixtureUuid("p-1020b");
+    await propose(admin, http, a, pa);
+    await propose(admin, http, b, pb);
+    // La sesion CASE de B (su caso) sobre el caso de A: la base no la acepta (RC004 -> NOT_FOUND uniforme); el step-up queda sin efecto.
+    await seedAttestedStepUp(admin, b.op1.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(a.caseRef, pa));
+    assert.deepEqual(await http.cases.withdraw({ sid: b.op1.caseSession.sid, caseRef: a.caseRef, proposalRef: pa, limit: LIMIT }), { ok: false, reason: "NOT_FOUND" });
+    // Refs mezclados dentro del caso de B: la propuesta de A sobre la Revocation de B es ajena (ERR-CM-01).
+    assert.deepEqual(await withdraw(admin, http, b, "op1", pa), { ok: false, reason: "ERR-CM-01" });
+    // Operador de A sobre el caso de B: igual NOT_FOUND.
+    await seedAttestedStepUp(admin, a.op1.principal, "WITHDRAW_CASE_VERIFICATION", rh2Target(b.caseRef, pb));
+    assert.deepEqual(await http.cases.withdraw({ sid: a.op1.caseSession.sid, caseRef: b.caseRef, proposalRef: pb, limit: LIMIT }), { ok: false, reason: "NOT_FOUND" });
+    assert.equal((await revocationRow(admin, a)).proposal_ref, pa, "la propuesta de A sigue PENDING");
+    assert.equal((await revocationRow(admin, b)).proposal_ref, pb, "la propuesta de B sigue PENDING");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM integrity.audit_event WHERE event_type = 'REVOCATION_PROPOSAL_WITHDRAWN' AND tenant_id = ANY($1)", [[a.tenantId, b.tenantId]])).rows[0]?.n, 0, "ningun retiro cruzado registrado");
+    // El retiro legitimo en A sigue funcionando y no toca a B.
+    assert.equal((await withdraw(admin, http, a, "op1", pa)).ok, true);
+    assert.equal((await revocationRow(admin, b)).proposal_ref, pb);
+    assert.deepEqual((await ledgerOf(admin, b.tenantId, b.revocationRef)).map((e) => e.eventType), ["REVOCATION_REQUESTED"]);
   } finally {
-    await admin.end();
+    await http.close();
   }
 });

@@ -314,12 +314,13 @@ transitions:
     effects:
       - "CA-128 X6 P2 (Carlos, 2026-10-01): solo el proponente retira, solo mientras la propuesta está PENDING (Revocation REQUESTED); la propuesta queda WITHDRAWN (terminal: no aprobable ni reutilizable por proposalRef)."
       - "No cambia el estado de la Revocation (REQUESTED -> REQUESTED) y nunca produce FAILED (INV-6: FAILED solo por R8); la Revocation queda disponible para una nueva propuesta RH2."
+      - "Replay idempotente (F-6D2-QA-01, 0070): repetir el retiro por el MISMO proponente devuelve el mismo resultado ({ok, sequence} del evento original) sin segundo evento ni cambio de fila; otro principal o una propuesta que nunca existió = ERR-CM-01 (404 uniforme)."
     emits: [REVOCATION_PROPOSAL_WITHDRAWN]
     payloadValues: {revocationRef: required, caseRef: required, proposalRef: required, verificationScriptVersion: required, withdrawnByRef: proposer}
     idempotencyKey: "(revocationRef, proposal_ref)"
     errors: [ERR-RV-07, ERR-CM-09, ERR-CM-01, ERR-CM-10, ERR-CM-06, ERR-RV-13, ERR-RC-05]
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09", "SEC-CNS-013"]
-    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020, TEST-CNS-1021, TEST-CNS-1022, TEST-CNS-1023, TEST-CNS-1024]
+    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1019, TEST-CNS-1020, TEST-CNS-1021, TEST-CNS-1022]
     changeNote: "CA-128 X6 P2 (2026-10-01): transición nueva, sin cambiar RH2; tests propios TEST-CNS-1013..1022. CA-128 (2026-10-01, Carlos, OPEN-RV-14 (a)): RH2w exige stepUpAssertion igual que RH2 (guards += GRD-RC-12, errors += ERR-RC-05, stepUp reemplazado); tests propios += TEST-CNS-1023, TEST-CNS-1024. Divergencia de código de error registrada en OPEN-RV-15."
   - id: R3
     from: VERIFIED
@@ -383,14 +384,17 @@ transitions:
   - id: R4
     from: CONFIRMED
     to: APPLIED
-    command: "job durable APPLY_REVOCATION (worker), encolado en la tx de R3/R3r/RH3"
-    actor: {actorType: HUMAN, actorRole: DECISION_MAKER, executor: "worker (job idempotente)", note: "el actor de la revocación es siempre el DecisionMaker (DEC-BR-017 §8)"}
+    command: "R4 en línea, atómica con R3/R3r/RH3 (case_state.r4_apply dentro de confirm_revocation / cosign_case_confirmation); respaldo: worker con case_state.apply_revocation solo para CONFIRMED sin APPLIED"
+    actor: {actorType: HUMAN, actorRole: DECISION_MAKER, executor: "la misma tx de R3/R3r/RH3 (web o platform); respaldo: worker", note: "el actor de la revocación es siempre el DecisionMaker (DEC-BR-017 §8)"}
     routeClass: RIGHTS
     httpPost: false
     acceptsIntegrityFailure: true # INV-RV-07: ningún guard de R4 rechaza por clave/integridad (el checker lo exige; SEC N2-02)
     guards: [GRD-RV-11, GRD-RV-19, GRD-RV-23, GRD-RV-24, GRD-RV-29]
     effects:
-      - "Job at-least-once, idempotente por revocationRef, con reintentos hasta APPLIED; el worker lo toma de inmediato. No existe CONFIRMED sin su job (INV-RV-09)."
+      - "G-3 (ADR-010 rev. 5 §4.2.a, enmienda rev. c, Carlos 2026-10-15): R3/R3r/RH3 + R4 + C6 + ledger + outbox son UNA sola tx (0066; excepción declarada a GRD-CM-15, P6-2): si R4 falla se revierte todo; no existe CONFIRMED visible sin APPLIED (INV-RV-09 reformulada). El llamador (web o platform) reintenta la tx COMPLETA solo ante errores transitorios (40001, 40P01, 55P03, conflicto de secuencia, conexión perdida), con tope técnico configurable (maxAttempts, inicial 3; no regulatorio)."
+      - "Commit ambiguo: ANTES de cada reintento el llamador lee el estado con una lectura sin efectos (R3: findByRef; R1r-R3r: findByRef de la ref usada; RH3: case_state.read_case_apply_state; nunca otra ejecución de la acción). Si la Revocation ya está APPLIED por la misma solicitud se devuelve el resultado REAL (con su recibo), sin alerta; nunca se informa fallo de algo que se aplicó (F-6D2-QA-02). P1-a (F-6D3-SEC-P1A): si un intento posterior a un fallo transitorio devuelve UNIFORM/IN_PROGRESS (R3r) o ERR-CM-06 (R3/R3r) porque la Revocation ya esta APPLIED (o mas alla), el llamador lee el estado de la ref usada y devuelve el resultado real (CONFIRMED con su ref); nunca informa fallo de algo aplicado. Relectura de RH3 tolera la sesion CASE vencida < 15 min (F-6D3-SEC-07)."
+      - "Agotamiento de reintentos: alerta a operación sin PII (ops.record_revocation_apply_alert, motivo R4_RETRIES_EXHAUSTED) en una tx separada posterior al rollback (si falla, línea de log sin PII); el caso queda pendiente (Revocation sin APPLIED) y la respuesta es el error uniforme 503 GUARD_EVALUATOR_UNAVAILABLE SIN acuse de aplicación exitosa. Alcance de G-3 (decisión de Carlos 2026-10-16, opción A; P2-3): además del agotamiento, CUALQUIER fallo que no sea un guard de dominio ni un error transitorio al aplicar una revocación (R3, R3r/R1r-R3r, RH3 + R4; p. ej. XX000) genera la alerta R4_APPLY_FAILED (misma tx separada, sin PII, log del proceso si la tx de alerta falla), sin reintento y sin acuse de éxito; el worker ya alerta R4_BACKUP_FAILED ante cualquier fallo (TEST-CNS-1731, 1732, 1733, 1734). La escalada humana sigue siendo R9 por TTL P-19. LEGAL DECISION F-PR6-25 (qué se comunica al titular, registro durable en R1r-R3r, plazo P-19): no la decide el código."
+      - "Worker (respaldo): solo recupera Revocation CONFIRMED sin APPLIED (filas anteriores a 0066 o anomalías) con case_state.apply_revocation (idempotente por expected_sequence y por las claves de idempotencia del ledger; alertas R4_BACKUP_APPLIED / R4_BACKUP_FAILED); nunca ejecuta R3 en nombre del titular ni toca VERIFIED."
       - "En una tx: consent-decision C6 (CONSENT_REVOKED scope ALL) + RECEIPT_CREATED + outbox consent.revoked; effectiveAt = hora del append (RULE-CNS-025)."
       - "Carrera §4.2: revoca la decisión vigente de la cadena con expectedSequence y reintenta ante conflicto; si la decisión ya está REVOKED, APPLIED idempotente sin segundo CONSENT_REVOKED (SEC P2-05)."
       - "Con falla de clave/integridad se acepta igual (P16; LD-05). Efecto más restrictivo definido técnicamente: desde el append, AuthorizationCheck devuelve NOT_AUTHORIZED para la cadena, con registro durable y reconciliación de la firma pendiente (SEC P2-07)."
@@ -771,7 +775,7 @@ guards:
     testIds: [TEST-CNS-333, TEST-CNS-335, TEST-CNS-407, TEST-CNS-408]
   - id: GRD-RV-24
     name: durable_apply_job
-    rule: "R3, R3r y RH3 encolan ops.job(kind = APPLY_REVOCATION, revocationRef) en la misma tx que REVOCATION_CONFIRMED; el job es idempotente por revocationRef, at-least-once, con reintentos y alerta si supera el umbral operativo; no existe CONFIRMED sin job."
+    rule: "G-3 (rev. c): R4 corre EN LÍNEA y atómica con R3, R3r y RH3 (REVOCATION_CONFIRMED + CONSENT_REVOKED + RECEIPT_CREATED + outbox + decisión REVOKED en una sola tx); con reintentos acotados del llamador, alerta al agotarse y sin APPLIED ni acuse; el worker solo respalda CONFIRMED sin APPLIED. Sustituye al job durable APPLY_REVOCATION en la misma tx (no existe CONFIRMED visible sin APPLIED)."
     onFail: ERR-CM-06
     governedBy: ["SEC-CNS-012 P1-01 (fix técnico: 'R4 en la misma tx o job durable')", "SM-CNS-001 R0.1", "ADR-006 §6 (ops.claim_due_jobs)"]
     testIds: [TEST-CNS-331]
@@ -981,7 +985,7 @@ events:
     emittedBy: [RH2w]
     payload: [revocationRef, caseRef, proposalRef, verificationScriptVersion, withdrawnByRef] # solo refs UUIDv4; withdrawnByRef = proposedByRef (solo el proponente retira, solo PENDING); la propuesta queda WITHDRAWN (terminal) y la Revocation sigue REQUESTED, nunca FAILED (INV-6)
     governedBy: ["CA-128 X6 P2 (Carlos, 2026-10-01)", "GRD-RV-09"]
-    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1018, TEST-CNS-1019, TEST-CNS-1020]
+    testIds: [TEST-CNS-1013, TEST-CNS-1014, TEST-CNS-1015, TEST-CNS-1016, TEST-CNS-1017, TEST-CNS-1019, TEST-CNS-1020]
   - id: RECOVERY_TOKEN_ISSUED
     stream: SECURITY
     emittedBy: [RV0, "rights-case:RC2"]
@@ -1062,19 +1066,20 @@ invariants:
       TEST-CNS-447: "RH3 completa: el REVOCATION_CONFIRMED del ledger trae recordedByRef y cosignedByRef UUIDv4, distintos, iguales a las columnas de la confirmación, sin PII (escáner); el verificador del ledger reconstruye los cuatro ojos solo desde el evento."
       TEST-CNS-448: "Append de RH3 sin cosignedByRef o con cosignedByRef = recordedByRef → falla sin CONFIRMED ni job APPLY_REVOCATION; R3/R3r con cosignedByRef o recordedByRef → rechazo por lista blanca (INV-CM-05)."
   - id: INV-RV-09
-    statement: "Toda Revocation CONFIRMED tiene un job APPLY_REVOCATION pendiente o ya aplicado; no existe CONFIRMED huérfano, y una caída entre la confirmación y R4 termina en APPLIED al reanudar el worker."
+    statement: "No existe Revocation CONFIRMED visible sin APPLIED producida por R3/R3r/RH3 (R4 atómica, G-3); una CONFIRMED sin APPLIED (fila anterior a 0066 o anomalía) la recupera el worker de respaldo hasta APPLIED."
     governedBy: ["SEC-CNS-012 P1-01 (técnico)", "SM-CNS-001 R0.1"]
     testIds: [TEST-CNS-331]
 
 dbEnforcement:
   governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
+  g3Note: "ADR-010 rev. 5 6d parte 2 (0066-0071, aún no mergeadas): case_state.r4_apply (interna, sin EXECUTE de runtime); confirm_revocation y cosign_case_confirmation = R3 + R4 + C6 en la misma tx (excepción a GRD-CM-15); apply_revocation solo worker (F-A10-26 cerrado, EXECUTE de app_rw revocado); read_case_apply_state (rights_operator) = lectura previa al reintento de RH3; alert_apply_exhausted(case_ref, motivo R4_RETRIES_EXHAUSTED | R4_APPLY_FAILED); INV-14 (opción A, Carlos 2026-10-16): record_case_confirmation y cosign_case_confirmation rechazan (RV004 = ERR-RV-07) al aprobador de RH2 del caso vía platform.is_case_rh2_approver; revoke_with_recovery_link termina en VERIFIED y R3r + R4 se componen en la tx del llamador llamando a confirm_revocation (diferencia con §4.2.a, F-PR6-48 P2, para Carlos)."
   status: "PARTIAL (ADR-010 PR-5a, db/migrations/0037): FN-RV-01..15, TRG-RV-01 y newChecks; PR-5b: FN-RV-16, rights_case, INSERT de ledger de app_rw. Desviaciones de PR-5a: EXECUTE de FN-RV-07..15 tambien para app_rw (interino hasta PR-6); sin validacion de sesion CASE/PLATFORM ni grants; proposal_* sigue en app.revocation"
   implementedIn: "ADR-010 PR-5a (0037); PR-5b"
   conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
   functions:
     - {id: FN-RV-01, name: case_state.request_revocation, transitions: [R1], executedBy: app_rw, owner: transition_owner}
     - {id: FN-RV-02, name: case_state.verify_revocation_otp, transitions: [R2], executedBy: app_rw, owner: transition_owner}
-    - {id: FN-RV-03, name: case_state.confirm_revocation, transitions: [R3], executedBy: app_rw, owner: transition_owner}
+    - {id: FN-RV-03, name: case_state.confirm_revocation, transitions: [R3, R3r, R4], executedBy: app_rw, owner: transition_owner}
     - {id: FN-RV-04, name: case_state.revoke_with_recovery_link, transitions: [R1r, R2r, R3r, R10, R11], executedBy: app_rw, owner: transition_owner}
     - {id: FN-RV-05, name: case_state.withdraw_revocation, transitions: [R8], executedBy: app_rw, owner: transition_owner}
     - {id: FN-RV-06, name: case_state.express_revocation_intent_in_case, transitions: [RC3, R12], executedBy: app_rw, owner: transition_owner, sameLotAs: "rights-case:RC3/RC3a"}
@@ -1082,8 +1087,8 @@ dbEnforcement:
     - {id: FN-RV-08, name: case_state.approve_case_verification, transitions: [RH2, RH2v], step: approve, executedBy: platform_rw, owner: transition_owner, dualControl: "tres humanos: GRD-RV-09, INV-13, INV-14, P-38, CHECK 0016:16"}
     - {id: FN-RV-09, name: case_state.withdraw_case_verification_proposal, transitions: [RH2w], executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner}
     - {id: FN-RV-10, name: case_state.record_case_confirmation, transitions: [RH3], step: record, executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner, legal: "LD-03 (OPEN-RV-06); step-up OPEN-RV-10"}
-    - {id: FN-RV-11, name: case_state.cosign_case_confirmation, transitions: [RH3], step: cosign, executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner, dualControl: "cuatro ojos GRD-RV-26, INV-17, INV-RV-11; CHECK cosigned_by_ref <> recorded_by_ref (nuevo en PR-5)", legal: "LD-03; step-up OPEN-RV-10"}
-    - {id: FN-RV-12, name: case_state.apply_revocation, transitions: [R4], executedBy: worker, owner: transition_owner, sameLotAs: "consent-decision:C6", acceptsIntegrityFailure: true}
+    - {id: FN-RV-11, name: case_state.cosign_case_confirmation, transitions: [RH3, R4], step: cosign, executedBy: "platform_rw + SET LOCAL ROLE rights_operator", owner: transition_owner, dualControl: "cuatro ojos GRD-RV-26, INV-17, INV-RV-11; CHECK cosigned_by_ref <> recorded_by_ref (nuevo en PR-5)", legal: "LD-03; step-up OPEN-RV-10"}
+    - {id: FN-RV-12, name: case_state.apply_revocation, transitions: [R4], executedBy: "worker (respaldo; R4 en línea la hace case_state.r4_apply dentro de FN-RV-03/FN-RV-11)", owner: transition_owner, sameLotAs: "consent-decision:C6", acceptsIntegrityFailure: true}
     - {id: FN-RV-13, name: case_state.mark_downstream_emitted, transitions: [R5], executedBy: worker, owner: transition_owner}
     - {id: FN-RV-14, name: case_state.record_downstream_ack, transitions: [R6], executedBy: worker, owner: transition_owner}
     - {id: FN-RV-15, name: case_state.record_erasure_attestation, transitions: [R7], executedBy: worker, owner: transition_owner}

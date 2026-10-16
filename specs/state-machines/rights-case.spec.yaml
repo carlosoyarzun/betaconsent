@@ -420,10 +420,10 @@ guards:
     testIds: [TEST-CNS-295, TEST-CNS-296]
   - id: GRD-RC-10
     name: operator_case_scoped_session
-    rule: "Ningún grant del caso lo aprueba el aprobador de una RH2/RH2v del caso, tampoco después de RH2 (AUDIT N-08; lo rechazan approve_grant y un CHECK). Acto del operador solo por función SECURITY DEFINER (propose_case_verification, record_case_confirmation, cosign_case_confirmation, close_case) con sesión CASE vigente (P-25) ligada a un rights_case_grant atestado (≤ P-23), pedido por el receptor y aprobado por PRIVACY_LEGAL/SECURITY ≠ solicitante (grant_request pendiente expira según P-37); sin Membership TENANT (trigger + revalidación en cada sesión); rights_operator sin DML y lectura solo por vistas filtradas por case_scope()."
+    rule: "Ningún grant del caso lo aprueba NI lo recibe el aprobador de una RH2/RH2v del caso, tampoco después de RH2, y ese aprobador no registra ni co-firma RH3 (INV-14, decisión de Carlos 2026-10-16 opción A; AUDIT N-08; lo rechazan platform.approve_grant, que devuelve NULL con evidencia GRANT_REJECTED / RH_TWO_APPROVER, el trigger rights_case_grant_insert_guard y, en sentido inverso, approve_case_verification vía platform.record_rh2_approval que lanza RV004 = ERR-RV-07; 0069/0070, F-PR6-43 cerrado). Acto del operador solo por función SECURITY DEFINER (propose_case_verification, record_case_confirmation, cosign_case_confirmation, close_case) con sesión CASE vigente (P-25) ligada a un rights_case_grant atestado (≤ P-23), pedido por el receptor y aprobado por PRIVACY_LEGAL/SECURITY ≠ solicitante (grant_request pendiente expira según P-37); sin Membership TENANT (trigger + revalidación en cada sesión); rights_operator sin DML y lectura solo por vistas filtradas por case_scope()."
     onFail: ERR-RC-04
     governedBy: ["SM-CNS-001 §5.2", "ADR-006 §6.3", "ADR-002 §5", "DEC-BR-017 §3", "REQ-CNS-TBD-06 AC-06.3", "SEC-CNS-006 P-23, P-25, P-37", "CARLOS r3 R6-1, R6-5"]
-    testIds: [TEST-CNS-307, TEST-CNS-308, TEST-CNS-405]
+    testIds: [TEST-CNS-307, TEST-CNS-308, TEST-CNS-405, TEST-CNS-1707, TEST-CNS-1727, TEST-CNS-1728, TEST-CNS-1729, TEST-CNS-1730]
   - id: GRD-RC-11
     name: sla_placeholder_overdue_only
     rule: "Vencido el placeholder P-20: FLAG-overdue + alerta; ningún cambio de estado; la página del caso no promete plazo."
@@ -556,13 +556,13 @@ invariants:
     governedBy: ["SM-CNS-001 §7 INV-13", "ADR-006 §6.3 (S6-01)", "CARLOS r3 R6-4"]
     testIds: [TEST-CNS-297]
   - id: INV-14
-    statement: "Ningún RH2 surte efecto si su aprobador es el receptor o el aprobador de algún grant del caso (tres humanos)."
-    governedBy: ["SM-CNS-001 §7 INV-14", "CARLOS r3 R7-4", "SEC-CNS-006 P-38"]
-    testIds: [TEST-CNS-298]
+    statement: "Ningún RH2 surte efecto si su aprobador es el receptor o el aprobador de algún grant del caso (tres humanos). Decisión de Carlos 2026-10-16 (opción A, F-6D3-SEC-P1B): el vínculo es simétrico y se extiende a RH3: quien aprueba RH2 de un caso (platform.case_verification / second_approver_ref) no aprueba ni RECIBE un grant de ese caso (platform.approve_grant: GRANT_REJECTED / RH_TWO_APPROVER y RH_TWO_APPROVER_OPERATOR; trigger rights_case_grant_insert_guard), ni registra ni co-firma RH3 (record_case_confirmation / cosign_case_confirmation: RV004 = ERR-RV-07), y si ya tiene un grant (vigente, vencido o solicitud pendiente) del caso su RH2 se rechaza (record_rh2_approval). approve_grant y record_rh2_approval comparten un advisory lock por caso (carrera concurrente)."
+    governedBy: ["SM-CNS-001 §7 INV-14", "CARLOS r3 R7-4", "SEC-CNS-006 P-38", "CARLOS 2026-10-16 INV-14 opción A"]
+    testIds: [TEST-CNS-298, TEST-CNS-1727, TEST-CNS-1728, TEST-CNS-1729, TEST-CNS-1730]
   - id: INV-15
-    statement: "Toda renovación de un rights_case_grant tiene el approved_by_ref del grant original (FK compuesta + CHECK)."
-    governedBy: ["SM-CNS-001 §7 INV-15", "CARLOS r3 R7-5", "ADR-006 §6.3", "REQ-CNS-TBD-06 AC-06.6"]
-    testIds: [TEST-CNS-299]
+    statement: "Sin renovaciones (F-PR6-44, opción A, Carlos 2026-10-15): un rights_case_grant NO se renueva; cada grant es nuevo, con su propia solicitud, doble aprobación y step-up, y existe a lo sumo un grant vigente por (caso, operador) (request_grant rechaza GRANT_ACTIVE). No hay vínculo de renovación (ni FK compuesta ni CHECK de approved_by_ref heredado); renovar = nueva doble aprobación (SEC-CNS-006 P-23). El texto original de SM-CNS-001 §7 INV-15 (renovación con el mismo approved_by_ref) queda sustituido para IT0 por esta decisión."
+    governedBy: ["SM-CNS-001 §7 INV-15", "CARLOS r3 R7-5", "ADR-006 §6.3", "REQ-CNS-TBD-06 AC-06.6", "F-PR6-44 (opción A)", "SEC-CNS-006 P-23"]
+    testIds: [TEST-CNS-299, TEST-CNS-1662, TEST-CNS-1709]
   - id: INV-RC-01
     statement: "El RightsCase no tiene estado de expiración ni de rechazo; ningún timer lo cierra (INV-10); nunca deniega."
     governedBy: ["SM-CNS-001 §5.2", "DEC-BR-017 §4, §5", "RULE-CNS-TBD-02", "ADR-002 §10"]
@@ -590,7 +590,7 @@ invariants:
 
 dbEnforcement:
   governedBy: ["ADR-010 rev. 4 §4.2 (Q-18)", "specs/db-roles.spec.yaml", "GRD-CM-15", "FN-4"]
-  status: "PARTIAL (ADR-010 PR-5b, db/migrations/0038 y 0039): FN-RC-01, FN-RC-02, FN-RC-03 (con FN-RV-06), FN-RC-06 y TRG-RC-01 implementadas; pendientes FN-RC-04, FN-RC-05 (FN-RV-16) y FN-RC-07 porque el dominio no implementa RC0, RC2/RV0 ni R9 (F-A10-33). close_case: EXECUTE interino tambien para app_rw solo en LOCAL (F-A10-26), sin GRD-RC-10. GRD-RC-09 y RC3 solo desde CONTACTING: dominio y 0038 alineados (D1, Carlos 2026-10-13; D6: la Revocation que cierra el caso es posterior a su apertura, solo en la base; 0039). RC3a sigue sin implementar en el dominio (F-A10-33)"
+  status: "PARTIAL (ADR-010 PR-5b, db/migrations/0038 y 0039): FN-RC-01, FN-RC-02, FN-RC-03 (con FN-RV-06), FN-RC-06 y TRG-RC-01 implementadas; pendientes FN-RC-04, FN-RC-05 (FN-RV-16) y FN-RC-07 porque el dominio no implementa RC0, RC2/RV0 ni R9 (F-A10-33). close_case: desde 0070 (ADR-010 rev. 5, 6d parte 2) solo EXECUTE de rights_operator, que platform_rw asume por SET LOCAL ROLE con sesion CASE (GRD-RC-10 por la sesion; actor y tenant desde la sesion); app_rw ya no la ejecuta (F-A10-26 cerrado). GRD-RC-09 y RC3 solo desde CONTACTING: dominio y 0038 alineados (D1, Carlos 2026-10-13; D6: la Revocation que cierra el caso es posterior a su apertura, solo en la base; 0039). RC3a sigue sin implementar en el dominio (F-A10-33)"
   implementedIn: "ADR-010 PR-5b (0038)"
   conventions: "Ver db-roles.spec.yaml conventions.securityDefinerHygiene; todas las funciones son de transition_owner (Q-18); cada una fija case_state.effect con su nombre al entrar; tenant derivado del registro; actor desde la sesión y la aserción ATTESTED."
   functions:
