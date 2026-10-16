@@ -22,6 +22,7 @@ import { runVerifierCycle } from "../../../src/server/modules/step-up/verifier.t
 import type { VerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { loginFlow, seedOperator, sha, call } from "../../helpers/pg-login-flow.ts";
+import { seedApprovedGrant } from "../../helpers/pg-platform-session.ts";
 import type { LoginFlow } from "../../helpers/pg-login-flow.ts";
 import { pgTest } from "./harness.ts";
 import type { PgRole, PgTestContext } from "./harness.ts";
@@ -61,10 +62,8 @@ const sessionRow = async (admin: Client, sid: string): Promise<Record<string, un
   (await admin.query("SELECT session_kind, principal_ref, parent_session_ref, tenant_id, case_ref, grant_ref, revoke_cause, revoked_at IS NOT NULL AS revoked, expires_at, idle_seconds FROM platform.platform_session WHERE sid_hash = $1", [sha(sid)])).rows[0];
 
 async function grantFor(admin: Client, principal: string, caseRef: string, seconds = 3600): Promise<string> {
-  return (await admin.query<{ grant_ref: string }>(
-    "INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + make_interval(secs => $4)) RETURNING grant_ref",
-    [TENANT, caseRef, principal, seconds],
-  )).rows[0]!.grant_ref;
+  // 0059: el grant nace de una grant_request APPROVED sobre un caso REAL (el helper siembra ambos).
+  return seedApprovedGrant(admin, { tenantId: TENANT, caseRef, operator: principal, seconds });
 }
 
 /** Siembra (superusuario) una asercion ATTESTED + su canje para un principal arbitrario (p. ej. sin rol): el camino real no atesta a quien no tiene rol, pero el rol puede dejar de estar ACTIVE despues. */
@@ -446,7 +445,7 @@ pgTest("TEST-CNS-1560 pg e2e: login PLATFORM -> sesion PLATFORM -> login CASE co
     await admin.query("INSERT INTO platform.platform_role_assignment (principal_ref, platform_role, status, requested_by_ref) VALUES ($1, 'RIGHTS_OPERATOR', 'PENDING', $2)", [A, fixtureUuid("pr6c-e2e-req")]);
     await admin.query("UPDATE platform.platform_role_assignment SET status = 'ACTIVE', approved_by_ref = $2, approved_at = now() WHERE principal_ref = $1", [A, fixtureUuid("pr6c-e2e-apr")]);
     await admin.query("INSERT INTO platform.principal_identity (principal_ref, sub_hmac) VALUES ($1, $2)", [A, computeSubHmac(K_SUB, ISSUER, SUB)]);
-    await admin.query("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')", [fixtureUuid("pr6c-e2e-tenant"), CASE, A]);
+    await seedApprovedGrant(admin, { tenantId: fixtureUuid("pr6c-e2e-tenant"), caseRef: CASE, operator: A, seconds: 3600 });
     const idp = new SyntheticIdpAdapter({ environment: "LOCAL", issuer: ISSUER, audience: AUDIENCE });
     const authz = createPgOidcAuthorization(platformPool);
     const store = createPgOidcExchangeStore(verifierPool);
@@ -505,8 +504,15 @@ pgTest("TEST-CNS-1560 pg e2e: login PLATFORM -> sesion PLATFORM -> login CASE co
 pgTest("TEST-CNS-1561 pg: P-23/P-37/P-36/P-25 (SEC-CNS-006 rev. 5 §1): grant <= 4 h, grant_request expira a 1 h y vencida no es aprobable, sesiones <= 4 h", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   const R = P("1561-r");
-  const ins = (secs: number): Promise<unknown> =>
-    admin.query("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + make_interval(secs => $4))", [TENANT, CASE_A, R, secs]);
+  // 0059: el grant solo nace de una grant_request APPROVED (misma identidad: tenant, caso, operador); cada intento usa su propia solicitud.
+  const APR = P("1561-apr");
+  const ins = async (secs: number): Promise<unknown> => {
+    const rq = (await admin.query<{ request_ref: string }>(
+      "INSERT INTO platform.grant_request (tenant_id, case_ref, operator_principal_ref, requested_by_ref, expires_at, status, approved_by_ref, approved_at) VALUES ($1, $2, $3, $3, now() + interval '1 hour', 'APPROVED', $4, now()) RETURNING request_ref",
+      [TENANT, CASE_A, R, APR],
+    )).rows[0]!;
+    return admin.query("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at, request_ref, approved_by_ref) VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5, $6)", [TENANT, CASE_A, R, secs, rq.request_ref, APR]);
+  };
   await ins(4 * 3600); // P-23: valid_until - valid_from <= 4 h
   await assert.rejects(ins(4 * 3600 + 60), (e) => codeOf(e) === "23514", "grant > 4 h");
   await assert.rejects(ins(-5), (e) => codeOf(e) === "23514", "grant sin vida");
@@ -555,7 +561,7 @@ pgTest("TEST-CNS-1562 pg: validate_session de CASE exige la inactividad de la se
       `INSERT INTO platform.platform_session (sid_hash, session_kind, principal_ref, assertion_ref, issued_at, expires_at, idle_seconds, last_seen_at)
        VALUES ($1, 'PLATFORM', $2, $3, now() - interval '2 hours', now() + interval '1 hour', $4, now() - make_interval(secs => $5)) RETURNING session_ref`,
       [sha(sidP), R, await lg("LOGIN_PLATFORM", null, "p"), parentIdle, parentSeenAgo])).rows[0]!;
-    const grant = (await admin.query<{ grant_ref: string }>("INSERT INTO platform.rights_case_grant (tenant_id, case_ref, operator_principal_ref, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour') RETURNING grant_ref", [TENANT, caseRef, R])).rows[0]!;
+    const grant = { grant_ref: await seedApprovedGrant(admin, { tenantId: TENANT, caseRef, operator: R, seconds: 3600 }) };
     await admin.query(
       `INSERT INTO platform.platform_session (sid_hash, session_kind, principal_ref, assertion_ref, parent_session_ref, tenant_id, case_ref, grant_ref, expires_at, idle_seconds)
        VALUES ($1, 'CASE', $2, $3, $4, $5, $6, $7, now() + interval '1 hour', 600)`,

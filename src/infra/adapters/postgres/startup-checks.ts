@@ -66,11 +66,12 @@ export class StartupCheckError extends Error {
  * (begin_oidc_authorization / complete_oidc_callback, sin SELECT ni DML sobre oidc_exchange; reemplazan a enqueue_oidc_exchange), consulta el estado con (ref, state)
  * y registra los limites P-49/P-50; el worker purga las solicitudes vencidas; integrity_verifier toma el canje y registra las aserciones (UNICO que atesta: step-up y login).
  * consume_login_assertion es INTERNA (sin EXECUTE de runtime). ADR-010 PR-6c (0053): platform_rw abre, valida y revoca las sesiones PLATFORM y CASE
- * (open_platform_session / open_case_session / validate_session / revoke_session); revoke_session_internal es INTERNA.
+ * (open_platform_session / open_case_session / validate_session / revoke_session); revoke_session_internal es INTERNA. ADR-010 PR-6d parte 1 (0060-0062): platform_rw emite el nonce del
+ * step-up de caso (issue_step_up_nonce) y solicita/aprueba grants (request_grant / approve_grant); session_principal, rights_case_of y consume_step_up son INTERNAS.
  */
 export const PLATFORM_RUNTIME_EXECUTE: Readonly<Record<string, readonly string[]>> = {
   app_rw: ["request_membership"],
-  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event", "open_platform_session", "open_case_session", "validate_session", "revoke_session"],
+  platform_rw: ["request_membership", "approve_membership", "request_role_assignment", "approve_role_assignment", "authorize", "issue_action_nonce", "begin_oidc_authorization", "complete_oidc_callback", "exchange_status", "record_limit_event", "open_platform_session", "open_case_session", "validate_session", "revoke_session", "issue_step_up_nonce", "request_grant", "approve_grant"],
   worker: ["purge_expired_oidc_exchange"],
   integrity_verifier: ["claim_oidc_exchange", "record_assertion", "record_login_assertion"],
   // ADR-010 rev. 5 PR-6e (G-9, P2(e)): el reconciler solo lee (SELECT por columnas); sin EXECUTE en platform ni acceso a sus tablas.
