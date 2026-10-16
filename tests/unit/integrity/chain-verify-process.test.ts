@@ -61,7 +61,7 @@ test("TEST-CNS-1738 solo acepta su rol: otro rol de runtime (incluidos integrity
 });
 
 test("TEST-CNS-1738 CNS_CHAIN_VERIFIER_BATCH: entero 100..5000 (default 500); fuera de rango o no numerico = el proceso no arranca (sin eco del valor)", async () => {
-  assert.deepEqual(parseChainVerifierConfig({ CNS_ENVIRONMENT: "LOCAL" }), { batchSize: DEFAULT_BATCH, allowEmpty: false });
+  assert.deepEqual(parseChainVerifierConfig({ CNS_ENVIRONMENT: "LOCAL" }), { batchSize: DEFAULT_BATCH, allowEmpty: false, stateDir: undefined });
   assert.equal(DEFAULT_BATCH, 500);
   for (const ok of [String(MIN_BATCH), "500", String(MAX_BATCH)]) assert.equal(parseChainVerifierConfig({ CNS_CHAIN_VERIFIER_BATCH: ok }).batchSize, Number(ok));
   for (const bad of ["99", "5001", "0", "-1", "abc", "1e3", "500.5", " 500", "", "999999"]) {
@@ -128,7 +128,7 @@ test("TEST-CNS-1755 grafo de imports de main.ts: no importa el verifier OIDC, st
   // Y el codigo del proceso no menciona CNS_VERIFIER_ mas que para rechazarlo.
   const procText = readFileSync(join(ROOT, "src/server/entrypoints/chain-verifier/chain-verify-process.ts"), "utf8");
   const reads = [...procText.matchAll(/env\.(CNS_[A-Z0-9_]+)/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(reads)].sort(), ["CNS_CHAIN_VERIFIER_ALLOW_EMPTY", "CNS_CHAIN_VERIFIER_BATCH", "CNS_ENVIRONMENT"]);
+  assert.deepEqual([...new Set(reads)].sort(), ["CNS_CHAIN_VERIFIER_ALLOW_EMPTY", "CNS_CHAIN_VERIFIER_BATCH", "CNS_CHAIN_VERIFIER_STATE_DIR", "CNS_ENVIRONMENT"]);
 });
 
 test("TEST-CNS-1754 el lector usa solo parametros $n: ningun SQL se arma con interpolacion de datos (tenant_id, cursor, lote) ni concatenacion de entradas", () => {
@@ -138,7 +138,7 @@ test("TEST-CNS-1754 el lector usa solo parametros $n: ningun SQL se arma con int
   for (const m of text.matchAll(/\.query(?:<[^>]*(?:<[^>]*>)?[^>]*>)?\(\s*/g)) {
     count += 1;
     const rest = text.slice(m.index! + m[0].length);
-    const constant = /^(EVENT_SELECT|TENANTS_SQL|UNCHAINED_SQL|LOCK_SQL)\s*[,)]/.exec(rest);
+    const constant = /^(EVENT_SELECT|TENANTS_SQL|UNCHAINED_SQL|LOCK_SQL|LOCK_CHECKPOINT_SQL|CHECKPOINT_HEADS_SQL|HASH_AT_SQL)\s*[,)]/.exec(rest);
     if (constant !== null) continue;
     const quote = rest[0];
     assert.ok(quote === '"' || quote === "`", `query con argumento no constante: ${rest.slice(0, 40)}`);

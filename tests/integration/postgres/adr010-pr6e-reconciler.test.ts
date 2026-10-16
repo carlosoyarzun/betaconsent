@@ -114,22 +114,23 @@ pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS s
   assert.equal(await cols("app.revocation"), "revocation_ref,revoked_decision_ref,tenant_id");
   assert.equal(await cols("integrity.audit_event"), "aggregate_id,aggregate_type,chain_seq,event_type,occurred_at,sequence,tenant_id", "sin payload, hashes ni refs de actor (P1-1)");
   // Exactamente 3 policies (todas SELECT, TO integrity_reconciler, USING true), una por tabla.
-  const pol = (await admin.query<{ rel: string; polname: string; polcmd: string; q: string }>(
+  const pol = (await admin.query<{ rel: string; polname: string; polcmd: string; q: string | null }>(
     `SELECT p.polrelid::regclass::text AS rel, p.polname, p.polcmd, pg_get_expr(p.polqual, p.polrelid) AS q FROM pg_policy p
-      WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_reconciler') = ANY (p.polroles) OR 0 = ANY (p.polroles) AND p.polrelid::regclass::text IN ('integrity.audit_event', 'app.invitation', 'app.consent_decision', 'app.revocation')
+      WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_reconciler') = ANY (p.polroles) OR 0 = ANY (p.polroles) AND p.polrelid::regclass::text IN ('integrity.audit_event', 'app.invitation', 'app.consent_decision', 'app.revocation', 'integrity.reconcile_run')
       ORDER BY 1`)).rows;
   assert.deepEqual(pol.map((p) => [p.rel, p.polname, p.polcmd, p.q]), [
     ["app.consent_decision", "consent_decision_reconciler_select", "r", "true"],
     ["app.invitation", "invitation_reconciler_select", "r", "true"],
     ["app.revocation", "revocation_reconciler_select", "r", "true"],
     ["integrity.audit_event", "audit_event_reconciler_select", "r", "true"],
+    ["integrity.reconcile_run", "reconcile_run_reconciler_insert", "a", null], // PR-7b (0077): unica policy de escritura del rol
   ]);
-  // Sin privilegios de escritura ni EXECUTE en ningun esquema de dominio; ningun privilegio sobre otras tablas de app/ops/platform.
+  // Sin privilegios de escritura ni EXECUTE en ningun esquema de dominio salvo el INSERT de conteos en integrity.reconcile_run (PR-7b); ningun privilegio sobre otras tablas de app/ops/platform.
   const writes = await admin.query(
     `SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'ops', 'platform', 'integrity', 'case_state', 'ledger_gen', 'tenant_resolve') AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
         AND (has_table_privilege('integrity_reconciler', c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('integrity_reconciler', c.oid, 'INSERT,UPDATE,REFERENCES'))`);
-  assert.equal(writes.rowCount, 0);
+  assert.deepEqual(writes.rows.map((r) => Object.values(r)[0]), ["integrity.reconcile_run"], "PR-7b: el reconciler solo INSERTA conteos en integrity.reconcile_run");
   const reads = (await admin.query<{ t: string }>(
     `SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'ops', 'platform', 'integrity', 'case_state', 'ledger_gen', 'tenant_resolve') AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_any_column_privilege('integrity_reconciler', c.oid, 'SELECT') ORDER BY 1`)).rows.map((r) => r.t);

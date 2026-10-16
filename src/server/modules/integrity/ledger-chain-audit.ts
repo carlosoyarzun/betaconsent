@@ -6,6 +6,7 @@
 
 import { createChainVerifier } from "../common/ledger-chain.ts";
 import type { ChainBreak, ChainRow } from "../common/ledger-chain.ts";
+import type { ChainAnomaly } from "./chain-checkpoint.ts";
 
 /** Tope de lineas de detalle por corrida (el conteo total siempre se informa). Mismo valor que el reconciler. */
 export const MAX_LOGGED_DIVERGENCES = 200;
@@ -21,19 +22,23 @@ export interface TenantChainResult {
   readonly verified: number;
   /** chainSeq del ultimo eslabon leido (0 si el tenant no tiene cadena): cabeza de la cadena para compararla a mano hasta PR-7 (C9). */
   readonly head: number;
+  /** eventHash del ultimo eslabon leido (null si el tenant no tiene cadena). NUNCA se imprime en el log; alimenta checkpoints y raiz Merkle (PR-7b). */
+  readonly headHash: string | null;
   /** Primer eslabon roto, si lo hay. */
   readonly broken: ChainBreak | null;
-  /** Filas sin eslabon (chain_seq NULL) posteriores al inicio de la cadena: evaden el verificador (ver ledger-verify-cli.ts). */
+  /** Filas sin eslabon (chain_seq NULL) posteriores al inicio de la cadena: evaden el verificador (UNCHAINED_SQL de chain-verifier-reader.ts). */
   readonly unchainedAfterStart: number;
 }
 
 export interface ChainAuditReport {
-  /** true solo si ningun tenant esta roto ni tiene filas sin eslabon. */
+  /** true solo si ningun tenant esta roto ni tiene filas sin eslabon ni hay anomalias de cola/estado (PR-7b). */
   readonly ok: boolean;
   readonly tenants: number;
   readonly events: number;
   readonly broken: number;
   readonly unchained: number;
+  /** Anomalias de cola/estado (truncamiento, tenant desaparecido, copia local en desacuerdo): F-PR6E-05. */
+  readonly anomalies: readonly ChainAnomaly[];
   readonly byReason: Readonly<Record<string, number>>;
   readonly results: readonly TenantChainResult[];
 }
@@ -46,17 +51,19 @@ export async function auditTenantChain(tenantId: string, batches: AsyncIterable<
   const verifier = createChainVerifier();
   let events = 0;
   let head = 0;
+  let headHash: string | null = null;
   for await (const batch of batches) {
     for (const row of batch) {
       events += 1;
       head = row.chainSeq;
+      headHash = row.eventHash;
       verifier.push(row);
     }
   }
-  return { tenantId, events, verified: verifier.verified, head, broken: verifier.broken, unchainedAfterStart };
+  return { tenantId, events, verified: verifier.verified, head, headHash, broken: verifier.broken, unchainedAfterStart };
 }
 
-export function summarizeChainAudit(results: readonly TenantChainResult[]): ChainAuditReport {
+export function summarizeChainAudit(results: readonly TenantChainResult[], anomalies: readonly ChainAnomaly[] = []): ChainAuditReport {
   const byReason: Record<string, number> = {};
   let events = 0;
   let broken = 0;
@@ -69,10 +76,11 @@ export function summarizeChainAudit(results: readonly TenantChainResult[]): Chai
       byReason[r.broken.reason] = (byReason[r.broken.reason] ?? 0) + 1;
     }
   }
-  return { ok: broken === 0 && unchained === 0, tenants: results.length, events, broken, unchained, byReason, results };
+  for (const a of anomalies) byReason[a.kind] = (byReason[a.kind] ?? 0) + 1;
+  return { ok: broken === 0 && unchained === 0 && anomalies.length === 0, tenants: results.length, events, broken, unchained, anomalies, byReason, results };
 }
 
-/** Exit codes del proceso: 0 cadena integra en todos los tenants; 2 algun tenant roto o con filas sin eslabon; 1 arranque, configuracion, lectura o asercion fallida (fail-closed). */
+/** Exit codes del proceso: 0 cadena integra en todos los tenants; 2 algun tenant roto, con filas sin eslabon o con anomalia de cola/estado; 1 arranque, configuracion, lectura o asercion fallida (fail-closed). */
 export const CHAIN_VERIFIER_EXIT = { OK: 0, ERROR: 1, BROKEN: 2 } as const;
 
 export function exitCodeFor(report: ChainAuditReport): number {
@@ -93,9 +101,11 @@ const safeInt = (value: number): string => (Number.isSafeInteger(value) && value
  */
 export function formatChainReport(report: ChainAuditReport): string[] {
   const kinds = Object.entries(report.byReason).filter(([k]) => REASON.test(k)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, n]) => `${k}=${n}`).join(",");
-  const lines = [`chain_verify_run ok=${report.ok} tenants=${report.tenants} events=${report.events} broken=${report.broken} unchained=${report.unchained}${kinds === "" ? "" : ` kinds=${kinds}`}`];
+  const anomalyPart = report.anomalies.length > 0 ? ` anomalies=${report.anomalies.length}` : "";
+  const lines = [`chain_verify_run ok=${report.ok} tenants=${report.tenants} events=${report.events} broken=${report.broken} unchained=${report.unchained}${anomalyPart}${kinds === "" ? "" : ` kinds=${kinds}`}`];
+  const anomalous = new Set(report.anomalies.map((a) => a.tenantId));
   for (const r of report.results.slice(0, MAX_LOGGED_TENANTS)) {
-    lines.push(`chain_verify_tenant tenant=${safeTenant(r.tenantId)} head=${safeInt(r.head)} events=${safeInt(r.events)} verified=${safeInt(r.verified)} status=${r.broken === null && r.unchainedAfterStart === 0 ? "ok" : "bad"}`);
+    lines.push(`chain_verify_tenant tenant=${safeTenant(r.tenantId)} head=${safeInt(r.head)} events=${safeInt(r.events)} verified=${safeInt(r.verified)} status=${r.broken === null && r.unchainedAfterStart === 0 && !anomalous.has(r.tenantId) ? "ok" : "bad"}`);
   }
   if (report.results.length > MAX_LOGGED_TENANTS) lines.push(`chain_verify_tenants_truncated shown=${MAX_LOGGED_TENANTS} total=${report.results.length}`);
   let detail = 0;
@@ -116,6 +126,13 @@ export function formatChainReport(report: ChainAuditReport): string[] {
         detail += 1;
         lines.push(`chain_verify_unchained tenant=${safeTenant(r.tenantId)} count=${safeInt(r.unchainedAfterStart)}`);
       }
+    }
+  }
+  for (const a of report.anomalies) {
+    detailTotal += 1;
+    if (detail < MAX_LOGGED_DIVERGENCES) {
+      detail += 1;
+      lines.push(`chain_verify_anomaly kind=${REASON.test(a.kind) ? a.kind : "?"} tenant=${a.tenantId === null ? "-" : safeTenant(a.tenantId)}`);
     }
   }
   if (detailTotal > MAX_LOGGED_DIVERGENCES) lines.push(`chain_verify_details_truncated shown=${MAX_LOGGED_DIVERGENCES} total=${detailTotal}`);

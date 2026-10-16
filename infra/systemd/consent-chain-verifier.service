@@ -20,6 +20,11 @@ Group=consent-chain-verifier
 WorkingDirectory=/opt/consent-app
 EnvironmentFile=/etc/consent/chain-verifier.env
 ExecStart=/usr/bin/node /opt/consent-app/src/server/entrypoints/chain-verifier/main.ts
+# PR-7b (ADR-010 rev. 6, F-PR6E-05, T-16): copia local de las ultimas cabezas por tenant, 0600 del uid consent-chain-verifier, dentro de un StateDirectory 0700 (ProtectSystem=strict lo deja escribible). Obligatoria fuera de LOCAL.
+# Si la copia falta o no coincide con integrity.chain_checkpoint el proceso sale con 2 (restablecerla es decision humana). El proceso solo ESCRIBE chain_run/chain_checkpoint (INSERT) y este directorio.
+StateDirectory=consent-chain-verifier
+StateDirectoryMode=0700
+Environment=CNS_CHAIN_VERIFIER_STATE_DIR=/var/lib/consent-chain-verifier
 # Sin Restart: una cadena rota (exit 2) es un hallazgo, no una falla transitoria; reintentar no la corrige. La siguiente corrida la dispara el timer.
 TimeoutStartSec=30min
 # Ningun SuccessExitStatus: todo exit != 0 (1 error, 2 cadena rota) es fallo y activa OnFailure=.

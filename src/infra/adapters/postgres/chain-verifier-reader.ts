@@ -6,6 +6,9 @@
 // concedidas en 0073. Sin DML y sin funciones. Todo valor variable (tenant, cursor, tamano de lote) va como parametro $n: ninguna cadena de SQL se arma con datos.
 // ADAPTADOR (ADR-001 §11): el dominio (modules/integrity/ledger-chain-audit.ts) no conoce Postgres.
 //
+// PR-7b (rev. 6, F-PR6E-05): dentro del MISMO snapshot lee tambien la ultima cabeza persistida por tenant (integrity.chain_checkpoint, SELECT concedido en 0076) y, por tenant, el hash del ledger en una secuencia dada
+// (`hashAtSeq`, solo las columnas concedidas en 0073) para que el proceso detecte truncamiento de cola. La ESCRITURA de checkpoints/chain_run es de chain-checkpoint-store.ts (tx READ WRITE aparte, T-3).
+//
 // Aserciones al arrancar, DENTRO de la misma tx (SEC-06-3, C5/C6/C13): transaction_read_only = on; la policy exacta (unica que alcanza al rol, permisiva, SELECT, USING true, sin WITH CHECK; se cuentan las
 // PUBLIC y las RESTRICTIVE); relrowsecurity y relforcerowsecurity; has_column_privilege de las 17 columnas. Si algo falta o difiere: ChainVerifierPreconditionError (el proceso sale con exit 1). Sin ellas, una
 // policy borrada o una RESTRICTIVE dejaria al verifier viendo 0 filas y daria exit 0 en verde falso.
@@ -13,6 +16,8 @@
 import type { PoolClient } from "pg";
 
 import type { ChainRow } from "../../../server/modules/common/ledger-chain.ts";
+import type { HeadRef } from "../../../server/modules/integrity/chain-checkpoint.ts";
+import { assertCheckpointWritable, ChainVerifierPreconditionError } from "./chain-checkpoint-preconditions.ts";
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike, Queryable } from "./pool.ts";
 
@@ -24,22 +29,8 @@ export const CHAIN_COLUMNS: readonly string[] = [
 export const CHAIN_VERIFIER_POLICY = "audit_event_chain_verifier_select";
 export const CHAIN_VERIFIER_APPLICATION_NAME = "consent-chain-verifier";
 
-export type ChainPreconditionCode =
-  | "READ_ONLY_NOT_ENFORCED"
-  | "POLICY_MISSING_OR_ALTERED"
-  | "RLS_NOT_FORCED"
-  | "COLUMN_PRIVILEGE_MISSING"
-  | "CATALOG_UNREADABLE";
-
-/** Una precondicion de lectura no se cumple (policy/FORCE RLS/privilegios/solo lectura). Fail-closed: el proceso sale con exit 1. El mensaje es un enum fijo: sin datos ni nombres de filas. */
-export class ChainVerifierPreconditionError extends Error {
-  readonly code: ChainPreconditionCode;
-  constructor(code: ChainPreconditionCode) {
-    super(`precondicion de lectura de la cadena incumplida: ${code}`);
-    this.name = "ChainVerifierPreconditionError";
-    this.code = code;
-  }
-}
+export { ChainVerifierPreconditionError } from "./chain-checkpoint-preconditions.ts";
+export type { ChainPreconditionCode } from "./chain-checkpoint-preconditions.ts";
 
 /** SQL fijo (sin interpolacion de datos): solo constantes de columnas. */
 const EVENT_SELECT =
@@ -48,8 +39,15 @@ const EVENT_SELECT =
   "FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq > $2::bigint ORDER BY chain_seq LIMIT $3::int";
 /** Toma el lock de lectura sobre el ledger sin leer filas ni columnas distintas de las concedidas (SEC-6F-01). */
 const LOCK_SQL = "SELECT tenant_id FROM integrity.audit_event LIMIT 0";
+/** Lock de lectura sobre la tabla de checkpoints (mismo motivo que LOCK_SQL: lo asertado no cambia durante la corrida). */
+const LOCK_CHECKPOINT_SQL = "SELECT run_id FROM integrity.chain_checkpoint LIMIT 0";
+/** Ultima cabeza persistida por tenant (la de mayor head_chain_seq). */
+const CHECKPOINT_HEADS_SQL =
+  "SELECT DISTINCT ON (tenant_id) tenant_id::text AS tenant_id, head_chain_seq::float8 AS head_chain_seq, head_event_hash FROM integrity.chain_checkpoint ORDER BY tenant_id, head_chain_seq DESC";
+/** Hash del ledger en una secuencia de un tenant (solo columnas concedidas en 0073). */
+const HASH_AT_SQL = "SELECT event_hash FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq = $2::bigint";
 const TENANTS_SQL = "SELECT DISTINCT tenant_id::text AS tenant_id FROM integrity.audit_event ORDER BY 1";
-/** Filas sin eslabon (chain_seq NULL) posteriores al inicio de la cadena (primer eslabon del tenant): las anteriores a 0013 son legado fuera de la cadena (misma consulta que ledger-verify-cli.ts). */
+/** Filas sin eslabon (chain_seq NULL) posteriores al inicio de la cadena (primer eslabon del tenant): las anteriores a 0013 son legado fuera de la cadena. */
 const UNCHAINED_SQL =
   "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq IS NULL " +
   "AND occurred_at > (SELECT min(occurred_at) FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq = 1)";
@@ -144,6 +142,8 @@ export async function assertChainReadable(db: Queryable): Promise<{ readonly cat
   );
   if (cols.rows[0]?.missing !== 0) throw new ChainVerifierPreconditionError("COLUMN_PRIVILEGE_MISSING");
 
+  await assertCheckpointWritable(db);
+
   const catalog = await db.query<{ environment: string }>("SELECT environment FROM ops.db_catalog");
   const env = catalog.rows[0]?.environment;
   if (catalog.rows.length !== 1 || typeof env !== "string") throw new ChainVerifierPreconditionError("CATALOG_UNREADABLE");
@@ -155,6 +155,17 @@ export interface TenantChainInput {
   readonly tenantId: string;
   readonly unchainedAfterStart: number;
   readonly batches: AsyncIterable<readonly ChainRow[]>;
+  /** Ultima cabeza persistida en integrity.chain_checkpoint para el tenant (null si nunca hubo). */
+  readonly previousHead: HeadRef | null;
+  /** Hash del ledger en `chainSeq` (null si no existe esa secuencia), dentro del mismo snapshot. */
+  hashAtSeq(chainSeq: number): Promise<string | null>;
+}
+
+/** Resultado del snapshot: tenants visitados y ultimas cabezas persistidas por tenant (todas, incluidas las de tenants sin eventos). */
+export interface ChainSnapshotResult {
+  readonly visited: number;
+  readonly tenantIds: ReadonlySet<string>;
+  readonly checkpointHeads: ReadonlyMap<string, HeadRef>;
 }
 
 export interface ChainSnapshotOptions {
@@ -165,26 +176,37 @@ export interface ChainSnapshotOptions {
 
 /**
  * Lee TODOS los tenants en un snapshot y entrega cada uno al callback (sin acumular el ledger en memoria). Siempre READ ONLY; al terminar ROLLBACK (nada que confirmar). Si el cliente trae app.tenant_id
- * arrastrado de otra sesion, acquireCleanClient lo destruye y falla cerrado. Devuelve la cantidad de tenants visitados.
+ * arrastrado de otra sesion, acquireCleanClient lo destruye y falla cerrado. Devuelve los tenants visitados y las ultimas cabezas persistidas.
  */
-export async function forEachTenantChainInSnapshot(pool: PoolLike, visit: (input: TenantChainInput) => Promise<void>, options: ChainSnapshotOptions): Promise<number> {
+export async function forEachTenantChainInSnapshot(pool: PoolLike, visit: (input: TenantChainInput) => Promise<void>, options: ChainSnapshotOptions): Promise<ChainSnapshotResult> {
   const client: PoolClient = await acquireCleanClient(pool);
   try {
     await client.query("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY");
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    let visited: number;
+    let result: ChainSnapshotResult;
     try {
       // SEC-6F-01: PRIMERA sentencia de la tx. Toma ACCESS SHARE sobre la tabla y bloquea CREATE/DROP/ALTER POLICY y NO FORCE RLS (ACCESS EXCLUSIVE) hasta el ROLLBACK:
       // lo asertado abajo no puede cambiar durante la corrida (sin esto, una policy alterada a mitad de camino daria exit 0 con filas filtradas).
       await client.query(LOCK_SQL);
+      await client.query(LOCK_CHECKPOINT_SQL);
       const { catalogEnvironment } = await assertChainReadable(client);
+      const checkpointHeads = new Map<string, HeadRef>();
+      for (const h of (await client.query<{ tenant_id: string; head_chain_seq: number; head_event_hash: string }>(CHECKPOINT_HEADS_SQL)).rows) {
+        checkpointHeads.set(h.tenant_id, { chainSeq: Number(h.head_chain_seq), eventHash: h.head_event_hash });
+      }
       const tenants = (await client.query<{ tenant_id: string }>(TENANTS_SQL)).rows.map((r) => r.tenant_id);
       options.onReadable?.({ catalogEnvironment, tenants: tenants.length });
       for (const tenantId of tenants) {
         const unchained = (await client.query<{ n: number }>(UNCHAINED_SQL, [tenantId])).rows[0]?.n ?? 0;
-        await visit({ tenantId, unchainedAfterStart: unchained, batches: readTenantBatches(client, tenantId, options.batchSize) });
+        await visit({
+          tenantId,
+          unchainedAfterStart: unchained,
+          batches: readTenantBatches(client, tenantId, options.batchSize),
+          previousHead: checkpointHeads.get(tenantId) ?? null,
+          hashAtSeq: async (chainSeq) => (await client.query<{ event_hash: string }>(HASH_AT_SQL, [tenantId, chainSeq])).rows[0]?.event_hash ?? null,
+        });
       }
-      visited = tenants.length;
+      result = { visited: tenants.length, tenantIds: new Set(tenants), checkpointHeads };
     } finally {
       await client.query("ROLLBACK");
     }
@@ -192,11 +214,12 @@ export async function forEachTenantChainInSnapshot(pool: PoolLike, visit: (input
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     try {
       await client.query(LOCK_SQL);
+      await client.query(LOCK_CHECKPOINT_SQL);
       await assertChainReadable(client);
     } finally {
       await client.query("ROLLBACK");
     }
-    return visited;
+    return result;
   } finally {
     client.release();
   }

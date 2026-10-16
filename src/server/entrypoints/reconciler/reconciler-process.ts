@@ -1,11 +1,14 @@
 // Gobierna: ADR-010 rev. 5 §2 (sexto proceso y credencial: `reconciler` -> `integrity_reconciler`, G-9), §4.2.c (hasta PR-7: exit code != 0 ante cualquier divergencia y log SIN PII: ids opacos,
 // tipo de divergencia y conteos, sin payloads), §10 fila 6e, F-PR6-29; INV-DBR-02 (cada proceso arranca solo con su rol exacto), INV-DBR-08. specs/db-roles.spec.yaml.
 //
-// Logica del proceso reconciler (sin HTTP, sin egress, sin escrituras). ENTRYPOINT (ADR-001 §11): puede importar adaptadores. Un pool UNICO del rol `integrity_reconciler` con chequeos de arranque
+// Logica del proceso reconciler (sin HTTP, sin egress; su UNICA escritura es el INSERT de conteos en integrity.reconcile_run, PR-7b/0077). ENTRYPOINT (ADR-001 §11): puede importar adaptadores. Un pool UNICO del rol `integrity_reconciler` con chequeos de arranque
 // (expectedRole, session_user = current_user, sin superusuario, sin GUC app.* ni role del cliente, URL saneada con assertSafeConnectionUrl, catalogo/environment): un rol equivocado NO arranca.
 // Cada corrida concilia estado <-> ledger (modules/integrity/ledger-reconciliation.ts) en un snapshot. NO recomputa la cadena SHA-256: no lee hashes ni payload (7 columnas, 0057) y el recomputo es del proceso
-// `chain-verifier` (entrypoints/chain-verifier/, ADR-010 rev. 6, F-PR6E-06; F-06-A). No corrige ni escribe nada: la persistencia de la conciliacion llega en PR-7 (§4.2.c). Cero PII y cero secretos en logs: solo ids opacos, tipos de evento, enums y conteos; nunca payloads ni hashes.
+// `chain-verifier` (entrypoints/chain-verifier/, ADR-010 rev. 6, F-PR6E-06; F-06-A). No corrige nada del estado ni del ledger. PR-7b (rev. 5 §7, "persistencia de la conciliacion"): al terminar inserta UNA fila de conteos por codigo de divergencia en integrity.reconcile_run (tx READ WRITE aparte; sin ids de agregado, sin PII). Cero PII y cero secretos en logs: solo ids opacos, tipos de evento, enums y conteos; nunca payloads ni hashes.
 
+import { randomUUID } from "node:crypto";
+
+import { persistReconcileRun } from "../../../infra/adapters/postgres/reconcile-run-store.ts";
 import { openProcessPool, parseRuntimeEnvironment } from "../../../infra/adapters/postgres/runtime-process.ts";
 import { forEachTenantInSnapshot } from "../../../infra/adapters/postgres/reconciler-reader.ts";
 import { reconcileTenant } from "../../modules/integrity/ledger-reconciliation.ts";
@@ -33,6 +36,7 @@ export async function startReconcilerProcess(options: StartReconcilerProcessOpti
   const pool = await openProcessPool({ process: "reconciler", environment, env, max: 1 });
   return {
     async run() {
+      const startedAt = new Date();
       const divergences: Divergence[] = [];
       let events = 0;
       const tenants = await forEachTenantInSnapshot(pool, (input) => {
@@ -41,7 +45,9 @@ export async function startReconcilerProcess(options: StartReconcilerProcessOpti
       });
       const byKind: Record<string, number> = {};
       for (const d of divergences) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
-      return { ok: divergences.length === 0, tenants, events, divergences, byKind };
+      const report: ReconciliationReport = { ok: divergences.length === 0, tenants, events, divergences, byKind };
+      await persistReconcileRun(pool, { runId: randomUUID(), startedAt, environment, tenants, events, divergences: divergences.length, byCode: byKind, exitCode: report.ok ? 0 : 2 });
+      return report;
     },
     stop: () => pool.end(),
   };
