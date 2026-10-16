@@ -22,7 +22,7 @@ CREATE TABLE integrity.anchor (
   prev_anchor_hash text        CONSTRAINT anchor_prev_hash_shape CHECK (prev_anchor_hash ~ '^[0-9a-f]{64}$'),
   anchor_hash      text        NOT NULL CONSTRAINT anchor_hash_shape CHECK (anchor_hash ~ '^[0-9a-f]{64}$') CONSTRAINT anchor_hash_unique UNIQUE,
   key_id           text        NOT NULL CONSTRAINT anchor_key_id_shape CHECK (key_id ~ '^[A-Za-z0-9._:-]{1,64}$'),
-  signature        text        NOT NULL CONSTRAINT anchor_signature_shape CHECK (signature ~ '^[A-Za-z0-9+/=_-]{16,512}$'),
+  signature        text        NOT NULL CONSTRAINT anchor_signature_shape CHECK (signature ~ '^[A-Za-z0-9+/=_-]{16,255}$'),
   format_version   smallint    NOT NULL CONSTRAINT anchor_format_version_positive CHECK (format_version >= 1),
   CONSTRAINT anchor_prev_only_first CHECK ((anchor_seq = 1) = (prev_anchor_hash IS NULL))
 );

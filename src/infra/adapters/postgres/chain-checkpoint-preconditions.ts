@@ -30,7 +30,7 @@ interface PolicyRow {
   polcmd: string;
   permissive: boolean;
   qual: string | null;
-  has_check: boolean;
+  wcheck: string | null;
   roles: string[];
 }
 
@@ -42,7 +42,7 @@ export async function assertCheckpointWritable(db: Queryable): Promise<void> {
   const rows = async (table: string): Promise<PolicyRow[]> =>
     (
       await db.query<PolicyRow>(
-        `SELECT p.polname::text AS polname, p.polcmd::text AS polcmd, p.polpermissive AS permissive, pg_catalog.pg_get_expr(p.polqual, p.polrelid) AS qual, p.polwithcheck IS NOT NULL AS has_check,
+        `SELECT p.polname::text AS polname, p.polcmd::text AS polcmd, p.polpermissive AS permissive, pg_catalog.pg_get_expr(p.polqual, p.polrelid) AS qual, pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) AS wcheck,
                 ARRAY(SELECT CASE WHEN r = 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(r)::text END FROM pg_catalog.unnest(p.polroles) AS r) AS roles
            FROM pg_catalog.pg_policy p
           WHERE p.polrelid = $1::pg_catalog.regclass AND (0::pg_catalog.oid = ANY (p.polroles) OR (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) = ANY (p.polroles))
@@ -50,13 +50,13 @@ export async function assertCheckpointWritable(db: Queryable): Promise<void> {
         [table],
       )
     ).rows;
-  const only = (p: PolicyRow | undefined, name: string, cmd: string, qual: string | null, check: boolean): boolean =>
-    p !== undefined && p.polname === name && p.polcmd === cmd && p.permissive && p.qual === qual && p.has_check === check && p.roles.length === 1 && p.roles[0] === "integrity_chain_verifier";
+  const only = (p: PolicyRow | undefined, name: string, cmd: string, qual: string | null, wcheck: string | null): boolean =>
+    p !== undefined && p.polname === name && p.polcmd === cmd && p.permissive && p.qual === qual && p.wcheck === wcheck && p.roles.length === 1 && p.roles[0] === "integrity_chain_verifier";
   const ckp = await rows("integrity.chain_checkpoint");
   const run = await rows("integrity.chain_run");
   if (
-    ckp.length !== 2 || !only(ckp[0], "chain_checkpoint_verifier_insert", "a", null, true) || !only(ckp[1], "chain_checkpoint_verifier_select", "r", "true", false) ||
-    run.length !== 1 || !only(run[0], "chain_run_verifier_insert", "a", null, true)
+    ckp.length !== 2 || !only(ckp[0], "chain_checkpoint_verifier_insert", "a", null, "true") || !only(ckp[1], "chain_checkpoint_verifier_select", "r", "true", null) ||
+    run.length !== 1 || !only(run[0], "chain_run_verifier_insert", "a", null, "true")
   ) {
     throw new ChainVerifierPreconditionError("CHECKPOINT_POLICY_MISSING_OR_ALTERED");
   }
