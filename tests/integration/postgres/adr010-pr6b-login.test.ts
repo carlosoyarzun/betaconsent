@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { stepUpSid } from "../../helpers/step-up-enqueue.ts";
 import { seedPlatformSession } from "../../helpers/pg-platform-session.ts";
 import { pgTest } from "./harness.ts";
 
@@ -54,7 +55,7 @@ async function begin(platform: Client, kind: string, principal: string | null, o
   const p51 = opts.p51 ?? NOT_LIMITED;
   const ref = (await call<{ r: string | null }>(platform, principal, "SELECT platform.begin_oidc_authorization($1, $2, $3, $4, $5, $6, $7, $8, $9) AS r", [
     kind, sha(state), binding, PKCE, target, opts.ttl ?? 300, opts.maxAwaiting ?? null, kind === "STEP_UP" ? p51.max : null, kind === "STEP_UP" ? p51.window : null,
-  ], opts.sid ?? null))[0]?.r;
+  ], opts.sid ?? (kind === "STEP_UP" ? await stepUpSid(principal) : null)))[0]?.r;
   return typeof ref === "string" ? { ref, state, stateHash: sha(state), binding, target } : null;
 }
 
@@ -154,7 +155,7 @@ pgTest("TEST-CNS-1500 pg: begin/complete: state de un solo uso; ajeno, malformad
   const stepUp = async (p51: { max: number; window: number } | null): Promise<string | null> => {
     const nonce = await issue();
     const state = randomBytes(24).toString("base64url");
-    const r = (await call<{ r: string | null }>(platform, B, "SELECT platform.begin_oidc_authorization('STEP_UP', $1, $2, $3, NULL, 300, NULL, $4, $5) AS r", [sha(state), sha(nonce), PKCE, p51?.max ?? null, p51?.window ?? null]))[0]?.r;
+    const r = (await call<{ r: string | null }>(platform, B, "SELECT platform.begin_oidc_authorization('STEP_UP', $1, $2, $3, NULL, 300, NULL, $4, $5) AS r", [sha(state), sha(nonce), PKCE, p51?.max ?? null, p51?.window ?? null], await stepUpSid(B)))[0]?.r;
     return r ?? null;
   };
   assert.equal(await stepUp(null), null, "P-51 sin configuracion: fail-closed");

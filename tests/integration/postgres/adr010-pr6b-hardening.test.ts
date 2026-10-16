@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { stepUpSid } from "../../helpers/step-up-enqueue.ts";
 import { seedPlatformSession } from "../../helpers/pg-platform-session.ts";
 import { pgTest } from "./harness.ts";
 
@@ -52,8 +53,8 @@ pgTest("TEST-CNS-1512 pg carrera: N inicios concurrentes no superan P-51 (por op
   // P-51: 6 nonces del mismo operador; 6 inicios concurrentes con max = 2 => exactamente 2.
   const nonces: string[] = [];
   for (let i = 0; i < 6; i++) nonces.push((await call<{ n: string }>(clients[0]!, A, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 300) AS n", [`${P(`t-${i}`)}:CONTEXT_OWNER`]))[0]!.n);
-  const stepUp = (c: Client, nonce: string): Promise<string | null> =>
-    call<{ r: string | null }>(c, A, "SELECT platform.begin_oidc_authorization('STEP_UP', $1, $2, $3, NULL, 300, NULL, 2, 600) AS r", [sha(randomBytes(24).toString("base64url")), sha(nonce), PKCE]).then((r) => r[0]?.r ?? null);
+  const stepUp = async (c: Client, nonce: string): Promise<string | null> =>
+    call<{ r: string | null }>(c, A, "SELECT platform.begin_oidc_authorization('STEP_UP', $1, $2, $3, NULL, 300, NULL, 2, 600) AS r", [sha(randomBytes(24).toString("base64url")), sha(nonce), PKCE], await stepUpSid(A)).then((r) => r[0]?.r ?? null);
   const results = await Promise.all(nonces.map((n, i) => stepUp(clients[i]!, n)));
   assert.equal(results.filter((r) => r !== null).length, 2, "P-51: exactamente 2 de 6 concurrentes");
   assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM platform.session_event WHERE event_type = 'STEP_UP_BEGIN' AND principal_ref = $1", [A])).rows[0]!.n), 2);
@@ -76,7 +77,7 @@ pgTest("TEST-CNS-1512 pg carrera: N inicios concurrentes no superan P-51 (por op
   await seedOperator(admin, other);
   const n8 = (await call<{ n: string }>(clients[0]!, other, "SELECT platform.issue_action_nonce('REQUEST_ROLE_ASSIGNMENT', ARRAY[$1], NULL, 300) AS n", [`${P("t-y")}:CONTEXT_OWNER`]))[0]!.n;
   void n7;
-  const su = (await call<{ r: string | null }>(clients[0]!, other, "SELECT platform.begin_oidc_authorization('STEP_UP', $1, $2, $3, NULL, 300, 1, 5, 600) AS r", [sha(randomUUID()), sha(n8), PKCE]))[0]?.r;
+  const su = (await call<{ r: string | null }>(clients[0]!, other, "SELECT platform.begin_oidc_authorization('STEP_UP', $1, $2, $3, NULL, 300, 1, 5, 600) AS r", [sha(randomUUID()), sha(n8), PKCE], await stepUpSid(other)))[0]?.r;
   assert.ok(typeof su === "string", "STEP_UP entra aun con P-53 excedido");
 });
 

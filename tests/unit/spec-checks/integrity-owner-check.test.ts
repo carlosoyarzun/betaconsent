@@ -174,7 +174,9 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
   const m0050 = "db/migrations/0050_adr010_pr6b_oidc_login_schema.sql";
   const m0051 = "db/migrations/0051_adr010_pr6b_oidc_login_functions.sql";
   // PR-6c (0052-0054): mismos owners que 0051 (platform_schema_owner y grant_owner).
-  const m6c = ["db/migrations/0052_adr010_pr6c_session_schema.sql", "db/migrations/0053_adr010_pr6c_session_functions.sql", "db/migrations/0054_adr010_pr6c_begin_login_case_session.sql"];
+  const m6c = ["db/migrations/0052_adr010_pr6c_session_schema.sql", "db/migrations/0053_adr010_pr6c_session_functions.sql", "db/migrations/0054_adr010_pr6c_begin_login_case_session.sql",
+    // PR-6d parte 1 (0059-0063): mismos owners (platform_schema_owner y grant_owner).
+    "db/migrations/0059_adr010_pr6d1_grants_schema.sql", "db/migrations/0060_adr010_pr6d1_step_up_session_principal.sql", "db/migrations/0061_adr010_pr6d1_step_up_nonce_functions.sql", "db/migrations/0062_adr010_pr6d1_request_approve_grant.sql", "db/migrations/0063_adr010_pr6d1_validate_case_tenant.sql"];
   const t5a = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
   const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: m0041, text: set37 }, { path: m0044, text: set37 }, { path: tpra, text: "SET LOCAL ROLE transition_owner;" }, { path: m0040, text: set40 }, { path: m0050, text: set35 }, { path: m0051, text: set40 }, ...m6c.map((path) => ({ path, text: set40 })), { path: m0042, text: "SET LOCAL ROLE transition_owner;" }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: tprb, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb2, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb3, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }, ...pb];
   assert.deepEqual(checkAdr010OwnerUsage(base), []);

@@ -226,17 +226,30 @@ paths:
       operationId: issueStepUp
       x-api-id: API-CNS-TBD-P07
       tags: [platform]
-      summary: "issueStepUp - Sesion caseSession o platformSession (P-36, 4.3.1, Q11)."
-      x-roles: "RIGHTS_OPERATOR, APPROVER, PLATFORM"
-      x-step-up: "(body: action + refs opacas; 302 al IdP con nonce ligado a tenant, accion, refs y principal)"
+      summary: "issueStepUp - Sesion platformSession (P-36, 4.3.1, Q11). PR-6d parte 1: acciones REQUEST_GRANT y APPROVE_GRANT. Body {action, targetRef} (REQUEST_GRANT: caseRef; APPROVE_GRANT: grantRequestRef). El principal sale de la sesion validada en la base, NUNCA de la request. Origin = mismo origen. P-50. P-51 (5 / 10 min) en la base."
+      x-session: platformSession
+      x-roles: "RIGHTS_OPERATOR (REQUEST_GRANT), APPROVER (APPROVE_GRANT)"
+      x-step-up: "(body: action + destino opaco; 303 al IdP con max_age=0 + prompt=login y el nonce emitido por la base, ligado a operador, accion y sha256(destino))"
       x-db-role: "platform_rw"
-      x-db-function: "platform.issue_action_nonce"
-      x-delivery: "PR-4"
+      x-db-function: "platform.issue_step_up_nonce + platform.begin_oidc_authorization(STEP_UP)"
+      x-delivery: "PR-6d parte 1 (REQUEST_GRANT, APPROVE_GRANT); el resto de acciones, 6d parte 2"
+      security: [{platformSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, targetRef]
+              additionalProperties: false
+              properties:
+                action: {type: string, enum: [REQUEST_GRANT, APPROVE_GRANT]}
+                targetRef: {type: string, format: uuid}
       responses:
-        '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+        '303':
+          description: "Location = autorizacion del IdP (max_age=0, prompt=login). Set-Cookie oidcState (Lax). Sin cuerpo."
         '404':
-          description: Respuesta uniforme.
+          description: Respuesta uniforme (origen, sesion, accion, rol, destino o limite).
   /platform/rights-cases/{caseRef}:
     get:
       operationId: getRightsCase
@@ -396,13 +409,16 @@ paths:
       x-step-up: "REQUEST_GRANT"
       x-db-role: "platform_rw"
       x-db-function: "platform.request_grant"
-      x-delivery: "PR-5"
+      x-delivery: "PR-6d parte 1"
+      description: |
+        El operador (RIGHTS_OPERATOR) pide el grant PARA SI MISMO: ni el principal ni el tenant salen del cuerpo (el cuerpo se ignora). El tenant se deriva del caso REAL; la solicitud pendiente vence a 1 h (P-37).
+        Consume el step-up REQUEST_GRANT en la misma transaccion. Origin = mismo origen. P-50.
       security: [{platformSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: "{requestRef}"
         '404':
           description: Respuesta uniforme.
   /platform/rights-cases/{caseRef}/grant-requests/{grantRequestRef}/approval:
@@ -416,14 +432,17 @@ paths:
       x-step-up: "APPROVE_GRANT"
       x-db-role: "platform_rw"
       x-db-function: "platform.approve_grant"
-      x-delivery: "PR-5"
+      x-delivery: "PR-6d parte 1"
+      description: |
+        Aprobador (APPROVER: PRIVACY_LEGAL o SECURITY) distinto del solicitante. Body opcional {validSeconds}: entero 60..14400 (P-23; defecto 7200; mas de 4 h se rechaza). Solicitud vencida (P-37) no aprobable y registrada.
+        Consume el step-up APPROVE_GRANT sobre grantRequestRef en la misma transaccion. Origin = mismo origen. P-50. Pendiente (6d parte 2): cruce con el aprobador RH2 del caso (F-PR6-43).
       security: [{platformSession: []}]
       parameters:
         - {name: caseRef, in: path, required: true, schema: {type: string, format: uuid}}
         - {name: grantRequestRef, in: path, required: true, schema: {type: string, format: uuid}}
       responses:
         '200':
-          description: OUTLINE - respuesta por definir en PR-3 a PR-5.
+          description: {grantRef}
         '404':
           description: Respuesta uniforme.
   /platform/memberships/requests:

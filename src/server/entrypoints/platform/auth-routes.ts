@@ -44,6 +44,24 @@ export interface AuthRoutesDeps extends OperatorLimitDeps {
   readonly flowTtlSeconds: number;
 }
 
+/** URL de autorizacion del IdP (G-5: max_age=0 + prompt=login en TODO flujo, login y step-up). `nonce` es el del navegador (login) o el nonce de step-up emitido por la base. */
+export function idpAuthorizationUrl(idp: IdpRedirectConfig, flow: { readonly state: string; readonly nonce: string; readonly verifier: string }): URL {
+  const target = new URL(idp.authorizationEndpoint);
+  for (const [k, v] of Object.entries({
+    response_type: "code",
+    client_id: idp.clientId,
+    redirect_uri: idp.redirectUri,
+    scope: "openid",
+    state: flow.state,
+    nonce: flow.nonce,
+    code_challenge: createHash("sha256").update(flow.verifier, "utf8").digest("base64url"),
+    code_challenge_method: "S256",
+    max_age: "0",
+    prompt: "login",
+  })) target.searchParams.set(k, v);
+  return target;
+}
+
 const b64u = (n: number): string => randomBytes(n).toString("base64url");
 const sha256Hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 
@@ -122,20 +140,7 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse,
         maxAwaiting: deps.maxAwaiting,
         ...(caseLogin === undefined ? {} : { sessionSid: caseLogin.sessionSid, targetRefHash: caseLogin.targetRefHash }),
       });
-      const target = new URL(deps.idp.authorizationEndpoint);
-      for (const [k, v] of Object.entries({
-        response_type: "code",
-        client_id: deps.idp.clientId,
-        redirect_uri: deps.idp.redirectUri,
-        scope: "openid",
-        state,
-        nonce,
-        code_challenge: createHash("sha256").update(verifier, "utf8").digest("base64url"),
-        code_challenge_method: "S256",
-        // G-5: reautenticacion obligatoria en cada login.
-        max_age: "0",
-        prompt: "login",
-      })) target.searchParams.set(k, v);
+      const target = idpAuthorizationUrl(deps.idp, { state, nonce, verifier });
       res.writeHead(302, { ...COMMON, location: target.toString(), "set-cookie": cookie(OIDC_STATE_COOKIE, state, "Lax", deps.flowTtlSeconds) });
       res.end();
       return true;
