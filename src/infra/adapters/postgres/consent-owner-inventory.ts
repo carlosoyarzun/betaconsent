@@ -77,7 +77,7 @@ rows AS (
   UNION ALL
   -- V2 acl de relaciones de consent_owner (tabla y columnas)
   SELECT 'V2|acl|' || rl.qname || '|' || COALESCE((SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text || ':' || a.privilege_type || ':' || pg_catalog.pg_get_userbyid(a.grantor)::pg_catalog.text, ',' ORDER BY pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text, a.privilege_type)
-                                                    FROM pg_catalog.aclexplode(rl.relacl) a WHERE a.grantee <> 0), '')
+                                                    FROM pg_catalog.aclexplode(rl.relacl) a WHERE a.grantee <> 0 AND a.privilege_type <> 'MAINTAIN'), '')
     FROM crels rl
   UNION ALL
   SELECT 'V2|colacl|' || rl.qname || '|' || pg_catalog.count(*)::pg_catalog.text || '|' || pg_catalog.md5(pg_catalog.string_agg(at.attname::pg_catalog.text || '=' || (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text || ':' || a.privilege_type || ':' || pg_catalog.pg_get_userbyid(a.grantor)::pg_catalog.text, ',' ORDER BY pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text, a.privilege_type) FROM pg_catalog.aclexplode(at.attacl) a), ';' ORDER BY at.attname::pg_catalog.text COLLATE "C"))
