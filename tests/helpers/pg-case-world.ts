@@ -241,12 +241,13 @@ export async function injectOutboxFailure(admin: Client, o: { name: string; tena
  * Commit ambiguo: el COMMIT SI se ejecuta en la base, pero al cliente le llega una conexion perdida (SQLSTATE 08006). Se arma con `times` cuantos COMMIT consecutivos fallan asi. Envuelve el pool que
  * recibe el adaptador de casos (opcion `casePool` de startPlatformHttp).
  */
-export function ambiguousCommitPool(times: number): { wrap: (pool: Pool) => PoolLike; fired(): number } {
+export function ambiguousCommitPool(times = 0): { wrap: (pool: Pool) => PoolLike; fired(): number; arm(n: number): void } {
   let remaining = times;
   let fired = 0;
   const PATCHED = Symbol.for("qa.ambiguousCommit");
   return {
     fired: () => fired,
+    arm: (n) => { remaining = n; },
     wrap: (pool) => ({
       async connect(): Promise<PoolClient> {
         const client = await pool.connect();
@@ -268,4 +269,26 @@ export function ambiguousCommitPool(times: number): { wrap: (pool: Pool) => Pool
       },
     }),
   };
+}
+
+/**
+ * Anomalia de R4 (fila anterior a 0066 o fallo de infraestructura): deja la Revocation CONFIRMED (co-firma aplicada) SIN APPLIED, con su evento REVOCATION_CONFIRMED, escrita por superusuario con las mismas funciones de
+ * la base. Requiere RH2 atestada y RH3 paso 1 (`recordRh3`). Es el unico estado que el respaldo del worker debe recuperar. Solo tests.
+ */
+export async function seedConfirmedWithoutApplied(admin: Client, w: CaseWorld): Promise<void> {
+  await admin.query("BEGIN");
+  try {
+    await admin.query("SELECT set_config('app.tenant_id', $1, true)", [w.tenantId]);
+    await admin.query("SELECT set_config('case_state.effect', 'cosign_case_confirmation', true)");
+    const seq = Number((await admin.query<{ n: number }>("SELECT COALESCE(max(sequence), 0)::integer AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2", [w.tenantId, w.revocationRef])).rows[0]!.n);
+    await admin.query("UPDATE app.revocation SET status = 'CONFIRMED', cosigned_by_ref = $3 WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef, w.op2.principal]);
+    await admin.query(
+      "SELECT case_state.ledger_append('Revocation', $1::text, 'REVOCATION_CONFIRMED', 'HUMAN', 'DECISION_MAKER', $2::text, $3::text, jsonb_build_object('revocationRef', $1::text, 'recordedByRef', $2::text, 'cosignedByRef', $3::text), $1::text || ':rh3', $4::integer)",
+      [w.revocationRef, w.op1.principal, w.op2.principal, seq],
+    );
+    await admin.query("COMMIT");
+  } catch (error) {
+    await admin.query("ROLLBACK");
+    throw error;
+  }
 }
