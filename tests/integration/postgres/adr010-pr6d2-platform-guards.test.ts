@@ -15,7 +15,7 @@ const LIMIT = { max: 50, windowSeconds: 600 } as const;
 const P51 = [50, 600] as const;
 
 const revRow = async (admin: Client, w: CaseWorld) =>
-  (await admin.query<{ status: string; proposal_ref: string | null; second_approver_ref: string | null }>("SELECT status, proposal_ref, second_approver_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
+  (await admin.query<{ status: string; proposal_ref: string | null; second_approver_ref: string | null }>("SELECT status, proposal_ref, second_approver_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
 const sessionEvents = async (admin: Client, principal: string, type?: string): Promise<Array<{ event_type: string; reason_code: string | null }>> =>
   (await admin.query<{ event_type: string; reason_code: string | null }>("SELECT event_type, reason_code FROM platform.session_event WHERE principal_ref = $1 AND ($2::text IS NULL OR event_type = $2) ORDER BY at, event_ref", [principal, type ?? null])).rows;
 const requestGrant = async (platform: Client, sid: string, caseRef: string): Promise<string | null> =>

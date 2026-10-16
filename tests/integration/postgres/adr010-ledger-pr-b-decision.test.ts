@@ -176,7 +176,7 @@ pgTest("TEST-CNS-1460 pg: guardas de ConsentDecision: INSERT solo PENDING sobre 
   // Con una Revocation CONFIRMED del tenant sobre esa decision: C6 se admite (la fila no cambia mas que state).
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)");
   await admin.query(
-    "INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r1460', 'ch-1460-a', 'd1460-a', 'CONFIRMED', 'OTP')", [T]);
+    "INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'r1460', 'ch-1460-a', 'd1460-a', 'CONFIRMED', 'OTP')", [T]);
   await admin.query("RESET ALL");
   assert.equal(await asTransitionOwner("UPDATE app.consent_decision SET state = 'REVOKED' WHERE consent_id = 'd1460-a'"), "ok");
   assert.equal(await asTransitionOwner("UPDATE app.consent_decision SET state = 'REVOKED', purposes = '[]'::jsonb WHERE consent_id = 'd1460-a'"), "42501", "C6 no cambia mas columnas");

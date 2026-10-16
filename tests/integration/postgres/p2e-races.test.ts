@@ -229,7 +229,7 @@ pgTest("TEST-CNS-848 pg: dos POST concurrentes con el mismo token de recuperacio
       assert.ok(results.every((r) => r.status === "fulfilled"), `ronda ${round}: ${JSON.stringify(results.map((r) => r.status === "rejected" ? String(r.reason) : "ok"))}`);
       const kinds = results.map((r) => (r.status === "fulfilled" ? r.value.kind : "?"));
       assert.equal(kinds.filter((k) => k === "UNIFORM").length, 1, `ronda ${round}: una UNIFORM sin efectos (${kinds.join(",")})`);
-      const open = await count("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D]);
+      const open = await count("SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D]);
       assert.equal(open, 1);
       const rev = await outside.revocationRepo.findOpenByChain(T, chain);
       assert.equal(rev?.status, "APPLIED");

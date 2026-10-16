@@ -44,6 +44,10 @@ export const CONSENT_OWNER_SET_ROLES: readonly string[] = [
   "ledger_gen_owner",
   "ledger_writer",
   "rights_case_lookup_owner", // ADR-010 rev. 5 PR-6d parte 1 (0064, F-PR6-45): dueño de app.rights_case_tenant_of
+  "app_schema_owner", // ADR-010 rev. 6 PR-7c (0080, F-PR7-01, C-2): dueño del esquema app (consent_owner conserva USAGE, CREATE)
+  "ops_schema_owner", // ADR-010 rev. 6 PR-7c (0080, F-PR7-01, R-21-1): dueño del esquema ops
+  "shared_fn_owner", // ADR-010 rev. 6 PR-7c (0080, F-PR7-01, C-3): dueño de app.current_tenant_id(), app.is_reserved_email(text), ops.catalog_environment()
+  "revocation_recovery_reader", // ADR-010 rev. 6 PR-7c (0080, F-6D3-SEC-08): dueño de case_state.list_confirmed_unapplied y de su policy cross-tenant
 ];
 
 /** Owners NOLOGIN de los que ningun rol de runtime puede ser miembro (spec INV-DBR-01; incluye consent_owner y outbox_claimer). */
@@ -62,6 +66,10 @@ export const OWNER_ROLES: readonly string[] = [
   "ledger_gen_owner", // ADR-010 rev. 5 PR-b (LG-8, F-PR6-11): doce owners cubiertos
   "ledger_writer",
   "rights_case_lookup_owner",
+  "app_schema_owner", // PR-7c (0080)
+  "ops_schema_owner",
+  "shared_fn_owner",
+  "revocation_recovery_reader",
 ];
 
 /** Roles de runtime (INV-DBR-01). */

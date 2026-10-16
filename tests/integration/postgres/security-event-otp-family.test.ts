@@ -257,8 +257,8 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
   )).rows;
   assert.ok(owners.length >= 4, "tabla, funcion, secuencia e indices");
   for (const o of owners) assert.equal(o.owner, "security_event_owner", o.what);
-  // El esquema ops NO se transfiere (R-21-1 / F-2, aceptado IT0b) y security_event_owner no conserva CREATE.
-  assert.equal((await admin.query<{ o: string }>("SELECT pg_get_userbyid(nspowner) AS o FROM pg_namespace WHERE nspname = 'ops'")).rows[0]?.o, "consent_owner");
+  // ADR-010 rev. 6 PR-7c (0082, R-21-1 / F-2 CERRADO): el esquema ops pasa a ops_schema_owner (consent_owner conserva USAGE, CREATE pero ya no puede DROP de objetos ajenos); security_event_owner no conserva CREATE.
+  assert.equal((await admin.query<{ o: string }>("SELECT pg_get_userbyid(nspowner) AS o FROM pg_namespace WHERE nspname = 'ops'")).rows[0]?.o, "ops_schema_owner");
   const schemaPrivs = (await admin.query<{ usage: boolean; create: boolean }>("SELECT has_schema_privilege('security_event_owner', 'ops', 'USAGE') AS usage, has_schema_privilege('security_event_owner', 'ops', 'CREATE') AS \"create\"")).rows[0];
   assert.deepEqual(schemaPrivs, { usage: true, create: false });
   // EXECUTE por defecto no llega a PUBLIC para lo que cree security_event_owner (ALTER DEFAULT PRIVILEGES de 0029).

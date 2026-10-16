@@ -57,11 +57,18 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
   // case_state_owner, transition_owner, rights_operator y el verifier no son duenos de nada todavia (PR-4/PR-5 les asignan objetos). Los tres owners de
   // platform_schema_owner, membership_owner y grant_owner (PR-3, 0035) tienen exactamente los objetos que fija TEST-CNS-1353.
   const owned = (await admin.query<{ n: number }>(
-    "SELECT (SELECT count(*) FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE r.rolname = ANY($1)) AS n",
+    "SELECT (SELECT count(*) FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE r.rolname = ANY($1)) + (SELECT count(*) FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE r.rolname = ANY($1)) AS n",
     [["case_state_owner", "transition_owner", "rights_operator", "integrity_verifier"]],
   )).rows[0];
-  // ADR-010 PR-5a/5b (0037, 0038): case_state_owner es dueno del esquema case_state (1) y transition_owner de sus 34 funciones + list_confirmed_unapplied de 0067 (0070 suma read_case_apply_state; 0066 suma r4_apply; 0070 suma current_sequence y alert_apply_exhausted y reemplaza las firmas de operador por las de actor desde la sesion; 0044 suma cancel_invitation_subject_mismatch; 0049 retira seed_local_revoke_decision, F-PRB-02); nada mas.
-  assert.equal(Number(owned?.n), 35); // 0067 suma list_confirmed_unapplied (P2-1)
+  // ADR-010 PR-5a/5b (0037, 0038): case_state_owner es dueno del esquema case_state (1) y transition_owner de sus funciones de transicion (0067 sumo list_confirmed_unapplied; 0070 suma read_case_apply_state; 0066 suma r4_apply;
+  // 0070 suma current_sequence y alert_apply_exhausted y reemplaza las firmas de operador por las de actor desde la sesion; 0044 suma cancel_invitation_subject_mismatch; 0049 retira seed_local_revoke_decision, F-PRB-02);
+  // ADR-010 rev. 6 PR-7c (0083, F-6D3-SEC-08): list_confirmed_unapplied pasa a revocation_recovery_reader, asi que transition_owner conserva 33 funciones; nada mas.
+  assert.equal(Number(owned?.n), 34);
+  // PR-7c (0081, Q16): case_state_owner es ademas dueno de case_state.revocation y case_state.rights_case (y de sus indices); consent_owner ya no lo es.
+  const relOwners = (await admin.query<{ relname: string }>(
+    "SELECT c.relname::text AS relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = 'case_state_owner' AND c.relkind = 'r' ORDER BY 1",
+  )).rows.map((x) => x.relname);
+  assert.deepEqual(relOwners, ["revocation", "rights_case"]);
 
   // 0034 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const before = await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]);
@@ -105,7 +112,7 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
 pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coincide con el catalogo; detecta fila extra/faltante; REAL_DATA falla cerrado; el arranque de app_rw sigue pasando", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
-  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 16); // 0068: + platform_rw -> rights_operator; // ADR-010 rev. 5 PR-b: ledger_gen_owner y ledger_writer (doce owners) + 6d parte 1: rights_case_lookup_owner
+  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 20); // PR-7c (0080): + app_schema_owner, ops_schema_owner, shared_fn_owner y revocation_recovery_reader; 0068: + platform_rw -> rights_operator; // ADR-010 rev. 5 PR-b: ledger_gen_owner y ledger_writer (doce owners) + 6d parte 1: rights_case_lookup_owner
   assert.equal((await checkRoleMemberships(admin, "REAL_DATA")).length, 1, "REAL_DATA no esta activado hasta PR-7");
 
   // Fila extra (rolled back: las membresias son transaccionales y no se tocan para otros archivos de test).
@@ -161,8 +168,8 @@ pgTest("TEST-CNS-1350 pg: integrity_verifier no puede crear objetos, cambiar de 
     await assert.rejects(() => verifier.query(`SET ROLE ${owner}`), (e: unknown) => codeOf(e) === "42501", `SET ROLE ${owner}`);
   }
   for (const sql of [
-    "SELECT 1 FROM app.revocation",
-    "SELECT 1 FROM app.rights_case",
+    "SELECT 1 FROM case_state.revocation",
+    "SELECT 1 FROM case_state.rights_case",
     "SELECT 1 FROM integrity.audit_event",
     "INSERT INTO app.outbox (tenant_id) VALUES (gen_random_uuid())",
     "SELECT 1 FROM ops.security_event",

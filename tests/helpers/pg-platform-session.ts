@@ -23,13 +23,13 @@ export async function seedPlatformSession(admin: Client, principal: string, opts
   return { sid, sessionRef: row.session_ref };
 }
 
-/** Siembra (superusuario) un caso REAL en app.rights_case (ADR-010 0059: el tenant de los grants y sesiones CASE se deriva de el). Idempotente por (tenant, case_ref). Solo tests. */
+/** Siembra (superusuario) un caso REAL en case_state.rights_case (ADR-010 0059: el tenant de los grants y sesiones CASE se deriva de el). Idempotente por (tenant, case_ref). Solo tests. */
 export async function seedRightsCase(admin: Client, tenantId: string, caseRef: string, status = "OPEN"): Promise<void> {
   await admin.query("BEGIN");
   try {
     await admin.query("SELECT set_config('case_state.effect', 'seed_local_rights_case', true)");
     await admin.query(
-      "INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, $2, $3, $4, $5, 'LIMIT_REACHED') ON CONFLICT (tenant_id, case_ref) DO NOTHING",
+      "INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, $2, $3, $4, $5, 'LIMIT_REACHED') ON CONFLICT (tenant_id, case_ref) DO NOTHING",
       [tenantId, caseRef, `chain-${caseRef}`, `dec-${caseRef}`, status],
     );
     await admin.query("COMMIT");

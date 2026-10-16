@@ -44,7 +44,7 @@ export interface RevocationRecord {
 export interface RevocationRepositoryPort {
   findByRef(tenantId: TenantId, revocationRef: string): Promise<RevocationRecord | null>;
   /** Igual que `findByRef`. HISTORICO: antes tomaba el lock de la fila (SELECT ... FOR UPDATE); desde ADR-010 PR-5a (0037) app_rw no tiene
-   * UPDATE sobre app.revocation y en Postgres ya NO bloquea: la serializacion (revocation.spec R4, SEC-CNS-015 P1-1) es de las funciones
+   * UPDATE sobre case_state.revocation y en Postgres ya NO bloquea: la serializacion (revocation.spec R4, SEC-CNS-015 P1-1) es de las funciones
    * `case_state.*` (lock de fila + expectedSequence). Se conserva el nombre por compatibilidad con los llamadores y tests.
    * Solo dentro de `UnitOfWorkPort.inTenant`: serializa R2/R3/R4/R8/RH* sobre la misma Revocation
    * y relee el estado vigente tras esperar al ganador. In-memory: equivalente a `findByRef` (la

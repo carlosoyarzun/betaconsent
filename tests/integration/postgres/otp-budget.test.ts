@@ -346,8 +346,8 @@ pgTest("TEST-CNS-395 pg: V6r (presupuesto RIGHTS agotado) -> ERR-OT-07 y challen
     // La Revocation abierta no cambia: mismo estado, sigue siendo la unica no terminal de la cadena y el ledger no registra nada nuevo.
     const rev = await env.outside.revocationRepo.findByRef(T, REV);
     assert.equal(rev?.status, "REQUESTED");
-    assert.equal(await env.count("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND chain_ref = $2 AND status <> 'FAILED'", [T, chain]), 1);
-    assert.equal(await env.count("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND chain_ref = $2 AND status = 'FAILED'", [T, chain]), 0);
+    assert.equal(await env.count("SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND chain_ref = $2 AND status <> 'FAILED'", [T, chain]), 1);
+    assert.equal(await env.count("SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND chain_ref = $2 AND status = 'FAILED'", [T, chain]), 0);
     assert.equal((await env.outside.ledger.listByAggregate(T, "Revocation", REV)).length, before, "sin eventos de ledger nuevos sobre la Revocation");
   });
 });

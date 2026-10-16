@@ -403,17 +403,17 @@ pgTest("TEST-CNS-1657 pg: privilegios de step-up y grants: ACL exacta, internas 
   assert.deepEqual((await admin.query("SELECT pg_get_userbyid(m.member) AS m, m.inherit_option, m.set_option, m.admin_option FROM pg_auth_members m WHERE m.roleid = 'rights_case_lookup_owner'::regrole")).rows, [{ m: "consent_owner", inherit_option: false, set_option: true, admin_option: false }]);
   assert.equal((await admin.query("SELECT 1 FROM pg_auth_members WHERE member = 'rights_case_lookup_owner'::regrole")).rowCount, 0);
   assert.equal((await admin.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname = 'rights_case_tenant_of' AND pg_get_userbyid(p.proowner) = 'rights_case_lookup_owner'")).rowCount, 1);
-  assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE polrelid = 'app.rights_case'::regclass AND (polroles && ARRAY['consent_owner'::regrole::oid, 'grant_owner'::regrole::oid])")).rowCount, 0, "sin policies del dueño ni de grant_owner");
+  assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE polrelid = 'case_state.rights_case'::regclass AND (polroles && ARRAY['consent_owner'::regrole::oid, 'grant_owner'::regrole::oid])")).rowCount, 0, "sin policies del dueño ni de grant_owner");
   assert.equal((await admin.query<{ r: string }>("SELECT COALESCE(string_agg(DISTINCT pg_get_userbyid(a.grantee), ',' ORDER BY pg_get_userbyid(a.grantee)), '') AS r FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace LEFT JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a ON a.grantee <> p.proowner WHERE n.nspname = 'app' AND p.proname = 'rights_case_tenant_of'")).rows[0]!.r, "grant_owner");
   // Sin principal ni tenant como parametro.
   assert.equal((await admin.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'platform' AND p.proname IN ('issue_step_up_nonce', 'request_grant', 'approve_grant') AND pg_get_function_arguments(p.oid) ~* '(principal|tenant)'")).rowCount, 0);
-  // platform_rw no ve app.rights_case ni las tablas de grants.
-  for (const t of ["app.rights_case", "platform.grant_request", "platform.rights_case_grant", "platform.action_nonce"]) await assert.rejects(platform.query(`SELECT 1 FROM ${t}`), (e) => codeOf(e) === "42501", t);
-  // grant_owner no tiene ningun privilegio sobre app.rights_case (solo EXECUTE de app.rights_case_tenant_of).
-  assert.equal((await admin.query<{ r: boolean }>("SELECT has_table_privilege('grant_owner', 'app.rights_case', 'SELECT') AS r")).rows[0]!.r, false);
-  assert.equal((await admin.query<{ r: boolean }>("SELECT has_any_column_privilege('grant_owner', 'app.rights_case', 'SELECT') AS r")).rows[0]!.r, false);
-  assert.equal((await admin.query<{ r: boolean }>("SELECT has_any_column_privilege('grant_owner', 'app.rights_case', 'INSERT,UPDATE') AS r")).rows[0]!.r, false);
-  assert.equal((await admin.query<{ r: boolean }>("SELECT has_column_privilege('grant_owner', 'app.rights_case', 'chain_ref', 'SELECT') AS r")).rows[0]!.r, false);
+  // platform_rw no ve case_state.rights_case ni las tablas de grants.
+  for (const t of ["case_state.rights_case", "platform.grant_request", "platform.rights_case_grant", "platform.action_nonce"]) await assert.rejects(platform.query(`SELECT 1 FROM ${t}`), (e) => codeOf(e) === "42501", t);
+  // grant_owner no tiene ningun privilegio sobre case_state.rights_case (solo EXECUTE de app.rights_case_tenant_of).
+  assert.equal((await admin.query<{ r: boolean }>("SELECT has_table_privilege('grant_owner', 'case_state.rights_case', 'SELECT') AS r")).rows[0]!.r, false);
+  assert.equal((await admin.query<{ r: boolean }>("SELECT has_any_column_privilege('grant_owner', 'case_state.rights_case', 'SELECT') AS r")).rows[0]!.r, false);
+  assert.equal((await admin.query<{ r: boolean }>("SELECT has_any_column_privilege('grant_owner', 'case_state.rights_case', 'INSERT,UPDATE') AS r")).rows[0]!.r, false);
+  assert.equal((await admin.query<{ r: boolean }>("SELECT has_column_privilege('grant_owner', 'case_state.rights_case', 'chain_ref', 'SELECT') AS r")).rows[0]!.r, false);
   // Un grant solo nace de una solicitud APPROVED por ese aprobador (trigger + FK compuesta), incluso para el superusuario.
   const R = P("1657-r");
   const C = fixtureUuid("pr6d1-1657-case");

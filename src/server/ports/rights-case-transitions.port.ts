@@ -2,7 +2,7 @@
 // INV-RC-07), specs/db-roles.spec.yaml (transition_owner, Q-18). ADR-001 §11: el dominio solo conoce este puerto.
 //
 // Puerto de escritura de las transiciones del RightsCase. Con un adaptador que lo implementa (Postgres: funciones SECURITY DEFINER de
-// `case_state`, dueno transition_owner), la fila de `app.rights_case` y su evento de ledger los escribe LA FUNCION en la misma tx; el dominio
+// `case_state`, dueno transition_owner), la fila de `case_state.rights_case` y su evento de ledger los escribe LA FUNCION en la misma tx; el dominio
 // solo decide (lee, valida, pasa `expectedSequence`) y llama. RC3 (lado rights_case) vive en `RevocationTransitionsPort.expressRevocationIntentInCase`
 // (FN-RC-03 = FN-RV-06: una sola funcion para ambos lados del mismo lote). Sin este puerto (adaptador in-memory), el dominio escribe con
 // `rightsCaseRepo.save` + `ledger.append` como antes (rutas legacy documentadas en rights-case.ts). Ambos caminos producen los mismos eventos y estados.

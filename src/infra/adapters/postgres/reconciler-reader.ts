@@ -43,7 +43,7 @@ async function listTenants(db: Queryable): Promise<string[]> {
     `SELECT tenant_id::text AS tenant_id FROM integrity.audit_event
      UNION SELECT tenant_id::text FROM app.invitation
      UNION SELECT tenant_id::text FROM app.consent_decision
-     UNION SELECT tenant_id::text FROM app.revocation
+     UNION SELECT tenant_id::text FROM case_state.revocation
      ORDER BY 1`,
   );
   return r.rows.map((x) => x.tenant_id);
@@ -54,7 +54,7 @@ async function readTenant(db: Queryable, tenantId: string): Promise<TenantReconc
   const invitations = await db.query<{ tenant_id: string; invitation_ref: string; state: string }>("SELECT tenant_id::text AS tenant_id, invitation_ref, state FROM app.invitation WHERE tenant_id = $1 ORDER BY invitation_ref", [tenantId]);
   const decisions = await db.query<{ tenant_id: string; consent_id: string; state: string }>("SELECT tenant_id::text AS tenant_id, consent_id, state FROM app.consent_decision WHERE tenant_id = $1 ORDER BY consent_id", [tenantId]);
   const revocations = await db.query<{ tenant_id: string; revocation_ref: string; revoked_decision_ref: string | null }>(
-    "SELECT tenant_id::text AS tenant_id, revocation_ref, revoked_decision_ref FROM app.revocation WHERE tenant_id = $1 ORDER BY revocation_ref",
+    "SELECT tenant_id::text AS tenant_id, revocation_ref, revoked_decision_ref FROM case_state.revocation WHERE tenant_id = $1 ORDER BY revocation_ref",
     [tenantId],
   );
   return {

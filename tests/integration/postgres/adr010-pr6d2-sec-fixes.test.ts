@@ -15,7 +15,7 @@ import { pgTest } from "./harness.ts";
 const LIMIT = { max: 50, windowSeconds: 600 } as const;
 const sha = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 
-pgTest("TEST-CNS-1723 pg (P2-1): el worker no lee app.revocation de otros tenants; case_state.list_confirmed_unapplied devuelve solo (tenant_id, revocation_ref) de CONFIRMED; app_rw/platform_rw no la ejecutan; la policy cross-tenant del worker no existe", async (ctx) => {
+pgTest("TEST-CNS-1723 pg (P2-1): el worker no lee case_state.revocation de otros tenants; case_state.list_confirmed_unapplied devuelve solo (tenant_id, revocation_ref) de CONFIRMED; app_rw/platform_rw no la ejecutan; la policy cross-tenant del worker no existe", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   const w = await seedCaseWorld(ctx, "1723");
   const http = await startPlatformHttp(ctx);
@@ -26,7 +26,7 @@ pgTest("TEST-CNS-1723 pg (P2-1): el worker no lee app.revocation de otros tenant
     const { seedConfirmedWithoutApplied } = await import("../../helpers/pg-case-world.ts");
     await seedConfirmedWithoutApplied(admin, w);
     // Lectura directa sin tenant: RLS tenant-acotada del worker (0042) = 0 filas; ya no hay policy cross-tenant.
-    assert.equal((await worker.query("SELECT 1 FROM app.revocation")).rowCount, 0, "sin tenant el worker no ve filas");
+    assert.equal((await worker.query("SELECT 1 FROM case_state.revocation")).rowCount, 0, "sin tenant el worker no ve filas");
     assert.equal((await admin.query("SELECT 1 FROM pg_policies WHERE schemaname = 'app' AND tablename = 'revocation' AND policyname = 'revocation_worker_recovery_select'")).rowCount, 0);
     const r = await worker.query("SELECT * FROM case_state.list_confirmed_unapplied(100, ARRAY[]::text[]) WHERE o_revocation_ref = $1", [w.revocationRef]);
     assert.deepEqual(r.rows, [{ o_tenant_id: w.tenantId, o_revocation_ref: w.revocationRef }], "solo las dos columnas");
@@ -37,7 +37,7 @@ pgTest("TEST-CNS-1723 pg (P2-1): el worker no lee app.revocation de otros tenant
     // Fijar el efecto desde el cliente no abre la policy: solo transition_owner la tiene.
     await worker.query("BEGIN");
     await worker.query("SELECT set_config('case_state.effect', 'list_confirmed_unapplied', true)");
-    assert.equal((await worker.query("SELECT 1 FROM app.revocation")).rowCount, 0);
+    assert.equal((await worker.query("SELECT 1 FROM case_state.revocation")).rowCount, 0);
     await worker.query("ROLLBACK");
   } finally {
     await worker.end();
@@ -102,7 +102,7 @@ pgTest("TEST-CNS-1725 pg (P2-6): el step-up de RH2 queda ligado a caseRef + prop
     assert.deepEqual(await propose(), { ok: false, reason: "STEP_UP" });
     await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(other.caseRef, proposalRef)); // mismo proposalRef, OTRO caso
     assert.deepEqual(await propose(), { ok: false, reason: "STEP_UP" });
-    assert.equal((await admin.query("SELECT 1 FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND proposal_ref IS NOT NULL", [w.tenantId, w.revocationRef])).rowCount, 0);
+    assert.equal((await admin.query("SELECT 1 FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND proposal_ref IS NOT NULL", [w.tenantId, w.revocationRef])).rowCount, 0);
     await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     assert.equal((await propose()).ok, true, "con caso + propuesta correctos pasa");
     // issue_step_up_nonce: solo el formato compuesto para RH2 (y el plano sigue para REQUEST_GRANT).

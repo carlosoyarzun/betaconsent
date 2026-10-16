@@ -1,10 +1,10 @@
 // Gobierna: CA-124 (H09), PR-D; src/server/ports/rights-case-repository.port.ts,
 // db/migrations/0010_invitation_otp_rights_case_enrollment.sql, rights-case.spec.yaml (GRD-RC-02,
-// GRD-RC-14), SEC-CNS-015 P2-E. ADR-001 §11: solo este adaptador conoce el SQL de app.rights_case.
+// GRD-RC-14), SEC-CNS-015 P2-E. ADR-001 §11: solo este adaptador conoce el SQL de case_state.rights_case.
 //
 // Opera DENTRO de la transaccion de PgUnitOfWork.inTenant (RLS por app.current_tenant_id()).
 // chain_ref y revoked_decision_ref se fijan al abrir el caso y no son actualizables.
-// ADR-010 PR-5b (INV-RC-07): app_rw ya NO tiene INSERT/UPDATE sobre app.rights_case (0038). Las transiciones reales del dominio las escriben las
+// ADR-010 PR-5b (INV-RC-07): app_rw ya NO tiene INSERT/UPDATE sobre case_state.rights_case (0038). Las transiciones reales del dominio las escriben las
 // funciones case_state.* (rights-case-transitions.adapter.ts); `save` es solo el contrato de siembra del puerto (LOCAL) y llama
 // case_state.seed_local_rights_case, que falla fuera de LOCAL.
 
@@ -48,7 +48,7 @@ export function createPgRightsCaseRepository(tx: TenantTx): RightsCaseRepository
   return {
     async findOpenByChain(tenantId, chainRef, revokedDecisionRef) {
       const r = await tx.query<RightsCaseRow>(
-        `SELECT ${COLUMNS} FROM app.rights_case
+        `SELECT ${COLUMNS} FROM case_state.rights_case
           WHERE tenant_id = $1 AND chain_ref = $2 AND revoked_decision_ref = $3
             AND status NOT IN ('RESOLVED', 'WITHDRAWN')
           ORDER BY created_at, case_ref LIMIT 1`,
@@ -59,18 +59,18 @@ export function createPgRightsCaseRepository(tx: TenantTx): RightsCaseRepository
     },
     async findByRef(tenantId, caseRef) {
       const r = await tx.query<RightsCaseRow>(
-        `SELECT ${COLUMNS} FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2`,
+        `SELECT ${COLUMNS} FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2`,
         [tenantId, caseRef],
       );
       const row = r.rows[0];
       return row ? toRecord(row) : null;
     },
     async findByRefForUpdate(tenantId, caseRef) {
-      // ADR-010 PR-5b: app_rw ya no tiene UPDATE sobre app.rights_case y SELECT ... FOR UPDATE lo exige: la lectura NO bloquea. La serializacion
+      // ADR-010 PR-5b: app_rw ya no tiene UPDATE sobre case_state.rights_case y SELECT ... FOR UPDATE lo exige: la lectura NO bloquea. La serializacion
       // de RC2u/RC3/RC4-6 la hace cada funcion case_state.* (FOR UPDATE de la fila + control de la secuencia esperada: una lectura vieja da RV409
       // y el UoW reejecuta con estado fresco).
       const r = await tx.query<RightsCaseRow>(
-        `SELECT ${COLUMNS} FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2`,
+        `SELECT ${COLUMNS} FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2`,
         [tenantId, caseRef],
       );
       const row = r.rows[0];

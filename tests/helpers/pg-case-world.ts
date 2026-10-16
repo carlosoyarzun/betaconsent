@@ -290,9 +290,9 @@ export async function seedConfirmedWithoutApplied(admin: Client, w: CaseWorld): 
     await admin.query("SELECT set_config('case_state.effect', 'cosign_case_confirmation', true)");
     const seq = Number((await admin.query<{ n: number }>("SELECT COALESCE(max(sequence), 0)::integer AS n FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2", [w.tenantId, w.revocationRef])).rows[0]!.n);
     // El guard INV-RV-12 solo deja escribir a las funciones case_state: se deshabilita DENTRO de esta tx de fixture y se vuelve a dejar ENABLE ALWAYS antes del COMMIT (solo tests).
-    await admin.query("ALTER TABLE app.revocation DISABLE TRIGGER revocation_transition_guard");
-    await admin.query("UPDATE app.revocation SET status = 'CONFIRMED', cosigned_by_ref = $3 WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef, w.op2.principal]);
-    await admin.query("ALTER TABLE app.revocation ENABLE ALWAYS TRIGGER revocation_transition_guard");
+    await admin.query("ALTER TABLE case_state.revocation DISABLE TRIGGER revocation_transition_guard");
+    await admin.query("UPDATE case_state.revocation SET status = 'CONFIRMED', cosigned_by_ref = $3 WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef, w.op2.principal]);
+    await admin.query("ALTER TABLE case_state.revocation ENABLE ALWAYS TRIGGER revocation_transition_guard");
     await admin.query(
       "SELECT case_state.ledger_append('Revocation', $1::text, 'REVOCATION_CONFIRMED', 'HUMAN', 'DECISION_MAKER', $2::text, $3::text, jsonb_build_object('revocationRef', $1::text, 'recordedByRef', $2::text, 'cosignedByRef', $3::text), $1::text || ':rh3', $4::integer)",
       [w.revocationRef, w.op1.principal, w.op2.principal, seq],

@@ -16,13 +16,13 @@ pgTest("TEST-CNS-1711 pg platform HTTP: RH2 (propuesta + aprobacion con step-up 
     await seedAttestedStepUp(admin, w.op1.principal, "PROPOSE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     const proposed = await http.post(p.proposals, w.op1.caseSession.sid, { proposalRef, verificationScriptVersion: "guion-1" });
     assert.equal(proposed.status, 201, proposed.body);
-    const afterPropose = (await admin.query("SELECT status, proposed_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    const afterPropose = (await admin.query("SELECT status, proposed_by_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
     assert.deepEqual(afterPropose, { status: "REQUESTED", proposed_by_ref: w.op1.principal }, "el proponente es el principal de la sesion CASE");
 
     await seedAttestedStepUp(admin, w.approver.principal, "APPROVE_CASE_VERIFICATION", rh2Target(w.caseRef, proposalRef));
     const approved = await http.post(p.approval(proposalRef), w.approver.platform.sid, {}, { kind: "PLATFORM" });
     assert.equal(approved.status, 200, approved.body);
-    const afterApprove = (await admin.query("SELECT status, second_approver_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    const afterApprove = (await admin.query("SELECT status, second_approver_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
     assert.deepEqual(afterApprove, { status: "VERIFIED", second_approver_ref: w.approver.principal });
     assert.equal((await admin.query("SELECT 1 FROM platform.case_verification WHERE tenant_id = $1 AND case_ref = $2 AND proposed_by_ref = $3 AND approved_by_ref = $4", [w.tenantId, w.caseRef, w.op1.principal, w.approver.principal])).rowCount, 1);
 
@@ -31,12 +31,12 @@ pgTest("TEST-CNS-1711 pg platform HTTP: RH2 (propuesta + aprobacion con step-up 
     const cosigned = await http.post(p.cosign, w.op2.caseSession.sid, {});
     assert.equal(cosigned.status, 200, cosigned.body);
     assert.deepEqual(JSON.parse(cosigned.body), { cosign: "COSIGNED", revocationState: "APPLIED" });
-    const row = (await admin.query("SELECT status, recorded_by_ref, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    const row = (await admin.query("SELECT status, recorded_by_ref, cosigned_by_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
     assert.deepEqual(row, { status: "APPLIED", recorded_by_ref: w.op1.principal, cosigned_by_ref: w.op2.principal });
 
     const closed = await http.post(p.close, w.op1.caseSession.sid, { outcome: "RESOLVED" });
     assert.equal(closed.status, 200, closed.body);
-    assert.equal((await admin.query("SELECT status FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [w.tenantId, w.caseRef])).rows[0]?.status, "RESOLVED");
+    assert.equal((await admin.query("SELECT status FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2", [w.tenantId, w.caseRef])).rows[0]?.status, "RESOLVED");
   } finally {
     await http.close();
   }

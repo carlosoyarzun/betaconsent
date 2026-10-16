@@ -32,7 +32,7 @@ const approveGrant = async (platform: Client, sid: string, caseRef: string, requ
 const rejections = async (admin: Client, principal: string, request: string): Promise<string[]> =>
   (await admin.query<{ reason_code: string }>("SELECT reason_code FROM platform.session_event WHERE principal_ref = $1 AND event_type = 'GRANT_REJECTED' AND request_ref = $2 ORDER BY at, event_ref", [principal, request])).rows.map((r) => r.reason_code);
 const revStatus = async (admin: Client, w: CaseWorld) =>
-  (await admin.query<{ status: string; recorded_by_ref: string | null; cosigned_by_ref: string | null }>("SELECT status, recorded_by_ref, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
+  (await admin.query<{ status: string; recorded_by_ref: string | null; cosigned_by_ref: string | null }>("SELECT status, recorded_by_ref, cosigned_by_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
 const alerts = async (admin: Client, w: CaseWorld): Promise<string[]> =>
   (await admin.query<{ alert_reason: string }>("SELECT alert_reason FROM ops.security_event WHERE tenant_id = $1 AND event_type = 'REVOCATION_APPLY_ALERT' ORDER BY event_seq", [w.tenantId])).rows.map((r) => r.alert_reason);
 

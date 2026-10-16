@@ -1,7 +1,7 @@
 // Gobierna: ADR-010 rev. 4 §4.2 (PR-5a), specs/state-machines/revocation.spec.yaml `dbEnforcement` (FN-RV-01..15, TRG-RV-01, INV-RV-12),
-// specs/db-roles.spec.yaml (INV-DBR-04, INV-DBR-05, transition_owner), GRD-RV-05/26/29, F-A10-01 (app.revocation), F-A10-03..06,
+// specs/db-roles.spec.yaml (INV-DBR-04, INV-DBR-05, transition_owner), GRD-RV-05/26/29, F-A10-01 (case_state.revocation), F-A10-03..06,
 // db/migrations/0037_adr010_case_state_revocation.sql. SYNTHETIC ONLY.
-// TEST-CNS-1373 (app_rw no escribe app.revocation ni deja REVOKED; trigger por efecto), TEST-CNS-1374 (CHECKs GRD-RV-26/05/29),
+// TEST-CNS-1373 (app_rw no escribe case_state.revocation ni deja REVOKED; trigger por efecto), TEST-CNS-1374 (CHECKs GRD-RV-26/05/29),
 // TEST-CNS-1375 (vectores dorados TS<->SQL: canonical_json y cadena del ledger escrita por las funciones), TEST-CNS-1376 (confirm_revocation
 // rechaza HUMAN_ASSISTED; catalogo exacto de case_state).
 // Requiere Postgres real (harness.ts); skip sin entorno.
@@ -26,14 +26,14 @@ const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code
 const constraintOf = (e: unknown): string | undefined => (e as { constraint?: string }).constraint;
 const SEED = "SELECT set_config('case_state.effect', 'seed_local_revocation', false)";
 
-pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision REVOKED; el trigger exige transition_owner y el efecto de la funcion (INV-RV-12, F-A10-01/06)", async (ctx) => {
+pgTest("TEST-CNS-1373 pg: app_rw no escribe case_state.revocation ni deja una decision REVOKED; el trigger exige transition_owner y el efecto de la funcion (INV-RV-12, F-A10-01/06)", async (ctx) => {
   const T = fixtureUuid("t1373");
   const admin = await ctx.connectAsSuperuser();
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   try {
     const uow = new PgUnitOfWork(pool);
     await admin.query(SEED);
-    await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'r1373', 'c1373', 'd1373', 'REQUESTED')", [T]);
+    await admin.query("INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'r1373', 'c1373', 'd1373', 'REQUESTED')", [T]);
     await seedFixture(() => admin.query(
       `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
        VALUES ($1, 'd1373', 'x', 'x', 'x', 'x', 'x', 'x', 'c1373', 'GRANTED', '[]', true)`,
@@ -41,14 +41,14 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
     ));
     // app_rw: ni INSERT ni UPDATE de ninguna columna (incluidos attested_*), ni REVOKED en consent_decision (policy), ni EXECUTE de auxiliares.
     for (const sql of [
-      "UPDATE app.revocation SET attested_revocation_ref = 'r1373', attested_case_ref = 'x' WHERE revocation_ref = 'r1373'",
-      "UPDATE app.revocation SET status = 'VERIFIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'",
-      "UPDATE app.revocation SET verified_recovery_method = 'HUMAN_ASSISTED' WHERE revocation_ref = 'r1373'",
-      "UPDATE app.revocation SET recorded_by_ref = 'x', cosigned_by_ref = 'y' WHERE revocation_ref = 'r1373'",
-      "INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES (current_setting('app.tenant_id')::uuid, 'x', 'c', 'd', 'REQUESTED')",
+      "UPDATE case_state.revocation SET attested_revocation_ref = 'r1373', attested_case_ref = 'x' WHERE revocation_ref = 'r1373'",
+      "UPDATE case_state.revocation SET status = 'VERIFIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'",
+      "UPDATE case_state.revocation SET verified_recovery_method = 'HUMAN_ASSISTED' WHERE revocation_ref = 'r1373'",
+      "UPDATE case_state.revocation SET recorded_by_ref = 'x', cosigned_by_ref = 'y' WHERE revocation_ref = 'r1373'",
+      "INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status) VALUES (current_setting('app.tenant_id')::uuid, 'x', 'c', 'd', 'REQUESTED')",
       "SELECT case_state.ledger_append('Revocation', 'r1373', 'REVOCATION_REQUESTED', 'HUMAN', NULL, NULL, NULL, '{}'::jsonb, NULL, 0)",
       "SELECT case_state.lock_revocation('r1373')",
-      "SELECT set_config('case_state.effect', 'cosign_case_confirmation', true), (SELECT 1 FROM app.revocation FOR UPDATE)",
+      "SELECT set_config('case_state.effect', 'cosign_case_confirmation', true), (SELECT 1 FROM case_state.revocation FOR UPDATE)",
     ]) {
       await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === "42501", sql);
     }
@@ -78,19 +78,19 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
     assert.equal((await admin.query<{ state: string }>("SELECT state FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = 'd1373-rev'", [T])).rows[0]?.state, "REVOKED");
     // Triggers de DELETE y TRUNCATE (42501 incluso para el superusuario) y trigger: superusuario sin efecto, y transition_owner con el efecto de OTRA funcion, rechazados (42501); no cambia nada.
     await admin.query("RESET ALL");
-    await assert.rejects(() => admin.query("DELETE FROM app.revocation WHERE revocation_ref = 'r1373'"), (e: unknown) => codeOf(e) === "42501");
-    await assert.rejects(() => admin.query("TRUNCATE app.revocation"), (e: unknown) => codeOf(e) === "42501");
-    await assert.rejects(() => admin.query("UPDATE app.revocation SET status = 'VERIFIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'"), (e: unknown) => codeOf(e) === "42501");
+    await assert.rejects(() => admin.query("DELETE FROM case_state.revocation WHERE revocation_ref = 'r1373'"), (e: unknown) => codeOf(e) === "42501");
+    await assert.rejects(() => admin.query("TRUNCATE case_state.revocation"), (e: unknown) => codeOf(e) === "42501");
+    await assert.rejects(() => admin.query("UPDATE case_state.revocation SET status = 'VERIFIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'"), (e: unknown) => codeOf(e) === "42501");
     await admin.query("BEGIN");
     try {
       await admin.query("SET LOCAL ROLE transition_owner");
       await admin.query("SELECT set_config('app.tenant_id', $1, true)", [T]);
       for (const [effect, sql] of [
-        ["confirm_revocation", "UPDATE app.revocation SET recorded_by_ref = 'x' WHERE revocation_ref = 'r1373'"],
-        ["record_case_confirmation", "UPDATE app.revocation SET attested_revocation_ref = 'r1373', attested_case_ref = NULL WHERE revocation_ref = 'r1373'"],
-        ["cosign_case_confirmation", "UPDATE app.revocation SET status = 'APPLIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'"],
-        ["propose_case_verification", "UPDATE app.revocation SET verified_recovery_method = 'HUMAN_ASSISTED' WHERE revocation_ref = 'r1373'"],
-        ["", "UPDATE app.revocation SET recorded_by_ref = 'x' WHERE revocation_ref = 'r1373'"],
+        ["confirm_revocation", "UPDATE case_state.revocation SET recorded_by_ref = 'x' WHERE revocation_ref = 'r1373'"],
+        ["record_case_confirmation", "UPDATE case_state.revocation SET attested_revocation_ref = 'r1373', attested_case_ref = NULL WHERE revocation_ref = 'r1373'"],
+        ["cosign_case_confirmation", "UPDATE case_state.revocation SET status = 'APPLIED', verified_auth_path = 'OTP' WHERE revocation_ref = 'r1373'"],
+        ["propose_case_verification", "UPDATE case_state.revocation SET verified_recovery_method = 'HUMAN_ASSISTED' WHERE revocation_ref = 'r1373'"],
+        ["", "UPDATE case_state.revocation SET recorded_by_ref = 'x' WHERE revocation_ref = 'r1373'"],
       ] as const) {
         await admin.query("SAVEPOINT s");
         await admin.query("SELECT set_config('case_state.effect', $1, true)", [effect]);
@@ -100,7 +100,7 @@ pgTest("TEST-CNS-1373 pg: app_rw no escribe app.revocation ni deja una decision 
     } finally {
       await admin.query("ROLLBACK");
     }
-    assert.equal((await admin.query<{ status: string }>("SELECT status FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = 'r1373'", [T])).rows[0]?.status, "REQUESTED");
+    assert.equal((await admin.query<{ status: string }>("SELECT status FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = 'r1373'", [T])).rows[0]?.status, "REQUESTED");
   } finally {
     await pool.end();
   }
@@ -112,7 +112,7 @@ pgTest("TEST-CNS-1374 pg: CHECKs nuevos GRD-RV-26 (cosigned <> recorded), GRD-RV
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED);
   const ins = (t: string, ref: string, cols: string, vals: string): Promise<unknown> =>
-    admin.query(`INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, ${cols}) VALUES ($1, $2, 'c', $3, ${vals})`, [t, ref, `d-${ref}`]);
+    admin.query(`INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, ${cols}) VALUES ($1, $2, 'c', $3, ${vals})`, [t, ref, `d-${ref}`]);
   const named = async (run: () => Promise<unknown>, constraint: string): Promise<void> => {
     await assert.rejects(run, (e: unknown) => constraintOf(e) === constraint, constraint);
   };
@@ -175,7 +175,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED);
   await admin.query(
-    `INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref, attested_revocation_ref, attested_case_ref, verified_auth_path, verified_recovery_method)
+    `INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref, attested_revocation_ref, attested_case_ref, verified_auth_path, verified_recovery_method)
      VALUES ($1, 'r1376', 'c1376', 'd1376', 'VERIFIED', 'case1376', 'r1376', 'case1376', 'RECOVERY', 'HUMAN_ASSISTED')`,
     [T],
   );
@@ -186,7 +186,7 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
       () => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.confirm_revocation('r1376', 0)")),
       (e: unknown) => codeOf(e) === "RV002",
     );
-    assert.equal((await admin.query<{ status: string }>("SELECT status FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = 'r1376'", [T])).rows[0]?.status, "VERIFIED");
+    assert.equal((await admin.query<{ status: string }>("SELECT status FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = 'r1376'", [T])).rows[0]?.status, "VERIFIED");
   } finally {
     await pool.end();
   }
@@ -200,7 +200,8 @@ pgTest("TEST-CNS-1376 pg: confirm_revocation rechaza una verificacion HUMAN_ASSI
     "revoke_with_recovery_link", "rights_case_transition_guard", "seed_local_revocation", "seed_local_rights_case", "verify_revocation_otp",
     "withdraw_case_verification_proposal", "withdraw_revocation",
   ]); // ADR-010 PR-5b (0038) agrega las funciones de RightsCase
-  assert.ok(fns.every((f) => f.o === "transition_owner"));
+  // ADR-010 rev. 6 PR-7c (0083, F-6D3-SEC-08): list_confirmed_unapplied es de revocation_recovery_reader; todas las demas, de transition_owner.
+  assert.ok(fns.every((f) => f.o === (f.n === "list_confirmed_unapplied" ? "revocation_recovery_reader" : "transition_owner")));
   assert.deepEqual(fns.filter((f) => !f.d).map((f) => f.n), ["canonical_json", "revocation_transition_guard", "rights_case_transition_guard"]);
   // GRD-CM-15 / PR-5a: EXECUTE exacto de las funciones de transicion para runtime (app_rw interino; worker solo SYSTEM); platform_rw e integrity_verifier ninguna.
   const ex = async (role: string, fn: string): Promise<boolean> =>
@@ -223,8 +224,8 @@ pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el
   const B = fixtureUuid("t1378-b");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED);
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'rA', 'cA', 'dA', 'CONFIRMED', 'OTP')", [A]);
-  await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref) VALUES ($1, 'rA2', 'cA2', 'dA2', 'REQUESTED', 'caseA')", [A]);
+  await admin.query("INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, 'rA', 'cA', 'dA', 'CONFIRMED', 'OTP')", [A]);
+  await admin.query("INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, case_ref) VALUES ($1, 'rA2', 'cA2', 'dA2', 'REQUESTED', 'caseA')", [A]);
   await seedFixture(() => admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'dA', 'x', 'x', 'x', 'x', 'x', 'x', 'cA', 'GRANTED', '[]', true)`,
@@ -233,7 +234,7 @@ pgTest("TEST-CNS-1378 pg: aislamiento por tenant del camino de funciones: con el
   await admin.query("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'recA', $2, 'cA', 'dA', now() + interval '1 day')", [A, "a".repeat(64)]);
   const snapshot = async (): Promise<string> =>
     JSON.stringify([
-      (await admin.query("SELECT revocation_ref, status, proposal_ref, verified_auth_path FROM app.revocation WHERE tenant_id = $1 ORDER BY 1", [A])).rows,
+      (await admin.query("SELECT revocation_ref, status, proposal_ref, verified_auth_path FROM case_state.revocation WHERE tenant_id = $1 ORDER BY 1", [A])).rows,
       (await admin.query("SELECT state FROM app.consent_decision WHERE tenant_id = $1", [A])).rows,
       (await admin.query("SELECT consumed_at FROM app.recovery_token WHERE tenant_id = $1", [A])).rows,
       (await admin.query("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [A])).rows,

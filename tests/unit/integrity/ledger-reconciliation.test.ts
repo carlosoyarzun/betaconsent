@@ -1,7 +1,7 @@
 // Gobierna: ADR-010 rev. 5 §2 (reconciler: columnas SIN PII), §4.2.c (conciliacion; exit code != 0 y log sin PII; el verifier conserva el recomputo de la cadena), §10 fila 6e, G-9, INV-DBR-08;
 // specs/ledger-derivation.spec.yaml (oraculo: pares ledgerWriter 19 / transitionOwner 14). Seguridad PR #99 (P1-1, P2-1, P2-2).
 // TEST-CNS-1600 (particion de pares), TEST-CNS-1601 (ledger y estado coherentes: sin divergencias), TEST-CNS-1602 (hueco de chain_seq, eventos sin eslabon y tenant malformado sin abortar),
-// TEST-CNS-1603 (huecos de sequence por agregado y ocurrencias duplicadas), TEST-CNS-1604 (par fuera de la particion), TEST-CNS-1605 (estado <-> ledger en ambos sentidos: CANCELLED, REVOKED via app.revocation, fila sin evento, evento sin fila),
+// TEST-CNS-1603 (huecos de sequence por agregado y ocurrencias duplicadas), TEST-CNS-1604 (par fuera de la particion), TEST-CNS-1605 (estado <-> ledger en ambos sentidos: CANCELLED, REVOKED via case_state.revocation, fila sin evento, evento sin fila),
 // TEST-CNS-1606 (salida sin PII y exit codes). Funcion pura: sin Postgres. SYNTHETIC ONLY.
 
 import test from "node:test";
@@ -124,7 +124,7 @@ test("TEST-CNS-1604: un par Agregado:EVENTO fuera de la particion (ni ledger_wri
   assert.ok(r.includes("PAIR_OUTSIDE_PARTITION:TENANT_STATUS_CHANGED"));
 });
 
-test("TEST-CNS-1605: estado <-> ledger en ambos sentidos: CANCELLED <-> INVITATION_CANCELLED, REVOKED <-> CONSENT_REVOKED (via app.revocation), fila sin evento y evento sin fila", () => {
+test("TEST-CNS-1605: estado <-> ledger en ambos sentidos: CANCELLED <-> INVITATION_CANCELLED, REVOKED <-> CONSENT_REVOKED (via case_state.revocation), fila sin evento y evento sin fila", () => {
   let r = kinds(reconcileTenant(input(chain(T, invEvents("i1", INV_PATH.slice(0, 2))), [["i1", "CANCELLED"]])));
   assert.deepEqual(r, ["STATE_EVENT_MISMATCH:MISSING:INVITATION_CANCELLED"]);
   r = kinds(reconcileTenant(input(chain(T, invEvents("i2", [...INV_PATH.slice(0, 2), "INVITATION_CANCELLED"])), [["i2", "READY"]])));
