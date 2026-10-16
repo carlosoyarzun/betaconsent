@@ -40,6 +40,10 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0057_adr010_pr6e_reconciler_ledger_select.sql": ["set-role"],
   // 0073 (ADR-010 rev. 6 PR-6f, D-1 (b)): USAGE del esquema integrity, SELECT por columnas (las 17 de la cadena) y policy de SELECT explicita TO integrity_chain_verifier sobre integrity.audit_event (DDL sobre integrity.*, antes de PR-7).
   "db/migrations/0073_adr010_pr6f_chain_verifier_ledger_select.sql": ["set-role"],
+  // 0076/0077/0078 (ADR-010 rev. 6 PR-7b): tablas integrity.chain_run, chain_checkpoint, reconcile_run y anchor con sus triggers, policies y grants (DDL sobre integrity.*, ANTES del revoke de PR-7; C-1/§4.5.1).
+  "db/migrations/0076_adr010_pr7b_chain_checkpoint.sql": ["set-role"],
+  "db/migrations/0077_adr010_pr7b_reconcile_run.sql": ["set-role"],
+  "db/migrations/0078_adr010_pr7b_anchor.sql": ["set-role"],
   // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
 };
