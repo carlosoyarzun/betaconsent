@@ -1,7 +1,7 @@
 // Gobierna: ADR-010 rev. 5 (enmienda rev. c, 2026-10-15) §4.2.a puntos 4 y 5 (G-3, lectura (A), decision de Carlos: R4 atomica con R3/RH3, reintentos acotados, agotamiento = alerta + caso pendiente sin APPLIED y
 // NUNCA acuse de exito; commit ambiguo = leer el estado y devolver el resultado real; el worker solo recupera CONFIRMED sin APPLIED), §10 fila 6d; src/server/modules/revocation/apply-guard.ts;
 // db/migrations/0066, 0067, 0070; revocation.spec R3/RH3/R4. SYNTHETIC ONLY. Requiere Postgres real (harness.ts). Cada test usa su propio mundo (refs y tenant propios): la base se comparte en el archivo.
-// TEST-CNS-1702 R4 atomica con RH3 (una sola tx), 1703 reintento acotado, 1704 agotamiento (alerta + 503 + sin APPLIED), 1705 commit ambiguo devuelve el resultado real, 1706 respaldo del worker.
+// TEST-CNS-1702 R4 atomica con RH3 (una sola tx), 1703 reintento acotado, 1704 agotamiento (alerta + 503 + sin APPLIED), 1714 (F-6D2-QA-02) 5 fallos 40001 nunca dan 503 con APPLIED, 1705 commit ambiguo devuelve el resultado real, 1706 respaldo del worker.
 
 import assert from "node:assert/strict";
 import type { Client } from "pg";
@@ -91,8 +91,8 @@ pgTest("TEST-CNS-1704 pg platform: agotados los reintentos (3) la tx queda rever
     assert.equal(JSON.parse(res.body).code, "GUARD_EVALUATOR_UNAVAILABLE");
     assert.ok(!/APPLIED|COSIGNED|revoked|receipt/i.test(res.body), "sin acuse de exito ni texto para el titular");
     assert.deepEqual(res.setCookie, []);
-    // FINDING F-6D2-QA-02: la "lectura previa al reintento" del adaptador es otra ejecucion completa de la co-firma, no una lectura: con maxAttempts=3 se ejecutan hasta 2 * 3 tx. Sigue acotado.
-    assert.equal(await failure.attempts(), 6, "acotado: maxAttempts intentos + una relectura (replay) tras cada uno");
+    // F-6D2-QA-02 (cerrado): la lectura previa al reintento es read_case_apply_state (sin efectos), no otra co-firma: exactamente maxAttempts ejecuciones de la tx.
+    assert.equal(await failure.attempts(), 3, "acotado: maxAttempts intentos; las relecturas de estado no ejecutan la co-firma");
     assert.deepEqual(await revocation(admin, w), { status: "VERIFIED", recorded_by_ref: w.op1.principal, cosigned_by_ref: null }, "caso pendiente: sin CONFIRMED ni APPLIED");
     assert.deepEqual(await events(admin, w), before);
     assert.equal(await outbox(admin, w), 0);
@@ -112,6 +112,27 @@ pgTest("TEST-CNS-1704 pg platform: agotados los reintentos (3) la tx queda rever
     assert.deepEqual(await alerts(admin, w), ["R4_RETRIES_EXHAUSTED"]);
   } finally {
     await workerPool.end();
+    await http.close();
+  }
+});
+
+pgTest("TEST-CNS-1714 pg platform (F-6D2-QA-02): con 5 fallos 40001 y maxAttempts=3 la co-firma nunca responde 503 si la Revocation quedo APPLIED: la lectura previa al reintento es una lectura de estado sin efectos (3 tx de cosign, no 6)", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  const w = await seedCaseWorld(ctx, "1714");
+  const http = await startPlatformHttp(ctx, { applyGuard: { maxAttempts: 3 } });
+  try {
+    await recordRh3(admin, http, w);
+    const failure = await injectOutboxFailure(admin, { name: "f1714", tenantId: w.tenantId, failures: 5, sqlstate: "40001" });
+    const res = await http.post(casePath(w.caseRef).cosign, w.op2.caseSession.sid, {});
+    const status = (await revocation(admin, w)).status;
+    assert.equal(await failure.attempts(), 3, "ninguna lectura previa ejecuta la co-firma");
+    // Invariante G-3: 503 si y solo si NO quedo APPLIED; nunca informar fallo de algo que se aplico.
+    assert.equal(res.status === 503, status !== "APPLIED", `status HTTP ${res.status} con Revocation ${status}`);
+    assert.equal(res.status, 503, res.body);
+    assert.equal(status, "VERIFIED");
+    assert.deepEqual(await alerts(admin, w), ["R4_RETRIES_EXHAUSTED"]);
+    await failure.remove();
+  } finally {
     await http.close();
   }
 });

@@ -13,7 +13,7 @@
 --   platform.record_rh2_approval(revocation_ref, case_ref, proposal_ref, proposed_by, approver) (EXECUTE solo transition_owner): cruce GRD-RC-10 (el aprobador de RH2 no es aprobador NI receptor de un grant del caso) y registro.
 --   issue_step_up_nonce / consume_step_up REEMPLAZADAS: admiten tambien PROPOSE/APPROVE/WITHDRAW_CASE_VERIFICATION (RH2; GRD-RC-12). Propose y withdraw: RIGHTS_OPERATOR; approve: APPROVER. consume_step_up (interna) pasa a ser
 --       EXECUTE de transition_owner: la llaman las funciones de RH2 en la misma tx que el efecto.
---   approve_grant REEMPLAZADA: rechaza (GRANT_REJECTED / RH2_APPROVER) al aprobador de una RH2 del caso. rights_case_grant_insert_guard REEMPLAZADA: el mismo cruce como red de seguridad de la base (un grant no nace
+--   approve_grant REEMPLAZADA: rechaza (GRANT_REJECTED / RH_TWO_APPROVER) al aprobador de una RH2 del caso. rights_case_grant_insert_guard REEMPLAZADA: el mismo cruce como red de seguridad de la base (un grant no nace
 --       con aprobador = aprobador de RH2 del caso). Un test cubre ambos caminos; GRD-RC-10 sale de traceability/x8-exceptions.csv.
 -- Decision de Carlos 2026-10-15 (F-PR6-44, opcion A): sin renovaciones; request_grant ya rechaza GRANT_ACTIVE (0062).
 
@@ -148,7 +148,7 @@ BEGIN
               WHERE g.tenant_id = v_tenant AND g.case_ref = p_case_ref AND (g.approved_by_ref = p_approver OR g.operator_principal_ref = p_approver))
      OR EXISTS (SELECT 1 FROM platform.grant_request r
                  WHERE r.tenant_id = v_tenant AND r.case_ref = p_case_ref AND r.status = 'PENDING' AND (r.operator_principal_ref = p_approver OR r.requested_by_ref = p_approver)) THEN
-    RAISE EXCEPTION 'el aprobador de RH2 no es aprobador ni receptor de un grant del caso' USING ERRCODE = 'RC004';
+    RAISE EXCEPTION 'el aprobador de RH2 no es aprobador ni receptor de un grant del caso' USING ERRCODE = 'RV004'; -- ERR-RV-07 (contrato RH2), no RC004
   END IF;
   INSERT INTO platform.case_verification (tenant_id, case_ref, revocation_ref, proposal_ref, proposed_by_ref, approved_by_ref)
   VALUES (v_tenant, p_case_ref, p_revocation_ref, p_proposal_ref, p_proposed_by, p_approver);
@@ -315,7 +315,7 @@ BEGIN
     IF v_req.requested_by_ref = v_principal OR v_req.operator_principal_ref = v_principal THEN v_reason := 'SELF_APPROVAL'; EXIT decide; END IF;
     -- GRD-RC-10 / INV-14 (F-PR6-43, condicion de merge de Carlos): el aprobador de una RH2 del caso (platform.case_verification) no aprueba ningun grant de ese caso.
     IF EXISTS (SELECT 1 FROM platform.case_verification cv WHERE cv.tenant_id = v_req.tenant_id AND cv.case_ref = p_case_ref AND cv.approved_by_ref = v_principal) THEN
-      v_reason := 'RH2_APPROVER'; EXIT decide;
+      v_reason := 'RH_TWO_APPROVER'; EXIT decide;
     END IF;
     -- F-PR6-40: el tenant se RE-DERIVA del caso real y debe coincidir con el de la solicitud.
     SELECT c.o_tenant_id, c.o_status INTO v_tenant, v_status FROM platform.rights_case_of(p_case_ref) c;
@@ -393,7 +393,7 @@ BEGIN
     END IF;
   END LOOP;
   SELECT p.prosrc INTO t FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = 'approve_grant';
-  IF t.prosrc !~ 'RH2_APPROVER' OR t.prosrc !~ 'platform\.case_verification' OR t.prosrc !~ 'SELF_APPROVAL' OR t.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0069: approve_grant perdio el cruce GRD-RC-10 o una regla anterior'; END IF;
+  IF t.prosrc !~ 'RH_TWO_APPROVER' OR t.prosrc !~ 'platform\.case_verification' OR t.prosrc !~ 'SELF_APPROVAL' OR t.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0069: approve_grant perdio el cruce GRD-RC-10 o una regla anterior'; END IF;
   SELECT p.prosrc INTO t FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = 'rights_case_grant_insert_guard';
   IF t.prosrc !~ 'platform\.case_verification' THEN RAISE EXCEPTION '0069: rights_case_grant_insert_guard perdio el cruce GRD-RC-10'; END IF;
   SELECT p.prosrc INTO t FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'platform' AND p.proname = 'issue_step_up_nonce';

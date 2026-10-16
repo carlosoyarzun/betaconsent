@@ -81,7 +81,7 @@ pgTest("TEST-CNS-1019 pg platform: retiro RH2 limpia la propuesta (columnas NULL
   }
 });
 
-pgTest("TEST-CNS-1022 pg platform: repetir el retiro RH2 no produce un segundo evento ni cambia la fila (FINDING F-6D2-QA-01: el spec pide replay idempotente, la funcion de 0070 responde ERR-CM-01); otro principal ERR-RV-07 / ERR-CM-01", async (ctx) => {
+pgTest("TEST-CNS-1022 pg platform: repetir el retiro RH2 no produce un segundo evento ni cambia la fila (replay idempotente de revocation.spec RH2w, F-6D2-QA-01 cerrado: mismo resultado, un solo evento); otro principal ERR-CM-01", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   const w = await seedCaseWorld(ctx, "1022");
   const http = await startPlatformHttp(ctx);
@@ -89,9 +89,10 @@ pgTest("TEST-CNS-1022 pg platform: repetir el retiro RH2 no produce un segundo e
     const proposalRef = fixtureUuid("p-1022");
     await propose(admin, http, w, proposalRef);
     assert.equal((await withdraw(admin, http, w, "op1", proposalRef)).ok, true);
+    const first = (await ledgerOf(admin, w.tenantId, w.revocationRef)).length;
     const replay = await withdraw(admin, http, w, "op1", proposalRef);
-    // Comportamiento actual de la base (0070): sin replay idempotente. Lo que el test fija como invariante: sin segundo evento y sin cambio de estado.
-    assert.deepEqual(replay, { ok: false, reason: "ERR-CM-01" });
+    assert.equal(replay.ok, true, JSON.stringify(replay));
+    assert.equal(first, 2);
     assert.equal((await ledgerOf(admin, w.tenantId, w.revocationRef)).length, 2, "sin segundo evento (REQUESTED + un solo retiro)");
     assert.deepEqual(await revocationRow(admin, w), { status: "REQUESTED", proposal_ref: null, proposed_by_ref: null, verification_script_version: null, second_approver_ref: null });
     assert.deepEqual(await withdraw(admin, http, w, "op2", proposalRef), { ok: false, reason: "ERR-CM-01" });

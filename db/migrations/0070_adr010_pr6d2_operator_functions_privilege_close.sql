@@ -97,7 +97,7 @@ BEGIN
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref OR v_rev.proposal_ref IS DISTINCT FROM p_proposal_ref THEN RAISE EXCEPTION 'propuesta ajena' USING ERRCODE = 'RV001'; END IF;
   IF v_actor = v_rev.proposed_by_ref THEN RAISE EXCEPTION 'aprobador igual al proponente' USING ERRCODE = 'RV004'; END IF; -- ERR-RV-07
   IF v_rev.status <> 'REQUESTED' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
-  -- GRD-RC-10 / INV-14: el aprobador de RH2 no es aprobador ni receptor de ningun grant del caso (RC004 -> ERR-RV-07).
+  -- GRD-RC-10 / INV-14: el aprobador de RH2 no es aprobador ni receptor de ningun grant del caso (record_rh2_approval lanza RV004 -> ERR-RV-07, 403).
   PERFORM platform.record_rh2_approval(v_revref, p_case_ref, p_proposal_ref, v_rev.proposed_by_ref, v_actor);
   UPDATE app.revocation
      SET status = 'VERIFIED', attested_revocation_ref = v_rev.revocation_ref, attested_case_ref = v_rev.case_ref,
@@ -123,6 +123,7 @@ DECLARE
   v_denied text;
   v_rev app.revocation;
   v_ev record;
+  v_prev record;
 BEGIN
   PERFORM pg_catalog.set_config('case_state.effect', 'withdraw_case_verification_proposal', true);
   IF session_user <> 'platform_rw' THEN RAISE EXCEPTION 'llamador no autorizado' USING ERRCODE = 'RC004'; END IF;
@@ -133,6 +134,15 @@ BEGIN
   v_denied := platform.consume_step_up(v_actor, 'WITHDRAW_CASE_VERIFICATION', p_proposal_ref, p_p51_max, p_p51_window_seconds);
   IF v_denied IS NOT NULL THEN RETURN pg_catalog.jsonb_build_object('denied', v_denied); END IF;
   v_rev := case_state.lock_revocation(v_revref);
+  -- RH2w replay idempotente (F-6D2-QA-01): el MISMO proponente repite el retiro de una propuesta ya retirada -> mismo resultado, sin segundo evento ni cambio. Otro principal o una propuesta que nunca existio caen en 'propuesta ajena'.
+  IF v_rev.case_ref IS NOT DISTINCT FROM p_case_ref AND v_rev.proposal_ref IS DISTINCT FROM p_proposal_ref THEN
+    SELECT e.sequence, e.payload INTO v_prev FROM integrity.audit_event e
+     WHERE e.tenant_id = v_rev.tenant_id AND e.aggregate_id = v_revref AND e.event_type = 'REVOCATION_PROPOSAL_WITHDRAWN'
+       AND e.idempotency_key_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_revref || ':rh2w:' || p_proposal_ref, 'UTF8')), 'hex');
+    IF FOUND AND v_prev.payload ->> 'withdrawnByRef' = v_actor THEN
+      RETURN pg_catalog.jsonb_build_object('ok', true, 'sequence', v_prev.sequence, 'replay', true);
+    END IF;
+  END IF;
   IF v_rev.case_ref IS DISTINCT FROM p_case_ref OR v_rev.proposal_ref IS DISTINCT FROM p_proposal_ref THEN RAISE EXCEPTION 'propuesta ajena' USING ERRCODE = 'RV001'; END IF;
   IF v_actor IS DISTINCT FROM v_rev.proposed_by_ref THEN RAISE EXCEPTION 'solo el proponente retira' USING ERRCODE = 'RV004'; END IF;
   IF v_rev.status <> 'REQUESTED' THEN RAISE EXCEPTION 'transicion invalida' USING ERRCODE = 'RV002'; END IF;
@@ -218,6 +228,29 @@ BEGIN
 END
 $fn$;
 
+-- Lectura de estado SIN EFECTOS para el reintento de RH3 (G-3, F-6D2-QA-02): la Revocation del caso real ya esta aplicada por la co-firma de ESTA sesion? Devuelve {applied, sequence} o {applied:false}. No escribe
+-- en el ledger ni en app.*, no consume step-up; solo revalida la sesion CASE (require_case_actor, sin evento). Misma condicion que el replay de cosign_case_confirmation.
+CREATE FUNCTION case_state.read_case_apply_state(p_case_ref text) RETURNS jsonb
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+AS $fn$
+DECLARE
+  v_actor text;
+  v_revref text;
+  v_rev app.revocation;
+BEGIN
+  IF session_user <> 'platform_rw' THEN RAISE EXCEPTION 'llamador no autorizado' USING ERRCODE = 'RC004'; END IF;
+  v_actor := platform.require_case_actor(p_case_ref, 'RIGHTS_OPERATOR');
+  SELECT c.revocation_ref INTO v_revref FROM app.rights_case c WHERE c.tenant_id = app.current_tenant_id() AND c.case_ref = p_case_ref;
+  IF v_revref IS NULL THEN RETURN pg_catalog.jsonb_build_object('applied', false); END IF;
+  SELECT r.* INTO v_rev FROM app.revocation r WHERE r.tenant_id = app.current_tenant_id() AND r.revocation_ref = v_revref AND r.case_ref = p_case_ref;
+  IF FOUND AND v_rev.status IN ('APPLIED', 'DOWNSTREAM_PENDING', 'DELIVERED', 'COMPLETED') AND v_rev.cosigned_by_ref IS NOT DISTINCT FROM v_actor THEN
+    RETURN pg_catalog.jsonb_build_object('ok', true, 'sequence', case_state.current_sequence(v_revref), 'applied', true, 'replay', true);
+  END IF;
+  RETURN pg_catalog.jsonb_build_object('applied', false);
+END
+$fn$;
+
 -- FN-RC-06 close_case: RC4.RESOLVED / RC4.WITHDRAWN (desde IN_VERIFICATION) y RC5 / RC6 (desde CONTACTING); GRD-RC-09 como en 0038/0039; GRD-RC-10 por la sesion CASE.
 CREATE FUNCTION case_state.close_case(p_case_ref text, p_outcome text) RETURNS jsonb
   LANGUAGE plpgsql SECURITY DEFINER
@@ -284,12 +317,14 @@ REVOKE ALL ON FUNCTION case_state.record_case_confirmation(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.cosign_case_confirmation(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.close_case(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION case_state.alert_apply_exhausted(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION case_state.read_case_apply_state(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION case_state.propose_case_verification(text, text, text, integer, integer) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.withdraw_case_verification_proposal(text, text, integer, integer) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.record_case_confirmation(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.cosign_case_confirmation(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.close_case(text, text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.alert_apply_exhausted(text) TO rights_operator;
+GRANT EXECUTE ON FUNCTION case_state.read_case_apply_state(text) TO rights_operator;
 GRANT EXECUTE ON FUNCTION case_state.approve_case_verification(text, text, integer, integer) TO platform_rw;
 
 -- F-A10-26: R4 solo worker (respaldo); F-A10-28: siembras LOCAL sin app_rw.
@@ -308,13 +343,13 @@ DECLARE
   n integer;
   oid_fn oid;
   spec text[];
-  all_fns text[] := ARRAY['propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation', 'cosign_case_confirmation', 'close_case', 'alert_apply_exhausted',
+  all_fns text[] := ARRAY['propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation', 'cosign_case_confirmation', 'close_case', 'alert_apply_exhausted', 'read_case_apply_state',
                           'apply_revocation', 'r4_apply', 'current_sequence', 'mark_downstream_emitted', 'record_downstream_ack', 'record_erasure_attestation', 'seed_local_revocation', 'seed_local_rights_case'];
 BEGIN
   -- ACL exacta de las funciones de operador, SYSTEM e internas.
   FOREACH spec SLICE 1 IN ARRAY ARRAY[
       ARRAY['propose_case_verification', 'rights_operator'], ARRAY['withdraw_case_verification_proposal', 'rights_operator'], ARRAY['record_case_confirmation', 'rights_operator'],
-      ARRAY['cosign_case_confirmation', 'rights_operator'], ARRAY['close_case', 'rights_operator'], ARRAY['alert_apply_exhausted', 'rights_operator'], ARRAY['approve_case_verification', 'platform_rw'],
+      ARRAY['cosign_case_confirmation', 'rights_operator'], ARRAY['close_case', 'rights_operator'], ARRAY['alert_apply_exhausted', 'rights_operator'], ARRAY['read_case_apply_state', 'rights_operator'], ARRAY['approve_case_verification', 'platform_rw'],
       ARRAY['apply_revocation', 'worker'], ARRAY['mark_downstream_emitted', 'worker'], ARRAY['record_downstream_ack', 'worker'], ARRAY['record_erasure_attestation', 'worker'],
       ARRAY['r4_apply', ''], ARRAY['current_sequence', ''], ARRAY['seed_local_revocation', ''], ARRAY['seed_local_rights_case', '']] LOOP
     SELECT pg_catalog.count(*) INTO n FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = spec[1];
@@ -341,7 +376,7 @@ BEGIN
   END LOOP;
   -- Reglas que no se pueden perder en cada funcion de operador.
   FOR f IN SELECT p.proname, p.prosrc, pg_catalog.pg_get_function_arguments(p.oid) AS args FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace s ON s.oid = p.pronamespace
-            WHERE s.nspname = 'case_state' AND p.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation', 'cosign_case_confirmation', 'close_case', 'alert_apply_exhausted') LOOP
+            WHERE s.nspname = 'case_state' AND p.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal', 'record_case_confirmation', 'cosign_case_confirmation', 'close_case', 'alert_apply_exhausted', 'read_case_apply_state') LOOP
     IF f.args ~* 'by_ref|operator_ref|actor_ref|principal|tenant|approver_ref' THEN RAISE EXCEPTION '0070: case_state.% no puede recibir actor, principal ni tenant (%)', f.proname, f.args; END IF;
     IF f.prosrc !~ 'platform\.require_(case|platform)_actor\(' OR f.prosrc !~ 'session_user <> .platform_rw.' THEN RAISE EXCEPTION '0070: case_state.% perdio el actor desde la sesion o la restriccion de llamador', f.proname; END IF;
     IF f.proname IN ('propose_case_verification', 'approve_case_verification', 'withdraw_case_verification_proposal') AND f.prosrc !~ 'platform\.consume_step_up\(' THEN RAISE EXCEPTION '0070: case_state.% perdio el step-up (GRD-RC-12)', f.proname; END IF;

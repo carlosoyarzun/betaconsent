@@ -85,8 +85,9 @@ function reply(res: ServerResponse, outcome: CaseOutcome, ok: () => { status: nu
   }
   const mapped = EXTERNAL[outcome.reason];
   if (mapped !== undefined) return problem(res, mapped.status, mapped.code);
+  if (outcome.reason === "ERR-CM-01") return notFound(res); // caso/propuesta ajena: 404 uniforme (no 409), sin oraculo
   if (outcome.reason.startsWith("ERR-")) return problem(res, 409, "INVALID_TRANSITION");
-  notFound(res); // NOT_FOUND / STEP_UP / ERR-CM-01: 404 uniforme
+  notFound(res); // NOT_FOUND / STEP_UP: 404 uniforme
 }
 
 /** Devuelve true si la ruta fue atendida. El resto cae al 404 del proceso. */

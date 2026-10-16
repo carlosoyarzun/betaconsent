@@ -67,7 +67,7 @@ export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapte
       const attempt = (): Promise<CaseOutcome> => op(i.sid, "SELECT case_state.cosign_case_confirmation($1::text) AS r", [i.caseRef]);
       const guard = options.applyGuard;
       if (guard === undefined) return attempt();
-      // La alerta del agotamiento va por la sesion CASE (tx aparte); la lectura previa al reintento es el replay idempotente de la propia funcion (misma co-firma ya aplicada = resultado real).
+      // La alerta del agotamiento va por la sesion CASE (tx aparte); la lectura previa al reintento es una funcion de estado SIN efectos (read_case_apply_state): si la misma co-firma ya quedo APPLIED se devuelve el resultado real, sin alerta.
       const withAlert: ApplyGuardConfig = {
         ...guard,
         alert: async ({ reason }) => {
@@ -80,9 +80,10 @@ export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapte
         withAlert,
         { tenantId: "", revocationRef: () => i.caseRef },
         attempt,
+        // Lectura REAL de estado, sin efectos (read_case_apply_state): nunca otra ejecucion de cosign (F-6D2-QA-02).
         async () => {
-          const replay = await attempt();
-          return replay.ok && replay.data.replay === true ? replay : null;
+          const state = await op(i.sid, "SELECT case_state.read_case_apply_state($1::text) AS r", [i.caseRef]);
+          return state.ok && state.data.applied === true ? { ok: true, data: state.data } : null;
         },
       );
     },

@@ -42,10 +42,10 @@ pgTest("TEST-CNS-1707 pg: GRD-RC-10 / F-PR6-43 (condicion de merge de Carlos): e
     const request = await requestGrant(platform, op3.sid, a.caseRef);
     assert.ok(typeof request === "string", "solicitud de grant creada");
     await seedAttestedStepUp(admin, a.approver.principal, "APPROVE_GRANT", request!);
-    // FINDING F-6D2-QA-03 (P1): el motivo 'RH2_APPROVER' (con digito) viola session_event_reason_shape ('^[A-Z_]{1,64}$'): approve_grant LANZA 23514 en vez de devolver NULL con evidencia GRANT_REJECTED.
-    // Hasta que una migracion nueva lo corrija, el test fija lo que SI debe cumplirse hoy: el grant no se crea (devuelva NULL o falle) y no queda fila.
-    const approved = await approveGrant(platform, a.approver.platform.sid, a.caseRef, request!).catch(() => null);
+    // F-6D2-QA-03 (cerrado): el motivo RH_TWO_APPROVER respeta session_event_reason_shape; approve_grant devuelve NULL (sin lanzar) y deja la evidencia GRANT_REJECTED.
+    const approved = await approveGrant(platform, a.approver.platform.sid, a.caseRef, request!);
     assert.equal(approved, null, "el aprobador de RH2 no aprueba el grant del caso");
+    assert.ok((await sessionEvents(admin, a.approver.principal, "GRANT_REJECTED")).some((e) => e.reason_code === "RH_TWO_APPROVER"), "evidencia GRANT_REJECTED / RH_TWO_APPROVER");
     assert.equal((await admin.query("SELECT 1 FROM platform.rights_case_grant WHERE request_ref = $1", [request])).rowCount, 0);
     // Red de seguridad en la base: ni siquiera sembrando el grant con ese aprobador.
     await assert.rejects(() => seedApprovedGrant(admin, { tenantId: a.tenantId, caseRef: a.caseRef, operator: op3.principal, approver: a.approver.principal }), (e: unknown) => (e as { code?: string }).code === "23000");
@@ -66,7 +66,7 @@ pgTest("TEST-CNS-1707 pg: GRD-RC-10 / F-PR6-43 (condicion de merge de Carlos): e
     assert.equal((await http.cases.propose({ sid: b.op1.caseSession.sid, caseRef: b.caseRef, proposalRef, scriptVersion: "g", limit: LIMIT })).ok, true);
     await seedAttestedStepUp(admin, b.approver.principal, "APPROVE_CASE_VERIFICATION", proposalRef);
     const refused = await http.cases.approve({ sid: b.approver.platform.sid, caseRef: b.caseRef, proposalRef, limit: LIMIT });
-    assert.equal(refused.ok, false, "el aprobador del grant no aprueba RH2 del caso");
+    assert.deepEqual(refused, { ok: false, reason: "ERR-RV-07" }, "el aprobador del grant no aprueba RH2 del caso (ERR-RV-07)");
     assert.deepEqual(await revRow(admin, b), { status: "REQUESTED", proposal_ref: proposalRef, second_approver_ref: null });
     assert.equal((await admin.query("SELECT 1 FROM platform.case_verification WHERE tenant_id = $1 AND case_ref = $2", [b.tenantId, b.caseRef])).rowCount, 0);
   } finally {
