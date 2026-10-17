@@ -24,6 +24,7 @@
 import type { RetentionConfig } from "../../../server/modules/common/retention.config.ts";
 import type { Queryable } from "./pool.ts";
 import { checkConsentOwnerInventory } from "./consent-owner-inventory.ts";
+import { checkDatabaseLevel } from "./database-level.ts";
 import { checkRoleMemberships, OWNER_ROLES, REAL_DATA_BLOCKERS, resolveDbRoleMode, RoleModeError } from "./role-membership.ts";
 import type { DbRoleMode } from "./role-membership.ts";
 
@@ -42,13 +43,17 @@ export interface StartupCheckOptions {
   expectedRole?: string;
   /** SEC-CNS-021 PR-3: retencion configurada (retention.config.ts). Obligatoria en STAGING; si se pasa, debe coincidir con ops.retention_policy. */
   retention?: RetentionConfig;
-  /** ADR-010 PR-2: modo de roles declarado por el deploy (nunca por la request). Por defecto resolveDbRoleMode(process.env, expectedEnvironment); REAL_DATA no esta activado hasta PR-7. */
+  /** ADR-010 PR-2: modo de roles declarado por el deploy (nunca por la request). Por defecto resolveDbRoleMode(process.env, expectedEnvironment); REAL_DATA es VERIFICABLE desde PR-7d pero sigue bloqueado por REAL_DATA_BLOCKERS (F-PR7-12). */
   roleMode?: DbRoleMode;
   /**
-   * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1): perfil de retencion del proceso. REQUIRED (por defecto: web, worker): exige/contrasta CNS_RETENTION_* con ops.retention_policy. NOT_APPLICABLE (platform,
-   * verifier, reconciler, chain-verifier): el proceso no purga ni escribe datos con retencion; NO llama a ops.retention_status() y el arranque ASIERTA que su rol NO puede ejecutar ops.retention_status() ni ops.purge_p34().
+   * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1; F-PR7a-03 corregido en PR-7d): perfil de retencion del proceso. El criterio es "CONSUME O PURGA retencion" (no "escribe datos con retencion": platform SI escribe ops.security_event, via
+   * rights_operator, pero no consume ni purga la retencion). REQUIRED (por defecto: web, worker): exige/contrasta CNS_RETENTION_* con ops.retention_policy. NOT_APPLICABLE (platform,
+   * verifier, reconciler, chain-verifier): el proceso no consume ni purga retencion; NO llama a ops.retention_status() y el arranque ASIERTA que ni su rol (current_user) ni ningun rol al que pueda hacer SET ROLE puede ejecutar
+   * ops.retention_status() ni ops.purge_p34().
    */
   retentionProfile?: RetentionProfile;
+  /** ADR-010 rev. 6 PR-7d: exige tambien el estado a nivel de base (INV-DBR-09). Por defecto solo en REAL_DATA; un deploy de STAGING/produccion lo activa. */
+  assertDatabaseLevel?: boolean;
 }
 
 export type RetentionProfile = "REQUIRED" | "NOT_APPLICABLE";
@@ -145,19 +150,23 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
     if (row.member) failures.push(`el rol de la conexión es miembro de ${row.owner}`);
   }
 
+  let roleMode: DbRoleMode | undefined;
   try {
     // El modo lo declara el deploy (CNS_DB_ROLE_MODE), el mismo que usa el runner; vacio solo vale en LOCAL/DEV. Sin modo valido, no arranca.
-    const roleMode = options.roleMode ?? resolveDbRoleMode(process.env, options.expectedEnvironment);
+    roleMode = options.roleMode ?? resolveDbRoleMode(process.env, options.expectedEnvironment);
     // ADR-010 rev. 6 PR-7c (C-3): REAL_DATA no arranca mientras F-PR7-01 siga abierto (aunque la aserción de membresía del modo estuviera activa).
     if (roleMode === "REAL_DATA" && REAL_DATA_BLOCKERS.length > 0) failures.push(`el modo REAL_DATA está bloqueado mientras sigan abiertos: ${REAL_DATA_BLOCKERS.join(", ")} (el migrador aún es dueño de objetos compartidos)`);
     for (const problem of await checkRoleMemberships(db, roleMode)) failures.push(`${problem} (INV-DBR-03)`);
+    // ADR-010 rev. 6 PR-7d (INV-DBR-09): estado a nivel de base (dueño db_owner_nologin, CONNECT/TEMP de PUBLIC, CREATE explicito, ddl_breakglass). Estricto en REAL_DATA o con `assertDatabaseLevel`;
+    // en LOCAL las bases desechables de los tests nacen de CREATE DATABASE ... OWNER consent_owner y no pasan por la fase cluster-post. El LOGIN de ddl_breakglass lo vigila breakglass-watch, no el arranque.
+    if (roleMode === "REAL_DATA" || options.assertDatabaseLevel === true) for (const problem of await checkDatabaseLevel(db, roleMode)) failures.push(problem);
   } catch (error) {
     failures.push(error instanceof RoleModeError ? `${error.message} (INV-DBR-03)` : "no se pudo verificar la membresía de los roles (INV-DBR-03)");
   }
 
   // F-PR7-01 (C-3): inventario por catalogo de lo que consent_owner controla y otros owners ejecutan; igualdad exacta con la allowlist versionada. Fail-closed si no se puede leer.
   try {
-    for (const problem of await checkConsentOwnerInventory(db)) failures.push(problem);
+    for (const problem of await checkConsentOwnerInventory(db, roleMode ?? "IT0B_SYNTHETIC")) failures.push(problem);
   } catch {
     failures.push("no se pudo verificar el inventario de consent_owner (F-PR7-01)");
   }
@@ -198,7 +207,7 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
     failures.push("no se pudo leer ops.db_catalog");
   }
 
-  if (options.retentionProfile === "NOT_APPLICABLE") await checkNoRetentionExecute(db, failures);
+  if (options.retentionProfile === "NOT_APPLICABLE") await checkNoRetentionExecute(db, failures, me?.rolname);
   else await checkRetentionConfig(db, options, failures);
   await checkPurgeExecuteIsolation(db, failures);
 
@@ -326,18 +335,25 @@ async function checkPurgeExecuteIsolation(db: Queryable, failures: string[]): Pr
 }
 
 /**
- * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1): un proceso con retencion NOT_APPLICABLE no puede ejecutar ops.retention_status() ni ops.purge_p34 (SECURITY DEFINER de security_event_owner). Resuelve por catalogo
- * (pg_proc + pg_namespace, sin USAGE de ops ni nombres de regproc) y es fail-closed: si no se puede verificar, no arranca.
+ * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1) y PR-7d (F-PR7a-03): un proceso con retencion NOT_APPLICABLE (no consume ni purga retencion) no puede ejecutar ops.retention_status() ni ops.purge_p34 (SECURITY DEFINER de security_event_owner),
+ * ni con su rol (current_user) ni con ningun rol al que pueda hacer SET ROLE (pg_has_role(current_user, r, 'SET')). Resuelve por catalogo (pg_proc + pg_namespace, sin USAGE de ops ni nombres de regproc) y es fail-closed: si no se
+ * puede verificar, no arranca.
  */
-async function checkNoRetentionExecute(db: Queryable, failures: string[]): Promise<void> {
+async function checkNoRetentionExecute(db: Queryable, failures: string[], me: string | undefined): Promise<void> {
   try {
-    const r = await db.query<{ name: string }>(
-      `SELECT p.proname::pg_catalog.text AS name
+    const r = await db.query<{ name: string; via: string }>(
+      `SELECT p.proname::pg_catalog.text AS name, x.rolname::pg_catalog.text AS via
          FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         CROSS JOIN pg_catalog.pg_roles x
         WHERE n.nspname = 'ops' AND p.proname IN ('retention_status', 'purge_p34')
-          AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')`,
+          AND (x.rolname = current_user OR pg_catalog.pg_has_role(current_user, x.oid, 'SET'))
+          AND pg_catalog.has_function_privilege(x.oid, p.oid, 'EXECUTE')`,
     );
-    for (const row of r.rows) failures.push(`el rol de la conexión puede ejecutar ops.${row.name} y su perfil de retención es NOT_APPLICABLE (F-6F-01, T-1)`);
+    for (const row of r.rows) {
+      failures.push(row.via === me
+        ? `el rol de la conexión puede ejecutar ops.${row.name} y su perfil de retención es NOT_APPLICABLE: no consume ni purga retención (F-6F-01, T-1)`
+        : `el rol de la conexión puede asumir ${row.via}, que ejecuta ops.${row.name}, y su perfil de retención es NOT_APPLICABLE: no consume ni purga retención (F-PR7a-03)`);
+    }
   } catch {
     failures.push("no se pudo verificar que el rol no ejecuta ops.retention_status / ops.purge_p34 (F-6F-01)");
   }

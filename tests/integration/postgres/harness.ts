@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import type { Client } from "pg";
 import {
+  applyClusterPostScope,
   applyClusterScope,
   applyDatabaseScope,
   loadMigrations,
@@ -197,8 +198,14 @@ function quoteIdent(name: string): string {
 async function provisionTemplate(config: Config, admin: Client): Promise<string> {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   const template = `consent_tpl_${migrationSetDigest(migrations).slice(0, 16)}`;
+  const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);
+  const templateExists = exists.rows.length > 0;
 
-  await applyClusterScope(admin, migrations, { environment: "LOCAL" }); // la plantilla es LOCAL sintetica; sin CNS_DB_ROLE_MODE el modo cae a IT0B_SYNTHETIC
+  // La plantilla es LOCAL sintetica; sin CNS_DB_ROLE_MODE el modo cae a IT0B_SYNTHETIC.
+  // ADR-010 rev. 6 PR-7d: con la plantilla ya construida no hay migraciones de base pendientes y la fase cluster + la posterior (revoke de integrity_owner, dueño de la base) van en UNA transaccion, asi que otros
+  // archivos de test que corren en paralelo nunca ven el SET re-otorgado por 0026. Al construir la plantilla (una vez por conjunto de migraciones, con los demas archivos esperando el lock del harness) la fase posterior se
+  // difiere hasta despues de las migraciones de base, que necesitan los SET de los owners.
+  await applyClusterScope(admin, migrations, { environment: "LOCAL", deferPost: !templateExists });
   await setRolePasswords(admin, {
     consent_migrator: config.migratorPassword,
     app_rw: config.appPassword,
@@ -209,18 +216,21 @@ async function provisionTemplate(config: Config, admin: Client): Promise<string>
     integrity_chain_verifier: config.appPassword, // ADR-010 rev. 6 PR-6f (0072)
   });
 
-  const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);
-  if (exists.rows.length > 0) return template;
+  if (templateExists) return template;
 
   const building = `${template}_b`;
-  await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(building)} WITH (FORCE)`);
-  await admin.query(`CREATE DATABASE ${quoteIdent(building)} OWNER consent_owner`);
-  const migrator = new pg.Client({ connectionString: urlWith(config.url, "consent_migrator", config.migratorPassword, building) });
-  await migrator.connect();
   try {
-    await applyDatabaseScope(migrator, migrations, { environment: "LOCAL" });
+    await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(building)} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${quoteIdent(building)} OWNER consent_owner`);
+    const migrator = new pg.Client({ connectionString: urlWith(config.url, "consent_migrator", config.migratorPassword, building) });
+    await migrator.connect();
+    try {
+      await applyDatabaseScope(migrator, migrations, { environment: "LOCAL" });
+    } finally {
+      await migrator.end();
+    }
   } finally {
-    await migrator.end();
+    await applyClusterPostScope(admin, migrations, { environment: "LOCAL" });
   }
   await admin.query(`ALTER DATABASE ${quoteIdent(building)} RENAME TO ${quoteIdent(template)}`);
   return template;

@@ -13,7 +13,12 @@
 // Detecta, NO previene: la prevencion total exige que consent_owner no sea dueño de nada (C-3 (a), antes de datos reales).
 
 import type { Queryable } from "./pool.ts";
-import { CONSENT_OWNER_INVENTORY_ALLOWLIST } from "./consent-owner-inventory.allowlist.ts";
+import {
+  CONSENT_OWNER_INVENTORY_ALLOWLIST,
+  CONSENT_OWNER_INVENTORY_ALLOWLIST_REAL_DATA,
+  CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS,
+} from "./consent-owner-inventory.allowlist.ts";
+import type { DbRoleMode } from "./role-membership.ts";
 
 /** Consulta del inventario: una fila `line` por hallazgo, ordenada con collation C. Solo lee catalogos publicos (corre con cualquier rol de runtime). */
 export const CONSENT_OWNER_INVENTORY_SQL = `
@@ -143,7 +148,31 @@ export async function readConsentOwnerInventory(db: Queryable): Promise<string[]
   return r.rows.map((x) => x.line);
 }
 
-/** Verifica el inventario contra la allowlist; devuelve las diferencias (vacio = ok). */
-export async function checkConsentOwnerInventory(db: Queryable, allowlist: readonly string[] = CONSENT_OWNER_INVENTORY_ALLOWLIST): Promise<string[]> {
-  return diffInventory(await readConsentOwnerInventory(db), allowlist);
+/** Allowlist del modo de roles (PR-7d): IT0B_SYNTHETIC conserva las filas de funciones de los owners con SET; REAL_DATA no. */
+export function inventoryAllowlistFor(mode: DbRoleMode): readonly string[] {
+  return mode === "REAL_DATA" ? CONSENT_OWNER_INVENTORY_ALLOWLIST_REAL_DATA : CONSENT_OWNER_INVENTORY_ALLOWLIST;
+}
+
+/** F-PR7C-08: mensaje explicito si la version mayor del servidor no esta entre las verificadas (vacio = verificada). Fail-closed si no se puede leer. */
+export async function checkInventoryServerVersion(db: Queryable): Promise<string[]> {
+  const r = await db.query<{ server_version_num: string | number }>("SELECT pg_catalog.current_setting('server_version_num') AS server_version_num");
+  const num = Number(r.rows[0]?.server_version_num);
+  if (!Number.isFinite(num)) return ["no se pudo leer server_version_num para el inventario de consent_owner (F-PR7C-08)"];
+  const major = Math.floor(num / 10000);
+  if (!CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS.includes(major)) {
+    return [`la allowlist del inventario de consent_owner se verifico con PostgreSQL ${CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS.join(", ")} y el servidor es ${major}: regenere y verifique la allowlist y declare la version (F-PR7C-08; los md5 de constraints y expresiones dependen de la version)`];
+  }
+  return [];
+}
+
+/**
+ * Verifica el inventario contra la allowlist del modo; devuelve las diferencias (vacio = ok). Si la version mayor del servidor no esta verificada devuelve UNA diferencia explicita y no compara md5 que no
+ * corresponden (F-PR7C-08). `allowlist` (tests) reemplaza la del modo y omite la verificacion de version.
+ */
+export async function checkConsentOwnerInventory(db: Queryable, mode: DbRoleMode = "IT0B_SYNTHETIC", allowlist?: readonly string[]): Promise<string[]> {
+  if (allowlist === undefined) {
+    const version = await checkInventoryServerVersion(db);
+    if (version.length > 0) return version;
+  }
+  return diffInventory(await readConsentOwnerInventory(db), allowlist ?? inventoryAllowlistFor(mode));
 }

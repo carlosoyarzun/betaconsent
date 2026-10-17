@@ -1,4 +1,5 @@
-// Gobierna: ADR-010 rev. 6 PR-7c (F-PR7-01, C-3). Allowlist EXACTA del inventario de consent-owner-inventory.ts, generada del catalogo de una base migrada (0000-0083, con 0075-0079 de PR-7b; incluye funciones de los roles a los que consent_owner puede hacer SET ROLE, huellas md5 de cuerpos, policies, triggers, constraints y defaults) y revisada.
+// Gobierna: ADR-010 rev. 6 PR-7c (F-PR7-01, C-3) y PR-7d (F-PR7C-08: version mayor de Postgres; modo: IT0B vs REAL_DATA). Allowlist EXACTA del inventario de consent-owner-inventory.ts, generada del catalogo de una base migrada (0000-0083, con 0075-0079 de PR-7b; incluye funciones de los roles a los que consent_owner puede hacer SET ROLE, huellas md5 de cuerpos, policies, triggers, constraints y defaults) y revisada.
+// PR-7d (C-1): consent_owner ya no tiene SET sobre integrity_owner en NINGUN modo, asi que las 8 filas V2|fn|integrity_owner|... salieron de la lista (siguen siendo funciones del ledger, pero el migrador ya no puede cambiarlas).
 // Cambiarla es un cambio de superficie del migrador: requiere revision de Carlos (CODEOWNERS: src/infra/adapters/postgres/). Orden: collation C.
 
 export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
@@ -227,14 +228,6 @@ export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
   "V2|fn|grant_owner|platform.session_case_receipt_actor(p_case_ref text)|true|132447cf5c758ee6bb3adf313338d96d|{\"search_path=pg_catalog, pg_temp\"}|{grant_owner=X/grant_owner,transition_owner=X/grant_owner}",
   "V2|fn|grant_owner|platform.session_principal(p_sid text)|true|252a63e620fb865bcba12d7a04461f91|{\"search_path=pg_catalog, pg_temp\"}|{grant_owner=X/grant_owner}",
   "V2|fn|grant_owner|platform.validate_session(p_sid text, p_kind text)|true|f6b64cef5f5c05b385a9472e8da53205|{\"search_path=pg_catalog, pg_temp\"}|{grant_owner=X/grant_owner,platform_rw=X/grant_owner}",
-  "V2|fn|integrity_owner|integrity.anchor_guard()|false|05a4f4db1d03c559d80df250ca97263c|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.append_only_guard()|false|784b5fd362d656f4ea339774ffe28b80|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.audit_event_immutable()|false|20bb00e3bb95f688bc77e3e01b28ae96|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.audit_event_single_aggregate_type()|false|eb17d7ac34861caec481a817448153d6|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.chain_checkpoint_guard()|false|39a8c3cc14701ab6683764306d276cb7|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.chain_run_complete_guard()|false|7c79934d44a2694a25619e6df33013e5|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.chain_run_started_guard()|true|fc8e178b48655e043b1cd26269e21f30|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.reconcile_run_guard()|false|06a0d49f13f8194fdfb409ba57afe8cb|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
   "V2|fn|ledger_writer|ledger_gen.canonical_json(p_value jsonb)|false|99fca94e9a5b99342b6f493aa9cbbb70|{\"search_path=pg_catalog, pg_temp\"}|{ledger_writer=X/ledger_writer}",
   "V2|fn|ledger_writer|ledger_gen.emit_consent_decision()|true|359f57da5546cf2b9d69c98acd48003d|{\"search_path=pg_catalog, pg_temp\"}|{ledger_writer=X/ledger_writer}",
   "V2|fn|ledger_writer|ledger_gen.emit_enrollment()|true|a8d5ec73a2e7b38ebcfbec0af665b252|{\"search_path=pg_catalog, pg_temp\"}|{ledger_writer=X/ledger_writer}",
@@ -377,3 +370,17 @@ export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
   "V3|schema|app|app_schema_owner|app_rw:USAGE,app_schema_owner:CREATE,app_schema_owner:USAGE,consent_owner:CREATE,consent_owner:USAGE,grant_owner:USAGE,integrity_reconciler:USAGE,integrity_verifier:USAGE,ledger_writer:USAGE,outbox_claimer:USAGE,platform_rw:USAGE,rights_case_lookup_owner:USAGE,security_event_owner:USAGE,shared_fn_owner:USAGE,staff_roster_owner:USAGE,staff_roster_reader:USAGE,tenant_resolve_owner:USAGE,transition_owner:USAGE,worker:USAGE",
   "V3|schema|ops|ops_schema_owner|app_rw:USAGE,consent_owner:CREATE,consent_owner:USAGE,integrity_chain_verifier:USAGE,integrity_reconciler:USAGE,integrity_verifier:USAGE,ledger_writer:USAGE,ops_schema_owner:CREATE,ops_schema_owner:USAGE,platform_rw:USAGE,security_event_owner:USAGE,shared_fn_owner:USAGE,transition_owner:USAGE,worker:USAGE",
 ];
+
+/**
+ * ADR-010 rev. 6 PR-7d (F-PR7C-08): versiones MAYORES de PostgreSQL con las que esta allowlist se verifico. Los md5 de pg_get_constraintdef/pg_get_expr dependen del deparseo de la version: se genero con PostgreSQL 18 (local) y
+ * coincide en PostgreSQL 16 (service container del CI: integration verde de los PR #106 y #107 con la misma allowlist). startup-checks.ts y TEST-CNS-1805 fallan con un mensaje explicito (no con cientos de diferencias) si
+ * server_version_num es de otra version mayor: hay que verificar y declarar la nueva version aqui (cambio revisado, CODEOWNERS).
+ */
+export const CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS: readonly number[] = [16, 18];
+
+/**
+ * ADR-010 rev. 6 PR-7d (F-PR7-01, F-PR7C-06): la lista es POR MODO. La lista base es la de IT0B_SYNTHETIC (consent_owner conserva SET sobre 16 owners menos integrity_owner). En REAL_DATA consent_owner no tiene ninguna membresia SET
+ * (REVOKE explicito de 0086) y por tanto desaparecen las filas V2|fn|<owner>|... de los roles con SET: solo quedarian las de funciones del propio consent_owner (ninguna). Antes de cualquier cambio a REAL_DATA_BLOCKERS: F-PR7-01 sigue
+ * abierto porque el migrador aun es dueño de tablas de app/ops y de sus triggers, policies, constraints y defaults (filas V2 que SI permanecen en REAL_DATA).
+ */
+export const CONSENT_OWNER_INVENTORY_ALLOWLIST_REAL_DATA: readonly string[] = CONSENT_OWNER_INVENTORY_ALLOWLIST.filter((l) => !/^V2\|fn\|(?!consent_owner\|)/.test(l));
