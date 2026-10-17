@@ -32,7 +32,7 @@ async function acquireAdvisoryLock(db: Queryable, key: number, timeoutMs: number
   for (;;) {
     const r = await db.query<{ locked: boolean }>("SELECT pg_try_advisory_lock($1) AS locked", [key]);
     if (r.rows[0]?.locked === true) return;
-    if (Date.now() >= deadline) throw new MigrationError(`No se obtuvo el lock del runner de migraciones en ${timeoutMs} ms (otro deploy o una ceremonia lo retiene); no se aplica nada (F-PR7D-09).`);
+    if (Date.now() >= deadline) throw new LockTimeoutError(`No se obtuvo el lock del runner de migraciones en ${timeoutMs} ms (otro deploy o una ceremonia lo retiene); no se aplica nada (F-PR7D-09).`);
     await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
   }
 }
@@ -66,6 +66,14 @@ export interface Migration {
 const FILE_RE = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 const SCOPE_RE = /^-- scope: (cluster-post|cluster|database)\s*$/;
 const ADVISORY_LOCK_KEY = 7_240_124; // CA-124; serializa runners concurrentes sobre la misma base
+
+/** El lock del runner no se obtuvo dentro del tope (P2-A: la fase posterior debe revocar igualmente, sin lock). */
+export class LockTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LockTimeoutError";
+  }
+}
 
 export class MigrationError extends Error {
   constructor(message: string) {
@@ -296,6 +304,7 @@ export async function applyClusterPostScope(
 ): Promise<string[]> {
   const mode = options.mode ?? resolveDbRoleMode(process.env, options.environment);
   const applied: string[] = [];
+  try {
   await withClusterRoleLock(
     superuser,
     async () => {
@@ -316,6 +325,11 @@ export async function applyClusterPostScope(
     },
     options.lockTimeoutMs,
   );
+  } catch (error) {
+    // P2-A: si el lock se agota la fase posterior no corrio, pero la fase cluster pudo dejar el SET re-otorgado: solo-REVOKE SIN lock (una transaccion que solo revoca).
+    if (error instanceof LockTimeoutError) await failsafeAfter(superuser, mode, error);
+    throw error;
+  }
   return applied;
 }
 
@@ -349,6 +363,8 @@ export async function applyDeploy(
     if (primary !== undefined) throw primary;
     return { cluster, database, post };
   } catch (error) {
+    // P2-A: ante CUALQUIER fallo de la fase posterior (incluido el lock agotado) se revoca sin lock; es idempotente.
+    await revokeOnlyFailsafe(superuser, mode).catch(() => undefined);
     throw primary ?? error;
   }
 }

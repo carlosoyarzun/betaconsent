@@ -7,7 +7,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import test from "node:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -483,4 +485,64 @@ pgTest("TEST-CNS-1868 pg (P1-2, F-PR7D-08): nadie es miembro de breakglass_log_o
   }
   // La vigilancia (con integrity_chain_verifier) ve el estado sano sin hallazgos.
   assert.deepEqual(evaluateBreakglass(await readBreakglassSnapshot(ver)), []);
+});
+
+/** initdb/pg_ctl (cluster privado del test 1869): INITDB_BIN_DIR, el PATH, Postgres.app o los paquetes de Debian/Ubuntu. */
+function findPgBin(): string | null {
+  const dirs = [process.env.INITDB_BIN_DIR, "/Applications/Postgres.app/Contents/Versions/latest/bin", ...["18", "17", "16", "15"].map((v) => `/usr/lib/postgresql/${v}/bin`)].filter((d): d is string => d !== undefined && d !== "");
+  for (const d of dirs) if (existsSync(join(d, "initdb")) && existsSync(join(d, "pg_ctl"))) return d;
+  return spawnSync("initdb", ["--version"], { encoding: "utf8" }).status === 0 ? "" : null;
+}
+
+test("TEST-CNS-1869 pg (P2-A/P2-B, F-PR7D-07): con el SET de integrity_owner RE-OTORGADO, una migracion cluster-post inyectada que falla, o el lock agotado (otra conexion retiene 7240124), deja a consent_owner SIN SET (solo-REVOKE sin lock). Corre en un cluster PRIVADO: re-otorgar el SET en el cluster compartido rompe los chequeos de arranque de los demas archivos en paralelo", async () => {
+  const config = { url: process.env.TEST_DATABASE_URL };
+  if (config.url === undefined || config.url === "") {
+    if (process.env.CI === "true") assert.fail("sin TEST_DATABASE_URL en CI");
+    return;
+  }
+  const bin = findPgBin();
+  if (bin === null) {
+    if (process.env.CI === "true") assert.fail("sin initdb/pg_ctl: el test 1869 necesita un cluster privado");
+    console.warn("TEST-CNS-1869 omitido: sin initdb (defina INITDB_BIN_DIR)");
+    return;
+  }
+  const bp = (name: string): string => (bin === "" ? name : join(bin, name));
+  const dir = mkdtempSync(join(tmpdir(), "cns1869-"));
+  const port = 40000 + Math.floor(Math.random() * 20000);
+  const sh = (cmd: string, args: string[]): void => {
+    const r = spawnSync(cmd, args, { encoding: "utf8" });
+    assert.equal(r.status, 0, `${cmd} ${args.join(" ")}: ${r.stderr}`);
+  };
+  sh(bp("initdb"), ["-D", join(dir, "data"), "-E", "UTF8", "-U", "postgres", "--auth=trust"]);
+  sh(bp("pg_ctl"), ["-D", join(dir, "data"), "-o", `-p ${port} -c unix_socket_directories= -c listen_addresses=127.0.0.1`, "-l", join(dir, "log"), "-w", "start"]);
+  const admin = new pg.Client({ connectionString: `postgres://postgres@127.0.0.1:${port}/postgres` });
+  const holder = new pg.Client({ connectionString: `postgres://postgres@127.0.0.1:${port}/postgres` });
+  try {
+    await admin.connect();
+    await holder.connect();
+    const migrations = loadMigrations(MIGRATIONS_DIR);
+    await applyClusterScope(admin, migrations, { mode: "IT0B_SYNTHETIC", deferPost: true }); // crea los roles y re-otorga los SET (estado previo a la fase posterior)
+    const canSet = async (): Promise<boolean> => (await admin.query<{ x: boolean }>("SELECT pg_has_role('consent_owner', 'integrity_owner', 'SET') AS x")).rows[0]!.x;
+    const post = migrations.filter((m) => m.scope === "cluster-post");
+    const injected = { ...post[0]!, version: "9999", name: "falla_inyectada", sql: "-- scope: cluster-post\nSELECT 1/0;\n" };
+    assert.equal(await canSet(), true, "precondicion: la fase cluster dejo el SET re-otorgado (0026)");
+    await assert.rejects(() => applyClusterPostScope(admin, [injected, ...post], { mode: "IT0B_SYNTHETIC" }), (e: unknown) => codeOf(e) === "22012");
+    assert.equal(await canSet(), false, "fase post inyectada falla => consent_owner sin SET (solo-REVOKE tras el ROLLBACK)");
+    assert.equal((await admin.query<{ x: boolean }>("SELECT pg_has_role('consent_owner', 'breakglass_log_owner', 'SET') AS x")).rows[0]!.x, false);
+
+    await admin.query(["GRANT", "integrity_owner", "TO consent_owner WITH INHERIT FALSE, SET TRUE"].join(" "));
+    assert.equal(await canSet(), true);
+    await holder.query("SELECT pg_advisory_lock(7240124)");
+    try {
+      await assert.rejects(() => applyClusterPostScope(admin, post, { mode: "IT0B_SYNTHETIC", lockTimeoutMs: 300 }), /No se obtuvo el lock del runner/);
+      assert.equal(await canSet(), false, "lock agotado => sin SET (solo-REVOKE sin lock)");
+    } finally {
+      await holder.query("SELECT pg_advisory_unlock(7240124)");
+    }
+  } finally {
+    await admin.end().catch(() => undefined);
+    await holder.end().catch(() => undefined);
+    spawnSync(bp("pg_ctl"), ["-D", join(dir, "data"), "-m", "immediate", "stop"], { encoding: "utf8" });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
