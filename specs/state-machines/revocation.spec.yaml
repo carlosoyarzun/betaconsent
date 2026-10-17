@@ -336,7 +336,7 @@ transitions:
       - "En la misma tx se encola el job durable APPLY_REVOCATION (GRD-RV-24)."
     emits: [REVOCATION_CONFIRMED]
     idempotencyKey: revocationRef
-    errors: [ERR-CM-02, ERR-RV-04, ERR-RV-14, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-RV-04, ERR-RV-14, ERR-CM-09, ERR-RV-21]
     governedBy: ["SM-CNS-001 §5 R3", "DEC-BR-017 §1", "SEC-CNS-012 P1-01 (técnico), P1-05"]
     testIds: [TEST-CNS-236, TEST-CNS-328]
   - id: R3r
@@ -352,7 +352,7 @@ transitions:
     effects: ["Confirmación explícita de retiro total en el mismo POST; en la misma tx se encola APPLY_REVOCATION (GRD-RV-24)."]
     emits: [REVOCATION_CONFIRMED]
     idempotencyKey: revocationRef
-    errors: [ERR-RV-04]
+    errors: [ERR-RV-04, ERR-RV-22]
     governedBy: ["SM-CNS-001 §5.1 R3r", "SEC-CNS-012 P1-01 (técnico)"]
     testIds: [TEST-CNS-237]
   - id: RH3
