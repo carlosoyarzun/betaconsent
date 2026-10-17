@@ -100,7 +100,7 @@ test("TEST-CNS-1737 el log no contiene payload, hashes (64 hex), refs de actor n
 
 test("TEST-CNS-1737 tope de lineas: detalle hasta MAX_LOGGED_DIVERGENCES y tenants hasta MAX_LOGGED_TENANTS; el conteo total siempre se informa", () => {
   const mk = (i: number, bad: boolean): TenantChainResult => ({
-    tenantId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, events: 3, verified: bad ? 1 : 3, head: 3,
+    tenantId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, events: 3, verified: bad ? 1 : 3, head: 3, headHash: "a".repeat(64),
     broken: bad ? { chainSeq: 2, aggregateId: `agg-${i}`, sequence: 1, reason: "EVENT_HASH_MISMATCH" } : null, unchainedAfterStart: 0,
   });
   const many = summarizeChainAudit(Array.from({ length: MAX_LOGGED_DIVERGENCES + 5 }, (_, i) => mk(i, true)));
@@ -141,7 +141,7 @@ test("TEST-CNS-1752 aggregate_id hostil (\\n, ANSI, linea falsa `chain_verify_ru
   const lines = formatChainReport(summarizeChainAudit([await audit(TENANT_A, ok)]));
   assert.ok(lines.find((l) => l.startsWith("chain_verify_break "))!.includes(`aggregate=${TENANT_B}`));
   // Un tenant_id que no es uuid (no deberia ocurrir: columna uuid) tambien se enmascara.
-  const odd = formatChainReport(summarizeChainAudit([{ tenantId: "x\ny", events: 1, verified: 1, head: 1, broken: null, unchainedAfterStart: 0 }]));
+  const odd = formatChainReport(summarizeChainAudit([{ tenantId: "x\ny", events: 1, verified: 1, head: 1, headHash: null, broken: null, unchainedAfterStart: 0 }]));
   assert.ok(odd.some((l) => l.includes("tenant=?")));
 });
 

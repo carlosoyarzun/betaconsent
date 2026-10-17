@@ -102,33 +102,20 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
     `SELECT p.polname, p.polcmd, p.polpermissive, pg_get_expr(p.polqual, p.polrelid) AS q, ARRAY(SELECT pg_get_userbyid(r)::text FROM unnest(p.polroles) r) AS roles FROM pg_policy p
       WHERE p.polrelid = 'integrity.audit_event'::regclass AND ((SELECT oid FROM pg_roles WHERE rolname = 'integrity_chain_verifier') = ANY (p.polroles) OR 0 = ANY (p.polroles))`)).rows;
   assert.deepEqual(pol.map((p) => [p.polname, p.polcmd, p.polpermissive, p.q, p.roles]), [["audit_event_chain_verifier_select", "r", true, "true", ["integrity_chain_verifier"]]]);
-  assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_chain_verifier') = ANY (polroles)")).rowCount, 1, "una sola policy en todo el catalogo");
+  // PR-7b (0076): sobre el ledger sigue 1 sola policy; en todo el catalogo el rol aparece ademas en las 3 de chain_run/chain_checkpoint (INSERT, INSERT y SELECT).
+  assert.deepEqual((await admin.query<{ n: string }>("SELECT p.polrelid::regclass::text || '.' || p.polname AS n FROM pg_policy p WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_chain_verifier') = ANY (p.polroles) ORDER BY 1")).rows.map((r) => r.n),
+    ["integrity.audit_event.audit_event_chain_verifier_select", "integrity.chain_checkpoint.chain_checkpoint_verifier_insert", "integrity.chain_checkpoint.chain_checkpoint_verifier_select", "integrity.chain_run.chain_run_verifier_insert"]);
   const rls = (await admin.query<{ f: boolean; e: boolean }>("SELECT relforcerowsecurity AS f, relrowsecurity AS e FROM pg_class WHERE oid = 'integrity.audit_event'::regclass")).rows[0]!;
   assert.deepEqual([rls.e, rls.f], [true, true]);
   // Esquemas: USAGE en integrity y ops (app se revoca en 0074, SEC-6F-03); en ningun otro de dominio.
   const usage = (await admin.query<{ nspname: string }>(`SELECT nspname FROM pg_namespace WHERE nspname IN ${SCHEMAS} AND has_schema_privilege('integrity_chain_verifier', oid, 'USAGE') ORDER BY 1`)).rows.map((r) => r.nspname);
   assert.deepEqual(usage, ["integrity", "ops"]);
-  // Idempotencia: 0072 (cluster, superusuario) y 0073 (base, migrador) se pueden re-ejecutar sin cambiar el estado.
+  // Idempotencia: 0072 (cluster, superusuario) se puede re-ejecutar sin cambiar el estado. 0073 (base) ya NO se re-ejecuta aqui: sus aserciones globales ("1 sola policy del rol", "sin escritura en ninguna relacion") eran
+  // exactas para el momento de migrar y dejan de valer tras 0076 (PR-7b); la aserción vigente transversal es 0079 (se aplica con el resto de migraciones en la plantilla).
   const sql72 = readFileSync(join(MIGRATIONS_DIR, "0072_adr010_pr6f_chain_verifier_role.sql"), "utf8");
-  const sql73 = readFileSync(join(MIGRATIONS_DIR, "0073_adr010_pr6f_chain_verifier_ledger_select.sql"), "utf8");
   await ctx.withRoleCatalogLock(async () => {
     await admin.query(sql72);
   });
-  const migrator = await ctx.connectAs("consent_migrator");
-  // PR-7c (0082): app es de app_schema_owner y consent_owner ya no puede re-conceder USAGE; para reproducir el orden real del deploy (0073 -> 0074, cuando app aun era de consent_owner) se devuelve el dueño solo durante el replay.
-  await admin.query("ALTER SCHEMA app OWNER TO consent_owner");
-  await migrator.query("BEGIN");
-  try {
-    await migrator.query(sql73);
-    await migrator.query(readFileSync(join(MIGRATIONS_DIR, "0074_adr010_pr7a_chain_verifier_no_app_usage.sql"), "utf8")); // 0073 re-concede USAGE de app; 0074 lo revoca (orden real del deploy)
-    await migrator.query("COMMIT");
-  } catch (e) {
-    await migrator.query("ROLLBACK");
-    throw e;
-  } finally {
-    await admin.query("ALTER SCHEMA app OWNER TO app_schema_owner");
-      await admin.query("GRANT USAGE, CREATE ON SCHEMA app TO consent_owner"); // ALTER OWNER fusiona/pierde las entradas ACL propias: se restaura la ACL del esquema
-  }
   assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE polname = 'audit_event_chain_verifier_select'")).rowCount, 1);
 });
 
@@ -274,7 +261,7 @@ pgTest("TEST-CNS-1748 pg: sin SELECT en ninguna otra tabla, vista, secuencia o f
   const reads = (await admin.query<{ t: string }>(
     `SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ${SCHEMAS} AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_any_column_privilege('integrity_chain_verifier', c.oid, 'SELECT') ORDER BY 1`)).rows.map((r) => r.t);
-  assert.deepEqual(reads, ["integrity.audit_event", "ops.db_catalog"]);
+  assert.deepEqual(reads, ["integrity.audit_event", "integrity.chain_checkpoint", "ops.db_catalog"], "PR-7b: + SELECT de chain_checkpoint (0076)");
   const seq = await admin.query(`SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ${SCHEMAS} AND c.relkind = 'S' AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege('integrity_chain_verifier', c.oid, 'USAGE,SELECT,UPDATE') ELSE false END`);
   assert.equal(seq.rowCount, 0);
   const fns = await admin.query(`SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND has_function_privilege('integrity_chain_verifier', p.oid, 'EXECUTE')`);
