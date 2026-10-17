@@ -11,6 +11,7 @@ import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTest, pgTestRaw } from "./harness.ts";
+import { qualified, tableOwner, tableSchema } from "../../helpers/table-schema.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 const constraintOf = (error: unknown): string | undefined => (error as { constraint?: string }).constraint;
@@ -32,22 +33,22 @@ async function columnsWith(admin: Client, table: string, role: string, privilege
 pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment con FORCE RLS, policies por app.current_tenant_id() solo para app_rw, sin DELETE/TRUNCATE, identidad inmutable y grants minimos por columna", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   for (const table of TABLES) {
-    const qname = `app.${table}`;
+    const qname = qualified(table);
     const rel = (await admin.query<{ rls: boolean; force: boolean; owner: string }>(
       "SELECT relrowsecurity AS rls, relforcerowsecurity AS force, pg_get_userbyid(relowner) AS owner FROM pg_class WHERE oid = $1::regclass",
       [qname],
     )).rows[0];
-    assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
+    assert.deepEqual(rel, { rls: true, force: true, owner: tableOwner(table) }, qname); // PR-7c (0081): rights_case es de case_state_owner
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true') AND NOT (policyname = 'rights_case_lookup_select' AND roles = '{rights_case_lookup_owner}')",
-      [table],
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = $2 AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true') AND NOT (policyname = 'rights_case_lookup_select' AND roles = '{rights_case_lookup_owner}')",
+      [table, tableSchema(table)],
     )).rows;
     // 0031 (SEC-CNS-021 PR-3): app.otp_verification suma SELECT y DELETE acotados por vencimiento TO security_event_owner; app_rw queda exactamente INSERT/SELECT/UPDATE.
     const ownerPolicies = policies.filter((p) => p.roles.includes("security_event_owner"));
     assert.deepEqual(ownerPolicies.map((p) => `${p.cmd}:${p.roles.join(",")}`).sort(), table === "otp_verification" ? ["DELETE:security_event_owner", "SELECT:security_event_owner"] : [], `${qname}: policies del dueno de la purga`);
     policies.splice(0, policies.length, ...policies.filter((p) => !p.roles.includes("security_event_owner")));
-    // ADR-010 PR-5b: app_rw solo lee app.rights_case (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_*).
+    // ADR-010 PR-5b: app_rw solo lee case_state.rights_case (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_*).
     assert.deepEqual(policies.map((p) => p.cmd).sort(), table === "rights_case" ? ["SELECT"] : ["INSERT", "SELECT", "UPDATE"], `${qname}: policies`);
     for (const p of policies) {
       assert.deepEqual(p.roles, ["app_rw"], `${qname}: policy solo TO app_rw`);
@@ -91,7 +92,7 @@ pgTest("TEST-CNS-838 pg: invitation, otp_verification, rights_case y enrollment 
     "attempts", "channel_ref", "code_hash", "consumed_at", "expires_at", "last_sent_at", "parent_ref", "resend_count", "scope", "sends_in_window",
     "sends_window_start", "state", "tenant_id", "verification_ref",
   ]); // 0032: marcas de envio P-06 insertables; data_class y created_at los fija la base
-  assert.deepEqual(await columnsWith(admin, "app.rights_case", "app_rw", "UPDATE"), []); // ADR-010 PR-5b: app_rw solo lee app.rights_case
+  assert.deepEqual(await columnsWith(admin, "case_state.rights_case", "app_rw", "UPDATE"), []); // ADR-010 PR-5b: app_rw solo lee case_state.rights_case
   assert.deepEqual(await columnsWith(admin, "app.enrollment", "app_rw", "UPDATE"), ["state"]);
   assert.deepEqual(await columnsWith(admin, "app.invitation", "app_rw", "INSERT"), [
     "bound_decision_maker_ref", "consent_version", "context_ref", "enrollment_ref", "expires_at", "invitation_ref", "participation_ref",
@@ -124,7 +125,7 @@ pgTestRaw("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, e
     // data_class distinto de SYNTHETIC en cada tabla.
     await expectFail(inv(", data_class", ", 'REAL'"), [t], "invitation_data_class_synthetic");
     await expectFail(otpIns("DECISION", "a@x.test", ", data_class", ", 'REAL'"), [t], "otp_data_class_synthetic");
-    await expectFail("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, data_class) VALUES ($1, 'c', 'ch', 'd', 'OPEN', 'REAL')", [t], "rights_case_data_class_synthetic");
+    await expectFail("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, data_class) VALUES ($1, 'c', 'ch', 'd', 'OPEN', 'REAL')", [t], "rights_case_data_class_synthetic");
     await expectFail("INSERT INTO app.enrollment (tenant_id, enrollment_ref, subject_ref, participation_ref, state, data_class) VALUES ($1, 'e', 's', 'p', 'ACTIVE', 'REAL')", [t], "enrollment_data_class_synthetic");
     await expectFail("INSERT INTO tenant_resolve.invitation_token (token_hash, tenant_id, invitation_ref, data_class) VALUES ($1, $2, 'i', 'REAL')", [hex("h839"), t], "invitation_token_data_class_synthetic");
     await expectFail("INSERT INTO tenant_resolve.handle (handle_hash, tenant_id, chain_ref, revoked_decision_ref, data_class) VALUES ($1, $2, 'c', 'd', 'REAL')", [hex("h839b"), t], "handle_data_class_synthetic");
@@ -138,8 +139,8 @@ pgTestRaw("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, e
     await expectFail(otpIns("DECISION", "a@x.test").replace("'CODE_SENT'", "'PENDING'"), [t], "otp_state_enum");
     await expectFail(otpIns("DECISION", "a@x.test").replace(`'${hex("c839")}'`, "'123456'"), [t], "otp_code_hash_shape");
     await expectFail(otpIns("DECISION", "a@x.test").replace(", 0, now()", ", -1, now()"), [t], "otp_attempts_nonneg");
-    await expectFail("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'c', 'ch', 'd', 'REOPENED')", [t], "rights_case_status_enum");
-    await expectFail("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c', 'ch', 'd', 'OPEN', 'OTHER')", [t], "rights_case_origin_enum");
+    await expectFail("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status) VALUES ($1, 'c', 'ch', 'd', 'REOPENED')", [t], "rights_case_status_enum");
+    await expectFail("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c', 'ch', 'd', 'OPEN', 'OTHER')", [t], "rights_case_origin_enum");
     await expectFail("INSERT INTO app.enrollment (tenant_id, enrollment_ref, subject_ref, participation_ref, state) VALUES ($1, 'e', 's', 'p', 'PAUSED')", [t], "enrollment_state_enum");
     await expectFail("INSERT INTO tenant_resolve.invitation_token (token_hash, tenant_id, invitation_ref) VALUES ('NO', $1, 'i')", [t], "invitation_token_hash_shape");
     await expectFail("INSERT INTO tenant_resolve.handle (handle_hash, tenant_id, chain_ref, revoked_decision_ref) VALUES ('NO', $1, 'c', 'd')", [t], "handle_hash_shape");
@@ -162,7 +163,7 @@ pgTestRaw("TEST-CNS-839 pg: CHECK de las tablas de PR-D (data_class SYNTHETIC, e
     await admin.query(otpIns("DECISION", "padre@example.org"), [t]);
     await admin.query(otpIns("REVOCATION", "mgmt:chain-ok").replace("'v'", "'v2'"), [t]);
     for (const table of ["invitation", "otp_verification"]) {
-      assert.equal((await admin.query<{ data_class: string }>(`SELECT data_class FROM app.${table} WHERE tenant_id = $1 LIMIT 1`, [t])).rows[0]?.data_class, "SYNTHETIC");
+      assert.equal((await admin.query<{ data_class: string }>(`SELECT data_class FROM ${qualified(table)} WHERE tenant_id = $1 LIMIT 1`, [t])).rows[0]?.data_class, "SYNTHETIC");
     }
   } finally {
     await admin.query("ROLLBACK");

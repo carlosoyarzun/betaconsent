@@ -6,7 +6,7 @@
 //   * huecos de chain_seq por tenant (1..n) y eventos sin eslabon (chain_seq NULL) posteriores al inicio de la cadena;
 //   * hueco de `sequence` por agregado (debe ser 1..n);
 //   * pares `Agregado:EVENTO` fuera de la particion (ledger_writer 19 U transition_owner 14);
-//   * estado <-> ledger de Invitation (incluye CANCELLED <-> INVITATION_CANCELLED) y ConsentDecision (incluye REVOKED <-> CONSENT_REVOKED, vinculado por app.revocation.revoked_decision_ref),
+//   * estado <-> ledger de Invitation (incluye CANCELLED <-> INVITATION_CANCELLED) y ConsentDecision (incluye REVOKED <-> CONSENT_REVOKED, vinculado por case_state.revocation.revoked_decision_ref),
 //     en ambos sentidos (fila sin evento, evento sin fila, valores distintos) y con cuenta de ocurrencias (eventos que deben aparecer UNA sola vez).
 // No decide si hubo consentimiento, si el OTP es valido ni la autorizacion del tenant (Master Plan §32). No corrige nada.
 // Cero PII: la salida contiene SOLO ids opacos, tipos de evento y enums.
@@ -46,7 +46,7 @@ export interface ReconciledEvent {
 
 export interface InvitationStateRow { readonly tenantId: string; readonly invitationRef: string; readonly state: string }
 export interface ConsentDecisionStateRow { readonly tenantId: string; readonly consentId: string; readonly state: string }
-/** app.revocation (0058): solo la ref y la decision revocada; vincula Revocation:CONSENT_REVOKED con la decision sin leer payload. */
+/** case_state.revocation (0058): solo la ref y la decision revocada; vincula Revocation:CONSENT_REVOKED con la decision sin leer payload. */
 export interface RevocationLinkRow { readonly tenantId: string; readonly revocationRef: string; readonly revokedDecisionRef: string | null }
 
 export interface TenantReconciliationInput {
@@ -206,7 +206,7 @@ function checkDecisions(input: TenantReconciliationInput, out: Divergence[]): vo
   const { tenantId } = input;
   const byAgg = groupBy(input.events.filter((e) => e.aggregateType === "ConsentDecision"), (e) => e.aggregateId);
   const known = new Set(input.decisions.map((r) => r.consentId));
-  // REVOKED <-> CONSENT_REVOKED: el evento vive en el agregado Revocation (aggregate_id = revocation_ref); la decision revocada sale de app.revocation.revoked_decision_ref (sin payload).
+  // REVOKED <-> CONSENT_REVOKED: el evento vive en el agregado Revocation (aggregate_id = revocation_ref); la decision revocada sale de case_state.revocation.revoked_decision_ref (sin payload).
   const decisionOfRevocation = new Map(input.revocations.map((r) => [r.revocationRef, r.revokedDecisionRef]));
   const revokedCount = new Map<string, number>();
   for (const e of input.events) {

@@ -70,11 +70,11 @@ pgTest("TEST-CNS-970 pg: 0015 admite los estados DOWNSTREAM_PENDING/DELIVERED/CO
   try {
     const D = fixtureUuid("d970");
     const ins = (ref: string, status: string) =>
-      admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, $2, 'c970', $3, $4, 'OTP')", [T, ref, D, status]);
+      admin.query("INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, $2, 'c970', $3, $4, 'OTP')", [T, ref, D, status]);
     await assert.rejects(() => ins("r970-x", "EXPIRED"), (e: unknown) => (e as { code?: string }).code === "23514");
     await ins("r970-1", "DELIVERED");
     await assert.rejects(() => ins("r970-2", "REQUESTED"), (e: unknown) => (e as { constraint?: string }).constraint === "revocation_open_per_decision_uq");
-    await admin.query("UPDATE app.revocation SET status = 'COMPLETED' WHERE tenant_id = $1 AND revocation_ref = 'r970-1'", [T]);
+    await admin.query("UPDATE case_state.revocation SET status = 'COMPLETED' WHERE tenant_id = $1 AND revocation_ref = 'r970-1'", [T]);
     await ins("r970-2", "REQUESTED"); // COMPLETED libera la decisión en el índice
     await ins("r970-3", "DOWNSTREAM_PENDING").then(
       () => assert.fail("no debería admitir dos abiertas"),

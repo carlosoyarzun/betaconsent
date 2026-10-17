@@ -1,7 +1,7 @@
 // Gobierna: ADR-010 rev. 4 §4.2 (PR-5b), specs/state-machines/rights-case.spec.yaml `dbEnforcement` (FN-RC-01, FN-RC-02, FN-RC-03, FN-RC-06,
 // TRG-RC-01, INV-RC-07), specs/db-roles.spec.yaml (INV-DBR-07), GRD-RC-01/02/04/07/09/14, F-A10-01, db/migrations/0038_adr010_case_state_rights_case.sql
 // y 0039_adr010_ledger_allowlist_close_case_d6.sql (allowlist de INV-DBR-07, D5; close_case D6). SYNTHETIC ONLY.
-// TEST-CNS-1381 (app_rw no escribe app.rights_case; trigger TRG-RC-01 por efecto; DELETE/TRUNCATE; terminales no se revierten), TEST-CNS-1382 (camino feliz
+// TEST-CNS-1381 (app_rw no escribe case_state.rights_case; trigger TRG-RC-01 por efecto; DELETE/TRUNCATE; terminales no se revierten), TEST-CNS-1382 (camino feliz
 // y codigos de error exactos de las funciones), TEST-CNS-1383 (aislamiento por tenant del camino de funciones), TEST-CNS-1384 (INV-DBR-07: app_rw no inserta
 // en el ledger eventos Revocation/RightsCase/CONSENT_REVOKED; los demas tipos siguen), TEST-CNS-1385 (siembra LOCAL sin upsert sobre terminales).
 // Requiere Postgres real (harness.ts); skip sin entorno.
@@ -28,48 +28,48 @@ async function seedDecision(admin: import("pg").Client, tenant: string, consent:
   ));
 }
 
-pgTest("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-RC-01 exige transition_owner y el efecto; DELETE/TRUNCATE rechazados; un terminal no se revierte (INV-RC-07)", async (ctx) => {
+pgTest("TEST-CNS-1381 pg: app_rw no escribe case_state.rights_case; el trigger TRG-RC-01 exige transition_owner y el efecto; DELETE/TRUNCATE rechazados; un terminal no se revierte (INV-RC-07)", async (ctx) => {
   const T = fixtureUuid("t1381");
   const admin = await ctx.connectAsSuperuser();
   await admin.query(SEED_RC);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-open', 'ch1', 'd1', 'OPEN', 'LIMIT_REACHED')", [T]);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-done', 'ch2', 'd2', 'RESOLVED', 'LIMIT_REACHED')", [T]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-open', 'ch1', 'd1', 'OPEN', 'LIMIT_REACHED')", [T]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-done', 'ch2', 'd2', 'RESOLVED', 'LIMIT_REACHED')", [T]);
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   try {
     const uow = new PgUnitOfWork(pool);
     for (const sql of [
-      "UPDATE app.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'",
-      "UPDATE app.rights_case SET revocation_ref = 'x' WHERE case_ref = 'c-open'",
-      "INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES (current_setting('app.tenant_id')::uuid, 'x', 'c', 'd', 'OPEN', 'LIMIT_REACHED')",
+      "UPDATE case_state.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'",
+      "UPDATE case_state.rights_case SET revocation_ref = 'x' WHERE case_ref = 'c-open'",
+      "INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES (current_setting('app.tenant_id')::uuid, 'x', 'c', 'd', 'OPEN', 'LIMIT_REACHED')",
       "SELECT case_state.lock_rights_case('c-open')",
       "SELECT case_state.rights_case_transition_guard()",
-      "SELECT set_config('case_state.effect', 'close_case', true), (SELECT 1 FROM app.rights_case WHERE case_ref = 'c-open' FOR UPDATE)",
-      "DELETE FROM app.rights_case WHERE case_ref = 'c-open'",
-      "TRUNCATE app.rights_case",
+      "SELECT set_config('case_state.effect', 'close_case', true), (SELECT 1 FROM case_state.rights_case WHERE case_ref = 'c-open' FOR UPDATE)",
+      "DELETE FROM case_state.rights_case WHERE case_ref = 'c-open'",
+      "TRUNCATE case_state.rights_case",
     ]) {
       await assert.rejects(() => uow.withTenantTx(T, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === "42501", sql);
     }
-    assert.ok((await uow.withTenantTx(T, (tx) => tx.query("SELECT 1 FROM app.rights_case"))).rowCount === 2, "app_rw si lee");
+    assert.ok((await uow.withTenantTx(T, (tx) => tx.query("SELECT 1 FROM case_state.rights_case"))).rowCount === 2, "app_rw si lee");
   } finally {
     await pool.end();
   }
   // Superusuario: DELETE/TRUNCATE tambien (trigger), y UPDATE sin efecto.
   await admin.query("RESET ALL");
-  await assert.rejects(() => admin.query("DELETE FROM app.rights_case WHERE case_ref = 'c-open'"), (e: unknown) => codeOf(e) === "42501");
-  await assert.rejects(() => admin.query("TRUNCATE app.rights_case"), (e: unknown) => codeOf(e) === "42501");
-  await assert.rejects(() => admin.query("UPDATE app.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"), (e: unknown) => codeOf(e) === "42501");
+  await assert.rejects(() => admin.query("DELETE FROM case_state.rights_case WHERE case_ref = 'c-open'"), (e: unknown) => codeOf(e) === "42501");
+  await assert.rejects(() => admin.query("TRUNCATE case_state.rights_case"), (e: unknown) => codeOf(e) === "42501");
+  await assert.rejects(() => admin.query("UPDATE case_state.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"), (e: unknown) => codeOf(e) === "42501");
   // transition_owner con el efecto de OTRA funcion, con un par fuera del grafo o tocando columnas ajenas: 42501; un terminal no se toca (policy USING: 0 filas).
   await admin.query("BEGIN");
   try {
     await admin.query("SET LOCAL ROLE transition_owner");
     await admin.query("SELECT set_config('app.tenant_id', $1, true)", [T]);
     for (const [effect, sql] of [
-      ["open_rights_case_bearer", "UPDATE app.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"],
-      ["confirm_case_return", "UPDATE app.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"], // origin LIMIT_REACHED no se mira aqui: el grafo si lo permite
-      ["confirm_case_return", "UPDATE app.rights_case SET status = 'RESOLVED' WHERE case_ref = 'c-open'"], // OPEN -> RESOLVED fuera del grafo
-      ["close_case", "UPDATE app.rights_case SET status = 'RESOLVED' WHERE case_ref = 'c-open'"], // OPEN no cierra
-      ["express_revocation_intent_in_case", "UPDATE app.rights_case SET status = 'IN_VERIFICATION' WHERE case_ref = 'c-open'"], // OPEN -> IN_VERIFICATION
-      ["", "UPDATE app.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"],
+      ["open_rights_case_bearer", "UPDATE case_state.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"],
+      ["confirm_case_return", "UPDATE case_state.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"], // origin LIMIT_REACHED no se mira aqui: el grafo si lo permite
+      ["confirm_case_return", "UPDATE case_state.rights_case SET status = 'RESOLVED' WHERE case_ref = 'c-open'"], // OPEN -> RESOLVED fuera del grafo
+      ["close_case", "UPDATE case_state.rights_case SET status = 'RESOLVED' WHERE case_ref = 'c-open'"], // OPEN no cierra
+      ["express_revocation_intent_in_case", "UPDATE case_state.rights_case SET status = 'IN_VERIFICATION' WHERE case_ref = 'c-open'"], // OPEN -> IN_VERIFICATION
+      ["", "UPDATE case_state.rights_case SET status = 'CONTACTING' WHERE case_ref = 'c-open'"],
     ] as const) {
       await admin.query("SAVEPOINT s");
       await admin.query("SELECT set_config('case_state.effect', $1, true)", [effect]);
@@ -85,12 +85,12 @@ pgTest("TEST-CNS-1381 pg: app_rw no escribe app.rights_case; el trigger TRG-RC-0
       await admin.query("SAVEPOINT s");
       await admin.query("SELECT set_config('case_state.effect', $1, true)", [effect]);
       // La policy de UPDATE (USING excluye terminales) oculta la fila: 0 filas afectadas, exacto (el trigger ni se alcanza).
-      const r = await admin.query("UPDATE app.rights_case SET status = 'OPEN' WHERE case_ref = 'c-done'");
+      const r = await admin.query("UPDATE case_state.rights_case SET status = 'OPEN' WHERE case_ref = 'c-done'");
       assert.equal(r.rowCount, 0, `terminal ${effect}`);
       await admin.query("ROLLBACK TO s");
     }
     // Verificacion DENTRO de la tx (antes del ROLLBACK): los estados siguen siendo los sembrados.
-    assert.deepEqual((await admin.query<{ s: string }>("SELECT status AS s FROM app.rights_case WHERE tenant_id = $1 ORDER BY case_ref", [T])).rows.map((r) => r.s), ["RESOLVED", "OPEN"]);
+    assert.deepEqual((await admin.query<{ s: string }>("SELECT status AS s FROM case_state.rights_case WHERE tenant_id = $1 ORDER BY case_ref", [T])).rows.map((r) => r.s), ["RESOLVED", "OPEN"]);
   } finally {
     await admin.query("ROLLBACK");
   }
@@ -119,7 +119,7 @@ pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED c
     await fails(OPEN, [C, chain, D, "OTRO"], "RC002");
     await fails(OPEN, [C, "otra-cadena", D, "CHANNEL_UNREACHABLE"], "RC001");
     await fails(OPEN, [C, chain, "no-existe", "CHANNEL_UNREACHABLE"], "RC001");
-    assert.equal((await admin.query("SELECT 1 FROM app.rights_case WHERE tenant_id = $1", [T])).rowCount, 0, "los rechazos no persisten nada");
+    assert.equal((await admin.query("SELECT 1 FROM case_state.rights_case WHERE tenant_id = $1", [T])).rowCount, 0, "los rechazos no persisten nada");
     // RC1: crea; GRD-RC-02: la segunda apertura devuelve el caso existente sin evento.
     const opened = (await run(OPEN, [C, chain, D, "CHANNEL_UNREACHABLE"])).rows[0]?.r;
     assert.deepEqual(opened, { caseRef: C, created: true, sequence: 1 });
@@ -151,7 +151,7 @@ pgTest("TEST-CNS-1382 pg: funciones de RightsCase: camino feliz hasta RESOLVED c
     await fails(EXPR, [C, fixtureUuid("chain-ajena"), D, REV], "RC009");
     await fails(EXPR, [C, chain, "otra-decision", REV], "RC009");
     await run(EXPR, [C, chain, D, REV]);
-    assert.equal((await admin.query<{ status: string; revocation_ref: string }>("SELECT status, revocation_ref FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T, C])).rows[0]?.status, "IN_VERIFICATION");
+    assert.equal((await admin.query<{ status: string; revocation_ref: string }>("SELECT status, revocation_ref FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T, C])).rows[0]?.status, "IN_VERIFICATION");
     assert.deepEqual(await events(REV), ["REVOCATION_REQUESTED"]);
     await fails(EXPR, [C, chain, D, fixtureUuid("rev1382-b")], "RV409"); // segundo RC3 con el caso ya IN_VERIFICATION: conflicto para que el UoW reejecute y converja por R12
     // R12 (attach) sobre la Revocation ligada: ok; sobre otra: RV002.
@@ -171,14 +171,14 @@ pgTest("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de Righ
   const D = fixtureUuid("d1383");
   await seedDecision(admin, A, D, "cA");
   await admin.query(SEED_RC);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'cA-open', 'cA', $2, 'OPEN', 'CHANNEL_UNREACHABLE')", [A, D]);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'cA-contacting', 'cA2', 'dA2', 'CONTACTING', 'LIMIT_REACHED')", [A]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'cA-open', 'cA', $2, 'OPEN', 'CHANNEL_UNREACHABLE')", [A, D]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'cA-contacting', 'cA2', 'dA2', 'CONTACTING', 'LIMIT_REACHED')", [A]);
   await admin.query("RESET ALL");
   const snapshot = async (): Promise<string> =>
     JSON.stringify([
-      (await admin.query("SELECT case_ref, status, revocation_ref FROM app.rights_case WHERE tenant_id = $1 ORDER BY 1", [A])).rows,
+      (await admin.query("SELECT case_ref, status, revocation_ref FROM case_state.rights_case WHERE tenant_id = $1 ORDER BY 1", [A])).rows,
       (await admin.query("SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1", [A])).rows,
-      (await admin.query("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1", [A])).rows,
+      (await admin.query("SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1", [A])).rows,
     ]);
   const before = await snapshot();
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
@@ -192,7 +192,7 @@ pgTest("TEST-CNS-1383 pg: aislamiento por tenant del camino de funciones de Righ
       await assert.rejects(() => uow.withTenantTx(B, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === code, sql);
     }
     // B tampoco ve las filas de A ni puede sembrar un caso con el tenant de A.
-    assert.equal((await uow.withTenantTx(B, (tx) => tx.query("SELECT 1 FROM app.rights_case"))).rowCount, 0);
+    assert.equal((await uow.withTenantTx(B, (tx) => tx.query("SELECT 1 FROM case_state.rights_case"))).rowCount, 0);
     await assert.rejects(
       () => uow.withTenantTx(B, (tx) => tx.query("SELECT case_state.seed_local_rights_case($1::uuid, 'x', 'c', 'd', 'OPEN', NULL, NULL)", [A])),
       (e: unknown) => codeOf(e) === "42501",
@@ -237,7 +237,7 @@ pgTest("TEST-CNS-1385 pg: seed_local_rights_case falla (42501) sobre un caso ter
   try {
     const uow = new PgUnitOfWork(pool);
     const seed = (status: string) => uow.withTenantTx(T, (tx) => tx.query("SELECT case_state.seed_local_rights_case($1::uuid, 'c1385', 'ch', 'd', $2::text, NULL, NULL)", [T, status]));
-    const status = async () => (await uow.withTenantTx(T, (tx) => tx.query<{ s: string }>("SELECT status AS s FROM app.rights_case WHERE case_ref = 'c1385'"))).rows[0]?.s;
+    const status = async () => (await uow.withTenantTx(T, (tx) => tx.query<{ s: string }>("SELECT status AS s FROM case_state.rights_case WHERE case_ref = 'c1385'"))).rows[0]?.s;
     await seed("OPEN");
     await seed("CONTACTING");
     assert.equal(await status(), "CONTACTING");
@@ -261,9 +261,9 @@ pgTest("TEST-CNS-1386 pg: RC2u: el atajo idempotente exige origin CHANNEL_UNREAC
   await seedDecision(admin, T, D2, "ch1386-real");
   await admin.query(SEED_RC);
   // CONTACTING sembrado sin evento: con origin CU el atajo no vale (RV002 tras el control de secuencia); con otro origin: RC001.
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-cu-noevent', 'ch1386', $2, 'CONTACTING', 'CHANNEL_UNREACHABLE')", [T, D]);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-lr', 'chx', 'dx', 'CONTACTING', 'LIMIT_REACHED')", [T]);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin, revocation_ref) VALUES ($1, 'c-iv', 'ch1386', 'dy', 'IN_VERIFICATION', 'CHANNEL_UNREACHABLE', 'rv-iv')", [T]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-cu-noevent', 'ch1386', $2, 'CONTACTING', 'CHANNEL_UNREACHABLE')", [T, D]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-lr', 'chx', 'dx', 'CONTACTING', 'LIMIT_REACHED')", [T]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin, revocation_ref) VALUES ($1, 'c-iv', 'ch1386', 'dy', 'IN_VERIFICATION', 'CHANNEL_UNREACHABLE', 'rv-iv')", [T]);
   await admin.query("RESET ALL");
   const pool = createPool({ connectionString: ctx.urlFor("app_rw"), max: 2 });
   const uow = new PgUnitOfWork(pool);
@@ -350,8 +350,8 @@ pgTest("TEST-CNS-1391 pg: concurrencia del trigger de un aggregate_type por aggr
   await seedDecision(admin, T, D, "ch1391");
   await seedDecision(admin, T, fixtureUuid("d1391-b"), "ch1391-b");
   await admin.query(SEED_RC);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-a', 'ch1391', $2, 'CONTACTING', 'LIMIT_REACHED')", [T, D]);
-  await admin.query("INSERT INTO app.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-b', 'ch1391-b', $2, 'CONTACTING', 'LIMIT_REACHED')", [T, fixtureUuid("d1391-b")]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-a', 'ch1391', $2, 'CONTACTING', 'LIMIT_REACHED')", [T, D]);
+  await admin.query("INSERT INTO case_state.rights_case (tenant_id, case_ref, chain_ref, revoked_decision_ref, status, origin) VALUES ($1, 'c-b', 'ch1391-b', $2, 'CONTACTING', 'LIMIT_REACHED')", [T, fixtureUuid("d1391-b")]);
   await admin.query("RESET ALL");
   const H = "a".repeat(64);
   const invite = (id: string, chainSeq: number): string =>

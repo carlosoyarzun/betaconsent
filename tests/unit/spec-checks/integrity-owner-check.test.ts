@@ -123,6 +123,8 @@ test("TEST-CNS-1325 security-event-owner-check: solo la allowlist usa SET ROLE s
 });
 
 // ADR-010 PR-2 (INV-DBR-03): el mismo control para los owners nuevos de cluster (solo 0034 concede su membresia; nadie hace SET ROLE).
+const PR7C_ROLES = ["app_schema_owner", "ops_schema_owner", "shared_fn_owner", "revocation_recovery_reader"];
+
 test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo ni GRANT de su membresia fuera de 0034/0035 (repo real); detecta variantes y no da falsos positivos", () => {
   const files: { path: string; text: string }[] = [];
   collect(ROOT, files);
@@ -141,7 +143,7 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
     }
   }
   // 0034 pasa con su GRANT y 0035 (ADR-010 PR-3) con el SET LOCAL ROLE de sus tres owners; una entrada obsoleta se marca; otra migracion con SET ROLE falla.
-  const real = ADR010_OWNER_ROLES.filter((r) => r !== "ledger_gen_owner" && r !== "ledger_writer" && r !== "rights_case_lookup_owner").map((r) => `GRANT ${r} TO consent_owner WITH INHERIT FALSE, SET TRUE;`).join("\n");
+  const real = ADR010_OWNER_ROLES.filter((r) => r !== "ledger_gen_owner" && r !== "ledger_writer" && r !== "rights_case_lookup_owner" && !PR7C_ROLES.includes(r)).map((r) => `GRANT ${r} TO consent_owner WITH INHERIT FALSE, SET TRUE;`).join("\n");
   // ADR-010 rev. 5 PR-b: 0046 (cluster) concede ledger_gen_owner y ledger_writer; 0047/0048/0049 los asumen con SET LOCAL ROLE (esquema ledger_gen y funciones de ledger_writer).
   const m0046 = "db/migrations/0046_adr010_ledger_roles.sql";
   const real46 = ["ledger_gen_owner", "ledger_writer"].map((r) => `GRANT ${r} TO consent_owner WITH INHERIT FALSE, SET TRUE;`).join("\n");
@@ -181,7 +183,18 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
     // PR-6d parte 1 (0059-0063): mismos owners (platform_schema_owner y grant_owner).
     "db/migrations/0059_adr010_pr6d1_grants_schema.sql", "db/migrations/0060_adr010_pr6d1_step_up_session_principal.sql", "db/migrations/0061_adr010_pr6d1_step_up_nonce_functions.sql", "db/migrations/0062_adr010_pr6d1_request_approve_grant.sql", "db/migrations/0063_adr010_pr6d1_validate_case_tenant.sql", m0069];
   const t5a = "tests/integration/postgres/adr010-pr5a-case-state.test.ts";
-  const base = [{ path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: m0041, text: set37 }, { path: m0044, text: set37 }, { path: m0066, text: set37 }, { path: m0070, text: set37 }, { path: tpra, text: "SET LOCAL ROLE transition_owner;" }, { path: m0040, text: set40 }, { path: m0050, text: set35 }, { path: m0051, text: set40 }, ...m6c.map((path) => ({ path, text: set40 })), { path: "db/migrations/0064_adr010_pr6d1_rights_case_lookup_role.sql", text: "GRANT rights_case_lookup_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;" }, { path: m0042, text: "SET LOCAL ROLE transition_owner;" }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: tprb, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb2, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb3, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }, ...pb];
+  // ADR-010 rev. 6 PR-7c: 0080 (cluster, concede los 4 roles nuevos), 0081 (7 owners por SET LOCAL ROLE literal), 0082 (dueños de esquema), 0083 (recovery reader) y los tests que asumen un owner nuevo.
+  const set81 = ["case_state_owner", "transition_owner", "platform_schema_owner", "grant_owner", "ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner"].map((r) => `SET LOCAL ROLE ${r};`).join("\n");
+  const pr7c = [
+    { path: "db/migrations/0080_adr010_pr7c_cluster_roles.sql", text: PR7C_ROLES.map((r) => `GRANT ${r} TO consent_owner WITH INHERIT FALSE, SET TRUE;`).join("\n") },
+    { path: "db/migrations/0081_adr010_pr7c_q16_move_revocation_rights_case.sql", text: set81 },
+    { path: "db/migrations/0082_adr010_pr7c_shared_functions_and_schema_owners.sql", text: "SET LOCAL ROLE app_schema_owner;\nSET LOCAL ROLE ops_schema_owner;" },
+    { path: "db/migrations/0083_adr010_pr7c_recovery_reader_owner.sql", text: "SET LOCAL ROLE case_state_owner;\nSET LOCAL ROLE transition_owner;\nSET LOCAL ROLE revocation_recovery_reader;" },
+    { path: "tests/integration/postgres/adr010-pr7c-owners.test.ts", text: "SET LOCAL ROLE case_state_owner;\nSET LOCAL ROLE transition_owner;" },
+    { path: "tests/integration/postgres/catalog.test.ts", text: "SET LOCAL ROLE app_schema_owner;" },
+    { path: "tests/integration/postgres/pr-c-schema.test.ts", text: "SET LOCAL ROLE shared_fn_owner;" },
+  ];
+  const base = [...pr7c, { path: m0034, text: real }, { path: m0035, text: set35 }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: m0041, text: set37 }, { path: m0044, text: set37 }, { path: m0066, text: set37 }, { path: m0070, text: set37 }, { path: tpra, text: "SET LOCAL ROLE transition_owner;" }, { path: m0040, text: set40 }, { path: m0050, text: set35 }, { path: m0051, text: set40 }, ...m6c.map((path) => ({ path, text: set40 })), { path: "db/migrations/0064_adr010_pr6d1_rights_case_lookup_role.sql", text: "GRANT rights_case_lookup_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;" }, { path: m0042, text: "SET LOCAL ROLE transition_owner;" }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: tprb, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb2, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb3, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }, ...pb];
   assert.deepEqual(checkAdr010OwnerUsage(base), []);
   assert.ok(checkAdr010OwnerUsage([{ path: m0034, text: "SELECT 1;" }, { path: m0035, text: "SELECT 1;" }, { path: m0036, text: "SELECT 1;" }, { path: m0037, text: "SELECT 1;" }, { path: m0038, text: "SELECT 1;" }, { path: m0039, text: "SELECT 1;" }, { path: m0041, text: "SELECT 1;" }, { path: tpra, text: "SELECT 1;" }, { path: m0040, text: "SELECT 1;" }, { path: m0050, text: "SELECT 1;" }, { path: m0051, text: "SELECT 1;" }, ...m6c.map((path) => ({ path, text: "SELECT 1;" })), { path: m0042, text: "SELECT 1;" }, { path: t5a, text: "SELECT 1;" }, { path: t5b, text: "SELECT 1;" }, { path: tprb, text: "SELECT 1;" }, { path: tprb2, text: "SELECT 1;" }, { path: tprb3, text: "SELECT 1;" }, { path: fixPlatform, text: "SELECT 1;" }, ...pbObsolete]).every((e) => e.includes("obsoleta")));
   assert.equal(checkAdr010OwnerUsage([...base, { path: "db/migrations/0038_otra.sql", text: "SET LOCAL ROLE transition_owner;" }]).length, 1);

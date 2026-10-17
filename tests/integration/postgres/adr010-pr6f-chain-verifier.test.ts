@@ -115,6 +115,8 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
     await admin.query(sql72);
   });
   const migrator = await ctx.connectAs("consent_migrator");
+  // PR-7c (0082): app es de app_schema_owner y consent_owner ya no puede re-conceder USAGE; para reproducir el orden real del deploy (0073 -> 0074, cuando app aun era de consent_owner) se devuelve el dueño solo durante el replay.
+  await admin.query("ALTER SCHEMA app OWNER TO consent_owner");
   await migrator.query("BEGIN");
   try {
     await migrator.query(sql73);
@@ -123,6 +125,9 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
   } catch (e) {
     await migrator.query("ROLLBACK");
     throw e;
+  } finally {
+    await admin.query("ALTER SCHEMA app OWNER TO app_schema_owner");
+      await admin.query("GRANT USAGE, CREATE ON SCHEMA app TO consent_owner"); // ALTER OWNER fusiona/pierde las entradas ACL propias: se restaura la ACL del esquema
   }
   assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE polname = 'audit_event_chain_verifier_select'")).rowCount, 1);
 });
@@ -276,7 +281,7 @@ pgTest("TEST-CNS-1748 pg: sin SELECT en ninguna otra tabla, vista, secuencia o f
   assert.equal(fns.rowCount, 0, "sin EXECUTE fuera de pg_catalog");
   assert.equal((await admin.query("SELECT 1 FROM pg_default_acl d WHERE d.defaclacl::text LIKE '%integrity_chain_verifier%'")).rowCount, 0, "default privileges vacios para el rol");
   const ver = await ctx.connectAs("integrity_chain_verifier");
-  for (const t of ["app.invitation", "app.consent_decision", "app.outbox", "app.rights_case", "ops.security_event", "platform.principal_identity", "platform.oidc_exchange", "case_state.x", "pii.x", "tenant_resolve.handle"]) {
+  for (const t of ["app.invitation", "app.consent_decision", "app.outbox", "case_state.rights_case", "ops.security_event", "platform.principal_identity", "platform.oidc_exchange", "case_state.x", "pii.x", "tenant_resolve.handle"]) {
     await assert.rejects(() => ver.query(`SELECT 1 FROM ${t}`), (e: unknown) => (t === "case_state.x" || t === "pii.x" ? ["42501", "42P01", "3F000"] : ["42501"]).includes(codeOf(e) ?? ""), t);
   }
   for (const s of ["platform", "case_state", "ledger_gen", "tenant_resolve", "pii"]) {

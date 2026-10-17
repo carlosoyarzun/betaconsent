@@ -60,7 +60,9 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
   const sql74 = readFileSync(join(MIGRATIONS_DIR, "0074_adr010_pr7a_chain_verifier_no_app_usage.sql"), "utf8");
   const sql73 = readFileSync(join(MIGRATIONS_DIR, "0073_adr010_pr6f_chain_verifier_ledger_select.sql"), "utf8");
   const migrator = await ctx.connectAs("consent_migrator");
+  // PR-7c (0082): app es de app_schema_owner; para reproducir el orden real del deploy (0073 -> 0074 con app aun de consent_owner) el dueño se devuelve solo durante el replay.
   for (const sql of [sql74, sql73 + "\n" + sql74]) {
+    await admin.query("ALTER SCHEMA app OWNER TO consent_owner");
     await migrator.query("BEGIN");
     try {
       await migrator.query(sql);
@@ -68,6 +70,9 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
     } catch (e) {
       await migrator.query("ROLLBACK");
       throw e;
+    } finally {
+      await admin.query("ALTER SCHEMA app OWNER TO app_schema_owner");
+      await admin.query("GRANT USAGE, CREATE ON SCHEMA app TO consent_owner"); // ALTER OWNER fusiona/pierde las entradas ACL propias: se restaura la ACL del esquema
     }
     assert.deepEqual(await state(), before);
   }

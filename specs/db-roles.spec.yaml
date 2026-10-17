@@ -16,7 +16,7 @@
 # No decide semántica de consentimiento, revocación ni elegibilidad. La autoridad de RH3 sigue siendo LEGAL DECISION LD-03 (ADR-010 Q12).
 specId: SPEC-CNS-DB-ROLES
 title: "Roles de PostgreSQL, membresías, privilegios y chequeos (IT0b / datos reales)"
-version: "0.4.0"
+version: "0.7.0" # PR-7c (ADR-010 rev. 6): Q16 ejecutado (app.revocation/app.rights_case -> case_state), esquemas app/ops de owners NOLOGIN, funciones compartidas de shared_fn_owner, revocation_recovery_reader (F-6D3-SEC-08), inventario por catalogo (F-PR7-01); decisiones de Carlos 2026-10-16 (C-2, C-3, C-6)
 status: PROPOSED
 owner: lampone-architect
 reviewers: [lampone-security, lampone-qa, carlosoyarzun]
@@ -314,7 +314,7 @@ roles:
       - {name: "case_state.cosign_case_confirmation", status: PR-5}
       - {name: "case_state.close_case", status: PR-5}
       - {name: "case_state.read_case_apply_state", status: "0070 (6d parte 2): lectura de estado SIN efectos para el reintento acotado de RH3 (F-6D2-QA-02)"}
-      - {name: "case_state.list_confirmed_unapplied(limit, skip_refs)", status: "0070 (6d parte 2, F-6D3-SEC-01): descubrimiento de Revocation CONFIRMED sin APPLIED para el respaldo del worker; devuelve solo (tenant_id, revocation_ref); EXECUTE solo worker; la policy revocation_transition_recovery_select (0067, TO transition_owner, solo CONFIRMED bajo el efecto de esta funcion) es la unica excepcion cross-tenant (F-6D3-SEC-08); el worker NO tiene policy cross-tenant propia"}
+      - {name: "case_state.list_confirmed_unapplied(limit, skip_refs)", status: "0070 (6d parte 2, F-6D3-SEC-01): descubrimiento de Revocation CONFIRMED sin APPLIED para el respaldo del worker; devuelve solo (tenant_id, revocation_ref); EXECUTE solo worker; PR-7c (0083, F-6D3-SEC-08 CERRADO): la funcion es de revocation_recovery_reader (NOLOGIN, SELECT solo de tenant_id, revocation_ref, status, created_at de case_state.revocation) y la unica lectura cross-tenant es la policy revocation_recovery_reader_select TO ese rol (status = CONFIRMED); la policy de transition_owner (0067) se eliminó; el worker NO tiene policy cross-tenant propia (TEST-CNS-1804)"}
       - {name: "platform.session_case_receipt_actor(case_ref)", status: "0069 (6d parte 2, F-6D3-SEC-07): principal de la sesion CASE para la relectura de estado tras un commit ambiguo; tolera sesion vencida hace < 15 min y no revocada; EXECUTE solo transition_owner"}
       - {name: "case_state.alert_apply_exhausted", status: "0070 (6d parte 2): alerta de RH3 (G-3): firma (case_ref, motivo); motivo R4_RETRIES_EXHAUSTED (agotamiento) o R4_APPLY_FAILED (fallo que no es guard de dominio, Carlos 2026-10-16 opción A)"}
     tables: [{object: "vistas case_scope() (rights-case.spec.yaml:422)", privileges: [SELECT], status: PR-5}]
@@ -354,8 +354,10 @@ roles:
     status: MAIN
     createdBy: "0000:23-27"
     owns:
-      - {object: "esquemas app y ops", status: "MAIN (0001:13, 0001:15). FN-6/R-21-1: puede DROP de objetos de esos esquemas"}
-      - {object: "tablas de app y ops no transferidas (incl. app.revocation, app.rights_case, app.staff_session, app.case_session, ops.access_log)", status: "MAIN; PR-7 mueve app.revocation/app.rights_case a case_state (Q16)"}
+      - {object: "esquemas app y ops", status: "PR-7c (0082): YA NO es dueño; app es de app_schema_owner y ops de ops_schema_owner (NOLOGIN). consent_owner conserva USAGE, CREATE (sin GRANT OPTION). FN-6/R-21-1 cerrados por prevencion: no puede DROP SCHEMA ni DROP de objetos ajenos (TEST-CNS-1803)"}
+      - {object: "tablas de app y ops no transferidas (incl. app.staff_session, app.case_session, ops.access_log, app.consent_decision, app.invitation, app.enrollment, app.otp_verification, app.recovery_token, app.outbox, app.idempotency_key, app.subject, app.school_participation, ops.db_catalog, ops.schema_migration)", status: "MAIN; residual F-PR7-01 (P1 hoy, P0 antes de REAL_DATA): consent_owner sigue siendo dueño y puede agregar triggers/policies/reglas que ejecutan otros owners. DETECTADO por el inventario por catalogo con allowlist (src/infra/adapters/postgres/consent-owner-inventory.ts; migracion 0082, startup-checks, TEST-CNS-1805), no prevenido; REAL_DATA queda bloqueado (REAL_DATA_BLOCKERS) hasta C-3 (a): el migrador no es dueño de nada en REAL_DATA"}
+      - {object: "app.revocation / app.rights_case", status: "PR-7c (0081, Q16): movidas a case_state.revocation / case_state.rights_case y transferidas a case_state_owner (decision de Carlos 2026-10-16, C-2). consent_owner ya no puede DROP/DISABLE TRIGGER/ALTER (TEST-CNS-1801)"}
+      - {object: "app.current_tenant_id(), app.is_reserved_email(text), ops.catalog_environment()", status: "PR-7c (0082, C-3): transferidas a shared_fn_owner. consent_owner no puede CREATE OR REPLACE/ALTER/DROP ni las ejecuta (TEST-CNS-1802)"}
       - {object: "base de datos (datdba)", status: "MAIN (precondición de 0027:10-11); PR-7 ALTER DATABASE … OWNER TO db_owner_nologin"}
     memberOf:
       - {role: tenant_resolve_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "MAIN (0000:44); REAL_DATA: REVOKE en PR-7 (Q-19)"}
@@ -503,11 +505,56 @@ roles:
   - id: case_state_owner
     class: OWNER
     login: false
-    status: "PR-2 (rol); PR-5 (CREATE SCHEMA case_state AUTHORIZATION case_state_owner, para las funciones); PR-7 (ALTER TABLE app.revocation / app.rights_case SET SCHEMA case_state, Q16)"
-    note: "Mientras las tablas sigan en app (dueño consent_owner), FN-6 sigue abierto y solo lo detecta la conciliación del verifier."
+    status: "PR-2 (rol); PR-5 (CREATE SCHEMA case_state AUTHORIZATION case_state_owner, para las funciones); PR-7c (0081, Q16 ejecutado: ALTER TABLE app.revocation / app.rights_case OWNER TO case_state_owner + SET SCHEMA case_state)"
+    note: "Desde 0081 es dueño de case_state.revocation y case_state.rights_case (con sus indices); FN-6 queda cerrado por prevencion. Ningun otro rol puede SET case_state_owner salvo consent_owner (IT0B_SYNTHETIC)."
     setRoleBy:
       - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-2 (Q15 c)"}
       - {member: ddl_breakglass, inherit: false, set: true, modes: [REAL_DATA], status: PR-7}
+
+  - id: app_schema_owner
+    class: OWNER
+    login: false
+    attributes: "NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION"
+    status: "PR-7c (0080 rol de cluster; 0082 ALTER SCHEMA app OWNER TO; decision de Carlos 2026-10-16, C-2; cierra la parte de esquema de F-PR7-01 y FN-6)"
+    owns: [{object: "esquema app", status: "0082; consent_owner conserva USAGE, CREATE sin GRANT OPTION"}]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-7c (0080)"}
+    verifiedBy: {tests: ["TEST-CNS-1800", "TEST-CNS-1803"]}
+
+  - id: ops_schema_owner
+    class: OWNER
+    login: false
+    attributes: "NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION"
+    status: "PR-7c (0080 rol; 0082 ALTER SCHEMA ops OWNER TO). Cierra R-21-1/FN-12 por prevencion (el migrador ya no puede DROP de tablas de ops)"
+    owns: [{object: "esquema ops", status: "0082; consent_owner conserva USAGE, CREATE sin GRANT OPTION"}]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-7c (0080)"}
+    verifiedBy: {tests: ["TEST-CNS-1800", "TEST-CNS-1803"]}
+
+  - id: shared_fn_owner
+    class: OWNER
+    login: false
+    attributes: "NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION"
+    status: "PR-7c (0080 rol; 0082 transfiere las funciones; decision de Carlos 2026-10-16, C-3). F-PR7-01: con CREATE OR REPLACE de una funcion compartida, el migrador ejecutaria codigo como otro owner"
+    owns: [{object: "app.current_tenant_id(), app.is_reserved_email(text), ops.catalog_environment()", status: "0082; ACL de EXECUTE conservada; USAGE sin CREATE en app y ops; sin privilegios sobre tablas"}]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-7c (0080)"}
+    note: "Toda funcion de consent_owner referida por policies, DEFAULT, CHECK, triggers o cuerpos de otros owners debe moverse aqui; el inventario (V1) falla si aparece una."
+    verifiedBy: {tests: ["TEST-CNS-1802", "TEST-CNS-1805"]}
+
+  - id: revocation_recovery_reader
+    class: OWNER
+    login: false
+    attributes: "NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION"
+    status: "PR-7c (0080 rol; 0083 funcion y policy; F-6D3-SEC-08 CERRADO, decision de Carlos 2026-10-16)"
+    owns: [{object: "case_state.list_confirmed_unapplied(integer, text[])", status: "0083; SECURITY DEFINER, search_path fijo; EXECUTE solo worker"}]
+    grantsHeld:
+      - {object: "case_state.revocation", privileges: ["SELECT (tenant_id, revocation_ref, status, created_at)"], policy: "revocation_recovery_reader_select (status = CONFIRMED, cross-tenant a proposito, solo alcanzable por la funcion)", status: "0083"}
+      - {object: "esquema case_state", privileges: [USAGE], status: "0083; sin CREATE"}
+    mustNot: ["CREATE en ningun esquema", "cualquier otra columna de case_state.revocation", "membresia en otro rol"]
+    setRoleBy:
+      - {member: consent_owner, inherit: false, set: true, modes: [IT0B_SYNTHETIC], status: "PR-7c (0080)"}
+    verifiedBy: {tests: ["TEST-CNS-1800", "TEST-CNS-1804"]}
 
   - id: breakglass_log_owner
     class: OWNER
@@ -596,7 +643,7 @@ residuals:
     closesIn: "PR-7, mecanismo (c) DECIDIDO (Q-20): (1) en REAL_DATA nadie tiene SET sobre security_event_owner salvo ddl_breakglass (NOLOGIN fuera de ceremonia); (2) auditoría de sesiones de ddl_breakglass (log_statement = 'all', conexiones y desconexiones, logs fuera del host, alerta del verifier). SIN event trigger. 0031:18-19 y db/README.md:90 prometían un event trigger: 0031 no se edita, db/README.md se corrige."
     remaining: "El superusuario y root (R-16/R-03) siguen pudiendo borrar sin rastro en ops.*, que no está anclado; se cierra con Q1 opción C."
   - {id: FN-4, text: "La base no impone las máquinas de estado; app_rw escribe HUMAN_ASSISTED/RH2/sesiones CASE.", acceptedFor: "IT0 sintético vía R-10", closesIn: PR-5}
-  - {id: FN-6, text: "consent_owner es dueño del esquema app y de app.revocation/app.rights_case: puede DISABLE TRIGGER o DROP y fabricar HUMAN_ASSISTED/RH2/RH3.", acceptedFor: "IT0B_SYNTHETIC (detecta la conciliación)", closesIn: "PR-7 (Q16, SET SCHEMA case_state); P0 si llegara a datos reales sin Q16"}
+  - {id: FN-6, text: "consent_owner es dueño del esquema app y de app.revocation/app.rights_case: puede DISABLE TRIGGER o DROP y fabricar HUMAN_ASSISTED/RH2/RH3.", acceptedFor: "IT0B_SYNTHETIC (detecta la conciliación)", closesIn: "CERRADO en PR-7c (0081-0082, decision de Carlos 2026-10-16: tablas a case_state_owner y esquemas app/ops a owners NOLOGIN; TEST-CNS-1801/1803). Queda F-PR7-01 (consent_owner aun dueño de las demas tablas de app/ops; detectado por inventario, REAL_DATA bloqueado)"}
   - {id: RES-OTP-WEB, text: "web controla la vía OTP del titular (app.otp_verification, 0010:162; 0032): un RCE en web puede completar una revocación por OTP.", acceptedFor: "Por diseño del spec (ADR-010 §4.2)", closesIn: "No se cierra; mitigan SEC-CNS-021 (presupuesto) y el ledger"}
   - {id: RES-OTP-WEB-PRB, text: "ADR-010 rev. 5 (F-A10-30-S0 ampliado, F-PR6-23): con app.tenant_id como GUC libre, sin prueba de token ni de codigo en la base, app_rw escribiendo state/code_hash y el decision_maker_ref de I9 por parametro, un RCE en web puede (1) llevar a GRANTED cualquier invitacion SENT de cualquier tenant, (2) forzar una revocacion por OTP o por recovery token (con R4 en linea queda APPLIED en la misma tx) y (3) cancelar cualquier invitacion VERIFIED por I9 (atribucion falsificada HUMAN/DECISION_MAKER). La capa 1 (ledger derivado) lo registraria como fiel.", acceptedFor: "IT0 sintetico (P1)", closesIn: "capa 2, opcion C (G-11): P0 antes de datos reales; la opcion E (aceptacion escrita) queda eliminada"}
   - {id: RES-STAFF-WEB, text: "Q-17: sesiones STAFF en web con DML de app_rw y RLS. Un RCE en web puede fabricar una sesión STAFF de su tenant y actuar como TENANT_ADMIN/INVITER (invitaciones, matrículas, RC0). No alcanza efectos de revocación ni sesiones CASE. N7 (login ATTESTED) queda solo para CASE/PLATFORM hasta APR-IDP.", acceptedFor: "IT0B_SYNTHETIC (consecuencia de Q-17, a declarar en ADR-010 §5)", closesIn: "Re-evaluar con APR-IDP antes de datos reales"}

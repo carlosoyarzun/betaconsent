@@ -206,7 +206,7 @@ pgTest("TEST-CNS-1719 pg web (R3r): agotados los reintentos = alerta R4_RETRIES_
     assert.equal(await decisionState(ctx, T, decisionRef), "GRANTED");
     assert.equal(await outboxCount(ctx, T), 0);
     const admin = await ctx.fixtureAdmin();
-    assert.equal((await admin.query("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2", [T, decisionRef])).rows[0]!.n, 0, "la tx completa se revirtio: sin Revocation");
+    assert.equal((await admin.query("SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2", [T, decisionRef])).rows[0]!.n, 0, "la tx completa se revirtio: sin Revocation");
     const alerts = (await admin.query<{ alert_reason: string }>("SELECT alert_reason FROM ops.security_event WHERE tenant_id = $1 AND event_type = 'REVOCATION_APPLY_ALERT' ORDER BY event_seq", [T])).rows.map((r) => r.alert_reason);
     assert.deepEqual(alerts, ["R4_RETRIES_EXHAUSTED"]);
     await failure.remove();

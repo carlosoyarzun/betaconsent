@@ -1,4 +1,4 @@
-// Gobierna: CA-128 X6 P2 (Carlos 2026-10-01), API-CNS-140 withdraw_case_verification_proposal, db/migrations/0016 (RLS FORCE por tenant de app.revocation), 0017 (REVOCATION_PROPOSAL_WITHDRAWN en la lista blanca
+// Gobierna: CA-128 X6 P2 (Carlos 2026-10-01), API-CNS-140 withdraw_case_verification_proposal, db/migrations/0016 (RLS FORCE por tenant de case_state.revocation), 0017 (REVOCATION_PROPOSAL_WITHDRAWN en la lista blanca
 // del ledger) y 0070 (ADR-010 rev. 5, 6d parte 2: la funcion corre solo por platform con sesion CASE, actor desde la sesion, step-up en la misma tx), INV-6. SYNTHETIC ONLY.
 // TEST-CNS-1019 (retiro/propuesta nueva/aprobacion en Postgres real, ledger y CHECK), TEST-CNS-1020 (aislamiento cross-tenant), TEST-CNS-1022 (repeticion del retiro en Postgres real).
 // Reescritos sobre platform (createPgPlatformCase del pool de platform_rw): mismas aserciones de estado, ledger, codigos de dominio y aislamiento que cuando corrian con app_rw y el actor declarado.
@@ -39,7 +39,7 @@ async function approve(admin: Client, http: PlatformHttp, w: CaseWorld, proposal
 }
 
 const revocationRow = async (admin: Client, w: CaseWorld) =>
-  (await admin.query("SELECT status, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
+  (await admin.query("SELECT status, proposal_ref, proposed_by_ref, verification_script_version, second_approver_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
 
 pgTest("TEST-CNS-1019 pg platform: retiro RH2 limpia la propuesta (columnas NULL), registra REVOCATION_PROPOSAL_WITHDRAWN (CHECK de 0017), no cambia el estado; aprobar tras retiro falla y una propuesta nueva se aprueba hasta VERIFIED", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
