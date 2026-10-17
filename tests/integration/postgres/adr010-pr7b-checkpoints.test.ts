@@ -257,7 +257,7 @@ pgTest("TEST-CNS-1776 pg: el trigger de chain_checkpoint rechaza cabeza inexiste
   assert.ok(head.chainSeq >= 3);
   const ver = await ctx.connectAs("integrity_chain_verifier");
   const runId = randomUUID();
-  await rw(ver, () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, now(), 'LOCAL', 1, 3, 0, 1, $2, 'RFC6962-SHA256-V1')`, [runId, "a".repeat(64)]));
+  await rw(ver, () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, now(), 'LOCAL', 1, 3, 2, 0, $2, $3)`, [runId, null, null]));
   const ins = (seq: number, hash: string, verified = 1): Promise<unknown> =>
     rw(ver, () => ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $5)", [runId, A, seq, hash, verified]));
   const rejected = (label: string, seq: number, hash: string, verified?: number): Promise<void> => assert.rejects(() => ins(seq, hash, verified), (e: unknown) => codeOf(e) === "23514", label);
@@ -269,12 +269,12 @@ pgTest("TEST-CNS-1776 pg: el trigger de chain_checkpoint rechaza cabeza inexiste
   // Mismo tenant en el mismo run: PK. En otro run: la misma cabeza es valida (igual seq e igual hash).
   await assert.rejects(() => ins(head.chainSeq, head.eventHash, head.chainSeq), (e: unknown) => codeOf(e) === "23505");
   const run2 = randomUUID();
-  await rw(ver, () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, now(), 'LOCAL', 1, 3, 0, 1, $2, 'RFC6962-SHA256-V1')`, [run2, "c".repeat(64)]));
+  await rw(ver, () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, now(), 'LOCAL', 1, 3, 2, 0, $2, $3)`, [run2, null, null]));
   await rw(ver, () => ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $3)", [run2, A, head.chainSeq, head.eventHash]));
   // Regresion: una cabeza ANTERIOR (existe en el ledger) con un checkpoint posterior ya persistido se rechaza (la cola no puede retroceder).
   const earlier = (await admin.query<{ chain_seq: string; event_hash: string }>("SELECT chain_seq::text, event_hash FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq = $2", [A, head.chainSeq - 1])).rows[0]!;
   const run3 = randomUUID();
-  await rw(ver, () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, now(), 'LOCAL', 1, 3, 0, 1, $2, 'RFC6962-SHA256-V1')`, [run3, "d".repeat(64)]));
+  await rw(ver, () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, now(), 'LOCAL', 1, 3, 2, 0, $2, $3)`, [run3, null, null]));
   await assert.rejects(
     () => rw(ver, () => ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $3)", [run3, A, Number(earlier.chain_seq), earlier.event_hash])),
     (e: unknown) => codeOf(e) === "23514" && /retroceder/.test((e as Error).message),
@@ -294,6 +294,38 @@ pgTest("TEST-CNS-1776 pg: el trigger de chain_checkpoint rechaza cabeza inexiste
     }
   }
   assert.equal((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_checkpoint WHERE run_id = ANY ($1::uuid[])", [[runId, run2, run3]])).rows[0]!.n, "2", "solo los dos validos entraron");
+});
+
+pgTest("TEST-CNS-1784 pg: SEC-7D-09 un run exit 0 que omite un tenant del ledger (el mas viejo o el mas nuevo) o con leaf_count distinto de sus checkpoints se rechaza al COMMIT; el run completo entra", async (ctx) => {
+  const admin = await ctx.fixtureAdmin();
+  await driveInvitation(ctx, A, "1784-a");
+  await driveInvitation(ctx, B, "1784-b");
+  const ver = await ctx.connectAs("integrity_chain_verifier");
+  const heads = await ledgerHeads(admin);
+  assert.ok(heads.length >= 2);
+  const order = (await admin.query<{ tenant_id: string }>("SELECT tenant_id FROM integrity.audit_event WHERE chain_seq = 1 ORDER BY occurred_at, tenant_id")).rows.map((r) => r.tenant_id);
+  assert.equal(order.length, heads.length);
+  const startedAt = new Date().toISOString();
+  const attempt = (subset: typeof heads, tenants: number, leaf: number, started = startedAt): Promise<unknown> => {
+    const runId = randomUUID();
+    return rw(ver, async () => {
+      await ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, $2, 'LOCAL', $3, 3, 0, $4, $5, 'RFC6962-SHA256-V1')`, [runId, started, tenants, leaf, "a".repeat(64)]);
+      for (const h of subset) await ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $3)", [runId, h.tenantId, h.chainSeq, h.eventHash]);
+    });
+  };
+  const n = heads.length;
+  const without = (tenantId: string): typeof heads => heads.filter((h) => h.tenantId !== tenantId);
+  const rejects = (label: string, p: Promise<unknown>): Promise<void> => assert.rejects(() => p, (e: unknown) => codeOf(e) === "23514" && /integrity\.chain_run/.test((e as Error).message), label);
+  await rejects("omite el tenant mas viejo", attempt(without(order[0]!), n, n - 1));
+  await rejects("omite el tenant mas nuevo", attempt(without(order[n - 1]!), n, n - 1));
+  await rejects("sin ningun checkpoint", attempt([], n, 0));
+  await rejects("completo pero leaf_count menor que los checkpoints", attempt(heads, n, n - 1));
+  await rejects("completo pero leaf_count mayor que los checkpoints", attempt(without(order[0]!), n, n));
+  // started_at anterior a toda genesis: ningun tenant es exigible; la raiz de un run sin hojas entra.
+  await attempt([], 0, 0, "2000-01-01T00:00:00Z");
+  // Completo: entra.
+  await attempt(heads, n, n);
+  assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_run WHERE leaf_count = $1 AND exit_code = 0", [n])).rows[0]!.n) >= 1, true);
 });
 
 const mkStateDir = async (): Promise<string> => {
@@ -320,7 +352,12 @@ pgTest("TEST-CNS-1781 pg: CHECKs de chain_run (raiz solo con exit 0, hojas <= te
   await bad("exit 2 con hojas", [randomUUID(), ok[1], "LOCAL", 2, 3, 2, 1, null, null]);
   await bad("environment fuera del enum", [randomUUID(), ok[1], "PROD", 1, 3, 0, 1, "a".repeat(64), "RFC6962-SHA256-V1"]);
   await bad("tenants negativo", [randomUUID(), ok[1], "LOCAL", -1, 3, 0, 0, "a".repeat(64), "RFC6962-SHA256-V1"]);
-  await ins(ok);
+  // SEC-7D-09: un run exit 0 valido lleva un checkpoint por cada tenant del ledger (el run y sus checkpoints en la misma tx; la completitud se evalua al COMMIT).
+  const heads = await ledgerHeads(admin);
+  await rw(ver, async () => {
+    await ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [ok[0], ok[1], "LOCAL", heads.length, 3, 0, heads.length, ok[7], ok[8]]);
+    for (const h of heads) await ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $3)", [ok[0], h.tenantId, h.chainSeq, h.eventHash]);
+  });
   await bad("run_id duplicado", ok, "23505");
   // finished_at lo fija la base: el verifier no puede insertarlo (42501), ni cambiar el run despues.
   await assert.rejects(() => rw(ver, () => ver.query("INSERT INTO integrity.chain_run (run_id, started_at, finished_at, environment, tenants, events, exit_code, leaf_count) VALUES ($1, now(), now(), 'LOCAL', 0, 0, 2, 0)", [randomUUID()])), (e: unknown) => codeOf(e) === "42501");

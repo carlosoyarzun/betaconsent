@@ -7,6 +7,8 @@
 --   integrity.chain_run         una fila por corrida (exit 0 o 2). merkle_root y merkle_format SOLO si exit_code = 0 (CHECK). El run_id lo genera el cliente: el verifier solo INSERTA (sin RETURNING, sin SELECT).
 --   integrity.chain_checkpoint  una fila por tenant verificado OK y por corrida: cabeza (chain_seq, event_hash). Un trigger BEFORE INSERT valida contra el ledger (la cabeza existe con ese hash) y contra el checkpoint
 --                               anterior del tenant (nunca regresa; igual seq => igual hash): un chain-verifier comprometido no puede plantar cabezas falsas ni retroceder.
+--   SEC-7D-09: un CONSTRAINT TRIGGER DEFERRABLE INITIALLY DEFERRED sobre chain_run (se evalua al COMMIT, con los checkpoints de la misma tx) exige, para exit_code = 0, un checkpoint del run por CADA tenant del ledger
+--                               cuya genesis (chain_seq = 1) tenga occurred_at <= started_at, y leaf_count = count(checkpoints del run): un run que omite un tenant (viejo o nuevo) no queda como verde.
 -- Ambas: append-only (triggers ENABLE ALWAYS: tambien para el superusuario y con session_replication_role = replica), RLS ENABLE + FORCE, sin purga (T-4).
 --   * integrity_chain_verifier: INSERT por columnas en chain_run (sin finished_at: lo fija la base) y en chain_checkpoint (sin recorded_at); SELECT de chain_checkpoint (policy unica cross-tenant); NADA sobre chain_run salvo INSERT.
 --   * integrity_anchor_signer (NOLOGIN hasta PR-7f): SELECT por columnas de chain_run (raiz) y de chain_checkpoint (cabezas que se publican). Sin ningun privilegio sobre integrity.audit_event (rev. 6: la raiz la calcula el chain-verifier).
@@ -74,6 +76,28 @@ CREATE TRIGGER chain_run_no_update_delete BEFORE UPDATE OR DELETE ON integrity.c
 CREATE TRIGGER chain_run_no_truncate BEFORE TRUNCATE ON integrity.chain_run FOR EACH STATEMENT EXECUTE FUNCTION integrity.append_only_guard();
 CREATE TRIGGER chain_checkpoint_no_update_delete BEFORE UPDATE OR DELETE ON integrity.chain_checkpoint FOR EACH ROW EXECUTE FUNCTION integrity.append_only_guard();
 CREATE TRIGGER chain_checkpoint_no_truncate BEFORE TRUNCATE ON integrity.chain_checkpoint FOR EACH STATEMENT EXECUTE FUNCTION integrity.append_only_guard();
+-- SEC-7D-09: completitud del run exit 0 (se evalua al COMMIT: el run se inserta antes que sus checkpoints en la misma tx). SECURITY INVOKER: el verifier lee el ledger (policy cross-tenant) y chain_checkpoint.
+CREATE FUNCTION integrity.chain_run_complete_guard() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+BEGIN
+  IF NEW.exit_code = 0 THEN
+    IF EXISTS (SELECT 1 FROM integrity.audit_event e
+                WHERE e.chain_seq = 1 AND e.occurred_at <= NEW.started_at
+                  AND NOT EXISTS (SELECT 1 FROM integrity.chain_checkpoint c WHERE c.run_id = NEW.run_id AND c.tenant_id = e.tenant_id)) THEN
+      RAISE EXCEPTION 'integrity.chain_run: un run exit 0 debe llevar un checkpoint por cada tenant del ledger con genesis <= started_at' USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.leaf_count <> (SELECT pg_catalog.count(*) FROM integrity.chain_checkpoint c WHERE c.run_id = NEW.run_id) THEN
+      RAISE EXCEPTION 'integrity.chain_run: leaf_count debe ser igual a los checkpoints del run' USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+  RETURN NULL;
+END
+$$;
+REVOKE ALL ON FUNCTION integrity.chain_run_complete_guard() FROM PUBLIC;
+CREATE CONSTRAINT TRIGGER chain_run_complete_guard AFTER INSERT ON integrity.chain_run DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION integrity.chain_run_complete_guard();
+ALTER TABLE integrity.chain_run ENABLE ALWAYS TRIGGER chain_run_complete_guard;
 ALTER TABLE integrity.chain_checkpoint ENABLE ALWAYS TRIGGER chain_checkpoint_guard;
 ALTER TABLE integrity.chain_run ENABLE ALWAYS TRIGGER chain_run_no_update_delete;
 ALTER TABLE integrity.chain_run ENABLE ALWAYS TRIGGER chain_run_no_truncate;
@@ -143,12 +167,13 @@ BEGIN
   END IF;
   -- Triggers append-only y de validacion: ENABLE ALWAYS.
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger tg JOIN pg_catalog.pg_class c ON c.oid = tg.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-       WHERE NOT tg.tgisinternal AND tg.tgenabled = 'A' AND n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint')) <> 5 THEN
-    RAISE EXCEPTION '0076: los 5 triggers de chain_run/chain_checkpoint deben ser ENABLE ALWAYS';
+       WHERE NOT tg.tgisinternal AND tg.tgenabled = 'A' AND n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint')) <> 6
+     OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger tg WHERE tg.tgrelid = 'integrity.chain_run'::regclass AND tg.tgname = 'chain_run_complete_guard' AND tg.tgdeferrable AND tg.tginitdeferred) THEN
+    RAISE EXCEPTION '0076: los 6 triggers (chain_run_complete_guard DEFERRABLE INITIALLY DEFERRED) de chain_run/chain_checkpoint deben ser ENABLE ALWAYS';
   END IF;
   -- Funciones: de integrity_owner, SECURITY INVOKER, sin EXECUTE para nadie mas.
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-              WHERE n.nspname = 'integrity' AND p.proname IN ('append_only_guard', 'chain_checkpoint_guard') AND (p.prosecdef OR pg_catalog.pg_get_userbyid(p.proowner) <> 'integrity_owner'
+              WHERE n.nspname = 'integrity' AND p.proname IN ('append_only_guard', 'chain_checkpoint_guard', 'chain_run_complete_guard') AND (p.prosecdef OR pg_catalog.pg_get_userbyid(p.proowner) <> 'integrity_owner'
                 OR EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a WHERE a.grantee <> p.proowner))) THEN
     RAISE EXCEPTION '0076: las funciones de trigger deben ser SECURITY INVOKER, de integrity_owner y sin EXECUTE para otros roles';
   END IF;
