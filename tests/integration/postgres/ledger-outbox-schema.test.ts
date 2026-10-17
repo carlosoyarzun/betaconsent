@@ -82,7 +82,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
 
   // P2-1: TODA policy de tablas con RLS exige app.current_tenant_id(); unica excepcion explicita:
   // las del claim, solo TO outbox_claimer. Ninguna policy abierta al dueno.
-  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]], ["app.revocation/revocation_worker_recovery_select", ["worker"]]]);
+  const CLAIM_ALLOWLIST = new Map([["app.outbox/outbox_claim_select", ["outbox_claimer"]], ["app.outbox/outbox_claim_update", ["outbox_claimer"]], ["case_state.revocation/revocation_worker_recovery_select", ["worker"]]]);
   const all = (await admin.query<{ k: string; roles: string[]; qual: string | null; with_check: string | null }>(
     `SELECT p.schemaname || '.' || p.tablename || '/' || p.policyname AS k, p.roles::text[] AS roles, p.qual, p.with_check
        FROM pg_policies p JOIN pg_class c ON c.oid = (p.schemaname || '.' || p.tablename)::regclass
@@ -133,7 +133,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
     "las policies de platform son exactamente las de 0035 y cada una es de UN solo owner",
   );
   // ADR-010 rev. 5 PR-6e (0057/0058, G-9): lectura cross-tenant EXPLICITA del reconciler (NOBYPASSRLS). Lista EXACTA y cerrada: solo SELECT, solo TO integrity_reconciler, USING (true).
-  const RECONCILER_POLICIES = ["app.consent_decision/consent_decision_reconciler_select", "app.invitation/invitation_reconciler_select", "app.revocation/revocation_reconciler_select", "integrity.audit_event/audit_event_reconciler_select", "integrity.reconcile_run/reconcile_run_reconciler_insert"];
+  const RECONCILER_POLICIES = ["app.consent_decision/consent_decision_reconciler_select", "app.invitation/invitation_reconciler_select", "case_state.revocation/revocation_reconciler_select", "integrity.audit_event/audit_event_reconciler_select", "integrity.reconcile_run/reconcile_run_reconciler_insert"];
   const reconcilerPolicies = all.filter((p) => p.roles.includes("integrity_reconciler"));
   assert.deepEqual(reconcilerPolicies.map((p) => p.k).sort(), RECONCILER_POLICIES);
   // PR-7b (0077): la unica policy de escritura del reconciler es el INSERT de conteos (WITH CHECK true, sin USING).
@@ -147,21 +147,28 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   const signerPolicies = all.filter((p) => p.roles.includes("integrity_anchor_signer"));
   assert.deepEqual(signerPolicies.map((p) => p.k).sort(), ["integrity.anchor/anchor_signer_insert", "integrity.anchor/anchor_signer_select", "integrity.chain_checkpoint/chain_checkpoint_signer_select", "integrity.chain_run/chain_run_signer_select"]);
   for (const p of signerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_anchor_signer"], p.k.endsWith("_insert") ? null : "true", p.k.endsWith("_insert") ? "true" : null], p.k);
+  // SEC-7D-09 (0076): la UNICA policy de integrity_owner sobre chain_run (lectura para chain_run_started_guard, SECURITY DEFINER; el verifier no lee chain_run). Lista exacta y cerrada.
+  const chainRunOwnerPolicies = all.filter((p) => p.k.startsWith("integrity.chain_run/") && p.roles.includes("integrity_owner"));
+  assert.deepEqual(chainRunOwnerPolicies.map((p) => p.k), ["integrity.chain_run/chain_run_owner_select"]);
+  assert.deepEqual([chainRunOwnerPolicies[0]!.roles, chainRunOwnerPolicies[0]!.qual, chainRunOwnerPolicies[0]!.with_check], [["integrity_owner"], "true", null]);
+  assert.equal(all.filter((p) => p.roles.includes("integrity_owner") && !p.k.startsWith("integrity.chain_run/")).filter((p) => p.k.startsWith("integrity.chain_run")).length, 0);
   // ADR-010 rev. 5 PR-6d parte 1 (0059/0064, F-PR6-40/45): ni grant_owner ni consent_owner tienen policy sobre app. La unica lectura cross-tenant nueva es TO rights_case_lookup_owner (rol NOLOGIN dedicado, dueño de
   // app.rights_case_tenant_of; EXECUTE solo grant_owner): ningun rol de runtime la usa. Lista EXACTA y cerrada.
   assert.equal(all.filter((p) => p.roles.includes("grant_owner") && p.k.startsWith("app.")).length, 0, "grant_owner sin policies sobre app");
   const grantOwnerPolicies = all.filter((p) => p.roles.includes("rights_case_lookup_owner"));
-  assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["app.rights_case/rights_case_lookup_select"]);
+  assert.deepEqual(grantOwnerPolicies.map((p) => p.k), ["case_state.rights_case/rights_case_lookup_select"]);
   for (const p of grantOwnerPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["rights_case_lookup_owner"], "true", null], p.k);
-  // ADR-010 rev. 5 6d parte 2 (0067, P2-1): UNICA excepcion cerrada y cross-tenant a proposito de transition_owner: solo filas CONFIRMED y solo bajo el efecto que fija case_state.list_confirmed_unapplied (la
-  // funcion que solo ejecuta `worker` y devuelve (tenant_id, revocation_ref)). Ningun rol de runtime tiene policy cross-tenant sobre app.revocation.
-  const recoveryPolicies = all.filter((p) => p.k === "app.revocation/revocation_transition_recovery_select");
+  // ADR-010 rev. 6 PR-7c (0083, F-6D3-SEC-08): la UNICA lectura cross-tenant de case_state.revocation (solo filas CONFIRMED) es TO revocation_recovery_reader (rol NOLOGIN dedicado, dueño de
+  // case_state.list_confirmed_unapplied, que solo ejecuta `worker` y devuelve (tenant_id, revocation_ref)). transition_owner (dueño de todas las transiciones) ya NO tiene policy cross-tenant: la de 0067 se elimino.
+  const recoveryPolicies = all.filter((p) => p.k === "case_state.revocation/revocation_recovery_reader_select");
   assert.equal(recoveryPolicies.length, 1, "exactamente una policy de recuperacion");
-  assert.deepEqual([recoveryPolicies[0]!.roles, recoveryPolicies[0]!.with_check], [["transition_owner"], null]);
-  assert.equal(recoveryPolicies[0]!.qual, "((status = 'CONFIRMED'::text) AND (current_setting('case_state.effect'::text, true) = 'list_confirmed_unapplied'::text))");
-  assert.equal(all.filter((p) => p.k.startsWith("app.revocation/") && p.roles.includes("worker") && !p.qual?.includes("current_tenant_id")).length, 0, "el worker no tiene policy cross-tenant");
+  assert.deepEqual([recoveryPolicies[0]!.roles, recoveryPolicies[0]!.with_check], [["revocation_recovery_reader"], null]);
+  assert.equal(recoveryPolicies[0]!.qual, "(status = 'CONFIRMED'::text)");
+  assert.equal(all.filter((p) => p.k === "case_state.revocation/revocation_transition_recovery_select").length, 0, "transition_owner sin la policy cross-tenant de 0067");
+  assert.equal(all.filter((p) => p.roles.includes("revocation_recovery_reader")).length, 1, "revocation_recovery_reader: una sola policy");
+  assert.equal(all.filter((p) => p.k.startsWith("case_state.revocation/") && p.roles.includes("worker") && !p.qual?.includes("current_tenant_id")).length, 0, "el worker no tiene policy cross-tenant");
   for (const p of all) {
-    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || chainVerifierPolicies.includes(p) || signerPolicies.includes(p) || grantOwnerPolicies.includes(p) || recoveryPolicies.includes(p)) continue;
+    if (ownerOnly.includes(p) || platformPolicies.includes(p) || reconcilerPolicies.includes(p) || chainVerifierPolicies.includes(p) || signerPolicies.includes(p) || grantOwnerPolicies.includes(p) || recoveryPolicies.includes(p) || chainRunOwnerPolicies.includes(p)) continue;
     const allowed = CLAIM_ALLOWLIST.get(p.k);
     if (allowed) {
       assert.deepEqual(p.roles, allowed, `${p.k}: solo ${allowed.join(",")}`);

@@ -139,7 +139,7 @@ pgTest("TEST-CNS-824 pg: GRD-RV-04: una sola Revocation no terminal por decision
     await assert.rejects(
       async () => {
         await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // 0037: siembra LOCAL como superusuario
-        await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r824-3', 'c', 'REQUESTED')", [T]);
+        await admin.query("INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, status) VALUES ($1, 'r824-3', 'c', 'REQUESTED')", [T]);
       },
       (e: unknown) => codeOf(e) === "23502",
     );
@@ -160,7 +160,7 @@ pgTest("TEST-CNS-824 pg: GRD-RV-04: una sola Revocation no terminal por decision
     const refs = results.map((r) => (r.status === "fulfilled" ? r.value.revocationRef : ""));
     assert.equal(refs[0], refs[1], "ambas devuelven la misma revocationRef (la ganadora)");
     assert.ok([fixtureUuid("r824-a"), fixtureUuid("r824-b")].includes(refs[0]!));
-    const open = (await admin.query("SELECT 1 FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D2])).rows;
+    const open = (await admin.query("SELECT 1 FROM case_state.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D2])).rows;
     assert.equal(open.length, 1);
     const events = (await admin.query("SELECT 1 FROM integrity.audit_event WHERE tenant_id = $1 AND event_type = 'REVOCATION_REQUESTED' AND aggregate_id = ANY($2)", [T, [fixtureUuid("r824-a"), fixtureUuid("r824-b")]])).rows;
     assert.equal(events.length, 1, "un solo REVOCATION_REQUESTED");
@@ -186,7 +186,7 @@ pgTest("TEST-CNS-825 pg: R1 concurrente con R1r sobre la misma decision => una s
         if (r.status === "rejected") assert.ok(r.reason instanceof DomainError && (r.reason.code === "ERR-RV-02" || r.reason.code === "ERR-CM-06"), String(r.reason));
       }
       assert.equal(results[1]?.status, "fulfilled", `ronda ${round}: R1r no falla`);
-      const open = await count("SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D]);
+      const open = await count("SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status <> 'FAILED'", [T, D]);
       assert.equal(open, 1, `ronda ${round}: una sola revocacion abierta`);
       const revs = (await outside.revocationRepo.findOpenByChain(T, chain));
       assert.equal(revs?.status, "APPLIED", "la unica revocacion llego a APPLIED (R1r adjunta o crea)");

@@ -19,6 +19,13 @@ export const DEFAULT_DB_ROLE_MODE: DbRoleMode = "IT0B_SYNTHETIC";
 /** Modos con aserción activa. REAL_DATA se activa en PR-7 (ADR-010 §7). */
 export const ACTIVE_DB_ROLE_MODES: readonly DbRoleMode[] = ["IT0B_SYNTHETIC"];
 
+/**
+ * ADR-010 rev. 6 PR-7c (decision de Carlos del 2026-10-16, C-3): hallazgos que BLOQUEAN el modo REAL_DATA mientras sigan abiertos. F-PR7-01 (P1 hoy, P0 antes de datos reales): consent_owner (el migrador) sigue
+ * siendo dueño de las tablas app.* y ops.* que escriben las funciones de otros owners (detectado por el inventario de consent-owner-inventory.ts, no prevenido). Se retira de esta lista solo cuando C-3 (a)
+ * este implementado (el migrador no es dueño de nada en REAL_DATA) y lo apruebe Carlos. startup-checks.ts y resolveDbRoleMode rechazan REAL_DATA mientras la lista no este vacia.
+ */
+export const REAL_DATA_BLOCKERS: readonly string[] = ["F-PR7-01"];
+
 export interface MembershipEdge {
   readonly member: string;
   readonly role: string;
@@ -44,6 +51,10 @@ export const CONSENT_OWNER_SET_ROLES: readonly string[] = [
   "ledger_gen_owner",
   "ledger_writer",
   "rights_case_lookup_owner", // ADR-010 rev. 5 PR-6d parte 1 (0064, F-PR6-45): dueño de app.rights_case_tenant_of
+  "app_schema_owner", // ADR-010 rev. 6 PR-7c (0080, F-PR7-01, C-2): dueño del esquema app (consent_owner conserva USAGE, CREATE)
+  "ops_schema_owner", // ADR-010 rev. 6 PR-7c (0080, F-PR7-01, R-21-1): dueño del esquema ops
+  "shared_fn_owner", // ADR-010 rev. 6 PR-7c (0080, F-PR7-01, C-3): dueño de app.current_tenant_id(), app.is_reserved_email(text), ops.catalog_environment()
+  "revocation_recovery_reader", // ADR-010 rev. 6 PR-7c (0080, F-6D3-SEC-08): dueño de case_state.list_confirmed_unapplied y de su policy cross-tenant
 ];
 
 /** Owners NOLOGIN de los que ningun rol de runtime puede ser miembro (spec INV-DBR-01; incluye consent_owner y outbox_claimer). */
@@ -62,6 +73,10 @@ export const OWNER_ROLES: readonly string[] = [
   "ledger_gen_owner", // ADR-010 rev. 5 PR-b (LG-8, F-PR6-11): doce owners cubiertos
   "ledger_writer",
   "rights_case_lookup_owner",
+  "app_schema_owner", // PR-7c (0080)
+  "ops_schema_owner",
+  "shared_fn_owner",
+  "revocation_recovery_reader",
 ];
 
 /** Roles de runtime (INV-DBR-01). */
@@ -122,6 +137,7 @@ export function resolveDbRoleMode(env: Readonly<Record<string, string | undefine
     throw new RoleModeError(`${DB_ROLE_MODE_ENV} es obligatorio fuera de LOCAL/DEV (entorno: ${environment ?? "no declarado"}).`);
   }
   if (raw !== "IT0B_SYNTHETIC" && raw !== "REAL_DATA") throw new RoleModeError(`${DB_ROLE_MODE_ENV} desconocido: "${raw}".`);
+  if (raw === "REAL_DATA" && REAL_DATA_BLOCKERS.length > 0) throw new RoleModeError(`El modo REAL_DATA está bloqueado mientras sigan abiertos: ${REAL_DATA_BLOCKERS.join(", ")}.`);
   assertModeActive(raw);
   return raw;
 }

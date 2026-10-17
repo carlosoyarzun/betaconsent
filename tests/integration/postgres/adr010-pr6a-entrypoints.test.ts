@@ -1,7 +1,7 @@
 // Gobierna: ADR-010 rev. 4 §7 fila PR-6 (6a: "Entrypoints web/platform/worker/verifier; unidades en infra/ (ADR-003); pools por rol"), INV-DBR-02, §4.2 (SYSTEM solo `worker`, GRD-CM-15);
 // specs/state-machines/revocation.spec.yaml R5-R7 (FN-RV-13..15); db/migrations/0042_adr010_worker_downstream_only.sql; plan PR-6 sub-PR 6a; F-A10-23, F-PR6-06, F-PR6-20.
 // TEST-CNS-1395: cada proceso (web/platform/worker/verifier) arranca con SU rol y los chequeos de arranque rechazan el rol equivocado (expectedRole por proceso); platform sirve solo /healthz.
-// TEST-CNS-1398: 0042 - app_rw/platform_rw/integrity_verifier sin EXECUTE de R5-R7 (42501 real), worker si; R4 intacta; el worker solo LEE app.revocation e integrity.audit_event bajo RLS.
+// TEST-CNS-1398: 0042 - app_rw/platform_rw/integrity_verifier sin EXECUTE de R5-R7 (42501 real), worker si; R4 intacta; el worker solo LEE case_state.revocation e integrity.audit_event bajo RLS.
 // TEST-CNS-1399: el worker ejecuta R5-R7 hasta COMPLETED (stub interno, LOCAL); el web ya no (42501, el estado no cambia); fuera de LOCAL el worker no ejecuta R5-R7.
 // Requiere Postgres real (harness.ts); skip sin entorno. Solo datos sinteticos.
 
@@ -135,7 +135,7 @@ async function execFor(admin: Client, role: string, fn: string): Promise<boolean
   return (await admin.query<{ x: boolean }>("SELECT has_function_privilege($1, p.oid, 'EXECUTE') AS x FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'case_state' AND p.proname = $2", [role, fn])).rows[0]?.x ?? false;
 }
 
-pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 intacta, y el worker solo LEE app.revocation e integrity.audit_event bajo RLS por tenant", async (ctx) => {
+pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 intacta, y el worker solo LEE case_state.revocation e integrity.audit_event bajo RLS por tenant", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   for (const fn of R5_R7) {
     assert.equal(await execFor(admin, "worker", fn), true, `worker ${fn}`);
@@ -165,14 +165,14 @@ pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 int
   const B = fixtureUuid("t1398-b");
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)");
   for (const [t, ref] of [[A, "r1398-a"], [B, "r1398-b"]] as const) {
-    await admin.query("INSERT INTO app.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, $2, $3, $4, 'APPLIED', 'OTP')", [t, ref, `c-${ref}`, `d-${ref}`]);
+    await admin.query("INSERT INTO case_state.revocation (tenant_id, revocation_ref, chain_ref, revoked_decision_ref, status, verified_auth_path) VALUES ($1, $2, $3, $4, 'APPLIED', 'OTP')", [t, ref, `c-${ref}`, `d-${ref}`]);
   }
   const worker = await ctx.connectAs("worker");
   const refsAs = async (tenant: string | null): Promise<string[]> => {
     await worker.query("BEGIN");
     try {
       if (tenant !== null) await worker.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
-      return (await worker.query<{ revocation_ref: string }>("SELECT revocation_ref FROM app.revocation WHERE revocation_ref LIKE 'r1398-%' ORDER BY 1")).rows.map((r) => r.revocation_ref);
+      return (await worker.query<{ revocation_ref: string }>("SELECT revocation_ref FROM case_state.revocation WHERE revocation_ref LIKE 'r1398-%' ORDER BY 1")).rows.map((r) => r.revocation_ref);
     } finally {
       await worker.query("ROLLBACK");
     }
@@ -204,8 +204,8 @@ pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 int
   assert.deepEqual(await ledgerAs(B), ["agg1398-b"], "el worker solo ve el ledger de B");
   assert.deepEqual(await ledgerAs(null), [], "sin tenant no ve nada");
   for (const sql of [
-    "UPDATE app.revocation SET status = 'COMPLETED' WHERE revocation_ref = 'r1398-a'",
-    "DELETE FROM app.revocation WHERE revocation_ref = 'r1398-a'",
+    "UPDATE case_state.revocation SET status = 'COMPLETED' WHERE revocation_ref = 'r1398-a'",
+    "DELETE FROM case_state.revocation WHERE revocation_ref = 'r1398-a'",
     "INSERT INTO integrity.audit_event (tenant_id, aggregate_type, aggregate_id, sequence, event_type, actor_type, payload) VALUES ('00000000-0000-4000-8000-000000000000', 'Revocation', 'x', 1, 'REVOCATION_REQUESTED', 'SYSTEM_GUARD', '{}')",
   ]) {
     await assert.rejects(() => worker.query(sql), (e: unknown) => codeOf(e) === "42501", sql);
@@ -213,7 +213,7 @@ pgTest("TEST-CNS-1398 pg: 0042 - R5-R7 solo worker (app_rw recibe 42501), R4 int
   // platform_rw e integrity_verifier siguen sin ninguna lectura de esas tablas.
   for (const role of ["platform_rw", "integrity_verifier"] as const) {
     const c = await ctx.connectAs(role);
-    await assert.rejects(() => c.query("SELECT 1 FROM app.revocation LIMIT 1"), (e: unknown) => codeOf(e) === "42501", `${role} app.revocation`);
+    await assert.rejects(() => c.query("SELECT 1 FROM case_state.revocation LIMIT 1"), (e: unknown) => codeOf(e) === "42501", `${role} case_state.revocation`);
     await assert.rejects(() => c.query("SELECT 1 FROM integrity.audit_event LIMIT 1"), (e: unknown) => codeOf(e) === "42501", `${role} audit_event`);
   }
 });

@@ -78,7 +78,7 @@ export const SECURITY_EVENT_OWNER_ALLOWLIST: Readonly<Record<string, readonly Us
  * ADR-010 PR-3: 0035 crea el esquema platform y sus objetos con SET LOCAL ROLE de platform_schema_owner, membership_owner y grant_owner
  * (patron 0027); la allowlist es POR ROL (una entrada que el rol no usa se marca obsoleta).
  */
-export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner", "ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner"];
+export const ADR010_OWNER_ROLES: readonly string[] = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner", "ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner", "app_schema_owner", "ops_schema_owner", "shared_fn_owner", "revocation_recovery_reader"];
 const M0034 = "db/migrations/0034_adr010_cluster_roles.sql";
 const M0035 = "db/migrations/0035_adr010_platform_schema.sql";
 const M0036 = "db/migrations/0036_adr010_verifier_assertions.sql";
@@ -93,6 +93,15 @@ const M0046 = "db/migrations/0046_adr010_ledger_roles.sql"; // ADR-010 rev. 5 PR
 const M0047 = "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql";
 const M0048 = "db/migrations/0048_adr010_ledger_gen_invitation.sql";
 const M0049 = "db/migrations/0049_adr010_ledger_gen_decision_seed_close_insert.sql";
+/** ADR-010 rev. 6 PR-7c: 0080 (cluster: concede los 4 roles nuevos a consent_owner), 0081 (Q16: recrea funciones por dueño, SET LOCAL ROLE literal), 0082 (dueños de esquema app/ops), 0083 (recovery reader, F-6D3-SEC-08). */
+const M0080 = "db/migrations/0080_adr010_pr7c_cluster_roles.sql";
+const M0081 = "db/migrations/0081_adr010_pr7c_q16_move_revocation_rights_case.sql";
+const M0082 = "db/migrations/0082_adr010_pr7c_shared_functions_and_schema_owners.sql";
+const M0083 = "db/migrations/0083_adr010_pr7c_recovery_reader_owner.sql";
+/** PR-7c: tests que asumen un owner nuevo (SET LOCAL ROLE) para probar que el migrador ya no puede o para fijar un fixture dentro de un ROLLBACK. */
+const T7C = "tests/integration/postgres/adr010-pr7c-owners.test.ts";
+const T_CATALOG = "tests/integration/postgres/catalog.test.ts";
+const T_PRC = "tests/integration/postgres/pr-c-schema.test.ts";
 
 /** ADR-010 rev. 5 PR-6b: 0050 (esquema de login: identidad versionada, oidc_exchange, login_assertion, session_event) y 0051 (funciones de login). */
 const M0050 = "db/migrations/0050_adr010_pr6b_oidc_login_schema.sql";
@@ -134,20 +143,26 @@ export const ADR010_OWNER_ALLOWLIST_BY_ROLE: Readonly<Record<string, Readonly<Re
   // 0036 (PR-4): identidad, no_self_approval, oidc_exchange, grant_assertion y funciones del verifier (mismos tres owners; platform_schema_owner para USAGE/CREATE temporal).
   // 0040 (PR-6-0): CREATE temporal de grant_owner sobre platform (platform_schema_owner) y record_assertion v2 como grant_owner (SET LOCAL ROLE).
   // 0050/0051 (PR-6b): CREATE temporal (platform_schema_owner), ALTER de principal_identity (membership_owner) y tablas/funciones de login (grant_owner), mismo patron que 0036.
-  platform_schema_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"], [M0050]: ["set-role"], [M0051]: ["set-role"], [M0052]: ["set-role"], [M0053]: ["set-role"], [M0054]: ["set-role"], [M0059]: ["set-role"], [M0060]: ["set-role"], [M0061]: ["set-role"], [M0062]: ["set-role"], [M0063]: ["set-role"], [M0069]: ["set-role"] },
+  platform_schema_owner: { [M0081]: ["set-role"], [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"], [M0050]: ["set-role"], [M0051]: ["set-role"], [M0052]: ["set-role"], [M0053]: ["set-role"], [M0054]: ["set-role"], [M0059]: ["set-role"], [M0060]: ["set-role"], [M0061]: ["set-role"], [M0062]: ["set-role"], [M0063]: ["set-role"], [M0069]: ["set-role"] },
   membership_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0050]: ["set-role"], [FIX_PLATFORM]: ["set-role"] },
-  grant_owner: { [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"], [M0050]: ["set-role"], [M0051]: ["set-role"], [M0052]: ["set-role"], [M0053]: ["set-role"], [M0054]: ["set-role"], [M0059]: ["set-role"], [M0060]: ["set-role"], [M0061]: ["set-role"], [M0062]: ["set-role"], [M0063]: ["set-role"], [M0069]: ["set-role"] },
+  grant_owner: { [M0081]: ["set-role"], [M0034]: ["grant-membership"], [M0035]: ["set-role"], [M0036]: ["set-role"], [M0040]: ["set-role"], [M0050]: ["set-role"], [M0051]: ["set-role"], [M0052]: ["set-role"], [M0053]: ["set-role"], [M0054]: ["set-role"], [M0059]: ["set-role"], [M0060]: ["set-role"], [M0061]: ["set-role"], [M0062]: ["set-role"], [M0063]: ["set-role"], [M0069]: ["set-role"] },
   // 0037 (PR-5a): case_state_owner crea el esquema case_state y le da USAGE/CREATE temporal a transition_owner; transition_owner crea las funciones
   // de transicion (SET LOCAL ROLE). Sin otros caminos: PR-5b y PR-7 amplian esta allowlist con revision (CODEOWNERS).
   // 0038 (PR-5b): mismo patron (CREATE temporal de transition_owner sobre case_state; funciones de RightsCase como transition_owner).
-  case_state_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0044]: ["set-role"], [M0066]: ["set-role"], [M0070]: ["set-role"] }, // 0044: CREATE temporal para cancel_invitation_subject_mismatch; 0041: CREATE temporal para ledger_append con dedupe estricto; 0039: CREATE temporal para close_case (D6)
-  transition_owner: { [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [M0044]: ["set-role"], [M0049]: ["set-role"], [M0066]: ["set-role"], [M0070]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"], [T_PRB]: ["set-role"], [T_PRB2]: ["set-role"], [T_PRB3]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
+  case_state_owner: { [M0081]: ["set-role"], [M0083]: ["set-role"], [T7C]: ["set-role"], [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0044]: ["set-role"], [M0066]: ["set-role"], [M0070]: ["set-role"] }, // 0044: CREATE temporal para cancel_invitation_subject_mismatch; 0041: CREATE temporal para ledger_append con dedupe estricto; 0039: CREATE temporal para close_case (D6)
+  transition_owner: { [M0081]: ["set-role"], [M0083]: ["set-role"], [T7C]: ["set-role"], [M0034]: ["grant-membership"], [M0037]: ["set-role"], [M0038]: ["set-role"], [M0039]: ["set-role"], [M0041]: ["set-role"], [M0042]: ["set-role"], [M0044]: ["set-role"], [M0049]: ["set-role"], [M0066]: ["set-role"], [M0070]: ["set-role"], [T5A]: ["set-role"], [T5B]: ["set-role"], [T_PRA]: ["set-role"], [T_PRB]: ["set-role"], [T_PRB2]: ["set-role"], [T_PRB3]: ["set-role"] }, // 0042: REVOKE EXECUTE de R5-R7 a app_rw (dueno de las funciones)
   // 0046 (PR-b): GRANT de ambos roles a consent_owner WITH INHERIT FALSE, SET TRUE (F-PR6-11; solo IT0B_SYNTHETIC). 0047/0048/0049: ledger_gen_owner crea el esquema ledger_gen y reparte USAGE/CREATE temporal;
   // ledger_writer crea sus funciones guard_*/emit_*/ledger_append/seed_local_catalog_event (SET LOCAL ROLE, patron 0037). Los tests de PR-b asumen ledger_writer para sus vectores y asserts.
-  ledger_gen_owner: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"] },
+  ledger_gen_owner: { [M0081]: ["set-role"], [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"] },
   // 0064 (PR-6d parte 1): GRANT a consent_owner WITH INHERIT FALSE, SET TRUE (solo IT0B_SYNTHETIC); 0065 le transfiere app.rights_case_tenant_of (ALTER FUNCTION ... OWNER TO, sin SET ROLE).
-  rights_case_lookup_owner: { [M0064]: ["grant-membership"] },
-  ledger_writer: { [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"], [T5B]: ["set-role"], [T_PRB3]: ["set-role"] },
+  rights_case_lookup_owner: { [M0081]: ["set-role"], [M0064]: ["grant-membership"] },
+  // ADR-010 rev. 6 PR-7c: 0080 concede los 4 roles a consent_owner (WITH INHERIT FALSE, SET TRUE; solo IT0B_SYNTHETIC). 0082 asume app_schema_owner y ops_schema_owner (GRANT de USAGE, CREATE a consent_owner tras ALTER SCHEMA ... OWNER);
+  // 0083 asume revocation_recovery_reader para crear list_confirmed_unapplied; shared_fn_owner solo en un test (GRANT EXECUTE dentro de un ROLLBACK).
+  app_schema_owner: { [M0080]: ["grant-membership"], [M0082]: ["set-role"], [T_CATALOG]: ["set-role"] },
+  ops_schema_owner: { [M0080]: ["grant-membership"], [M0082]: ["set-role"] },
+  shared_fn_owner: { [M0080]: ["grant-membership"], [T_PRC]: ["set-role"] },
+  revocation_recovery_reader: { [M0080]: ["grant-membership"], [M0083]: ["set-role"] },
+  ledger_writer: { [M0081]: ["set-role"], [M0046]: ["grant-membership"], [M0047]: ["set-role"], [M0048]: ["set-role"], [M0049]: ["set-role"], [T5B]: ["set-role"], [T_PRB3]: ["set-role"] },
 };
 /** Compatibilidad: allowlist uniforme (solo 0034), usada por tests que pasan su propia lista para todos los roles. */
 export const ADR010_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKind[]>> = {

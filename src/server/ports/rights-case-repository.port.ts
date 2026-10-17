@@ -1,6 +1,6 @@
 // Gobierna: specs/state-machines/rights-case.spec.yaml (aggregateType RightsCase).
 // Puerto (ADR-001 §11): proyección del ledger para el agregado RightsCase. En IT0 el
-// adaptadores son in-memory y Postgres (app.rights_case, CA-124 PR-D) en src/infra/adapters/**.
+// adaptadores son in-memory y Postgres (case_state.rights_case, CA-124 PR-D) en src/infra/adapters/**.
 
 import type { ChainRef, TenantId } from "../modules/common/types.ts";
 

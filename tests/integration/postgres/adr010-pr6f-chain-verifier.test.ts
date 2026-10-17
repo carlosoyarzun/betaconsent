@@ -268,7 +268,7 @@ pgTest("TEST-CNS-1748 pg: sin SELECT en ninguna otra tabla, vista, secuencia o f
   assert.equal(fns.rowCount, 0, "sin EXECUTE fuera de pg_catalog");
   assert.equal((await admin.query("SELECT 1 FROM pg_default_acl d WHERE d.defaclacl::text LIKE '%integrity_chain_verifier%'")).rowCount, 0, "default privileges vacios para el rol");
   const ver = await ctx.connectAs("integrity_chain_verifier");
-  for (const t of ["app.invitation", "app.consent_decision", "app.outbox", "app.rights_case", "ops.security_event", "platform.principal_identity", "platform.oidc_exchange", "case_state.x", "pii.x", "tenant_resolve.handle"]) {
+  for (const t of ["app.invitation", "app.consent_decision", "app.outbox", "case_state.rights_case", "ops.security_event", "platform.principal_identity", "platform.oidc_exchange", "case_state.x", "pii.x", "tenant_resolve.handle"]) {
     await assert.rejects(() => ver.query(`SELECT 1 FROM ${t}`), (e: unknown) => (t === "case_state.x" || t === "pii.x" ? ["42501", "42P01", "3F000"] : ["42501"]).includes(codeOf(e) ?? ""), t);
   }
   for (const s of ["platform", "case_state", "ledger_gen", "tenant_resolve", "pii"]) {

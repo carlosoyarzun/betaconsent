@@ -1,6 +1,6 @@
 // Gobierna: CA-124 (H09), PR-C; src/server/ports/revocation-repository.port.ts,
 // db/migrations/0006_revocation_consent_recovery.sql, revocation.spec.yaml, INV-CM-02.
-// ADR-001 §11: solo este adaptador conoce el SQL de app.revocation.
+// ADR-001 §11: solo este adaptador conoce el SQL de case_state.revocation.
 //
 // Opera DENTRO de la transaccion de PgUnitOfWork.inTenant (tenant fijado con set_config local):
 // RLS filtra por app.current_tenant_id(); tenant_id se pasa ademas en cada filtro y como
@@ -70,18 +70,18 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
   return {
     async findByRef(tenantId, revocationRef) {
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2`,
+        `SELECT ${COLUMNS} FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2`,
         [tenantId, revocationRef],
       );
       const row = r.rows[0];
       return row ? toRecord(row) : null;
     },
     async findByRefForUpdate(tenantId, revocationRef) {
-      // ADR-010 PR-5a: app_rw ya no tiene UPDATE sobre app.revocation (0037) y SELECT ... FOR UPDATE lo exige: la lectura NO bloquea. La
+      // ADR-010 PR-5a: app_rw ya no tiene UPDATE sobre case_state.revocation (0037) y SELECT ... FOR UPDATE lo exige: la lectura NO bloquea. La
       // serializacion (GRD-RV-23) la hace cada funcion case_state.* (FOR UPDATE de la fila + control de la secuencia esperada ANTES de los
       // guards de estado: una lectura vieja da RV409 y el UoW reejecuta con estado fresco, igual que el antiguo lock de fila).
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2`,
+        `SELECT ${COLUMNS} FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2`,
         [tenantId, revocationRef],
       );
       const row = r.rows[0];
@@ -89,7 +89,7 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
     },
     async findByCase(tenantId, caseRef) {
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND case_ref = $2 ORDER BY created_at, revocation_ref LIMIT 1`,
+        `SELECT ${COLUMNS} FROM case_state.revocation WHERE tenant_id = $1 AND case_ref = $2 ORDER BY created_at, revocation_ref LIMIT 1`,
         [tenantId, caseRef],
       );
       const row = r.rows[0];
@@ -97,7 +97,7 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
     },
     async findOpenByChain(tenantId, chainRef) {
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation
+        `SELECT ${COLUMNS} FROM case_state.revocation
           WHERE tenant_id = $1 AND chain_ref = $2 AND status NOT IN ('FAILED', 'COMPLETED')
           ORDER BY created_at, revocation_ref LIMIT 1`,
         [tenantId, chainRef],
@@ -107,14 +107,14 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
     },
     async listByDecision(tenantId, revokedDecisionRef) {
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 ORDER BY created_at, revocation_ref`,
+        `SELECT ${COLUMNS} FROM case_state.revocation WHERE tenant_id = $1 AND revoked_decision_ref = $2 ORDER BY created_at, revocation_ref`,
         [tenantId, revokedDecisionRef],
       );
       return r.rows.map(toRecord);
     },
     async findOpenByDecision(tenantId, revokedDecisionRef) {
       const r = await tx.query<RevocationRow>(
-        `SELECT ${COLUMNS} FROM app.revocation
+        `SELECT ${COLUMNS} FROM case_state.revocation
           WHERE tenant_id = $1 AND revoked_decision_ref = $2 AND status NOT IN ('FAILED', 'COMPLETED')
           ORDER BY created_at, revocation_ref LIMIT 1`,
         [tenantId, revokedDecisionRef],
@@ -123,7 +123,7 @@ export function createPgRevocationRepository(tx: TenantTx): RevocationRepository
       return row ? toRecord(row) : null;
     },
     async save(record) {
-      // ADR-010 PR-5a (INV-RV-12): app_rw ya NO tiene INSERT/UPDATE sobre app.revocation (0037). `save` es el contrato de siembra del puerto y
+      // ADR-010 PR-5a (INV-RV-12): app_rw ya NO tiene INSERT/UPDATE sobre case_state.revocation (0037). `save` es el contrato de siembra del puerto y
       // solo existe en LOCAL: llama case_state.seed_local_revocation (SECURITY DEFINER de transition_owner, falla fuera de LOCAL). Las
       // transiciones reales del dominio NO pasan por aqui: usan RevocationTransitionsPort (revocation-transitions.adapter.ts). chain_ref y
       // revoked_decision_ref se fijan al crear y no son actualizables.

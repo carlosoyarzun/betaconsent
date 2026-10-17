@@ -11,6 +11,7 @@ import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.
 import { syntheticDecision } from "../../contract/synthetic-decision.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import { pgTestRaw } from "./harness.ts";
+import { qualified, tableOwner, tableSchema } from "../../helpers/table-schema.ts";
 
 const TABLES = ["invitation", "otp_verification", "rights_case", "enrollment", "consent_decision", "revocation", "recovery_token", "idempotency_key"] as const;
 
@@ -34,7 +35,7 @@ pgTestRaw("TEST-CNS-876 pg X5: con una sola conexion A->B->(sin tenant) ninguna 
     const countRows = async (tenant: string | null): Promise<Record<string, number>> => {
       const read = async (tx: { query: (t: string) => Promise<{ rows: Array<{ n: number }> }> }): Promise<Record<string, number>> => {
         const out: Record<string, number> = {};
-        for (const t of TABLES) out[t] = (await tx.query(`SELECT count(*)::int AS n FROM app.${t}`)).rows[0]?.n ?? -1;
+        for (const t of TABLES) out[t] = (await tx.query(`SELECT count(*)::int AS n FROM ${qualified(t)}`)).rows[0]?.n ?? -1;
         return out;
       };
       if (tenant !== null) return uow.withTenantTx(tenant, read);

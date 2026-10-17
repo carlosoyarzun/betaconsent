@@ -16,7 +16,7 @@ const events = async (admin: Client, w: CaseWorld): Promise<string[]> =>
   (await admin.query<{ event_type: string }>("SELECT event_type FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 ORDER BY sequence", [w.tenantId, w.revocationRef])).rows.map((r) => r.event_type);
 const outbox = async (admin: Client, w: CaseWorld): Promise<number> => (await admin.query<{ n: number }>("SELECT count(*)::int AS n FROM app.outbox WHERE tenant_id = $1", [w.tenantId])).rows[0]!.n;
 const revocation = async (admin: Client, w: CaseWorld) =>
-  (await admin.query<{ status: string; recorded_by_ref: string | null; cosigned_by_ref: string | null }>("SELECT status, recorded_by_ref, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
+  (await admin.query<{ status: string; recorded_by_ref: string | null; cosigned_by_ref: string | null }>("SELECT status, recorded_by_ref, cosigned_by_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!;
 const alerts = async (admin: Client, w: CaseWorld): Promise<string[]> =>
   (await admin.query<{ alert_reason: string }>("SELECT alert_reason FROM ops.security_event WHERE tenant_id = $1 AND event_type = 'REVOCATION_APPLY_ALERT' AND revocation_ref = $2 ORDER BY event_seq", [w.tenantId, w.revocationRef])).rows.map((r) => r.alert_reason);
 const countOf = (all: readonly string[], type: string): number => all.filter((x) => x === type).length;
@@ -39,7 +39,7 @@ pgTest("TEST-CNS-1702 pg platform: la co-firma RH3 aplica R3 + R4 + C6 en UNA tr
     assert.equal((await admin.query("SELECT state FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2", [w.tenantId, w.consentId])).rows[0]?.state, "REVOKED");
     // Una sola transaccion: todo lo que R3 + R4 + C6 escribio comparte el xmin de la tx de la co-firma.
     const xmins = new Set<string>();
-    xmins.add((await admin.query<{ x: string }>("SELECT xmin::text AS x FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!.x);
+    xmins.add((await admin.query<{ x: string }>("SELECT xmin::text AS x FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0]!.x);
     xmins.add((await admin.query<{ x: string }>("SELECT xmin::text AS x FROM app.consent_decision WHERE tenant_id = $1 AND consent_id = $2", [w.tenantId, w.consentId])).rows[0]!.x);
     xmins.add((await admin.query<{ x: string }>("SELECT xmin::text AS x FROM app.outbox WHERE tenant_id = $1", [w.tenantId])).rows[0]!.x);
     for (const r of (await admin.query<{ x: string }>("SELECT xmin::text AS x FROM integrity.audit_event WHERE tenant_id = $1 AND aggregate_id = $2 AND event_type IN ('REVOCATION_CONFIRMED', 'CONSENT_REVOKED', 'RECEIPT_CREATED')", [w.tenantId, w.revocationRef])).rows) xmins.add(r.x);

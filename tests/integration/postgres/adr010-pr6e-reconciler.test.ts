@@ -111,17 +111,17 @@ pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS s
           AND has_column_privilege('integrity_reconciler', a.attrelid, a.attname, 'SELECT')`, [rel])).rows[0]?.c ?? "";
   assert.equal(await cols("app.invitation"), "invitation_ref,state,tenant_id");
   assert.equal(await cols("app.consent_decision"), "consent_id,state,tenant_id");
-  assert.equal(await cols("app.revocation"), "revocation_ref,revoked_decision_ref,tenant_id");
+  assert.equal(await cols("case_state.revocation"), "revocation_ref,revoked_decision_ref,tenant_id");
   assert.equal(await cols("integrity.audit_event"), "aggregate_id,aggregate_type,chain_seq,event_type,occurred_at,sequence,tenant_id", "sin payload, hashes ni refs de actor (P1-1)");
   // Exactamente 3 policies (todas SELECT, TO integrity_reconciler, USING true), una por tabla.
   const pol = (await admin.query<{ rel: string; polname: string; polcmd: string; q: string | null }>(
     `SELECT p.polrelid::regclass::text AS rel, p.polname, p.polcmd, pg_get_expr(p.polqual, p.polrelid) AS q FROM pg_policy p
-      WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_reconciler') = ANY (p.polroles) OR 0 = ANY (p.polroles) AND p.polrelid::regclass::text IN ('integrity.audit_event', 'app.invitation', 'app.consent_decision', 'app.revocation', 'integrity.reconcile_run')
+      WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_reconciler') = ANY (p.polroles) OR 0 = ANY (p.polroles) AND p.polrelid::regclass::text IN ('integrity.audit_event', 'app.invitation', 'app.consent_decision', 'case_state.revocation', 'integrity.reconcile_run')
       ORDER BY 1`)).rows;
   assert.deepEqual(pol.map((p) => [p.rel, p.polname, p.polcmd, p.q]), [
     ["app.consent_decision", "consent_decision_reconciler_select", "r", "true"],
     ["app.invitation", "invitation_reconciler_select", "r", "true"],
-    ["app.revocation", "revocation_reconciler_select", "r", "true"],
+    ["case_state.revocation", "revocation_reconciler_select", "r", "true"],
     ["integrity.audit_event", "audit_event_reconciler_select", "r", "true"],
     ["integrity.reconcile_run", "reconcile_run_reconciler_insert", "a", null], // PR-7b (0077): unica policy de escritura del rol
   ]);
@@ -134,7 +134,7 @@ pgTest("TEST-CNS-1610 pg: integrity_reconciler = LOGIN NOSUPERUSER NOBYPASSRLS s
   const reads = (await admin.query<{ t: string }>(
     `SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'ops', 'platform', 'integrity', 'case_state', 'ledger_gen', 'tenant_resolve') AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_any_column_privilege('integrity_reconciler', c.oid, 'SELECT') ORDER BY 1`)).rows.map((r) => r.t);
-  assert.deepEqual(reads, ["app.consent_decision", "app.invitation", "app.revocation", "integrity.audit_event", "ops.db_catalog"]);
+  assert.deepEqual(reads, ["app.consent_decision", "app.invitation", "case_state.revocation", "integrity.audit_event", "ops.db_catalog"]);
   const fns = await admin.query(
     `SELECT n.nspname || '.' || p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname IN ('app', 'ops', 'platform', 'integrity', 'case_state', 'ledger_gen', 'tenant_resolve') AND has_function_privilege('integrity_reconciler', p.oid, 'EXECUTE')`);
@@ -218,13 +218,13 @@ pgTest("TEST-CNS-1612 pg: el reconciler da 42501 al leer payload y demas columna
     await denied(`SELECT ${col} FROM integrity.audit_event`, `audit_event.${col}`);
   }
   for (const col of ["payload", "event_hash"]) await denied(`SELECT count(*) FROM integrity.audit_event WHERE ${col} IS NOT NULL`, `audit_event.${col} en WHERE`);
-  for (const col of ["status", "case_ref", "recorded_by_ref", "reason_code", "verification_ref"]) await denied(`SELECT ${col} FROM app.revocation`, `revocation.${col}`);
+  for (const col of ["status", "case_ref", "recorded_by_ref", "reason_code", "verification_ref"]) await denied(`SELECT ${col} FROM case_state.revocation`, `revocation.${col}`);
   // Columnas con PII o secretos: SELECT * y columnas concretas.
   await denied("SELECT * FROM app.invitation", "SELECT * invitation");
   for (const col of ["token_hash", "recipient_channel_ref", "subject_ref", "bound_decision_maker_ref"]) await denied(`SELECT ${col} FROM app.invitation`, `invitation.${col}`);
   for (const col of ["decision_maker_ref", "subject_ref", "receipt_ref"]) await denied(`SELECT ${col} FROM app.consent_decision`, `consent_decision.${col}`);
   // Tablas ajenas y esquema platform.
-  for (const t of ["app.rights_case", "app.case_session", "app.outbox", "ops.security_event", "app.otp_verification", "app.enrollment", "tenant_resolve.handle"]) await denied(`SELECT 1 FROM ${t}`, t);
+  for (const t of ["case_state.rights_case", "app.case_session", "app.outbox", "ops.security_event", "app.otp_verification", "app.enrollment", "tenant_resolve.handle"]) await denied(`SELECT 1 FROM ${t}`, t);
   await denied("SELECT 1 FROM platform.principal_identity", "principal_identity");
   await denied("SELECT 1 FROM platform.oidc_exchange", "oidc_exchange");
   await denied("SELECT 1 FROM platform.session_event", "session_event (fuera de 6e: 6c)");

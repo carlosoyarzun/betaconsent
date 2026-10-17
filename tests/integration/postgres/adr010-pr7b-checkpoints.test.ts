@@ -296,7 +296,7 @@ pgTest("TEST-CNS-1776 pg: el trigger de chain_checkpoint rechaza cabeza inexiste
   assert.equal((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_checkpoint WHERE run_id = ANY ($1::uuid[])", [[runId, run2, run3]])).rows[0]!.n, "2", "solo los dos validos entraron");
 });
 
-pgTest("TEST-CNS-1784 pg: SEC-7D-09 un run exit 0 que omite un tenant del ledger (el mas viejo o el mas nuevo) o con leaf_count distinto de sus checkpoints se rechaza al COMMIT; el run completo entra", async (ctx) => {
+pgTest("TEST-CNS-1784 pg: SEC-7D-09 un run exit 0 incompleto (omite un tenant, leaf_count distinto, vacio con genesis) o con started_at fuera de la cota, futuro o no monotono se rechaza; el run completo entra", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   await driveInvitation(ctx, A, "1784-a");
   await driveInvitation(ctx, B, "1784-b");
@@ -305,27 +305,44 @@ pgTest("TEST-CNS-1784 pg: SEC-7D-09 un run exit 0 que omite un tenant del ledger
   assert.ok(heads.length >= 2);
   const order = (await admin.query<{ tenant_id: string }>("SELECT tenant_id FROM integrity.audit_event WHERE chain_seq = 1 ORDER BY occurred_at, tenant_id")).rows.map((r) => r.tenant_id);
   assert.equal(order.length, heads.length);
-  const startedAt = new Date().toISOString();
-  const attempt = (subset: typeof heads, tenants: number, leaf: number, started = startedAt): Promise<unknown> => {
+  const n = heads.length;
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const iso = (offsetMs = 0): string => new Date(Date.now() + offsetMs).toISOString();
+  const attempt = async (subset: typeof heads, tenants: number, leaf: number, started = iso()): Promise<unknown> => {
     const runId = randomUUID();
     return rw(ver, async () => {
       await ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, $2, 'LOCAL', $3, 3, 0, $4, $5, 'RFC6962-SHA256-V1')`, [runId, started, tenants, leaf, "a".repeat(64)]);
       for (const h of subset) await ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $3)", [runId, h.tenantId, h.chainSeq, h.eventHash]);
     });
   };
-  const n = heads.length;
   const without = (tenantId: string): typeof heads => heads.filter((h) => h.tenantId !== tenantId);
-  const rejects = (label: string, p: Promise<unknown>): Promise<void> => assert.rejects(() => p, (e: unknown) => codeOf(e) === "23514" && /integrity\.chain_run/.test((e as Error).message), label);
-  await rejects("omite el tenant mas viejo", attempt(without(order[0]!), n, n - 1));
-  await rejects("omite el tenant mas nuevo", attempt(without(order[n - 1]!), n, n - 1));
-  await rejects("sin ningun checkpoint", attempt([], n, 0));
-  await rejects("completo pero leaf_count menor que los checkpoints", attempt(heads, n, n - 1));
-  await rejects("completo pero leaf_count mayor que los checkpoints", attempt(without(order[0]!), n, n));
-  // started_at anterior a toda genesis: ningun tenant es exigible; la raiz de un run sin hojas entra.
-  await attempt([], 0, 0, "2000-01-01T00:00:00Z");
+  const rejects = async (label: string, p: () => Promise<unknown>, re = /integrity\.chain_run/): Promise<void> => {
+    await sleep(3);
+    await assert.rejects(p, (e: unknown) => codeOf(e) === "23514" && re.test((e as Error).message), label);
+  };
+  await rejects("omite el tenant mas viejo", () => attempt(without(order[0]!), n, n - 1));
+  await rejects("omite el tenant mas nuevo", () => attempt(without(order[n - 1]!), n, n - 1));
+  await rejects("sin ningun checkpoint (el ledger tiene genesis: leaf_count >= 1)", () => attempt([], n, 0));
+  await rejects("completo pero leaf_count menor que los checkpoints", () => attempt(heads, n, n - 1));
+  await rejects("completo pero leaf_count mayor que los checkpoints", () => attempt(without(order[0]!), n, n));
+  // started_at: el declarado por el cliente no puede evadir la exigencia (p. ej. anterior a toda genesis) ni quedar fuera de la cota.
+  await rejects("started_at anterior a toda genesis (2000-01-01) y vacio", () => attempt([], 0, 0, "2000-01-01T00:00:00Z"), /cota/);
+  await rejects("started_at fuera de la cota (hace 1 h)", () => attempt(heads, n, n, iso(-3_600_000)), /cota/);
+  await rejects("started_at en el futuro", () => attempt(heads, n, n, iso(3_600_000)), /cota/);
   // Completo: entra.
+  await sleep(3);
+  const okAt = iso();
+  await attempt(heads, n, n, okAt);
+  assert.ok(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_run WHERE leaf_count = $1 AND exit_code = 0", [n])).rows[0]!.n) >= 1);
+  // Monotonia: igual o anterior al ultimo run se rechaza.
+  await rejects("started_at igual al de un run previo", () => attempt(heads, n, n, okAt), /mayor que el de todo run previo/);
+  await rejects("started_at anterior al de un run previo", () => attempt(heads, n, n, new Date(Date.parse(okAt) - 1).toISOString()), /mayor que el de todo run previo/);
+  // Un tenant ya checkpointeado no puede omitirse despues (exit 0).
+  await sleep(3);
+  await rejects("omite un tenant que ya tuvo checkpoint", () => attempt(without(order[0]!), n, n - 1));
+  // El run siguiente completo entra.
+  await sleep(3);
   await attempt(heads, n, n);
-  assert.equal(Number((await admin.query<{ n: string }>("SELECT count(*)::text AS n FROM integrity.chain_run WHERE leaf_count = $1 AND exit_code = 0", [n])).rows[0]!.n) >= 1, true);
 });
 
 const mkStateDir = async (): Promise<string> => {
@@ -358,11 +375,11 @@ pgTest("TEST-CNS-1781 pg: CHECKs de chain_run (raiz solo con exit 0, hojas <= te
     await ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [ok[0], ok[1], "LOCAL", heads.length, 3, 0, heads.length, ok[7], ok[8]]);
     for (const h of heads) await ver.query("INSERT INTO integrity.chain_checkpoint (run_id, tenant_id, head_chain_seq, head_event_hash, verified_events) VALUES ($1, $2, $3, $4, $3)", [ok[0], h.tenantId, h.chainSeq, h.eventHash]);
   });
-  await bad("run_id duplicado", ok, "23505");
+  await bad("run_id duplicado", [ok[0], new Date().toISOString(), ...ok.slice(2)], "23505");
   // finished_at lo fija la base: el verifier no puede insertarlo (42501), ni cambiar el run despues.
   await assert.rejects(() => rw(ver, () => ver.query("INSERT INTO integrity.chain_run (run_id, started_at, finished_at, environment, tenants, events, exit_code, leaf_count) VALUES ($1, now(), now(), 'LOCAL', 0, 0, 2, 0)", [randomUUID()])), (e: unknown) => codeOf(e) === "42501");
   // Un run de exit 2 valido (sin raiz) entra.
-  await ins([randomUUID(), ok[1], "LOCAL", 2, 5, 2, 0, null, null]);
+  await ins([randomUUID(), new Date().toISOString(), "LOCAL", 2, 5, 2, 0, null, null]);
 
   // Precondiciones (exit 1): sin policy de SELECT de chain_checkpoint (verde falso), sin privilegio de INSERT, sin FORCE RLS.
   const expectExit1 = async (label: string, code: string, restore: () => Promise<void>): Promise<void> => {

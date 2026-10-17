@@ -9,6 +9,9 @@
 --                               anterior del tenant (nunca regresa; igual seq => igual hash): un chain-verifier comprometido no puede plantar cabezas falsas ni retroceder.
 --   SEC-7D-09: un CONSTRAINT TRIGGER DEFERRABLE INITIALLY DEFERRED sobre chain_run (se evalua al COMMIT, con los checkpoints de la misma tx) exige, para exit_code = 0, un checkpoint del run por CADA tenant del ledger
 --                               cuya genesis (chain_seq = 1) tenga occurred_at <= started_at, y leaf_count = count(checkpoints del run): un run que omite un tenant (viejo o nuevo) no queda como verde.
+--   SEC-7D-09 (endurecido): BEFORE INSERT `chain_run_started_guard` (SECURITY DEFINER de integrity_owner, que lee chain_run por una policy propia; el verifier sigue sin SELECT): started_at dentro de
+--                               [transaction_timestamp() - 15 min, transaction_timestamp()] y estrictamente mayor que el de todo run previo (serializa los inserts con LOCK SHARE ROW EXCLUSIVE). El guard diferido
+--                               ademas exige checkpoint para todo tenant que ya tuvo alguno en un run anterior (sin depender de started_at) y leaf_count >= 1 si el ledger tiene alguna genesis.
 -- Ambas: append-only (triggers ENABLE ALWAYS: tambien para el superusuario y con session_replication_role = replica), RLS ENABLE + FORCE, sin purga (T-4).
 --   * integrity_chain_verifier: INSERT por columnas en chain_run (sin finished_at: lo fija la base) y en chain_checkpoint (sin recorded_at); SELECT de chain_checkpoint (policy unica cross-tenant); NADA sobre chain_run salvo INSERT.
 --   * integrity_anchor_signer (NOLOGIN hasta PR-7f): SELECT por columnas de chain_run (raiz) y de chain_checkpoint (cabezas que se publican). Sin ningun privilegio sobre integrity.audit_event (rev. 6: la raiz la calcula el chain-verifier).
@@ -76,6 +79,29 @@ CREATE TRIGGER chain_run_no_update_delete BEFORE UPDATE OR DELETE ON integrity.c
 CREATE TRIGGER chain_run_no_truncate BEFORE TRUNCATE ON integrity.chain_run FOR EACH STATEMENT EXECUTE FUNCTION integrity.append_only_guard();
 CREATE TRIGGER chain_checkpoint_no_update_delete BEFORE UPDATE OR DELETE ON integrity.chain_checkpoint FOR EACH ROW EXECUTE FUNCTION integrity.append_only_guard();
 CREATE TRIGGER chain_checkpoint_no_truncate BEFORE TRUNCATE ON integrity.chain_checkpoint FOR EACH STATEMENT EXECUTE FUNCTION integrity.append_only_guard();
+-- SEC-7D-09: cota y monotonia de started_at. SECURITY DEFINER (dueno integrity_owner, search_path fijo) porque el verifier no puede leer chain_run; la policy chain_run_owner_select permite al dueno (FORCE RLS) verlo.
+-- El started_at lo declara el cliente y la persistencia corre en otra tx despues de la instantanea: por eso es una cota (no un DEFAULT).
+CREATE FUNCTION integrity.chain_run_started_guard() RETURNS trigger
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+BEGIN
+  LOCK TABLE integrity.chain_run IN SHARE ROW EXCLUSIVE MODE;
+  IF NEW.started_at > pg_catalog.transaction_timestamp() OR NEW.started_at < pg_catalog.transaction_timestamp() - INTERVAL '15 minutes' THEN
+    RAISE EXCEPTION 'integrity.chain_run: started_at fuera de la cota (transaction_timestamp() - 15 min, transaction_timestamp())' USING ERRCODE = 'check_violation';
+  END IF;
+  IF EXISTS (SELECT 1 FROM integrity.chain_run r WHERE r.started_at >= NEW.started_at) THEN
+    RAISE EXCEPTION 'integrity.chain_run: started_at debe ser mayor que el de todo run previo' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION integrity.chain_run_started_guard() FROM PUBLIC;
+CREATE TRIGGER chain_run_started_guard BEFORE INSERT ON integrity.chain_run FOR EACH ROW EXECUTE FUNCTION integrity.chain_run_started_guard();
+ALTER TABLE integrity.chain_run ENABLE ALWAYS TRIGGER chain_run_started_guard;
+CREATE POLICY chain_run_owner_select ON integrity.chain_run FOR SELECT TO integrity_owner USING (true);
+
 -- SEC-7D-09: completitud del run exit 0 (se evalua al COMMIT: el run se inserta antes que sus checkpoints en la misma tx). SECURITY INVOKER: el verifier lee el ledger (policy cross-tenant) y chain_checkpoint.
 CREATE FUNCTION integrity.chain_run_complete_guard() RETURNS trigger
   LANGUAGE plpgsql
@@ -88,8 +114,17 @@ BEGIN
                   AND NOT EXISTS (SELECT 1 FROM integrity.chain_checkpoint c WHERE c.run_id = NEW.run_id AND c.tenant_id = e.tenant_id)) THEN
       RAISE EXCEPTION 'integrity.chain_run: un run exit 0 debe llevar un checkpoint por cada tenant del ledger con genesis <= started_at' USING ERRCODE = 'check_violation';
     END IF;
+    -- Sin depender de started_at: todo tenant que ya tuvo un checkpoint en un run anterior debe tenerlo tambien aqui.
+    IF EXISTS (SELECT 1 FROM integrity.chain_checkpoint p
+                WHERE p.run_id <> NEW.run_id
+                  AND NOT EXISTS (SELECT 1 FROM integrity.chain_checkpoint c WHERE c.run_id = NEW.run_id AND c.tenant_id = p.tenant_id)) THEN
+      RAISE EXCEPTION 'integrity.chain_run: un run exit 0 debe llevar checkpoint de todo tenant que ya tuvo alguno' USING ERRCODE = 'check_violation';
+    END IF;
     IF NEW.leaf_count <> (SELECT pg_catalog.count(*) FROM integrity.chain_checkpoint c WHERE c.run_id = NEW.run_id) THEN
       RAISE EXCEPTION 'integrity.chain_run: leaf_count debe ser igual a los checkpoints del run' USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.leaf_count < 1 AND EXISTS (SELECT 1 FROM integrity.audit_event e WHERE e.chain_seq = 1) THEN
+      RAISE EXCEPTION 'integrity.chain_run: el ledger tiene genesis: un run exit 0 exige leaf_count >= 1' USING ERRCODE = 'check_violation';
     END IF;
   END IF;
   RETURN NULL;
@@ -158,8 +193,8 @@ BEGIN
       RAISE EXCEPTION '0076: ACL de integrity.% distinta de la esperada (hay %)', t, actual;
     END IF;
   END LOOP;
-  -- Policies: exactamente las 2 de chain_run y las 3 de chain_checkpoint, permisivas, de un solo rol.
-  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'integrity' AND c.relname = 'chain_run') <> 2
+  -- Policies: exactamente las 3 de chain_run y las 3 de chain_checkpoint, permisivas, de un solo rol.
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'integrity' AND c.relname = 'chain_run') <> 3
      OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'integrity' AND c.relname = 'chain_checkpoint') <> 3
      OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint') AND (NOT p.polpermissive OR pg_catalog.array_length(p.polroles, 1) <> 1 OR 0::oid = ANY (p.polroles))) THEN
@@ -167,13 +202,13 @@ BEGIN
   END IF;
   -- Triggers append-only y de validacion: ENABLE ALWAYS.
   IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger tg JOIN pg_catalog.pg_class c ON c.oid = tg.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-       WHERE NOT tg.tgisinternal AND tg.tgenabled = 'A' AND n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint')) <> 6
+       WHERE NOT tg.tgisinternal AND tg.tgenabled = 'A' AND n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint')) <> 7
      OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger tg WHERE tg.tgrelid = 'integrity.chain_run'::regclass AND tg.tgname = 'chain_run_complete_guard' AND tg.tgdeferrable AND tg.tginitdeferred) THEN
-    RAISE EXCEPTION '0076: los 6 triggers (chain_run_complete_guard DEFERRABLE INITIALLY DEFERRED) de chain_run/chain_checkpoint deben ser ENABLE ALWAYS';
+    RAISE EXCEPTION '0076: los 7 triggers (chain_run_complete_guard DEFERRABLE INITIALLY DEFERRED) de chain_run/chain_checkpoint deben ser ENABLE ALWAYS';
   END IF;
-  -- Funciones: de integrity_owner, SECURITY INVOKER, sin EXECUTE para nadie mas.
+  -- Funciones: de integrity_owner, SECURITY INVOKER (salvo chain_run_started_guard: DEFINER, search_path fijo), sin EXECUTE para nadie mas.
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-              WHERE n.nspname = 'integrity' AND p.proname IN ('append_only_guard', 'chain_checkpoint_guard', 'chain_run_complete_guard') AND (p.prosecdef OR pg_catalog.pg_get_userbyid(p.proowner) <> 'integrity_owner'
+              WHERE n.nspname = 'integrity' AND p.proname IN ('append_only_guard', 'chain_checkpoint_guard', 'chain_run_complete_guard', 'chain_run_started_guard') AND ((p.prosecdef <> (p.proname = 'chain_run_started_guard')) OR pg_catalog.pg_get_userbyid(p.proowner) <> 'integrity_owner'
                 OR EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a WHERE a.grantee <> p.proowner))) THEN
     RAISE EXCEPTION '0076: las funciones de trigger deben ser SECURITY INVOKER, de integrity_owner y sin EXECUTE para otros roles';
   END IF;

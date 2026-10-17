@@ -304,8 +304,8 @@ pgTest("TEST-CNS-875 e2e pg: el caso RH3 sembrado por el camino legal (RC1 -> RC
   try {
     await seedRh3DevCase(env.bundle.ports, env.bundle.revocationPorts, T);
     // Camino legal: caso IN_VERIFICATION ligado a la Revocation REQUESTED, sin propuesta RH2 ni aprobador (RH2 solo por platform).
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION' AND revocation_ref = $3", [T, RH3_DEV_CASE_REF, RH3_DEV_REVOCATION_REF]), 1);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'REQUESTED' AND proposal_ref IS NULL AND second_approver_ref IS NULL", [T, RH3_DEV_REVOCATION_REF]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION' AND revocation_ref = $3", [T, RH3_DEV_CASE_REF, RH3_DEV_REVOCATION_REF]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'REQUESTED' AND proposal_ref IS NULL AND second_approver_ref IS NULL", [T, RH3_DEV_REVOCATION_REF]), 1);
     const login = await fetch(`${env.baseUrl}/__dev/staff-login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -317,7 +317,7 @@ pgTest("TEST-CNS-875 e2e pg: el caso RH3 sembrado por el camino legal (RC1 -> RC
       const res = await fetch(`${env.baseUrl}/platform/rights-cases/${RH3_DEV_CASE_REF}${suffix}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: "{}" });
       assert.equal(res.status, 404, suffix);
     }
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'REQUESTED'", [T, RH3_DEV_REVOCATION_REF]), 1, "web no cambia el estado");
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2 AND status = 'REQUESTED'", [T, RH3_DEV_REVOCATION_REF]), 1, "web no cambia el estado");
   } finally {
     await env.close();
   }
@@ -335,11 +335,11 @@ pgTest("TEST-CNS-882 e2e pg: seed RH3 atomico (una tx: si falla no queda nada) e
     } as typeof rp;
     await assert.rejects(() => seedRh3DevCase(env.bundle.ports, failing, T2), /boom/);
     assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.consent_decision WHERE tenant_id = $1 AND chain_ref = $2", [T2, RH3_DEV_CHAIN_REF]), 0);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T2, RH3_DEV_CASE_REF]), 0);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [T2, RH3_DEV_REVOCATION_REF]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2", [T2, RH3_DEV_CASE_REF]), 0);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [T2, RH3_DEV_REVOCATION_REF]), 0);
     assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), true);
     assert.equal(await seedRh3DevCase(env.bundle.ports, rp, T2), false);
-    assert.equal(await count(env, "SELECT count(*)::int AS n FROM app.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION'", [T2, RH3_DEV_CASE_REF]), 1);
+    assert.equal(await count(env, "SELECT count(*)::int AS n FROM case_state.rights_case WHERE tenant_id = $1 AND case_ref = $2 AND status = 'IN_VERIFICATION'", [T2, RH3_DEV_CASE_REF]), 1);
   } finally {
     await env.close();
   }
