@@ -12,6 +12,7 @@ import type { CaseOutcome, PlatformCasePort } from "../../../server/ports/platfo
 import { acquireCleanClient } from "./pool.ts";
 import type { PoolLike } from "./pool.ts";
 import { mapTransitionError } from "./revocation-transitions.adapter.ts";
+import { retryRolledBack } from "./transient-error.ts";
 
 const SID_RE = /^[0-9a-f]{64}$/;
 
@@ -23,7 +24,12 @@ export interface PlatformCaseAdapterOptions {
 }
 
 export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapterOptions = {}): PlatformCasePort {
-  async function exec(sid: string, actor: Actor, sql: string, params: readonly unknown[]): Promise<CaseOutcome> {
+  // PR-7a: una tx revertida (clase 40, 55P03) se reintenta con tope; agotado, se relanza el error crudo (el borde responde 503 uniforme).
+  function exec(sid: string, actor: Actor, sql: string, params: readonly unknown[]): Promise<CaseOutcome> {
+    return retryRolledBack(() => execOnce(sid, actor, sql, params));
+  }
+
+  async function execOnce(sid: string, actor: Actor, sql: string, params: readonly unknown[]): Promise<CaseOutcome> {
     if (!SID_RE.test(sid)) return { ok: false, reason: "NOT_FOUND" };
     const client = await acquireCleanClient(pool);
     let broken = false;
@@ -56,6 +62,8 @@ export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapte
   }
 
   const op = (sid: string, sql: string, params: readonly unknown[]): Promise<CaseOutcome> => exec(sid, "OPERATOR", sql, params);
+  // Los intentos de co-firma NO llevan reintento interno: los acota el guardia de R4 (G-3, maxAttempts); anidar reintentos multiplicaria los intentos de cosign.
+  const opOnce = (sid: string, sql: string, params: readonly unknown[]): Promise<CaseOutcome> => execOnce(sid, "OPERATOR", sql, params);
 
   return {
     propose: (i) => op(i.sid, "SELECT case_state.propose_case_verification($1::text, $2::text, $3::text, $4::integer, $5::integer) AS r", [i.caseRef, i.proposalRef, i.scriptVersion, i.limit.max, i.limit.windowSeconds]),
@@ -64,7 +72,7 @@ export function createPgPlatformCase(pool: PoolLike, options: PlatformCaseAdapte
     record: (i) => op(i.sid, "SELECT case_state.record_case_confirmation($1::text) AS r", [i.caseRef]),
     close: (i) => op(i.sid, "SELECT case_state.close_case($1::text, $2::text) AS r", [i.caseRef, i.outcome]),
     async cosign(i) {
-      const attempt = (): Promise<CaseOutcome> => op(i.sid, "SELECT case_state.cosign_case_confirmation($1::text) AS r", [i.caseRef]);
+      const attempt = (): Promise<CaseOutcome> => opOnce(i.sid, "SELECT case_state.cosign_case_confirmation($1::text) AS r", [i.caseRef]);
       const guard = options.applyGuard;
       if (guard === undefined) return attempt();
       // La alerta del agotamiento va por la sesion CASE (tx aparte); la lectura previa al reintento es una funcion de estado SIN efectos (read_case_apply_state): si la misma co-firma ya quedo APPLIED se devuelve el resultado real, sin alerta.

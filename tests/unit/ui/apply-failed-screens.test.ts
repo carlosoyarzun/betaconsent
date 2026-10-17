@@ -1,5 +1,5 @@
 // Gobierna: F-PR6-25 (hallazgos F-PR6-51 y F-PR6-52), UX-CNS-015, DEC-BR-006 / REQ-CNS-033 (sin
-// acuse ni recibo), RULE-CNS-026. TEST-CNS-1760..1765.
+// acuse ni recibo), RULE-CNS-026. TEST-CNS-1767..1765.
 // Ejecuta revocation.js / recovery.js reales contra un DOM mínimo construido con los ids del HTML
 // que renderizan revocation-page.ts / recovery-page.ts (sin jsdom: dependencia no permitida).
 
@@ -59,7 +59,7 @@ function boot(asset: string, html: string, respond: (url: string) => { status: n
 const UNAVAILABLE = { code: "GUARD_EVALUATOR_UNAVAILABLE", status: 503, correlationId: "00000000-0000-4000-8000-000000000000" };
 const NO_ACK = /registrad|recibid|en proceso|en curso|te avisaremos|revocad|cancelad|denegad/i;
 
-test("TEST-CNS-1760: revocation-page.ts renderiza el aviso A con el copy literal (UX-CNS-015), role=alert, oculto, foco programático, ícono + código ERR-RV-21 en texto y sin afirmar registro ni proceso", () => {
+test("TEST-CNS-1767: revocation-page.ts renderiza el aviso A con el copy literal (UX-CNS-015), role=alert, oculto, foco programático, ícono + código ERR-RV-21 en texto y sin afirmar registro ni proceso", () => {
   const html = renderRevocationConfirmPage();
   assert.match(html, /<div role="alert" aria-live="assertive" class="lp-alert-error" id="error-apply-failed" tabindex="-1" hidden>/);
   assert.ok(html.includes("No pudimos completar tu retiro</span>"));
@@ -75,7 +75,7 @@ test("TEST-CNS-1760: revocation-page.ts renderiza el aviso A con el copy literal
   assert.match(src, /REQ-CNS-033/);
 });
 
-test("TEST-CNS-1761: revocation.js ante 503 de /confirm muestra el aviso A (no el uniforme ni el comprobante), con foco, sin ocultar el formulario", async () => {
+test("TEST-CNS-1768: revocation.js ante 503 de /confirm muestra el aviso A (no el uniforme ni el comprobante), con foco, sin ocultar el formulario", async () => {
   const doc = boot("revocation.js", renderRevocationConfirmPage(), (url) => (url.endsWith("/confirm") ? { status: 503, body: UNAVAILABLE } : { status: 200 }));
   doc.getElementById("confirm-revocation-btn")!.click();
   await settle();
@@ -86,7 +86,7 @@ test("TEST-CNS-1761: revocation.js ante 503 de /confirm muestra el aviso A (no e
   assert.equal(doc.getElementById("revocation-form")!.hidden, false);
 });
 
-test("TEST-CNS-1762: revocation.js con 503 sin cuerpo JSON también muestra el aviso A; con 200 + revocationRef sigue mostrando el comprobante y oculta el aviso", async () => {
+test("TEST-CNS-1769: revocation.js con 503 sin cuerpo JSON también muestra el aviso A; con 200 + revocationRef sigue mostrando el comprobante y oculta el aviso", async () => {
   let calls = 0;
   const doc = boot("revocation.js", renderRevocationConfirmPage(), (url) => {
     if (!url.endsWith("/confirm")) return { status: 200 };
@@ -103,7 +103,7 @@ test("TEST-CNS-1762: revocation.js con 503 sin cuerpo JSON también muestra el a
   assert.equal(doc.getElementById("state-applied")!.hidden, false);
 });
 
-test("TEST-CNS-1763: revocation.js con 404 sigue mostrando el texto uniforme actual (sin aviso A)", async () => {
+test("TEST-CNS-1770: revocation.js con 404 sigue mostrando el texto uniforme actual (sin aviso A)", async () => {
   const html = renderRevocationConfirmPage();
   assert.match(html, /El enlace puede no ser válido o haber expirado\./);
   const doc = boot("revocation.js", html, (url) => (url.endsWith("/confirm") ? { status: 404 } : { status: 200 }));
@@ -113,7 +113,7 @@ test("TEST-CNS-1763: revocation.js con 404 sigue mostrando el texto uniforme act
   assert.equal(doc.getElementById("error-apply-failed")!.hidden, true);
 });
 
-test("TEST-CNS-1764: recovery.js distingue el 503 (aviso B: enlace aún válido, ERR-RV-22, foco) del 404/202 (texto uniforme actual: token inválido o expirado)", async () => {
+test("TEST-CNS-1771: recovery.js distingue el 503 (aviso B: enlace aún válido, ERR-RV-22, foco) del 404/202 (texto uniforme actual: token inválido o expirado)", async () => {
   const html = renderRecoveryConfirmPage();
   assert.match(html, /id="error-uniform" hidden>\s*<p>No pudimos continuar con este retiro\.<\/p>\s*<p>El enlace puede no ser válido o haber expirado\./);
   assert.match(html, /<div role="alert" aria-live="assertive" class="lp-alert-error" id="error-apply-failed" tabindex="-1" hidden>/);
@@ -140,7 +140,7 @@ test("TEST-CNS-1764: recovery.js distingue el 503 (aviso B: enlace aún válido,
   }
 });
 
-test("TEST-CNS-1765: recovery.js 'Volver a intentar' tras el 503 reenvía /recovery/revoke y un CONFIRMED posterior muestra el comprobante", async () => {
+test("TEST-CNS-1772: recovery.js 'Volver a intentar' tras el 503 reenvía /recovery/revoke y un CONFIRMED posterior muestra el comprobante", async () => {
   let calls = 0;
   const doc = boot("recovery.js", renderRecoveryConfirmPage(), () => {
     calls += 1;
