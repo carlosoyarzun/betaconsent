@@ -104,12 +104,12 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
   assert.deepEqual(pol.map((p) => [p.polname, p.polcmd, p.polpermissive, p.q, p.roles]), [["audit_event_chain_verifier_select", "r", true, "true", ["integrity_chain_verifier"]]]);
   // PR-7b (0076): sobre el ledger sigue 1 sola policy; en todo el catalogo el rol aparece ademas en las 3 de chain_run/chain_checkpoint (INSERT, INSERT y SELECT).
   assert.deepEqual((await admin.query<{ n: string }>("SELECT p.polrelid::regclass::text || '.' || p.polname AS n FROM pg_policy p WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_chain_verifier') = ANY (p.polroles) ORDER BY 1")).rows.map((r) => r.n),
-    ["integrity.audit_event.audit_event_chain_verifier_select", "integrity.chain_checkpoint.chain_checkpoint_verifier_insert", "integrity.chain_checkpoint.chain_checkpoint_verifier_select", "integrity.chain_run.chain_run_verifier_insert"]);
+    ["breakglass.ceremony.ceremony_watch_select", "integrity.audit_event.audit_event_chain_verifier_select", "integrity.chain_checkpoint.chain_checkpoint_verifier_insert", "integrity.chain_checkpoint.chain_checkpoint_verifier_select", "integrity.chain_run.chain_run_verifier_insert"]); // PR-7d (0085): + vigilancia de break-glass (T-8)
   const rls = (await admin.query<{ f: boolean; e: boolean }>("SELECT relforcerowsecurity AS f, relrowsecurity AS e FROM pg_class WHERE oid = 'integrity.audit_event'::regclass")).rows[0]!;
   assert.deepEqual([rls.e, rls.f], [true, true]);
   // Esquemas: USAGE en integrity y ops (app se revoca en 0074, SEC-6F-03); en ningun otro de dominio.
   const usage = (await admin.query<{ nspname: string }>(`SELECT nspname FROM pg_namespace WHERE nspname IN ${SCHEMAS} AND has_schema_privilege('integrity_chain_verifier', oid, 'USAGE') ORDER BY 1`)).rows.map((r) => r.nspname);
-  assert.deepEqual(usage, ["integrity", "ops"]);
+  assert.deepEqual(usage, ["integrity", "ops"]); // PR-7d: breakglass (USAGE para la vigilancia, T-8) no esta en SCHEMAS; lo fija TEST-CNS-1851
   // Idempotencia: 0072 (cluster, superusuario) se puede re-ejecutar sin cambiar el estado. 0073 (base) ya NO se re-ejecuta aqui: sus aserciones globales ("1 sola policy del rol", "sin escritura en ninguna relacion") eran
   // exactas para el momento de migrar y dejan de valer tras 0076 (PR-7b); la aserción vigente transversal es 0079 (se aplica con el resto de migraciones en la plantilla).
   const sql72 = readFileSync(join(MIGRATIONS_DIR, "0072_adr010_pr6f_chain_verifier_role.sql"), "utf8");

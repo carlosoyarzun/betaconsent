@@ -1,6 +1,6 @@
 // Gobierna: X8 decision 3 (Carlos, 2026-10-06), F-X8-11, DEC-BR-014 §6, db/migrations/0026 y 0027, ADR-002 §2.
-// TEST-CNS-1230: el migrador asumiendo consent_owner NO puede alterar ni escribir el ledger (42501) y la
-// membresia de integrity_owner es {consent_owner: INHERIT false, SET true}.
+// TEST-CNS-1230: el migrador asumiendo consent_owner NO puede alterar ni escribir el ledger (42501). ADR-010 rev. 6 PR-7d (C-1, Carlos 2026-10-16): la membresia de integrity_owner es SOLO
+// {ddl_breakglass: INHERIT false, SET true} en AMBOS modos (consent_owner y consent_migrator ya no pueden hacer SET ROLE integrity_owner: 42501); invierte la version de X8/PR-2.
 // TEST-CNS-1231: ownership del ledger y la cadena/append/idempotencia de app_rw siguen funcionando.
 // Requiere Postgres real (harness.ts); skip sin entorno.
 
@@ -10,7 +10,7 @@ import { enableLedgerMechanicsAppend, pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
 
-pgTest("TEST-CNS-1230 pg: consent_owner (migrador) no puede alterar ni escribir el ledger sin asumir el rol dueño del ledger (42501)", async (ctx) => {
+pgTest("TEST-CNS-1230 pg: consent_owner (migrador) no puede alterar ni escribir el ledger NI asumir integrity_owner (42501); la unica membresia de integrity_owner es ddl_breakglass (ambos modos)", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   const members = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
     `SELECT m.rolname AS member, a.inherit_option, a.set_option
@@ -18,11 +18,19 @@ pgTest("TEST-CNS-1230 pg: consent_owner (migrador) no puede alterar ni escribir 
       WHERE r.rolname = 'integrity_owner'`,
   )).rows;
   // ADR-010 PR-2 (INV-DBR-03): la membresia se afirma contra la lista exacta del modo (role-membership.ts), no contra una constante local.
-  // Hoy (IT0B_SYNTHETIC) consent_owner conserva SET sobre integrity_owner; PR-7 lo saca de esa lista y de este test (REVOKE + aserción).
-  const expectedMembers = EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.filter((e) => e.role === "integrity_owner")
-    .map((e) => ({ member: e.member, inherit_option: e.inherit, set_option: e.set }));
-  assert.deepEqual(expectedMembers, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
-  assert.deepEqual(members, expectedMembers);
+  // PR-7d: integrity_owner solo lo asume ddl_breakglass (ceremonia), en los dos modos; consent_owner ya no (REVOKE en 0086).
+  for (const mode of ["IT0B_SYNTHETIC", "REAL_DATA"] as const) {
+    const expectedMembers = EXPECTED_MEMBERSHIPS[mode].filter((e) => e.role === "integrity_owner")
+      .map((e) => ({ member: e.member, inherit_option: e.inherit, set_option: e.set }));
+    assert.deepEqual(expectedMembers, [{ member: "ddl_breakglass", inherit_option: false, set_option: true }], mode);
+  }
+  assert.deepEqual(members, [{ member: "ddl_breakglass", inherit_option: false, set_option: true }]);
+  // El migrador no puede asumir integrity_owner, ni directo ni via consent_owner (la membresia ya no existe: 42501).
+  for (const via of [null, "consent_owner"]) {
+    const mig = await ctx.connectAs("consent_migrator");
+    if (via !== null) await mig.query(`SET ROLE ${via}`);
+    await assert.rejects(() => mig.query("SET ROLE integrity_owner"), (e: unknown) => codeOf(e) === "42501", `SET ROLE integrity_owner (via=${via ?? "migrador"})`);
+  }
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), [], "la membresia de todos los roles gobernados coincide con el modo");
 
   const migrator = await ctx.connectAs("consent_migrator");

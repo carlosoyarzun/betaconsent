@@ -242,9 +242,10 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
   const members = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
     `SELECT m.rolname AS member, a.inherit_option, a.set_option
        FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
-      WHERE r.rolname = 'security_event_owner'`,
+      WHERE r.rolname = 'security_event_owner' ORDER BY 1`,
   )).rows;
-  assert.deepEqual(members, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
+  // PR-7d (0086): ddl_breakglass tambien asume security_event_owner (ceremonia de break-glass); nadie mas.
+  assert.deepEqual(members, [{ member: "consent_owner", inherit_option: false, set_option: true }, { member: "ddl_breakglass", inherit_option: false, set_option: true }]);
   for (const runtime of ["app_rw", "worker", "platform_rw"]) {
     assert.equal((await admin.query<{ m: boolean }>("SELECT pg_has_role($1, 'security_event_owner', 'MEMBER') AS m", [runtime])).rows[0]?.m, false, `${runtime} es miembro`);
   }

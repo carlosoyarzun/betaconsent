@@ -27,7 +27,7 @@ import { exitCodeFor, RECONCILER_EXIT, startReconcilerProcess } from "../../../s
 import { exitCodeFor as chainExitCodeFor, type ChainAuditReport } from "../../../src/server/modules/integrity/ledger-chain-audit.ts";
 import type { InvitationRecord } from "../../../src/server/ports/invitation-repository.port.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
-import { MIGRATIONS_DIR, pgTest, type PgTestContext } from "./harness.ts";
+import { BREAKGLASS_WATCH_REVOKE_SQL, MIGRATIONS_DIR, pgTest, type PgTestContext } from "./harness.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code;
@@ -171,7 +171,14 @@ pgTest("TEST-CNS-1774 pg: forma exacta de 0075-0079: signer NOLOGIN sin membresi
   });
   assert.equal((await admin.query<{ rolcanlogin: boolean }>("SELECT rolcanlogin FROM pg_roles WHERE rolname = 'integrity_anchor_signer'")).rows[0]!.rolcanlogin, false);
   const sql79 = readFileSync(join(MIGRATIONS_DIR, "0079_adr010_pr7b_runtime_privilege_assertions.sql"), "utf8");
-  await admin.query(sql79);
+  // PR-7d (0085): 0079 fija el alcance del chain-verifier ANTES de la vigilancia de break-glass; se re-ejecuta sin esa concesion, dentro de una transaccion revertida.
+  await admin.query("BEGIN");
+  try {
+    await admin.query(BREAKGLASS_WATCH_REVOKE_SQL);
+    await admin.query(sql79);
+  } finally {
+    await admin.query("ROLLBACK");
+  }
   // 0079 falla cerrado ante un privilegio de mas (tx revertida).
   for (const [grant, why] of [
     ["GRANT INSERT ON integrity.chain_run TO app_rw", "otro rol con INSERT"],
@@ -184,6 +191,7 @@ pgTest("TEST-CNS-1774 pg: forma exacta de 0075-0079: signer NOLOGIN sin membresi
   ] as const) {
     await admin.query("BEGIN");
     try {
+      await admin.query(BREAKGLASS_WATCH_REVOKE_SQL);
       await admin.query(grant);
       await assert.rejects(() => admin.query(sql79), (e: unknown) => /0079/.test((e as Error).message), why);
     } finally {

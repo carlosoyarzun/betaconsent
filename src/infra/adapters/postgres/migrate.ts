@@ -130,7 +130,7 @@ async function assertDeployState(superuser: Queryable, mode: DbRoleMode, stage: 
  * de su owner; las membresias de ddl_breakglass de un deploy anterior las harian fallar. La fase `cluster-post` (0086) las restablece en la misma transaccion (o justo despues de las migraciones de base), asi que el estado visible
  * al terminar siempre las incluye. SQL del runner, no de una migracion: no se registra ni se versiona.
  */
-const PREFLIGHT_SQL = `DO $preflight$
+export const CLUSTER_PREFLIGHT_SQL = `DO $preflight$
 DECLARE
   m record;
 BEGIN
@@ -177,7 +177,7 @@ export async function applyClusterScope(
   await withClusterRoleLock(superuser, async () => {
     await withDeclaredMode(superuser, mode, async () => {
       await inTransaction(superuser, async () => {
-        await superuser.query(PREFLIGHT_SQL);
+        await superuser.query(CLUSTER_PREFLIGHT_SQL);
         for (const m of migrations.filter((x) => x.scope === "cluster")) {
           await superuser.query(m.sql);
           applied.push(m.version);

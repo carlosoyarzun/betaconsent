@@ -117,6 +117,31 @@ export async function revokeLocalSeedFromAppRw(ctx: PgTestContext): Promise<void
   await admin.query("REVOKE EXECUTE ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) FROM app_rw");
 }
 
+/**
+ * ADR-010 rev. 6 PR-7d: aplica la fase `cluster-post` (0086) en el modo dado DENTRO de una transaccion de `admin` (superusuario conectado a la base del test), ejecuta `fn` y revierte (ROLLBACK): el catalogo global de roles
+ * y la base del test quedan intactos. Serializado con el provisionado (lock de roles). Sirve para verificar la aserción de membresia y el estado a nivel de base de REAL_DATA (que no es el modo del cluster compartido) sin tocarlo.
+ * Helper de tests.
+ */
+export async function withClusterPostApplied<T>(ctx: PgTestContext, admin: Client, mode: "IT0B_SYNTHETIC" | "REAL_DATA", fn: () => Promise<T>): Promise<T> {
+  const post = loadMigrations(MIGRATIONS_DIR).filter((m) => m.scope === "cluster-post");
+  return ctx.withRoleCatalogLock(async () => {
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SELECT set_config('cns.db_role_mode', $1, true)", [mode]);
+      for (const m of post) await admin.query(m.sql);
+      return await fn();
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
+}
+
+/**
+ * ADR-010 rev. 6 PR-7d (0085): el chain-verifier tiene USAGE de `breakglass` y SELECT por columnas de breakglass.ceremony (vigilancia, T-8). Las aserciones de 0074/0079 (ya mergeadas) fijan el alcance del rol ANTES de esa concesion;
+ * los tests que re-ejecutan esos archivos quitan la concesion dentro de su transaccion con ROLLBACK (o la devuelven al terminar). Helper de tests.
+ */
+export const BREAKGLASS_WATCH_REVOKE_SQL = "REVOKE SELECT ON breakglass.ceremony FROM integrity_chain_verifier; REVOKE USAGE ON SCHEMA breakglass FROM integrity_chain_verifier";
+
 let currentCtx: PgTestContext | undefined;
 
 /** Como `seedRaw` sobre la base del test en curso (para helpers de siembra que no reciben `ctx`). Solo tests. */

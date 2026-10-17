@@ -64,6 +64,7 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
   // 0073 ya no se re-ejecuta: sus aserciones globales (1 sola policy del rol) eran exactas solo al migrar y dejan de valer tras 0076 (PR-7b, F-PR7B-06); 0074 es idempotente por si sola.
   for (const sql of [sql74, sql74]) {
     await admin.query("ALTER SCHEMA app OWNER TO consent_owner");
+    await admin.query("REVOKE USAGE ON SCHEMA breakglass FROM integrity_chain_verifier"); // PR-7d (0085): 0074 fija el alcance anterior a la vigilancia de break-glass; se devuelve al terminar el replay
     await migrator.query("BEGIN");
     try {
       await migrator.query(sql);
@@ -74,6 +75,7 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
     } finally {
       await admin.query("ALTER SCHEMA app OWNER TO app_schema_owner");
       await admin.query("GRANT USAGE, CREATE ON SCHEMA app TO consent_owner"); // ALTER OWNER fusiona/pierde las entradas ACL propias: se restaura la ACL del esquema
+      await admin.query("GRANT USAGE ON SCHEMA breakglass TO integrity_chain_verifier");
     }
     assert.deepEqual(await state(), before);
   }
