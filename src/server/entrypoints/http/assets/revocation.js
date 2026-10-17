@@ -43,6 +43,7 @@
     var errorNetwork = document.getElementById("error-network");
     var errorUniform = document.getElementById("error-uniform");
     var retryBtn = document.getElementById("retry-btn");
+    var errorApplyFailed = document.getElementById("error-apply-failed");
     if (!form || !confirmBtn) return;
 
     var busy = false;
@@ -51,6 +52,7 @@
     function hideStates() {
       if (errorNetwork) errorNetwork.hidden = true;
       if (errorUniform) errorUniform.hidden = true;
+      if (errorApplyFailed) errorApplyFailed.hidden = true;
     }
 
     function showNetworkError() {
@@ -61,6 +63,17 @@
     function showUniformError() {
       hideStates();
       if (errorUniform) errorUniform.hidden = false;
+    }
+
+    // F-PR6-25 (hallazgo F-PR6-51): 503 GUARD_EVALUATOR_UNAVAILABLE de R3 + R4. NO es un acuse: el
+    // aviso (role="alert") recibe el foco, no depende del color y trae el código ERR-RV-21 como texto.
+    // Acción primaria: enlace "Empezar de nuevo" (rehace la solicitud completa desde /manage; no reintenta con el código viejo).
+    function showApplyFailed() {
+      hideStates();
+      if (errorApplyFailed) {
+        errorApplyFailed.hidden = false;
+        errorApplyFailed.focus();
+      }
     }
 
     // Frame 33:54 (comprobante): la confirmación reemplaza el formulario y recibe el foco.
@@ -111,6 +124,10 @@
           setBusy(confirmBtn, false);
           if (res.status === 404) {
             showUniformError();
+            return null;
+          }
+          if (res.status === 503) {
+            showApplyFailed();
             return null;
           }
           return res.json().catch(function () {

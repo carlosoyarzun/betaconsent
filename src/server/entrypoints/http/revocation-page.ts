@@ -16,6 +16,7 @@
 // l.522, en confirmar-retiro y en el comprobante). Ninguno se redacta aquí (CLAUDE.md, copy
 // legal de producción).
 
+import { HELP_MAILTO, REVOCATION_APPLY_FAILED_COPY as APPLY_FAILED } from "./revocation-apply-failed-copy.ts";
 import { alertHead, GUEST_HELP_LINK, guestHead, guestHeader } from "./guest-layout.ts";
 import { RECEIPT_WATERMARK } from "./guest-messages.ts";
 
@@ -72,6 +73,14 @@ export function renderRevocationConfirmPage(): string {
     <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       ${alertHead("error", "No pudimos continuar con este retiro.")}
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
+    </div>
+
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-apply-failed" tabindex="-1" hidden>
+      ${alertHead("error", APPLY_FAILED.title)}
+      <p>${APPLY_FAILED.body}</p>
+      <p id="apply-failed-code">${APPLY_FAILED.codeLabel}: ${APPLY_FAILED.code}</p>
+      <a href="/manage" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="new-code-link">${APPLY_FAILED.primaryLabel}</a>
+      <p><a href="${HELP_MAILTO}" class="lp-link" id="apply-failed-help">${APPLY_FAILED.helpLabel}</a></p>
     </div>
   </main>
   <script src="/assets/revocation.js" defer></script>

@@ -26,6 +26,8 @@ export type DomainErrorCode =
   | "ERR-RV-13" // LEDGER_VOCABULARY_VIOLATION (GRD-RV-19/28): payload fuera de la lista blanca o sin campos exigidos
   | "ERR-RV-18" // GRD-RV-26 onFail (RH3_FOUR_EYES_REQUIRED: falta confirmación previa o co-firma el mismo principal)
   | "ERR-RV-20" // GRD-RV-10 onFail (RH3 sin RH2/RH2v ATTESTED previa)
+  | "ERR-RV-21" // REVOCATION_NOT_COMPLETED_OTP — solo presentación (F-PR6-25): aviso de la pantalla OTP ante el 503 uniforme; la API no cambia
+  | "ERR-RV-22" // REVOCATION_NOT_COMPLETED_RECOVERY — solo presentación (F-PR6-25): aviso de la pantalla de recuperación ante el 503 uniforme; el token no se consume
   // specs/state-machines/invitation.spec.yaml
   | "ERR-IV-01" // INVITATION_TOKEN_NOT_RESOLVED — 404 uniforme (GRD-IV-07)
   | "ERR-IV-02" // INVITATION_ALREADY_ACTIVE (GRD-IV-01)

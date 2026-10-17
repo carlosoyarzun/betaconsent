@@ -336,7 +336,7 @@ transitions:
       - "En la misma tx se encola el job durable APPLY_REVOCATION (GRD-RV-24)."
     emits: [REVOCATION_CONFIRMED]
     idempotencyKey: revocationRef
-    errors: [ERR-CM-02, ERR-RV-04, ERR-RV-14, ERR-CM-09]
+    errors: [ERR-CM-02, ERR-RV-04, ERR-RV-14, ERR-CM-09, ERR-RV-21]
     governedBy: ["SM-CNS-001 §5 R3", "DEC-BR-017 §1", "SEC-CNS-012 P1-01 (técnico), P1-05"]
     testIds: [TEST-CNS-236, TEST-CNS-328]
   - id: R3r
@@ -352,7 +352,7 @@ transitions:
     effects: ["Confirmación explícita de retiro total en el mismo POST; en la misma tx se encola APPLY_REVOCATION (GRD-RV-24)."]
     emits: [REVOCATION_CONFIRMED]
     idempotencyKey: revocationRef
-    errors: [ERR-RV-04]
+    errors: [ERR-RV-04, ERR-RV-22]
     governedBy: ["SM-CNS-001 §5.1 R3r", "SEC-CNS-012 P1-01 (técnico)"]
     testIds: [TEST-CNS-237]
   - id: RH3
@@ -929,6 +929,18 @@ errors:
     emitsEvent: none
     governedBy: ["DEC-BR-018 R13-1"]
     testIds: [TEST-CNS-384]
+  - id: ERR-RV-21
+    code: REVOCATION_NOT_COMPLETED_OTP
+    response: "Solo presentación (F-PR6-25, UX-CNS-015): la API sigue respondiendo el 503 uniforme GUARD_EVALUATOR_UNAVAILABLE de R3+R4 agotado; la pantalla OTP muestra el aviso interino 'No pudimos completar tu retiro' con este código. No es acuse ni recibo (DEC-BR-006/REQ-CNS-033 siguen siendo gate de Carlos); no cambia la semántica de revocación"
+    emitsEvent: none
+    governedBy: ["F-PR6-25", "UX-CNS-015", "RULE-CNS-026"]
+    testIds: [TEST-CNS-1767, TEST-CNS-1768, TEST-CNS-1769]
+  - id: ERR-RV-22
+    code: REVOCATION_NOT_COMPLETED_RECOVERY
+    response: "Solo presentación (F-PR6-25, UX-CNS-015): igual que ERR-RV-21 para R3r+R4 en la vía de recuperación; el token NO se consume (F-PR6-48) y el enlace sigue válido; la pantalla muestra 'No pudimos completar tu retiro ahora' con este código. Distinto del error uniforme ERR-RV-05 (token inválido o expirado)"
+    emitsEvent: none
+    governedBy: ["F-PR6-25", "UX-CNS-015", "RULE-CNS-026", "F-PR6-48"]
+    testIds: [TEST-CNS-1771, TEST-CNS-1772, TEST-CNS-1773]
 
 events:
   - id: REVOCATION_REQUESTED
