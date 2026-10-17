@@ -1,0 +1,27 @@
+# Gobierna: ADR-010 rev. 6 §4.5.3, F-PR7-03, T-8; patron de consent-chain-verifier-alert.service. PR-7e. Alerta LOCAL (journal, sin PII ni egress) cuando la vigilancia de break-glass falla (OnFailure= de consent-breakglass-watch.service).
+# Quien monitorea el journal del host (alerta humana) es una decision de infraestructura PENDING (IT0b). ARTEFACTO de IT0: no se instala en este repo.
+[Unit]
+Description=Consent App - Alerta local: break-glass abierto sin ceremonia vigente o vigilancia fallida
+
+[Service]
+Type=oneshot
+User=consent-chain-verifier
+Group=consent-chain-verifier
+ExecStart=/usr/bin/logger -p user.crit -t consent-breakglass-watch "ALERTA break-glass: LOGIN o sesion de ddl_breakglass sin ceremonia vigente, o ceremonia vencida sin cerrar; ver journalctl -u consent-breakglass-watch.service (sin PII)"
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { checkConsentOwnerInventory } from "../../../src/infra/adapters/postgres/consent-owner-inventory.ts";
 import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
 import { recordRh3, seedCaseWorld, seedConfirmedWithoutApplied, startPlatformHttp } from "../../helpers/pg-case-world.ts";
+import { CLUSTER_PREFLIGHT_SQL } from "../../../src/infra/adapters/postgres/migrate.ts";
 import { MIGRATIONS_DIR, pgTest } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
@@ -28,9 +29,10 @@ pgTest("TEST-CNS-1800 pg: los 4 roles de PR-7c son NOLOGIN/NOSUPERUSER/NOBYPASSR
   assert.deepEqual(attrs, [...NEW_ROLES].sort().map((rolname) => ({ rolname, rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false, rolcanlogin: false })));
   const edges = (await admin.query<{ member: string; role: string; inherit_option: boolean; set_option: boolean; admin_option: boolean }>(
     `SELECT u.rolname AS member, r.rolname AS role, m.inherit_option, m.set_option, m.admin_option FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
-      WHERE r.rolname = ANY($1) OR u.rolname = ANY($1) ORDER BY 2`, [[...NEW_ROLES]],
+      WHERE r.rolname = ANY($1) OR u.rolname = ANY($1) ORDER BY 2, 1`, [[...NEW_ROLES]],
   )).rows;
-  assert.deepEqual(edges, [...NEW_ROLES].sort().map((role) => ({ member: "consent_owner", role, inherit_option: false, set_option: true, admin_option: false })));
+  // PR-7d (0086): ddl_breakglass tambien es miembro (SET, sin herencia ni ADMIN) de los 4 roles; nadie mas.
+  assert.deepEqual(edges, [...NEW_ROLES].sort().flatMap((role) => ["consent_owner", "ddl_breakglass"].map((member) => ({ member, role, inherit_option: false, set_option: true, admin_option: false }))));
 });
 
 pgTest("TEST-CNS-1801 pg (Q16, FN-6): revocation y rights_case estan en case_state, de case_state_owner; consent_owner (y el migrador) no puede DROP, DISABLE TRIGGER, ALTER ni leerlas; app.revocation ya no existe", async (ctx) => {
@@ -251,17 +253,20 @@ pgTest("TEST-CNS-1807 pg: 0081 y 0083 son reaplicables (idempotentes) y dejan el
        UNION ALL SELECT 'nsp|' || nspname || '|' || pg_get_userbyid(nspowner) || '|' || coalesce(nspacl::text, '') FROM pg_namespace WHERE nspname IN ('app', 'ops', 'case_state')) t(x)`,
   )).rows[0]!.s;
   const before = await snapshot();
-  const migrator = await ctx.connectAs("consent_migrator");
-  for (const file of ["0081_adr010_pr7c_q16_move_revocation_rights_case.sql", "0083_adr010_pr7c_recovery_reader_owner.sql"]) {
-    await migrator.query("BEGIN");
+  // PR-7d: 0083 asevera que consent_owner es el unico miembro de revocation_recovery_reader y ddl_breakglass (0086) tambien lo es. El replay corre como superusuario con SET LOCAL ROLE consent_owner, tras el preflight del
+  // runner (sin membresias de ddl_breakglass) y con ROLLBACK, dentro del lock de roles: la membresia no se modifica fuera de la transaccion. El migrador ya no es quien las ejecuta aqui (su camino real es el runner).
+  await ctx.withRoleCatalogLock(async () => {
+    await admin.query("BEGIN");
     try {
-      await migrator.query("SET LOCAL ROLE consent_owner");
-      await migrator.query(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
-      await migrator.query("COMMIT");
-    } catch (error) {
-      await migrator.query("ROLLBACK");
-      throw error;
+      await admin.query(CLUSTER_PREFLIGHT_SQL);
+      for (const file of ["0081_adr010_pr7c_q16_move_revocation_rights_case.sql", "0083_adr010_pr7c_recovery_reader_owner.sql"]) {
+        await admin.query("SET LOCAL ROLE consent_owner");
+        await admin.query(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
+        await admin.query("RESET ROLE");
+      }
+      assert.equal(await snapshot(), before);
+    } finally {
+      await admin.query("ROLLBACK");
     }
-  }
-  assert.equal(await snapshot(), before);
+  });
 });

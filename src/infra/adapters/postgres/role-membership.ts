@@ -6,9 +6,10 @@
 // posterior a la fase de cluster) y startup-checks.ts. Igualdad EXACTA y fail-closed: cualquier fila extra o faltante que toque un
 // rol gobernado falla. El modo lo declara el deploy (variable de entorno CNS_DB_ROLE_MODE), nunca la request.
 //
-// Estado de activación (PR-2): solo IT0B_SYNTHETIC está activo. REAL_DATA está definido pero NO se activa hasta PR-7 (que revoca
-// las membresías de consent_owner/consent_migrator y crea ddl_breakglass); pedirlo hoy falla cerrado. Cambiar el modo o una
-// membresía es human gate (specs/db-roles.spec.yaml humanGate).
+// Estado de activación: ADR-010 rev. 6 PR-7d activa AMBOS modos como modos VERIFICABLES (la aserción de membresía de REAL_DATA existe y el runner puede aplicarla). REAL_DATA NO autoriza datos reales
+// (F-PR7-12): resolveDbRoleMode lo rechaza mientras REAL_DATA_BLOCKERS no este vacio (F-PR7-01) y el catalogo sigue exigiendo data_class = SYNTHETIC. PR-7d revoca integrity_owner a consent_owner en AMBOS modos (C-1, Carlos 2026-10-16),
+// agrega ddl_breakglass (miembro de los owners salvo consent_owner) y, en REAL_DATA, el REVOKE explicito de todas las membresias SET de consent_owner/consent_migrator (F-PRB-06, F-PR7C-06).
+// Cambiar el modo o una membresía es human gate (specs/db-roles.spec.yaml humanGate).
 
 import type { Queryable } from "./pool.ts";
 
@@ -16,8 +17,8 @@ export type DbRoleMode = "IT0B_SYNTHETIC" | "REAL_DATA";
 
 export const DB_ROLE_MODE_ENV = "CNS_DB_ROLE_MODE";
 export const DEFAULT_DB_ROLE_MODE: DbRoleMode = "IT0B_SYNTHETIC";
-/** Modos con aserción activa. REAL_DATA se activa en PR-7 (ADR-010 §7). */
-export const ACTIVE_DB_ROLE_MODES: readonly DbRoleMode[] = ["IT0B_SYNTHETIC"];
+/** Modos con aserción activa (ADR-010 rev. 6 PR-7d). Activo = VERIFICABLE; no implica autorizacion de datos reales (F-PR7-12). */
+export const ACTIVE_DB_ROLE_MODES: readonly DbRoleMode[] = ["IT0B_SYNTHETIC", "REAL_DATA"];
 
 /**
  * ADR-010 rev. 6 PR-7c (decision de Carlos del 2026-10-16, C-3): hallazgos que BLOQUEAN el modo REAL_DATA mientras sigan abiertos. F-PR7-01 (P1 hoy, P0 antes de datos reales): consent_owner (el migrador) sigue
@@ -37,11 +38,13 @@ export interface MembershipEdge {
 
 const edge = (member: string, role: string, inherit: boolean, set: boolean, admin = false): MembershipEdge => ({ member, role, inherit, set, admin });
 
-/** Owners de §4.1.1 que consent_owner puede asumir con SET (INHERIT FALSE) en IT0B_SYNTHETIC. */
+/**
+ * Owners de §4.1.1 que consent_owner puede asumir con SET (INHERIT FALSE) en IT0B_SYNTHETIC. ADR-010 rev. 6 PR-7d (C-1): integrity_owner YA NO esta en la lista (en ninguno de los dos modos): toda DDL sobre integrity.* va por
+ * ceremonia de break-glass (ddl_breakglass).
+ */
 export const CONSENT_OWNER_SET_ROLES: readonly string[] = [
   "tenant_resolve_owner",
   "staff_roster_owner",
-  "integrity_owner",
   "security_event_owner",
   "platform_schema_owner",
   "grant_owner",
@@ -82,31 +85,46 @@ export const OWNER_ROLES: readonly string[] = [
 /** Roles de runtime (INV-DBR-01). */
 export const RUNTIME_ROLES: readonly string[] = ["app_rw", "platform_rw", "worker", "integrity_verifier", "integrity_reconciler", "integrity_chain_verifier"]; // ADR-010 rev. 5 PR-6e (G-9): sexto rol; rev. 6 PR-6f (D-1 (b)): septimo rol de runtime
 
+/**
+ * ADR-010 rev. 6 PR-7d (0084): roles de nivel de base. NO son OWNER_ROLES (ddl_breakglass no es miembro de ellos; db_owner_nologin y breakglass_log_owner no tienen miembros ni se pueden asumir): db_owner_nologin (dueño de la base),
+ * breakglass_log_owner (dueño de breakglass.ceremony) y ddl_breakglass (NOLOGIN fuera de ceremonia; asume los owners).
+ */
+export const DB_LEVEL_ROLES: readonly string[] = ["db_owner_nologin", "breakglass_log_owner", "ddl_breakglass"];
+
+/** Owners que asume ddl_breakglass (INHERIT FALSE, SET TRUE): lista DERIVADA de OWNER_ROLES menos consent_owner (T-13; F-PR7-06: ni "diez" ni "doce"). db/migrations/0084 repite esta lista y un test las compara. */
+export const BREAKGLASS_OWNER_ROLES: readonly string[] = OWNER_ROLES.filter((r) => r !== "consent_owner");
+
 /** Roles cuyas membresías (como miembro o como rol concedido) gobierna la aserción. */
 export const GOVERNED_ROLES: readonly string[] = [
   ...OWNER_ROLES,
+  ...DB_LEVEL_ROLES,
   ...RUNTIME_ROLES,
   "consent_migrator",
   "staff_roster_reader",
   "rights_operator",
 ];
 
+/** ADR-010 rev. 6 PR-7d (0084, INV-DBR-09): ddl_breakglass asume cada owner (menos consent_owner) con INHERIT FALSE, SET TRUE, sin ADMIN, en AMBOS modos. */
+const BREAKGLASS_EDGES: readonly MembershipEdge[] = BREAKGLASS_OWNER_ROLES.map((r) => edge("ddl_breakglass", r, false, true));
+
 /**
- * Membresías esperadas por modo. PR-2: no incluye platform_rw -> rights_operator (PR-5) ni ddl_breakglass (PR-7); esos PR las
- * agregan. REAL_DATA queda definido (sin activar) con los roles que existen hoy.
+ * Membresías esperadas por modo (INV-DBR-03). PR-7d: sin integrity_owner para consent_owner en ningun modo (C-1) y con ddl_breakglass -> los 17 owners en ambos. REAL_DATA: consent_owner sin ninguna membresia SET y
+ * consent_migrator sin outbox_claimer (REVOKE explicito en 0086).
  */
 export const EXPECTED_MEMBERSHIPS: Readonly<Record<DbRoleMode, readonly MembershipEdge[]>> = {
   IT0B_SYNTHETIC: [
     edge("consent_migrator", "consent_owner", true, true),
     edge("consent_migrator", "outbox_claimer", false, true),
-    ...CONSENT_OWNER_SET_ROLES.map((r) => edge("consent_owner", r, false, true)), // integrity_owner: solo hasta PR-7
+    ...CONSENT_OWNER_SET_ROLES.map((r) => edge("consent_owner", r, false, true)),
     edge("app_rw", "staff_roster_reader", false, true),
     edge("platform_rw", "rights_operator", false, true), // ADR-010 rev. 5 PR-6d parte 2 (0068)
+    ...BREAKGLASS_EDGES,
   ],
   REAL_DATA: [
     edge("consent_migrator", "consent_owner", true, true),
     edge("app_rw", "staff_roster_reader", false, true),
     edge("platform_rw", "rights_operator", false, true), // ADR-010 rev. 5 PR-6d parte 2 (0068)
+    ...BREAKGLASS_EDGES,
   ],
 };
 
@@ -119,7 +137,7 @@ export class RoleModeError extends Error {
 
 export function assertModeActive(mode: DbRoleMode): void {
   if (!ACTIVE_DB_ROLE_MODES.includes(mode)) {
-    throw new RoleModeError(`El modo ${mode} no está activado (se activa en ADR-010 PR-7); no hay aserción de membresía para él.`);
+    throw new RoleModeError(`El modo ${mode} no está activado; no hay aserción de membresía para él.`);
   }
 }
 
@@ -181,6 +199,6 @@ export async function readGovernedMemberships(db: Queryable): Promise<Membership
 
 /** Verifica la igualdad exacta de membresías para el modo; devuelve las diferencias (vacío = ok). Modo no activado = una diferencia. */
 export async function checkRoleMemberships(db: Queryable, mode: DbRoleMode = DEFAULT_DB_ROLE_MODE): Promise<string[]> {
-  if (!ACTIVE_DB_ROLE_MODES.includes(mode)) return [`el modo ${mode} no está activado (ADR-010 PR-7)`];
+  if (!ACTIVE_DB_ROLE_MODES.includes(mode)) return [`el modo ${mode} no está activado`];
   return diffMemberships(await readGovernedMemberships(db), mode);
 }

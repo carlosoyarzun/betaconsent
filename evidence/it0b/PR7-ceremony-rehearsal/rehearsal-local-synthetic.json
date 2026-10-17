@@ -1,0 +1,53 @@
+{
+  "ceremonyRef": "CER-20261017-eee3e3",
+  "kind": "REHEARSAL",
+  "environment": "LOCAL",
+  "dataClass": "SYNTHETIC",
+  "steps": [
+    {
+      "at": "2026-10-17T19:51:34.560Z",
+      "name": "before",
+      "rolcanlogin": false,
+      "sessions": 0,
+      "watchFindings": 0
+    },
+    {
+      "at": "2026-10-17T19:51:34.609Z",
+      "name": "open",
+      "rolcanlogin": true,
+      "scramVerifierStored": true,
+      "plaintextOnServer": false,
+      "reasonCode": "REHEARSAL",
+      "ticketRef": "CA-999",
+      "windowMinutes": 30
+    },
+    {
+      "at": "2026-10-17T19:51:34.654Z",
+      "name": "ddl",
+      "script": "db/ceremonies/rehearsal-ddl.sql",
+      "scriptSha256": "e64abc69c39d79c1d850c4bb7698ec6da2bed7f4b783e0daf502d4f354e2867c",
+      "assumedRole": "integrity_owner",
+      "ownersAssumable": 17,
+      "deniedRoles": [
+        "consent_owner",
+        "consent_migrator",
+        "app_rw"
+      ],
+      "logStatement": "ddl",
+      "logParameterMaxLength": 0
+    },
+    {
+      "at": "2026-10-17T19:51:34.676Z",
+      "name": "close",
+      "rolcanlogin": false,
+      "passwordDiscarded": true,
+      "sessions": 0,
+      "closedAtRecorded": true,
+      "watchFindings": 0
+    }
+  ],
+  "evidenceClass": "SECONDARY",
+  "primaryEvidencePending": "ancla firmada antes/despues (PR-7f, F-R6-1/C-7)",
+  "serverVersionNum": "180002",
+  "noPlaintextOnServer": true
+}

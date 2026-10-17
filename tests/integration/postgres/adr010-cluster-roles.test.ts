@@ -7,9 +7,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { checkDatabaseLevel } from "../../../src/infra/adapters/postgres/database-level.ts";
+import { CLUSTER_PREFLIGHT_SQL } from "../../../src/infra/adapters/postgres/migrate.ts";
 import { checkRoleMemberships, EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
-import { MIGRATIONS_DIR, pgTest } from "./harness.ts";
+import { MIGRATIONS_DIR, pgTest, withClusterPostApplied } from "./harness.ts";
+
+/** PR-7d: ddl_breakglass es miembro de los owners (0086) y las migraciones de cluster ya mergeadas asertan que consent_owner es el unico miembro; el runner las revoca antes (CLUSTER_PREFLIGHT_SQL). Estos tests filtran sus filas. */
+const withoutBreakglass = (problems: string[]): string[] => problems.filter((p) => !p.includes("ddl_breakglass"));
 
 const NEW_OWNERS = ["platform_schema_owner", "membership_owner", "grant_owner", "case_state_owner", "transition_owner"];
 const EXPECTED_OWNED_RELATIONS: string[] = [
@@ -49,7 +54,7 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
   const edges = async (where: string, values: readonly unknown[]): Promise<Array<{ member: string; role: string; inherit_option: boolean; set_option: boolean }>> =>
     (await admin.query<{ member: string; role: string; inherit_option: boolean; set_option: boolean }>(
       `SELECT u.rolname AS member, r.rolname AS role, m.inherit_option, m.set_option
-         FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE ${where} ORDER BY 1, 2`,
+         FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE (${where}) AND u.rolname <> 'ddl_breakglass' ORDER BY 1, 2`,
       [...values],
     )).rows;
   assert.deepEqual(await edges("u.rolname = 'integrity_verifier'", []), [], "integrity_verifier no es miembro de nadie");
@@ -91,8 +96,16 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
   // 0034 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const before = await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]);
   const sql0034 = readFileSync(join(MIGRATIONS_DIR, "0034_adr010_cluster_roles.sql"), "utf8");
-  await ctx.withRoleCatalogLock(async () => { await admin.query(sql0034); }); // catalogo global de roles: serializado con el provisionado
-  assert.deepEqual(await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]), before);
+  await ctx.withRoleCatalogLock(async () => {
+    await admin.query("BEGIN"); // catalogo global de roles: serializado con el provisionado; PR-7d: tras el preflight del runner (sin membresias de ddl_breakglass) y con ROLLBACK
+    try {
+      await admin.query(CLUSTER_PREFLIGHT_SQL);
+      await admin.query(sql0034);
+      assert.deepEqual(await edges("r.rolname = ANY($1) OR u.rolname = ANY($1)", [[...OWNER_ROLES, "integrity_verifier", "rights_operator"]]), before);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
   assert.deepEqual(await attrs(nologin), [...nologin].sort().map((rolname) => ({ rolname, ...NOLOGIN_FLAGS })));
 
   // Camino del REVOKE: re-ejecutar 0034 con membresias extra YA presentes las limpia; platform_rw -> rights_operator NO se revoca (la aserción la
@@ -108,8 +121,9 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
     try {
       for (const [role, member, options] of extra) await admin.query(`GRANT ${role} TO ${member}${options}`);
       assert.ok((await checkRoleMemberships(admin, "IT0B_SYNTHETIC")).length >= 7, "las membresias extra se detectan antes de 0034");
+      await admin.query(CLUSTER_PREFLIGHT_SQL);
       await admin.query(sql);
-      assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), [], "0034 deja la lista exacta (incluida platform_rw -> rights_operator de 0068, que no revoca)");
+      assert.deepEqual(withoutBreakglass(await checkRoleMemberships(admin, "IT0B_SYNTHETIC")), [], "0034 deja la lista exacta (incluida platform_rw -> rights_operator de 0068, que no revoca)");
     } finally {
       await admin.query("ROLLBACK");
     }
@@ -118,6 +132,7 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
     try {
       await admin.query("SELECT set_config('cns.db_role_mode', 'REAL_DATA', true)");
       await admin.query(NEW_OWNERS.map((r) => `REVOKE ${r} FROM consent_owner`).join(";"));
+      await admin.query(CLUSTER_PREFLIGHT_SQL);
       await admin.query(sql);
       assert.deepEqual(await edges("r.rolname = ANY($1)", [NEW_OWNERS]), [], "en REAL_DATA 0034 no concede SET a consent_owner");
     } finally {
@@ -130,8 +145,16 @@ pgTest("TEST-CNS-1348 pg: owners nuevos y rights_operator NOLOGIN/NOSUPERUSER/NO
 pgTest("TEST-CNS-1349 pg: la aserción de membresia exacta de IT0B_SYNTHETIC coincide con el catalogo; detecta fila extra/faltante; REAL_DATA falla cerrado; el arranque de app_rw sigue pasando", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
-  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 20); // PR-7c (0080): + app_schema_owner, ops_schema_owner, shared_fn_owner y revocation_recovery_reader; 0068: + platform_rw -> rights_operator; // ADR-010 rev. 5 PR-b: ledger_gen_owner y ledger_writer (doce owners) + 6d parte 1: rights_case_lookup_owner
-  assert.equal((await checkRoleMemberships(admin, "REAL_DATA")).length, 1, "REAL_DATA no esta activado hasta PR-7");
+  // 20 de PR-7c menos integrity_owner (revocado en ambos modos, C-1) mas los 17 de ddl_breakglass (PR-7d, 0086): 1 (migrator->consent_owner) + 1 (migrator->outbox_claimer) + 15 (consent_owner -> owners sin integrity_owner)
+  // + 1 (app_rw -> reader) + 1 (platform_rw -> rights_operator) + 17.
+  assert.equal(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.length, 36);
+  assert.equal(EXPECTED_MEMBERSHIPS.REAL_DATA.length, 20, "REAL_DATA: migrator->consent_owner, app_rw->reader, platform_rw->rights_operator y los 17 de ddl_breakglass");
+  // PR-7d: REAL_DATA es un modo VERIFICABLE. El cluster compartido de los tests esta en IT0B_SYNTHETIC, asi que REAL_DATA difiere (los SET de consent_owner siguen), y la fase cluster-post de REAL_DATA (en una tx con ROLLBACK) deja la lista exacta.
+  assert.ok((await checkRoleMemberships(admin, "REAL_DATA")).some((p) => /consent_owner -> /.test(p)), "en IT0B_SYNTHETIC consent_owner conserva SET: REAL_DATA lo detecta");
+  await withClusterPostApplied(ctx, admin, "REAL_DATA", async () => {
+    assert.deepEqual(await checkRoleMemberships(admin, "REAL_DATA"), [], "REAL_DATA: lista exacta tras el REVOKE explicito");
+    assert.deepEqual(await checkDatabaseLevel(admin, "REAL_DATA", { breakglassMustBeClosed: true }), [], "REAL_DATA: estado a nivel de base");
+  });
 
   // Fila extra (rolled back: las membresias son transaccionales y no se tocan para otros archivos de test).
   // El SQL se arma con variables (no con literales GRANT <owner>) para no ampliar las allowlists de los checkers de owners (CA-142, TEST-CNS-1347).
