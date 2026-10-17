@@ -13,6 +13,8 @@
 // alcance/irreversibilidad del retiro (handoff §8, protocolo l.423). Ninguno se redacta aquí
 // (CLAUDE.md, copy legal de producción).
 
+import { HELP_MAILTO, RECOVERY_APPLY_FAILED_COPY as APPLY_FAILED } from "./revocation-apply-failed-copy.ts";
+
 const HEAD = `<meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Recuperar acceso · Consent App</title>
@@ -62,6 +64,14 @@ export function renderRecoveryConfirmPage(): string {
     <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
       <p>No pudimos continuar con este retiro.</p>
       <p>El enlace puede no ser válido o haber expirado. Si crees que esto es un error, contáctanos.</p>
+    </div>
+
+    <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-apply-failed" tabindex="-1" hidden>
+      <p><strong>${APPLY_FAILED.title}</strong></p>
+      <p>${APPLY_FAILED.body}</p>
+      <p id="apply-failed-code">${APPLY_FAILED.codeLabel}: ${APPLY_FAILED.code}</p>
+      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-apply-btn">${APPLY_FAILED.primaryLabel}</button>
+      <p><a href="${HELP_MAILTO}" class="lp-link" id="apply-failed-help">${APPLY_FAILED.helpLabel}</a></p>
     </div>
   </main>
   <script src="/assets/recovery.js" defer></script>

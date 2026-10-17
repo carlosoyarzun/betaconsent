@@ -929,6 +929,18 @@ errors:
     emitsEvent: none
     governedBy: ["DEC-BR-018 R13-1"]
     testIds: [TEST-CNS-384]
+  - id: ERR-RV-21
+    code: REVOCATION_NOT_COMPLETED_OTP
+    response: "Solo presentación (F-PR6-25, UX-CNS-015): la API sigue respondiendo el 503 uniforme GUARD_EVALUATOR_UNAVAILABLE de R3+R4 agotado; la pantalla OTP muestra el aviso interino 'No pudimos completar tu retiro' con este código. No es acuse ni recibo (DEC-BR-006/REQ-CNS-033 siguen siendo gate de Carlos); no cambia la semántica de revocación"
+    emitsEvent: none
+    governedBy: ["F-PR6-25", "UX-CNS-015", "RULE-CNS-026"]
+    testIds: [TEST-CNS-1760, TEST-CNS-1761, TEST-CNS-1762]
+  - id: ERR-RV-22
+    code: REVOCATION_NOT_COMPLETED_RECOVERY
+    response: "Solo presentación (F-PR6-25, UX-CNS-015): igual que ERR-RV-21 para R3r+R4 en la vía de recuperación; el token NO se consume (F-PR6-48) y el enlace sigue válido; la pantalla muestra 'No pudimos completar tu retiro ahora' con este código. Distinto del error uniforme ERR-RV-05 (token inválido o expirado)"
+    emitsEvent: none
+    governedBy: ["F-PR6-25", "UX-CNS-015", "RULE-CNS-026", "F-PR6-48"]
+    testIds: [TEST-CNS-1764, TEST-CNS-1765, TEST-CNS-1766]
 
 events:
   - id: REVOCATION_REQUESTED
