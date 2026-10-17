@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OidcAuthorizationPort } from "../../ports/oidc-exchange.port.ts";
 import { PlatformDeniedError } from "../../ports/oidc-exchange.port.ts";
 import type { PlatformSessionPort } from "../../ports/platform-session.port.ts";
-import { COMMON, constantTimeEqual, cookie, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, tooManyRequests } from "./http-util.ts";
+import { COMMON, constantTimeEqual, cookie, isUnavailable, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, serviceUnavailable, tooManyRequests } from "./http-util.ts";
 import type { OperatorLimitDeps } from "./http-util.ts";
 import type { Cidr, SlidingLimiter } from "./rate-limit.ts";
 import { ipInCidrs, truncateIp } from "./rate-limit.ts";
@@ -171,6 +171,7 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse,
     return true;
   } catch (error) {
     if (error instanceof PlatformDeniedError) return notFound(res), true;
+    if (isUnavailable(error)) return serviceUnavailable(res), true; // PR-7a (F-PR7-10): indisponibilidad de la base = 503 uniforme
     return notFound(res), true; // fallo cerrado, sin detalle
   }
 }

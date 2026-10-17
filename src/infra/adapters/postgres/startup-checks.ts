@@ -44,7 +44,14 @@ export interface StartupCheckOptions {
   retention?: RetentionConfig;
   /** ADR-010 PR-2: modo de roles declarado por el deploy (nunca por la request). Por defecto resolveDbRoleMode(process.env, expectedEnvironment); REAL_DATA no esta activado hasta PR-7. */
   roleMode?: DbRoleMode;
+  /**
+   * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1): perfil de retencion del proceso. REQUIRED (por defecto: web, worker): exige/contrasta CNS_RETENTION_* con ops.retention_policy. NOT_APPLICABLE (platform,
+   * verifier, reconciler, chain-verifier): el proceso no purga ni escribe datos con retencion; NO llama a ops.retention_status() y el arranque ASIERTA que su rol NO puede ejecutar ops.retention_status() ni ops.purge_p34().
+   */
+  retentionProfile?: RetentionProfile;
 }
+
+export type RetentionProfile = "REQUIRED" | "NOT_APPLICABLE";
 
 export interface StartupCheckResult {
   ok: boolean;
@@ -191,7 +198,8 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
     failures.push("no se pudo leer ops.db_catalog");
   }
 
-  await checkRetentionConfig(db, options, failures);
+  if (options.retentionProfile === "NOT_APPLICABLE") await checkNoRetentionExecute(db, failures);
+  else await checkRetentionConfig(db, options, failures);
   await checkPurgeExecuteIsolation(db, failures);
 
   return { ok: failures.length === 0, failures };
@@ -317,6 +325,24 @@ async function checkPurgeExecuteIsolation(db: Queryable, failures: string[]): Pr
   }
 }
 
+/**
+ * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1): un proceso con retencion NOT_APPLICABLE no puede ejecutar ops.retention_status() ni ops.purge_p34 (SECURITY DEFINER de security_event_owner). Resuelve por catalogo
+ * (pg_proc + pg_namespace, sin USAGE de ops ni nombres de regproc) y es fail-closed: si no se puede verificar, no arranca.
+ */
+async function checkNoRetentionExecute(db: Queryable, failures: string[]): Promise<void> {
+  try {
+    const r = await db.query<{ name: string }>(
+      `SELECT p.proname::pg_catalog.text AS name
+         FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'ops' AND p.proname IN ('retention_status', 'purge_p34')
+          AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')`,
+    );
+    for (const row of r.rows) failures.push(`el rol de la conexión puede ejecutar ops.${row.name} y su perfil de retención es NOT_APPLICABLE (F-6F-01, T-1)`);
+  } catch {
+    failures.push("no se pudo verificar que el rol no ejecuta ops.retention_status / ops.purge_p34 (F-6F-01)");
+  }
+}
+
 /** Etiqueta de la senal de purga atrasada (sin etiquetas de tenant). */
 export const RETENTION_PURGE_STALE_SIGNAL = "retention_purge_stale";
 /** INV-21-19: una corrida de purga debe tener menos de 26 h (job diario + holgura). */
@@ -407,12 +433,17 @@ async function checkStaffRosterRoles(db: Queryable, runtimeRole: string | undefi
     for (const row of grants.rows) failures.push(`staff_roster_reader tiene privilegios indebidos sobre ${row.rel} (solo SELECT sobre la vista del roster)`);
 
     const view = await db.query<{ reader_select: boolean; runtime_select: boolean; schema_create: boolean }>(
-      `SELECT pg_catalog.has_table_privilege('staff_roster_reader', '${STAFF_ROSTER_VIEW}', 'SELECT') AS reader_select,
-              pg_catalog.has_any_column_privilege(current_user, '${STAFF_ROSTER_VIEW}', 'SELECT') AS runtime_select,
+      // SEC-6F-03 (PR-7a): la vista se resuelve por catalogo (pg_class + pg_namespace, OID) y no por nombre/regclass, que exige USAGE sobre el esquema app (el chain-verifier ya no lo tiene).
+      `SELECT COALESCE(pg_catalog.has_table_privilege('staff_roster_reader', v.oid, 'SELECT'), false) AS reader_select,
+              COALESCE(pg_catalog.has_any_column_privilege(current_user, v.oid, 'SELECT'), true) AS runtime_select,
               EXISTS (SELECT 1 FROM pg_catalog.pg_namespace s
                        WHERE s.nspname !~ '^pg_' AND s.nspname <> 'information_schema'
                          AND (pg_catalog.has_schema_privilege('staff_roster_reader', s.oid, 'CREATE')
-                              OR pg_catalog.has_schema_privilege('staff_roster_owner', s.oid, 'CREATE'))) AS schema_create`,
+                              OR pg_catalog.has_schema_privilege('staff_roster_owner', s.oid, 'CREATE'))) AS schema_create
+         FROM (SELECT 1) AS one
+         LEFT JOIN (SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace vn ON vn.oid = c.relnamespace
+                     WHERE vn.nspname = $1 AND c.relname = $2 AND c.relkind = 'v') AS v ON true`,
+      [STAFF_ROSTER_VIEW.split(".")[0], STAFF_ROSTER_VIEW.split(".")[1]],
     );
     const v = view.rows[0];
     if (v === undefined || v.reader_select !== true) failures.push("staff_roster_reader no tiene SELECT sobre la vista del roster");

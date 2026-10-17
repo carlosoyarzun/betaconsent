@@ -105,9 +105,9 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
   assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE (SELECT oid FROM pg_roles WHERE rolname = 'integrity_chain_verifier') = ANY (polroles)")).rowCount, 1, "una sola policy en todo el catalogo");
   const rls = (await admin.query<{ f: boolean; e: boolean }>("SELECT relforcerowsecurity AS f, relrowsecurity AS e FROM pg_class WHERE oid = 'integrity.audit_event'::regclass")).rows[0]!;
   assert.deepEqual([rls.e, rls.f], [true, true]);
-  // Esquemas: USAGE en integrity, app y ops; en ningun otro de dominio.
+  // Esquemas: USAGE en integrity y ops (app se revoca en 0074, SEC-6F-03); en ningun otro de dominio.
   const usage = (await admin.query<{ nspname: string }>(`SELECT nspname FROM pg_namespace WHERE nspname IN ${SCHEMAS} AND has_schema_privilege('integrity_chain_verifier', oid, 'USAGE') ORDER BY 1`)).rows.map((r) => r.nspname);
-  assert.deepEqual(usage, ["app", "integrity", "ops"]);
+  assert.deepEqual(usage, ["integrity", "ops"]);
   // Idempotencia: 0072 (cluster, superusuario) y 0073 (base, migrador) se pueden re-ejecutar sin cambiar el estado.
   const sql72 = readFileSync(join(MIGRATIONS_DIR, "0072_adr010_pr6f_chain_verifier_role.sql"), "utf8");
   const sql73 = readFileSync(join(MIGRATIONS_DIR, "0073_adr010_pr6f_chain_verifier_ledger_select.sql"), "utf8");
@@ -115,13 +115,19 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
     await admin.query(sql72);
   });
   const migrator = await ctx.connectAs("consent_migrator");
+  // PR-7c (0082): app es de app_schema_owner y consent_owner ya no puede re-conceder USAGE; para reproducir el orden real del deploy (0073 -> 0074, cuando app aun era de consent_owner) se devuelve el dueño solo durante el replay.
+  await admin.query("ALTER SCHEMA app OWNER TO consent_owner");
   await migrator.query("BEGIN");
   try {
     await migrator.query(sql73);
+    await migrator.query(readFileSync(join(MIGRATIONS_DIR, "0074_adr010_pr7a_chain_verifier_no_app_usage.sql"), "utf8")); // 0073 re-concede USAGE de app; 0074 lo revoca (orden real del deploy)
     await migrator.query("COMMIT");
   } catch (e) {
     await migrator.query("ROLLBACK");
     throw e;
+  } finally {
+    await admin.query("ALTER SCHEMA app OWNER TO app_schema_owner");
+      await admin.query("GRANT USAGE, CREATE ON SCHEMA app TO consent_owner"); // ALTER OWNER fusiona/pierde las entradas ACL propias: se restaura la ACL del esquema
   }
   assert.equal((await admin.query("SELECT 1 FROM pg_policy WHERE polname = 'audit_event_chain_verifier_select'")).rowCount, 1);
 });

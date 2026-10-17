@@ -16,7 +16,7 @@ import type { CaseStepUpAction, PlatformGrantPort, StepUpLimit } from "../../por
 import type { PlatformSessionPort } from "../../ports/platform-session.port.ts";
 import { CASE_REF_RE, idpAuthorizationUrl, OIDC_STATE_COOKIE } from "./auth-routes.ts";
 import type { IdpRedirectConfig } from "./auth-routes.ts";
-import { COMMON, cookie, json, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, tooManyRequests } from "./http-util.ts";
+import { COMMON, cookie, isUnavailable, json, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, serviceUnavailable, tooManyRequests } from "./http-util.ts";
 import type { OperatorLimitDeps } from "./http-util.ts";
 import type { Cidr } from "./rate-limit.ts";
 import { ipInCidrs } from "./rate-limit.ts";
@@ -137,7 +137,8 @@ export async function handleGrantRoute(req: IncomingMessage, res: ServerResponse
     if (grantRef === null) return notFound(res), true;
     json(res, 200, { grantRef });
     return true;
-  } catch {
+  } catch (error) {
+    if (isUnavailable(error)) return serviceUnavailable(res), true; // PR-7a (F-PR7-10): indisponibilidad de la base = 503 uniforme
     return notFound(res), true; // fallo cerrado, sin detalle
   }
 }

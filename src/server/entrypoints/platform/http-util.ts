@@ -1,8 +1,10 @@
 // Gobierna: ADR-010 rev. 5 §5.2 (cookies `__Host-`, 404 uniforme, no-referrer), G-8, seguridad rev. c punto 5; contracts/openapi/consent-platform.openapi.yaml (securitySchemes). Utilidades HTTP
 // compartidas por las rutas del proceso platform (auth-routes.ts y session-routes.ts). Sin estado; nada se registra (ni cookies, ni sids, ni IP).
 
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerResponse } from "node:http";
+import { isServiceUnavailableError } from "../../../infra/adapters/postgres/transient-error.ts";
+import { PlatformUnavailableError } from "../../ports/oidc-exchange.port.ts";
 import type { OidcAuthorizationPort } from "../../ports/oidc-exchange.port.ts";
 import type { SlidingLimiter } from "./rate-limit.ts";
 
@@ -44,6 +46,17 @@ export function constantTimeEqual(a: string, b: string): boolean {
 export function notFound(res: ServerResponse): void {
   res.writeHead(404, { ...COMMON, "content-type": "application/json" });
   res.end(JSON.stringify({ error: "not_found" }));
+}
+
+/** ADR-010 PR-7a (F-PR7-10, T-10): el borde responde 503 uniforme (mismo cuerpo para cualquier ruta o recurso, con correlationId opaco) ante la indisponibilidad de la base; nunca 404 (no es "no existe"). */
+export function serviceUnavailable(res: ServerResponse): void {
+  res.writeHead(503, { ...COMMON, "content-type": "application/json" });
+  res.end(JSON.stringify({ code: "SERVICE_UNAVAILABLE", status: 503, correlationId: randomUUID() }));
+}
+
+/** true = el error es indisponibilidad de infraestructura (PlatformUnavailableError o SQLSTATE/socket de indisponibilidad): el llamador responde `serviceUnavailable`. */
+export function isUnavailable(error: unknown): boolean {
+  return error instanceof PlatformUnavailableError || isServiceUnavailableError(error);
 }
 
 /** Rechazo temporal de un limite autenticado (P-50): sin revelar cual limite. */

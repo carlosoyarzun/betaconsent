@@ -10,7 +10,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { runVerifierCycle } from "../../../src/server/modules/step-up/verifier.ts";
 import type { VerifierConfig } from "../../../src/server/modules/step-up/verifier.ts";
 import { computeSubHmac, VerifierConfigError } from "../../../src/server/modules/step-up/id-token.ts";
-import { PlatformDeniedError } from "../../../src/server/ports/oidc-exchange.port.ts";
+import { PlatformDeniedError, PlatformUnavailableError } from "../../../src/server/ports/oidc-exchange.port.ts";
 import type { AssertionRecord, ClaimedExchange, LoginAssertionRecord, OidcExchangeStorePort } from "../../../src/server/ports/oidc-exchange.port.ts";
 import { SyntheticIdpAdapter } from "../../../src/infra/adapters/synthetic-idp.adapter.ts";
 import { withPlatformTransaction } from "../../../src/infra/adapters/postgres/platform-call.ts";
@@ -144,9 +144,9 @@ test("TEST-CNS-1371 platform-call: principal solo por set_config('app.principal_
     (e) => e instanceof PlatformDeniedError && e.message === "platform: operacion no autorizada" && !/constraint|23514/.test(String(e.message)),
   );
   assert.ok(c3.queries.some((q) => q.text === "ROLLBACK") && !c3.queries.some((q) => q.text === "COMMIT"));
-  // Si ni el ROLLBACK se puede hacer, la conexion se destruye.
+  // Si ni el ROLLBACK se puede hacer, la conexion se destruye. PR-7a (T-10): una conexion perdida (08006) es indisponibilidad, no un DENY: PlatformUnavailableError (503 uniforme en el borde).
   const c4 = new FakeClient((text) => (text === "ROLLBACK" || text.startsWith("SELECT platform.") ? sqlError("08006") : undefined));
-  await assert.rejects(() => withPlatformTransaction(fakePool([c4]), PRINCIPAL, async (tx) => tx.query("SELECT platform.x()")), PlatformDeniedError);
+  await assert.rejects(() => withPlatformTransaction(fakePool([c4]), PRINCIPAL, async (tx) => tx.query("SELECT platform.x()")), PlatformUnavailableError);
   assert.deepEqual(c4.releases, [true]);
 
   // Principal con forma invalida (p. ej. la forma vieja staff-synthetic-): ni se conecta.
