@@ -233,7 +233,7 @@ export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
   "V2|fn|integrity_owner|integrity.audit_event_single_aggregate_type()|false|eb17d7ac34861caec481a817448153d6|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
   "V2|fn|integrity_owner|integrity.chain_checkpoint_guard()|false|39a8c3cc14701ab6683764306d276cb7|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
   "V2|fn|integrity_owner|integrity.chain_run_complete_guard()|false|7c79934d44a2694a25619e6df33013e5|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
-  "V2|fn|integrity_owner|integrity.chain_run_started_guard()|true|10ae076c5876ed4b920b9d06b3868311|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
+  "V2|fn|integrity_owner|integrity.chain_run_started_guard()|true|fc8e178b48655e043b1cd26269e21f30|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
   "V2|fn|integrity_owner|integrity.reconcile_run_guard()|false|06a0d49f13f8194fdfb409ba57afe8cb|{\"search_path=pg_catalog, pg_temp\"}|{integrity_owner=X/integrity_owner}",
   "V2|fn|ledger_writer|ledger_gen.canonical_json(p_value jsonb)|false|99fca94e9a5b99342b6f493aa9cbbb70|{\"search_path=pg_catalog, pg_temp\"}|{ledger_writer=X/ledger_writer}",
   "V2|fn|ledger_writer|ledger_gen.emit_consent_decision()|true|359f57da5546cf2b9d69c98acd48003d|{\"search_path=pg_catalog, pg_temp\"}|{ledger_writer=X/ledger_writer}",

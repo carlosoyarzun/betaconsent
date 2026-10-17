@@ -10,7 +10,7 @@
 --   SEC-7D-09: un CONSTRAINT TRIGGER DEFERRABLE INITIALLY DEFERRED sobre chain_run (se evalua al COMMIT, con los checkpoints de la misma tx) exige, para exit_code = 0, un checkpoint del run por CADA tenant del ledger
 --                               cuya genesis (chain_seq = 1) tenga occurred_at <= started_at, y leaf_count = count(checkpoints del run): un run que omite un tenant (viejo o nuevo) no queda como verde.
 --   SEC-7D-09 (endurecido): BEFORE INSERT `chain_run_started_guard` (SECURITY DEFINER de integrity_owner, que lee chain_run por una policy propia; el verifier sigue sin SELECT): started_at dentro de
---                               [transaction_timestamp() - 15 min, transaction_timestamp()] y estrictamente mayor que el de todo run previo (serializa los inserts con LOCK SHARE ROW EXCLUSIVE). El guard diferido
+--                               [clock_timestamp() - 15 min, clock_timestamp()] (reloj real, no el de la tx: una tx abierta antes de una genesis no puede confirmar mucho despues) y estrictamente mayor que el de todo run previo (serializa los inserts con LOCK SHARE ROW EXCLUSIVE). El guard diferido
 --                               ademas exige checkpoint para todo tenant que ya tuvo alguno en un run anterior (sin depender de started_at) y leaf_count >= 1 si el ledger tiene alguna genesis.
 -- Ambas: append-only (triggers ENABLE ALWAYS: tambien para el superusuario y con session_replication_role = replica), RLS ENABLE + FORCE, sin purga (T-4).
 --   * integrity_chain_verifier: INSERT por columnas en chain_run (sin finished_at: lo fija la base) y en chain_checkpoint (sin recorded_at); SELECT de chain_checkpoint (policy unica cross-tenant); NADA sobre chain_run salvo INSERT.
@@ -80,7 +80,7 @@ CREATE TRIGGER chain_run_no_truncate BEFORE TRUNCATE ON integrity.chain_run FOR 
 CREATE TRIGGER chain_checkpoint_no_update_delete BEFORE UPDATE OR DELETE ON integrity.chain_checkpoint FOR EACH ROW EXECUTE FUNCTION integrity.append_only_guard();
 CREATE TRIGGER chain_checkpoint_no_truncate BEFORE TRUNCATE ON integrity.chain_checkpoint FOR EACH STATEMENT EXECUTE FUNCTION integrity.append_only_guard();
 -- SEC-7D-09: cota y monotonia de started_at. SECURITY DEFINER (dueno integrity_owner, search_path fijo) porque el verifier no puede leer chain_run; la policy chain_run_owner_select permite al dueno (FORCE RLS) verlo.
--- El started_at lo declara el cliente y la persistencia corre en otra tx despues de la instantanea: por eso es una cota (no un DEFAULT).
+-- Se usa clock_timestamp() (no transaction_timestamp()): un verifier no puede abrir la tx antes de una genesis y confirmar mucho despues con un started_at viejo. El started_at lo declara el cliente y la persistencia corre en otra tx despues de la instantanea: por eso es una cota (no un DEFAULT).
 CREATE FUNCTION integrity.chain_run_started_guard() RETURNS trigger
   LANGUAGE plpgsql
   SECURITY DEFINER
@@ -88,8 +88,8 @@ CREATE FUNCTION integrity.chain_run_started_guard() RETURNS trigger
   AS $$
 BEGIN
   LOCK TABLE integrity.chain_run IN SHARE ROW EXCLUSIVE MODE;
-  IF NEW.started_at > pg_catalog.transaction_timestamp() OR NEW.started_at < pg_catalog.transaction_timestamp() - INTERVAL '15 minutes' THEN
-    RAISE EXCEPTION 'integrity.chain_run: started_at fuera de la cota (transaction_timestamp() - 15 min, transaction_timestamp())' USING ERRCODE = 'check_violation';
+  IF NEW.started_at > pg_catalog.clock_timestamp() OR NEW.started_at < pg_catalog.clock_timestamp() - INTERVAL '15 minutes' THEN
+    RAISE EXCEPTION 'integrity.chain_run: started_at fuera de la cota (clock_timestamp() - 15 min, clock_timestamp())' USING ERRCODE = 'check_violation';
   END IF;
   IF EXISTS (SELECT 1 FROM integrity.chain_run r WHERE r.started_at >= NEW.started_at) THEN
     RAISE EXCEPTION 'integrity.chain_run: started_at debe ser mayor que el de todo run previo' USING ERRCODE = 'check_violation';

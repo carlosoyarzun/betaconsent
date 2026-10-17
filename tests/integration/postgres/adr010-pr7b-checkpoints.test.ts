@@ -343,6 +343,18 @@ pgTest("TEST-CNS-1784 pg: SEC-7D-09 un run exit 0 incompleto (omite un tenant, l
   // El run siguiente completo entra.
   await sleep(3);
   await attempt(heads, n, n);
+  // clock_timestamp() (no transaction_timestamp()): con la tx abierta antes, un started_at que estaba dentro de la cota al abrirla queda FUERA tras esperar (el mensaje es el de la cota, no el de monotonia).
+  await ver.query("BEGIN READ WRITE");
+  try {
+    await ver.query("SELECT pg_sleep(1.5)");
+    await assert.rejects(
+      () => ver.query(`INSERT INTO integrity.chain_run (${RUN_COLS}) SELECT $1, transaction_timestamp() - interval '899 seconds', 'LOCAL', 0, 0, 0, 0, $2, 'RFC6962-SHA256-V1'`, [randomUUID(), "a".repeat(64)]),
+      (e: unknown) => codeOf(e) === "23514" && /cota/.test((e as Error).message),
+      "cota medida con el reloj real",
+    );
+  } finally {
+    await ver.query("ROLLBACK");
+  }
 });
 
 const mkStateDir = async (): Promise<string> => {
