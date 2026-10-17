@@ -220,43 +220,74 @@ function quoteIdent(name: string): string {
   return `"${name}"`;
 }
 
+function urlOnDatabase(base: string, database: string): string {
+  const u = new URL(base);
+  u.pathname = `/${database}`;
+  return u.toString();
+}
+
 async function provisionTemplate(config: Config, admin: Client): Promise<string> {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   const template = `consent_tpl_${migrationSetDigest(migrations).slice(0, 16)}`;
   const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);
   const templateExists = exists.rows.length > 0;
 
-  // La plantilla es LOCAL sintetica; sin CNS_DB_ROLE_MODE el modo cae a IT0B_SYNTHETIC.
-  // ADR-010 rev. 6 PR-7d: con la plantilla ya construida no hay migraciones de base pendientes y la fase cluster + la posterior (revoke de integrity_owner, dueño de la base) van en UNA transaccion, asi que otros
-  // archivos de test que corren en paralelo nunca ven el SET re-otorgado por 0026. Al construir la plantilla (una vez por conjunto de migraciones, con los demas archivos esperando el lock del harness) la fase posterior se
-  // difiere hasta despues de las migraciones de base, que necesitan los SET de los owners.
-  await applyClusterScope(admin, migrations, { environment: "LOCAL", deferPost: !templateExists });
-  await setRolePasswords(admin, {
-    consent_migrator: config.migratorPassword,
-    app_rw: config.appPassword,
-    worker: config.appPassword,
-    platform_rw: config.appPassword,
-    integrity_verifier: config.appPassword, // ADR-010 PR-2 (0034)
-    integrity_reconciler: config.appPassword, // ADR-010 rev. 5 PR-6e (0056)
-    integrity_chain_verifier: config.appPassword, // ADR-010 rev. 6 PR-6f (0072)
+  // ADR-010 rev. 6 PR-7d (P1 de la revision del PR #109): el esquema breakglass y la fase cluster-post viven en la BASE DE LA APLICACION (aqui, la plantilla), no en la base de mantenimiento de `admin`. Los advisory locks son por
+  // base de datos: el lock de roles de la base de mantenimiento (el que toma ctx.withRoleCatalogLock y el ensayo de ceremonia) se toma aqui, ademas del propio del runner en la base de la plantilla.
+  // Con la plantilla ya construida no hay migraciones de base pendientes (el runner lo calcula con ops.schema_migration) y la fase cluster + la posterior van en UNA transaccion, asi que otros archivos de test que corren en
+  // paralelo nunca ven el SET re-otorgado por 0026. Al construir la plantilla (una vez por conjunto de migraciones, con los demas archivos esperando el lock del harness) la fase posterior se difiere hasta despues de las
+  // migraciones de base, que necesitan los SET de los owners.
+  await withClusterRoleLock(admin, async () => {
+    if (templateExists) {
+      const tpl = new pg.Client({ connectionString: urlOnDatabase(config.url, template) });
+      await tpl.connect();
+      try {
+        await applyClusterScope(tpl, migrations, { environment: "LOCAL" });
+      } finally {
+        await tpl.end();
+      }
+    } else {
+      // La base de mantenimiento no tiene ops.schema_migration: el runner difiere la fase posterior.
+      await applyClusterScope(admin, migrations, { environment: "LOCAL" });
+    }
+    await setRolePasswords(admin, {
+      consent_migrator: config.migratorPassword,
+      app_rw: config.appPassword,
+      worker: config.appPassword,
+      platform_rw: config.appPassword,
+      integrity_verifier: config.appPassword, // ADR-010 PR-2 (0034)
+      integrity_reconciler: config.appPassword, // ADR-010 rev. 5 PR-6e (0056)
+      integrity_chain_verifier: config.appPassword, // ADR-010 rev. 6 PR-6f (0072)
+    });
   });
 
   if (templateExists) return template;
 
   const building = `${template}_b`;
-  try {
-    await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(building)} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${quoteIdent(building)} OWNER consent_owner`);
-    const migrator = new pg.Client({ connectionString: urlWith(config.url, "consent_migrator", config.migratorPassword, building) });
-    await migrator.connect();
+  await withClusterRoleLock(admin, async () => {
     try {
-      await applyDatabaseScope(migrator, migrations, { environment: "LOCAL" });
+      await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(building)} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${quoteIdent(building)} OWNER consent_owner`);
+      const migrator = new pg.Client({ connectionString: urlWith(config.url, "consent_migrator", config.migratorPassword, building) });
+      await migrator.connect();
+      try {
+        await applyDatabaseScope(migrator, migrations, { environment: "LOCAL" });
+      } finally {
+        await migrator.end();
+      }
     } finally {
-      await migrator.end();
+      // La fase posterior corre siempre que la base exista (tambien si una migracion de base fallo): no deja el SET de integrity_owner re-otorgado.
+      if ((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [building])).rows.length > 0) {
+        const post = new pg.Client({ connectionString: urlOnDatabase(config.url, building) });
+        await post.connect();
+        try {
+          await applyClusterPostScope(post, migrations, { environment: "LOCAL" });
+        } finally {
+          await post.end();
+        }
+      }
     }
-  } finally {
-    await applyClusterPostScope(admin, migrations, { environment: "LOCAL" });
-  }
+  });
   await admin.query(`ALTER DATABASE ${quoteIdent(building)} RENAME TO ${quoteIdent(template)}`);
   return template;
 }

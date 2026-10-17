@@ -98,10 +98,12 @@ rows AS (
   SELECT 'V2|colacl|' || rl.qname || '|' || pg_catalog.count(*)::pg_catalog.text || '|' || pg_catalog.md5(pg_catalog.string_agg(at.attname::pg_catalog.text || '=' || (SELECT pg_catalog.string_agg(pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text || ':' || a.privilege_type || ':' || pg_catalog.pg_get_userbyid(a.grantor)::pg_catalog.text, ',' ORDER BY pg_catalog.pg_get_userbyid(a.grantee)::pg_catalog.text, a.privilege_type) FROM pg_catalog.aclexplode(at.attacl) a), ';' ORDER BY at.attname::pg_catalog.text COLLATE "C"))
     FROM crels rl JOIN pg_catalog.pg_attribute at ON at.attrelid = rl.oid WHERE at.attacl IS NOT NULL AND NOT at.attisdropped GROUP BY rl.qname
   UNION ALL
-  -- V2 funciones que consent_owner puede cambiar: las que posee y las de roles a los que puede hacer SET ROLE (shared_fn_owner, owners de esquema): identidad, SECURITY DEFINER, md5(prosrc), proconfig y ACL
+  -- V2 funciones que consent_owner puede cambiar: las que posee y las de roles a los que puede hacer SET ROLE (shared_fn_owner, owners de esquema): identidad, SECURITY DEFINER, md5(prosrc), proconfig y ACL.
+  -- PR-7d (F-PR7D-06): ALLOWLIST POR DUEÑO, independiente del SET: tambien las de integrity_owner y breakglass_log_owner (consent_owner ya no las asume; si una migracion posterior hace ALTER FUNCTION ... OWNER TO consent_owner la fila aparece como V2|fn|consent_owner|...).
   SELECT 'V2|fn|' || pg_catalog.pg_get_userbyid(f.proowner)::pg_catalog.text || '|' || f.qname || '(' || f.args || ')|' || f.prosecdef::pg_catalog.text || '|' || pg_catalog.md5(p.prosrc) || '|' || COALESCE(p.proconfig::pg_catalog.text, '') || '|' || COALESCE(p.proacl::pg_catalog.text, '')
     FROM fns f JOIN pg_catalog.pg_proc p ON p.oid = f.oid
    WHERE f.proowner = (SELECT oid FROM co) OR (pg_catalog.pg_has_role('consent_owner', f.proowner, 'SET') AND pg_catalog.pg_get_userbyid(f.proowner)::pg_catalog.text !~ '^pg_')
+      OR pg_catalog.pg_get_userbyid(f.proowner)::pg_catalog.text IN ('integrity_owner', 'breakglass_log_owner')
   UNION ALL
   -- V3: dueño y ACL de los esquemas del dominio compartido
   SELECT 'V3|schema|' || n.nspname::pg_catalog.text || '|' || pg_catalog.pg_get_userbyid(n.nspowner)::pg_catalog.text || '|'

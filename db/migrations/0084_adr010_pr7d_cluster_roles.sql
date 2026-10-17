@@ -3,13 +3,13 @@
 -- F-PR7-04, F-PR7-06, F-PR7-12, F-PRB-06, F-PR7C-06, F-A10-10, F-A10-11; decisiones de Carlos del 2026-10-16 (C-1: revoke de integrity_owner en AMBOS modos; C-4: break-glass; C-5 (LEGAL DECISION): logs de ceremonia
 -- minimizados y solo DDL; C-9: textos); specs/db-roles.spec.yaml rev. 0.8. Regla de Carlos (2026-10-01): las migraciones mergeadas no se editan; esta es nueva.
 --
--- Roles de cluster nuevos de PR-7d y sus membresias. Se aplica ANTES de las migraciones de base (migrate.ts applyClusterScope, fase "cluster"); el REVOKE de integrity_owner, el cambio de dueño de la base y el modo REAL_DATA
+-- Roles de cluster nuevos de PR-7d y sus membresias. (Revision de seguridad del PR #109, F-PR7D-02: sin concesion transitoria a consent_owner; el esquema breakglass lo crea 0085 en cluster-post.) Se aplica ANTES de las migraciones de base (migrate.ts applyClusterScope, fase "cluster"); el REVOKE de integrity_owner, el cambio de dueño de la base y el modo REAL_DATA
 -- son de la fase POSTERIOR (0086, `-- scope: cluster-post`), que corre despues de las migraciones de base: una base nueva necesita que consent_owner conserve SET sobre integrity_owner mientras se aplican 0027, 0030, 0037...
 -- Se ejecuta como superusuario en CADA deploy y es idempotente (patron 0034/0075/0080). No fija contrasena (el repo no tiene credenciales; la de la ceremonia se entrega como verificador SCRAM, db/ceremonies/).
 --
 --   db_owner_nologin       NOLOGIN. Dueño de la BASE (ALTER DATABASE ... OWNER en 0086): quita a consent_owner el poder de DROP DATABASE y de conceder CREATE en la base. Sin miembros ni membresias.
---   breakglass_log_owner   NOLOGIN. Dueño del esquema breakglass y de breakglass.ceremony (0085). Sin miembros ni membresias EXCEPTO la transitoria de consent_owner (SET, sin INHERIT) que 0085 necesita para crear el esquema y
---                          que 0086 REVOCA; despues de cada deploy nadie puede asumirlo (solo el superusuario del cluster escribe la tabla, en las ceremonias).
+--   breakglass_log_owner   NOLOGIN. Dueño del esquema breakglass y de breakglass.ceremony (0085). SIN miembros ni membresias, nunca (ni siquiera transitorias: F-PR7D-02): 0085 (cluster-post) lo asume con SET LOCAL ROLE desde el
+--                          superusuario del deploy, sin membresia; nadie mas puede asumirlo (solo el superusuario del cluster escribe la tabla, en las ceremonias).
 --   ddl_breakglass         NOLOGIN al crearse, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, NOINHERIT, CONNECTION LIMIT 1. Miembro (INHERIT FALSE, SET TRUE, sin ADMIN) de los 17 owners gobernados
 --                          (OWNER_ROLES de role-membership.ts menos consent_owner; la lista esta en 0086 y un test la compara). Es el UNICO rol que asume owners fuera de las migraciones aplicadas por consent_owner.
 --                          Sus membresias las concede 0086 (fase posterior): varias migraciones de base ya mergeadas (0029, ...) asertan que consent_owner es el UNICO miembro de su owner, asi que durante las migraciones de base
@@ -42,7 +42,7 @@ ALTER ROLE ddl_breakglass SET log_parameter_max_length = 0;
 ALTER ROLE ddl_breakglass SET log_parameter_max_length_on_error = 0;
 ALTER ROLE ddl_breakglass SET idle_in_transaction_session_timeout = '10min';
 
--- Ninguna membresia de los tres roles salvo la transitoria consent_owner -> breakglass_log_owner (las de ddl_breakglass las concede 0086). Se revoca de forma condicional (REVOKE sobre un no miembro emite un WARNING por corrida).
+-- Ninguna membresia de los tres roles (las de ddl_breakglass las concede 0086). Se revoca de forma condicional (REVOKE sobre un no miembro emite un WARNING por corrida); incluye la transitoria consent_owner -> breakglass_log_owner de versiones previas de esta migracion.
 DO $revoke$
 DECLARE
   m record;
@@ -54,25 +54,13 @@ BEGIN
             WHERE (x.rolname IN ('db_owner_nologin', 'breakglass_log_owner'))
                OR (r.rolname IN ('db_owner_nologin', 'ddl_breakglass'))
                OR (x.rolname = 'ddl_breakglass')
-               OR (r.rolname = 'breakglass_log_owner' AND x.rolname <> 'consent_owner') LOOP
+               OR (r.rolname = 'breakglass_log_owner') LOOP
     EXECUTE pg_catalog.format('REVOKE %I FROM %I', m.role_name, m.member_name);
   END LOOP;
 END
 $revoke$;
 
--- breakglass_log_owner -> consent_owner: transitoria (revocada en 0086). Un GRANT repetido actualiza las opciones y no quita ADMIN OPTION: se revoca de forma condicional.
-DO $grants$
-BEGIN
-  GRANT breakglass_log_owner TO consent_owner WITH INHERIT FALSE, SET TRUE;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
-               JOIN pg_catalog.pg_roles r ON r.oid = m.roleid JOIN pg_catalog.pg_roles x ON x.oid = m.member
-              WHERE r.rolname = 'breakglass_log_owner' AND x.rolname = 'consent_owner' AND m.admin_option) THEN
-    REVOKE ADMIN OPTION FOR breakglass_log_owner FROM consent_owner;
-  END IF;
-END
-$grants$;
-
--- Ningun rol de runtime ni el migrador es miembro de los tres roles (el migrador solo llega a breakglass_log_owner de forma transitiva por consent_owner y con un cambio de rol explicito, durante 0085).
+-- Ningun rol de runtime ni el migrador es miembro de los tres roles.
 DO $runtime$
 DECLARE
   g text;
@@ -124,9 +112,6 @@ BEGIN
 
   SELECT * INTO rec FROM pg_catalog.pg_roles x WHERE x.rolname = 'breakglass_log_owner';
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member = rec.oid) THEN RAISE EXCEPTION '0084: breakglass_log_owner no es miembro de ningun rol'; END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid = rec.oid
-              AND NOT (m.member = (SELECT c.oid FROM pg_catalog.pg_roles c WHERE c.rolname = 'consent_owner') AND NOT m.inherit_option AND m.set_option AND NOT m.admin_option)) THEN
-    RAISE EXCEPTION '0084: breakglass_log_owner solo puede tener a consent_owner como miembro transitorio (SET, sin herencia ni ADMIN)';
-  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid = rec.oid) THEN RAISE EXCEPTION '0084: breakglass_log_owner no puede tener miembros (INV-DBR-09, F-PR7D-02)'; END IF;
 END
 $assert84$;

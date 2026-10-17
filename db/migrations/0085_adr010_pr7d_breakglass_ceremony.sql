@@ -1,4 +1,4 @@
--- scope: database
+-- scope: cluster-post
 -- Gobierna: ADR-010 rev. 6 §4.5.4 / Q13 (breakglass.ceremony: registro de ceremonias sin purga ni personas), §4.5.3 (vigilancia, F-PR7-03), fila PR-7 de §10; decisiones de Carlos del 2026-10-16 (C-4, C-5: LEGAL DECISION sobre
 -- retencion de logs de ceremonia; C-9); specs/db-roles.spec.yaml rev. 0.8 (breakglass_log_owner, integrity_chain_verifier). Regla de Carlos (2026-10-01): las migraciones mergeadas no se editan.
 --
@@ -8,9 +8,11 @@
 -- root/superusuario (R-03/R-16), cubierto por la vigilancia (breakglass-watch) y por la ancla externa de PR-7f (aun no implementada); NO es una garantia contra root.
 -- Ventana P-46 <= 60 min: CHECK en la tabla (valid_until > opened_at y <= opened_at + 60 min).
 --
--- Corre como consent_owner (el runner). consent_owner tiene SET transitorio sobre breakglass_log_owner solo durante el deploy (0084 lo concede, 0086 lo revoca): CREATE SCHEMA ... AUTHORIZATION lo exige y la
--- creacion del esquema solo necesita CREATE en la base (que consent_owner tiene). USAGE y SELECT por columnas de breakglass.ceremony para integrity_chain_verifier (vigilancia de break-glass, T-8): solo opened_at, valid_until, closed_at
--- y la referencia opaca; el rol no recibe ningun otro privilegio sobre el esquema.
+-- Corre como SUPERUSUARIO del deploy en la fase `cluster-post` (F-PR7D-02, revision de seguridad del PR #109): el esquema y la tabla los crea el superusuario con SET LOCAL ROLE breakglass_log_owner, SIN que consent_owner (el
+-- migrador) sea miembro de ese rol en ningun momento. Antes (scope database) consent_owner recibia una membresia SET transitoria en CADA deploy y podia alterar breakglass.ceremony (DISABLE TRIGGER, DELETE/UPDATE, CREATE POLICY,
+-- GRANT INSERT a si mismo); ahora no puede asumir el rol ni tiene USAGE/CREATE en el esquema. Idempotente (se re-ejecuta en cada deploy). Las aserciones exactas (dueño, tgenabled = 'A' en los 2 triggers, RLS forzada, UNA policy,
+-- ACL exacta) las hace database-level.ts (checkDatabaseLevel: deploy, startup y vigilancia), no un bloque SQL de esta migracion. USAGE y SELECT por columnas de breakglass.ceremony para integrity_chain_verifier (vigilancia de
+-- break-glass, T-8): solo opened_at, valid_until, closed_at y la referencia opaca; el rol no recibe ningun otro privilegio sobre el esquema.
 
 CREATE SCHEMA IF NOT EXISTS breakglass AUTHORIZATION breakglass_log_owner;
 
@@ -58,24 +60,4 @@ REVOKE ALL ON breakglass.ceremony FROM PUBLIC;
 GRANT USAGE ON SCHEMA breakglass TO integrity_chain_verifier;
 GRANT SELECT (ceremony_ref, opened_at, valid_until, closed_at) ON breakglass.ceremony TO integrity_chain_verifier;
 
-SET LOCAL ROLE consent_owner;
-
-DO $assert85$
-DECLARE
-  owner_name text;
-BEGIN
-  SELECT pg_catalog.pg_get_userbyid(n.nspowner) INTO owner_name FROM pg_catalog.pg_namespace n WHERE n.nspname = 'breakglass';
-  IF owner_name IS DISTINCT FROM 'breakglass_log_owner' THEN RAISE EXCEPTION '0085: el esquema breakglass debe ser de breakglass_log_owner'; END IF;
-  SELECT pg_catalog.pg_get_userbyid(c.relowner) INTO owner_name FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'breakglass' AND c.relname = 'ceremony';
-  IF owner_name IS DISTINCT FROM 'breakglass_log_owner' THEN RAISE EXCEPTION '0085: breakglass.ceremony debe ser de breakglass_log_owner'; END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-              WHERE n.nspname = 'breakglass' AND c.relname = 'ceremony' AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity)) THEN
-    RAISE EXCEPTION '0085: breakglass.ceremony debe tener RLS habilitado y forzado';
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace, (VALUES ('app_rw'), ('platform_rw'), ('worker'), ('integrity_verifier'), ('integrity_reconciler')) AS r(rolname)
-              WHERE n.nspname = 'breakglass' AND c.relname = 'ceremony'
-                AND (pg_catalog.has_any_column_privilege(r.rolname, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') OR pg_catalog.has_schema_privilege(r.rolname, n.oid, 'USAGE,CREATE'))) THEN
-    RAISE EXCEPTION '0085: ningun rol de runtime salvo integrity_chain_verifier tiene acceso a breakglass';
-  END IF;
-END
-$assert85$;
+RESET ROLE;

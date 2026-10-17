@@ -2,6 +2,7 @@
 
 import { EventEmitter } from "node:events";
 import type { PoolClient, QueryResult } from "pg";
+import { BREAKGLASS_EXPECTED_FACTS } from "../../../src/infra/adapters/postgres/database-level.ts";
 
 export interface RecordedQuery {
   text: string;
@@ -28,6 +29,8 @@ export class FakeClient extends EventEmitter {
     }
     const response = this.responder(text, values);
     if (response instanceof Error) throw response;
+    // El runner toma sus locks con pg_try_advisory_lock (F-PR7D-04): por defecto el doble los concede.
+    if (response === undefined && text.includes("pg_try_advisory_lock")) return { rows: [{ locked: true }], rowCount: 1 } as unknown as QueryResult<R>;
     return { rows: [], rowCount: 0, ...response } as unknown as QueryResult<R>;
   }
 
@@ -61,6 +64,8 @@ export function fakePool(clients: FakeClient[]): { connect(): Promise<PoolClient
  * ADR-010 rev. 6 PR-7d: respuestas "sanas" de checkDatabaseLevel (database-level.ts) para dobles que ya responden la aserción de membresía. Devuelve undefined si la consulta no es del estado a nivel de base.
  */
 export function databaseLevelRows(text: string, mode: "IT0B_SYNTHETIC" | "REAL_DATA" = "IT0B_SYNTHETIC"): Partial<QueryResult> | undefined {
+  if (text.includes("'schema|owner='")) return { rows: BREAKGLASS_EXPECTED_FACTS.map((fact) => ({ fact })) };
+  if (text.includes("FROM pg_catalog.pg_db_role_setting s") && text.includes("for_role")) return { rows: [] };
   if (text.includes("AS datdba_name")) return { rows: [{ datdba_name: "db_owner_nologin", public_privileges: ["USAGE"], owner_create: mode === "IT0B_SYNTHETIC", missing_connect: null }] };
   if (text.includes("'db_owner_nologin', 'breakglass_log_owner', 'ddl_breakglass')")) {
     const base = { rolcanlogin: false, rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false, rolinherit: false, rolconnlimit: -1, rolconfig: null, members: 0 };

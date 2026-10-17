@@ -4,6 +4,7 @@
 // Lectura del estado de break-glass con el rol integrity_chain_verifier: LOGIN de ddl_breakglass (pg_roles), sesiones de ddl_breakglass (pg_stat_activity, solo conteo) y ceremonias abiertas
 // (breakglass.ceremony: referencia opaca y ventana). Solo lectura; nunca datos del dominio ni de personas.
 
+import { checkBreakglassState, checkDbRoleSettings } from "./database-level.ts";
 import type { Queryable } from "./pool.ts";
 
 export interface OpenCeremony {
@@ -18,9 +19,11 @@ export interface BreakglassSnapshot {
   /** Sesiones de ddl_breakglass visibles en pg_stat_activity (null: la vista no las muestra a este rol). */
   readonly sessions: number | null;
   readonly openCeremonies: readonly OpenCeremony[];
+  /** Diferencias del estado EXACTO del esquema breakglass y de pg_db_role_setting (F-PR7D-02/05); vacio o ausente = exacto. Solo nombres de objeto y de rol. */
+  readonly stateProblems?: readonly string[];
 }
 
-export type BreakglassFindingCode = "LOGIN_WITHOUT_CEREMONY" | "SESSION_WITHOUT_CEREMONY" | "CEREMONY_OVERDUE" | "ROLE_NOT_FOUND";
+export type BreakglassFindingCode = "LOGIN_WITHOUT_CEREMONY" | "SESSION_WITHOUT_CEREMONY" | "CEREMONY_OVERDUE" | "ROLE_NOT_FOUND" | "STATE_DRIFT";
 
 export interface BreakglassFinding {
   readonly code: BreakglassFindingCode;
@@ -45,6 +48,7 @@ export async function readBreakglassSnapshot(db: Queryable): Promise<BreakglassS
     canLogin: row?.can_login ?? null,
     sessions: row?.sessions === null || row?.sessions === undefined ? null : Number(row.sessions),
     openCeremonies: ceremonies.rows.map((c) => ({ ceremonyRef: c.ceremony_ref, openedAtMs: Number(c.opened_ms), validUntilMs: Number(c.valid_ms) })),
+    stateProblems: [...(await checkBreakglassState(db)), ...(await checkDbRoleSettings(db))],
   };
 }
 
@@ -56,6 +60,7 @@ export function evaluateBreakglass(s: BreakglassSnapshot): BreakglassFinding[] {
   const findings: BreakglassFinding[] = [];
   if (!Number.isFinite(s.nowMs)) throw new Error("breakglass-watch: reloj ilegible");
   if (s.canLogin === null) findings.push({ code: "ROLE_NOT_FOUND" });
+  if ((s.stateProblems ?? []).length > 0) findings.push({ code: "STATE_DRIFT" });
   const valid = s.openCeremonies.filter((c) => c.validUntilMs > s.nowMs);
   if (valid.length === 0) {
     if (s.canLogin === true) findings.push({ code: "LOGIN_WITHOUT_CEREMONY" });

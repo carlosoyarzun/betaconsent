@@ -1,6 +1,6 @@
 // Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7d/7e), decisiones de Carlos del 2026-10-16 (C-1, C-4, C-5, C-9), F-PR7-03/06/07/12, F-PR7C-08. Sin Postgres. SYNTHETIC ONLY.
 // TEST-CNS-1850 (vigilancia de break-glass: evaluacion pura), 1851 (verificador SCRAM: vector RFC 7677 y formato), 1852 (coherencia de los archivos SQL: lista derivada de owners, ceremonias solo DDL y sin contrasena en texto plano),
-// 1853 (inventario de consent_owner por modo y por version mayor de PostgreSQL, F-PR7C-08).
+// 1853 (inventario de consent_owner por modo, por dueño independiente del SET y por version mayor de PostgreSQL, F-PR7C-08, F-PR7D-06).
 
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { evaluateBreakglass } from "../../../src/infra/adapters/postgres/breakglass-watch-reader.ts";
 import type { BreakglassSnapshot } from "../../../src/infra/adapters/postgres/breakglass-watch-reader.ts";
-import { checkConsentOwnerInventory, checkInventoryServerVersion, inventoryAllowlistFor } from "../../../src/infra/adapters/postgres/consent-owner-inventory.ts";
+import { CONSENT_OWNER_INVENTORY_SQL, checkConsentOwnerInventory, checkInventoryServerVersion, inventoryAllowlistFor } from "../../../src/infra/adapters/postgres/consent-owner-inventory.ts";
 import { CONSENT_OWNER_INVENTORY_ALLOWLIST, CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS } from "../../../src/infra/adapters/postgres/consent-owner-inventory.allowlist.ts";
 import { DDL_BREAKGLASS_SETTINGS } from "../../../src/infra/adapters/postgres/database-level.ts";
 import { BREAKGLASS_OWNER_ROLES, CONSENT_OWNER_SET_ROLES, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
@@ -104,13 +104,19 @@ test("TEST-CNS-1853 inventario de consent_owner: allowlist por modo (REAL_DATA s
   const it0b = inventoryAllowlistFor("IT0B_SYNTHETIC");
   const real = inventoryAllowlistFor("REAL_DATA");
   assert.equal(it0b, CONSENT_OWNER_INVENTORY_ALLOWLIST);
-  assert.ok(!it0b.some((l) => l.startsWith("V2|fn|integrity_owner|")), "consent_owner ya no tiene SET sobre integrity_owner (C-1)");
+  // F-PR7D-06: allowlist POR DUEÑO, independiente del SET: integrity_owner (8) y breakglass_log_owner (1) estan en AMBOS modos aunque consent_owner no pueda asumirlos.
+  const fnRows = (list: readonly string[], owner: string): string[] => list.filter((l) => l.startsWith(`V2|fn|${owner}|`));
+  assert.equal(fnRows(it0b, "integrity_owner").length, 8, "las 8 filas del ledger se reponen");
+  assert.equal(fnRows(it0b, "breakglass_log_owner").length, 1);
   assert.ok(it0b.some((l) => l.startsWith("V2|fn|transition_owner|")), "IT0B conserva las filas de los owners con SET");
-  assert.deepEqual(real.filter((l) => l.startsWith("V2|fn|")), [], "REAL_DATA: sin SET no hay funciones de otros owners en el alcance de consent_owner");
-  assert.equal(real.length, it0b.filter((l) => !l.startsWith("V2|fn|")).length);
-  // Cada fila V2|fn de IT0B es de un owner con SET (cierra la derivacion de la lista por modo).
+  assert.deepEqual(fnRows(real, "integrity_owner"), fnRows(it0b, "integrity_owner"), "REAL_DATA tambien: es por dueño, no por SET");
+  assert.deepEqual(fnRows(real, "breakglass_log_owner"), fnRows(it0b, "breakglass_log_owner"));
+  assert.deepEqual(real.filter((l) => l.startsWith("V2|fn|") && !/^V2\|fn\|(integrity_owner|breakglass_log_owner)\|/.test(l)), [], "REAL_DATA: sin SET no hay funciones de OTROS owners en el alcance de consent_owner");
+  assert.equal(real.length, it0b.filter((l) => !l.startsWith("V2|fn|") || /^V2\|fn\|(integrity_owner|breakglass_log_owner)\|/.test(l)).length);
+  // Cada fila V2|fn de IT0B es de un owner con SET o de uno de los dos duenos independientes del SET (cierra la derivacion de la lista por modo).
   const owners = new Set(it0b.filter((l) => l.startsWith("V2|fn|")).map((l) => l.split("|")[2] as string));
-  for (const o of owners) assert.ok(CONSENT_OWNER_SET_ROLES.includes(o), o);
+  for (const o of owners) assert.ok(CONSENT_OWNER_SET_ROLES.includes(o) || o === "integrity_owner" || o === "breakglass_log_owner", o);
+  assert.match(CONSENT_OWNER_INVENTORY_SQL, /IN \('integrity_owner', 'breakglass_log_owner'\)/, "la consulta lee las funciones de esos duenos aunque no haya SET");
   assert.ok(CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS.includes(16) && CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS.includes(18));
   const version = (num: string): FakeClient => new FakeClient((text) => (text.includes("server_version_num") ? { rows: [{ server_version_num: num }] } : { rows: [] }));
   assert.deepEqual(await checkInventoryServerVersion(version("160015")), []);

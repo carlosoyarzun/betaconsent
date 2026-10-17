@@ -50,6 +50,8 @@ interface Scenario {
 
 function db(s: Scenario = {}): FakeClient {
   return new FakeClient((text) => {
+    const dbLevel = databaseLevelRows(text); // PR-7d (F-PR7D-05): STAGING exige el estado a nivel de base
+    if (dbLevel !== undefined) return dbLevel;
     if (text.includes("server_version_num")) return { rows: [{ server_version_num: "180000" }] };
     if (text.includes("V2|trigger|")) {
       if (s.inventory === "error") return new Error("boom");

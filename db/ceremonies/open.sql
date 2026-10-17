@@ -4,10 +4,11 @@
 -- ABRE una ceremonia: inserta la fila en breakglass.ceremony y habilita el LOGIN de ddl_breakglass por una ventana <= P-46 (60 min, CHECK de la tabla) con un VERIFICADOR SCRAM-SHA-256 calculado del lado del cliente
 -- (tools/ceremony/scram-verifier.ts): la contrasena en texto plano NUNCA llega al servidor ni a sus logs; el verificador es un hash salado. Superusuario del cluster, conectado a la BASE de la aplicacion.
 --
---   psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -v ceremony_ref=CER-20261017-01 -v reason_code=REHEARSAL -v ticket_ref=CA-999 -v valid_minutes=30 -v verifier="$VERIFIER" -f db/ceremonies/open.sql
+--   CNS_CEREMONY_VERIFIER="$VERIFIER" psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -v ceremony_ref=CER-20261017-01 -v reason_code=REHEARSAL -v ticket_ref=CA-999 -v valid_minutes=30 -f db/ceremonies/open.sql
 --
--- Variables: ceremony_ref (referencia opaca, ^[A-Za-z0-9][A-Za-z0-9._-]{5,63}$), reason_code (DDL_LEDGER | DDL_SCHEMA | PRINCIPAL_BOOTSTRAP | INCIDENT_RECOVERY | REHEARSAL), ticket_ref (Jira CA-n), valid_minutes (1..60),
--- verifier (SCRAM-SHA-256$<iter>:<salt>$<StoredKey>:<ServerKey>). Sin personas, sin datos del dominio. Solo DDL en la sesion de la ceremonia (la sesion usa log_statement = 'ddl', sin parametros).
+-- Variables: ceremony_ref (referencia opaca, ^[A-Za-z0-9][A-Za-z0-9._-]{5,63}$), reason_code (DDL_LEDGER | DDL_SCHEMA | PRINCIPAL_BOOTSTRAP | INCIDENT_RECOVERY | REHEARSAL), ticket_ref (Jira CA-n), valid_minutes (1..60).
+-- El verificador (SCRAM-SHA-256$<iter>:<salt>$<StoredKey>:<ServerKey>) se lee del ENTORNO con \getenv (variable CNS_CEREMONY_VERIFIER; psql 15+), NUNCA por argv (-v verifier=...): un argumento de linea de comandos
+-- queda visible en `ps` y en el historial del shell (F-PR7D-07). Sin personas, sin datos del dominio. Solo DDL en la sesion de la ceremonia (la sesion usa log_statement = 'ddl', sin parametros).
 -- El ancla firmada antes/despues de la ceremonia (Q13) llega con PR-7f (F-R6-1, C-7 pendiente de Carlos): hasta entonces la evidencia es SECUNDARIA (fila de ceremonia + log de sesion).
 
 \set ON_ERROR_STOP on
@@ -15,6 +16,9 @@
 -- Este script no deja el verificador ni nada de la ceremonia en el log del servidor de esta sesion de superusuario.
 SET log_statement = 'none';
 SET log_min_duration_statement = -1;
+-- pg_stat_statements registraria el ALTER ROLE ... PASSWORD (utilidad) con el verificador: no se rastrean sentencias de utilidad en esta sesion (F-PR7D-07). Si la extension no esta cargada, es un placeholder inocuo.
+SET pg_stat_statements.track_utility = off;
+\getenv verifier CNS_CEREMONY_VERIFIER
 
 SELECT (:'verifier' ~ '^SCRAM-SHA-256\$[0-9]{4,7}:[A-Za-z0-9+/]+=*\$[A-Za-z0-9+/]+=*:[A-Za-z0-9+/]+=*$') AS verifier_ok,
        (:'valid_minutes' ~ '^[0-9]{1,2}$' AND :'valid_minutes'::int BETWEEN 1 AND 60) AS minutes_ok \gset

@@ -10,7 +10,7 @@ import { loadRetentionConfig, RETENTION_ENV_VARS } from "../../../src/server/mod
 import { executeRetentionPurge, formatPurgeLine, PURGE_ORDER } from "../../../src/infra/adapters/postgres/retention-purge.ts";
 import { checkRetentionPurgeFreshness, MAX_PURGE_AGE_MS, RETENTION_PURGE_STALE_SIGNAL, runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
 import { EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
-import { FakeClient } from "./fakes.ts";
+import { databaseLevelRows, FakeClient } from "./fakes.ts";
 
 // ADR-010 PR-2: el modo de roles lo declara el deploy; fuera de LOCAL/DEV es obligatorio. Los dobles de abajo asumen el modo vigente (IT0B).
 process.env.CNS_DB_ROLE_MODE ??= "IT0B_SYNTHETIC";
@@ -80,6 +80,8 @@ test("TEST-CNS-1312 el nucleo del CLI purga purge_run primero, llama ops.purge_p
 
 function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error", purgeExecRow?: { app_rw: boolean; platform_rw: boolean }): FakeClient {
   return new FakeClient((text) => {
+    const dbLevel = databaseLevelRows(text); // PR-7d (F-PR7D-05): STAGING exige el estado a nivel de base
+    if (dbLevel !== undefined) return dbLevel;
     if (text.includes("server_version_num")) return { rows: [{ server_version_num: "180000" }] };
     if (text.includes("V2|trigger|")) return { rows: CONSENT_OWNER_INVENTORY_ALLOWLIST.map((line) => ({ line })) }; // PR-7c (F-PR7-01): inventario de consent_owner = allowlist
     if (text.includes("pg_catalog.pg_settings")) return { rows: [] };
