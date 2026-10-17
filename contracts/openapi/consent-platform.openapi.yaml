@@ -26,6 +26,7 @@ info:
     - Ningun GET transiciona (INV-CM-08).
     - El actor se toma de la sesion, nunca del body.
     - Respuestas 404 uniformes.
+    - Indisponibilidad de la base (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida): 503 uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, nunca 404 (ADR-010 PR-7a, F-PR7-10); 404 queda para recursos no validos o ajenos y para errores que no son de indisponibilidad.
     - Excepcion de tenantRef (F-A10-07; decision de Carlos 2026-10-11 (4)): API-CNS-100 dice "ningun request acepta tenantRef". La excepcion aplica SOLO en esta API del proceso `platform` (equipo de LectorPro, clase PLATFORM con step-up): el aprovisionamiento de membership (Q4) y de role-assignment (cross-tenant) necesita el tenant destino. La via web (consola STAFF, app_rw, `POST /staff/membership-requests` en consent-it0) NO lo acepta: lo deriva de la sesion STAFF.
     - Nadie aprueba su propio acceso (decision de Carlos 2026-10-11 (6)): la aprobacion de una membership o de un rol exige un aprobador distinto del solicitante Y distinto del principal que recibe el acceso; la base lo impone (CHECK approved_by_ref <> principal_ref y reason_code SELF_ACCESS). Un DENY responde un error generico uniforme: el motivo queda en platform.authorization_check, no en la respuesta (F-A10-13).
     - Enums de rol fijos (decision de Carlos 2026-10-11 (2)): membership TENANT_ADMIN | INVITER; plataforma PLATFORM | RIGHTS_OPERATOR | APPROVER (clase PRIVACY_LEGAL | SECURITY) | CONTEXT_OWNER. `principalRef` es un UUIDv4 opaco.
@@ -72,6 +73,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/auth/callback:
     get:
       operationId: platformAuthCallback
@@ -96,6 +99,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/auth/continue:
     get:
       operationId: platformAuthContinue
@@ -112,6 +117,8 @@ paths:
           description: "{status: login_in_progress}. Cache-Control no-store, Referrer-Policy no-referrer."
         '404':
           description: Respuesta uniforme (origen fuera de la allowlist).
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/auth/exchange:
     get:
       operationId: platformAuthExchangeStatus
@@ -132,6 +139,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/sessions/platform:
     post:
       operationId: openPlatformSession
@@ -150,6 +159,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/sessions/case:
     post:
       operationId: openCaseSession
@@ -168,6 +179,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/case-session/logout:
     post:
       operationId: caseSessionLogout
@@ -187,6 +200,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/logout:
     post:
       operationId: platformLogout
@@ -205,6 +220,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/step-up:
     post:
       operationId: issueStepUp
@@ -235,6 +252,8 @@ paths:
           description: "Location = autorizacion del IdP (max_age=0, prompt=login). Set-Cookie oidcState (Lax). Sin cuerpo."
         '404':
           description: Respuesta uniforme (origen, sesion, accion, rol, destino o limite).
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}:
     get:
       operationId: getRightsCase
@@ -255,6 +274,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/verification-proposals:
     post:
       operationId: proposeCaseVerification
@@ -301,6 +322,8 @@ paths:
           description: "P-50 (limite del operador)."
         '404':
           description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/approval:
     post:
       operationId: approveCaseVerification
@@ -338,6 +361,8 @@ paths:
           description: "P-50 (limite del operador)."
         '404':
           description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/verification-proposals/{proposalRef}/withdrawal:
     post:
       operationId: withdrawCaseVerificationProposal
@@ -375,6 +400,8 @@ paths:
           description: "P-50 (limite del operador)."
         '404':
           description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/confirmation:
     post:
       operationId: recordCaseConfirmation
@@ -420,6 +447,8 @@ paths:
           description: "P-50 (limite del operador)."
         '404':
           description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/confirmation/cosign:
     post:
       operationId: cosignCaseConfirmation
@@ -462,7 +491,7 @@ paths:
         '404':
           description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
         '503':
-          description: "G-3 (ADR-010 rev. 5 §4.2.a): agotados los reintentos acotados de R3/RH3 + R4. Error uniforme GUARD_EVALUATOR_UNAVAILABLE {code, status, correlationId}; SIN acuse de aplicacion exitosa; la alerta R4_RETRIES_EXHAUSTED queda registrada y el caso pendiente (Revocation sin APPLIED). Nunca se devuelve 503 si la Revocation quedo APPLIED: se lee el estado (read_case_apply_state) y se devuelve el resultado real."
+          description: "G-3 (ADR-010 rev. 5 §4.2.a): agotados los reintentos acotados de R3/RH3 + R4. Error uniforme GUARD_EVALUATOR_UNAVAILABLE {code, status, correlationId}; SIN acuse de aplicacion exitosa; la alerta R4_RETRIES_EXHAUSTED queda registrada y el caso pendiente (Revocation sin APPLIED). Nunca se devuelve 503 si la Revocation quedo APPLIED: se lee el estado (read_case_apply_state) y se devuelve el resultado real. Ademas, ante indisponibilidad de la base (PR-7a, F-PR7-10): SERVICE_UNAVAILABLE {code, status, correlationId}, uniforme para cualquier caso; no garantiza que la operacion no se aplico: reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/close:
     post:
       operationId: closeRightsCase
@@ -507,6 +536,8 @@ paths:
           description: "P-50 (limite del operador)."
         '404':
           description: Respuesta uniforme (sesion, origen, caso o propuesta ajena o no valida, step-up ausente o rechazado, ERR-CM-01). Sin cuerpo distinguible.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/grant-requests:
     post:
       operationId: requestCaseGrant
@@ -530,6 +561,8 @@ paths:
           description: "{requestRef}"
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/rights-cases/{caseRef}/grant-requests/{grantRequestRef}/approval:
     post:
       operationId: approveCaseGrant
@@ -554,6 +587,8 @@ paths:
           description: {grantRef}
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/memberships/requests:
     post:
       operationId: requestMembership
@@ -572,6 +607,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/memberships/requests/{requestRef}/approval:
     post:
       operationId: approveMembership
@@ -592,6 +629,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/role-assignments/requests:
     post:
       operationId: requestRoleAssignment
@@ -610,6 +649,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/role-assignments/requests/{requestRef}/approval:
     post:
       operationId: approveRoleAssignment
@@ -630,6 +671,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
   /platform/consent-contexts/{contextRef}/reactivate:
     post:
       operationId: reactivateConsentContext
@@ -651,6 +694,8 @@ paths:
           description: OUTLINE - respuesta por definir en PR-3 a PR-5.
         '404':
           description: Respuesta uniforme.
+        '503':
+          description: "ADR-010 PR-7a (F-PR7-10): la base no esta disponible (SQLSTATE de clase 08, 40, 53, 57 o 55P03, conexion perdida). Error uniforme SERVICE_UNAVAILABLE {code, status, correlationId}, identico para cualquier recurso (no es 'no existe'; sin oraculo). Los demas errores no de dominio ni de autorizacion siguen en 404 uniforme. En rutas con efecto (POST de sesion, grant, step-up y acciones de caso), un 503 NO garantiza que la operacion no se aplico (commit ambiguo ante conexion perdida): reconsultar el estado antes de repetir."
 components:
   securitySchemes:
     caseSession:

@@ -19,6 +19,15 @@ export class PlatformDeniedError extends Error {
   }
 }
 
+/** ADR-010 PR-7a (F-PR7-10): la base no esta disponible (error transitorio de infraestructura, NO un DENY ni un error de dominio). El borde responde 503 uniforme, nunca 404. Mensaje fijo y sin detalle. */
+export class PlatformUnavailableError extends Error {
+  readonly code = "PLATFORM_UNAVAILABLE";
+  constructor() {
+    super("platform: servicio no disponible");
+    this.name = "PlatformUnavailableError";
+  }
+}
+
 export interface EnqueueExchangeInput {
   /** Principal que inicia el step-up (sale de la sesion PLATFORM; nunca de la request). UUIDv4. */
   principalRef: string;

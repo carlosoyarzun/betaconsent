@@ -138,7 +138,7 @@ test("TEST-CNS-1754 el lector usa solo parametros $n: ningun SQL se arma con int
   for (const m of text.matchAll(/\.query(?:<[^>]*(?:<[^>]*>)?[^>]*>)?\(\s*/g)) {
     count += 1;
     const rest = text.slice(m.index! + m[0].length);
-    const constant = /^(EVENT_SELECT|TENANTS_SQL|UNCHAINED_SQL|LOCK_SQL)\s*[,)]/.exec(rest);
+    const constant = /^(EVENT_SELECT|TENANTS_SQL|UNCHAINED_SQL|UNCHAINED_STRICT_SQL|LOCK_SQL)\s*[,)]/.exec(rest);
     if (constant !== null) continue;
     const quote = rest[0];
     assert.ok(quote === '"' || quote === "`", `query con argumento no constante: ${rest.slice(0, 40)}`);
