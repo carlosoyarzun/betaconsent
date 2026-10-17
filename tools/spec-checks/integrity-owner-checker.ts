@@ -44,8 +44,10 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0076_adr010_pr7b_chain_checkpoint.sql": ["set-role"],
   "db/migrations/0077_adr010_pr7b_reconcile_run.sql": ["set-role"],
   "db/migrations/0078_adr010_pr7b_anchor.sql": ["set-role"],
-  // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
+  // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): ahora demuestra que el migrador ya NO puede (42501) y ejercita el rol con un superusuario de prueba.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
+  // TEST-CNS-1230 (PR-7d, C-1): prueba que consent_owner/consent_migrator reciben 42501 al SET ROLE integrity_owner.
+  "tests/integration/postgres/ledger-integrity-owner.test.ts": ["set-role"],
 };
 
 /** SEC-CNS-021 PR-1: caminos aprobados para security_event_owner. Mismas reglas que INTEGRITY_OWNER_ALLOWLIST. */

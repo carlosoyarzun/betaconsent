@@ -25,14 +25,17 @@ test("TEST-CNS-749 parseMigration valida nombre, alcance y calcula sha256", () =
   }
   assert.throws(() => parseMigration("0008_x.sql", "SELECT 1;\n"), /scope/);
   assert.throws(() => parseMigration("0008_x.sql", "-- scope: superuser\n"), /scope/);
+  assert.equal(parseMigration("0008_x.sql", "-- scope: cluster-post\nSELECT 1;\n").scope, "cluster-post");
 });
 
-test("TEST-CNS-749 las migraciones del repo: 0000, 0004, 0018, 0026, 0028, 0034, 0046, 0056, 0064, 0068, 0072, 0075 y 0080 son cluster, el resto database, versiones únicas y ordenadas", () => {
+test("TEST-CNS-749 las migraciones del repo: 0000, 0004, 0018, 0026, 0028, 0034, 0046, 0056, 0064, 0068, 0072, 0075, 0080 y 0084 son cluster, 0086 cluster-post, el resto database, versiones únicas y ordenadas", () => {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   assert.equal(migrations[0]?.version, "0000");
   assert.equal(migrations[0]?.scope, "cluster");
   // Solo 0000 (roles), 0004 (outbox_claimer), 0018 (roles del roster, API-CNS-116), 0026 (integrity_owner, X8) 0028 (security_event_owner, SEC-CNS-021) 0034 (roles de cluster de ADR-010 PR-2), 0046 (ledger_gen_owner y ledger_writer, ADR-010 rev. 5 PR-b), 0056 (integrity_reconciler, ADR-010 rev. 5 PR-6e) y 0072 (integrity_chain_verifier, ADR-010 rev. 6 PR-6f) son de alcance cluster; el resto, database.
-  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004", "0018", "0026", "0028", "0034", "0046", "0056", "0064", "0068", "0072", "0075", "0080"]);
+  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004", "0018", "0026", "0028", "0034", "0046", "0056", "0064", "0068", "0072", "0075", "0080", "0084"]);
+  // PR-7d: la fase posterior del superusuario (revoke de integrity_owner, dueño de la base, REAL_DATA) es 0086 y corre despues de las migraciones de base.
+  assert.deepEqual(migrations.filter((m) => m.scope === "cluster-post").map((m) => m.version), ["0086"]);
   const versions = migrations.map((m) => m.version);
   assert.deepEqual(versions, [...versions].sort());
   assert.equal(new Set(versions).size, versions.length);

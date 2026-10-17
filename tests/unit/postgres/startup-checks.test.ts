@@ -9,7 +9,7 @@ import { EXPECTED_MEMBERSHIPS, OWNER_ROLES } from "../../../src/infra/adapters/p
 import type { DbRoleMode, MembershipEdge } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { applyClusterScope, parseMigration } from "../../../src/infra/adapters/postgres/migrate.ts";
 import { CONSENT_OWNER_INVENTORY_ALLOWLIST } from "../../../src/infra/adapters/postgres/consent-owner-inventory.allowlist.ts";
-import { FakeClient } from "./fakes.ts";
+import { databaseLevelRows, FakeClient } from "./fakes.ts";
 
 // ADR-010 PR-2: el modo de roles lo declara el deploy; fuera de LOCAL/DEV es obligatorio. Los dobles de abajo asumen el modo vigente (IT0B).
 process.env.CNS_DB_ROLE_MODE ??= "IT0B_SYNTHETIC";
@@ -50,6 +50,7 @@ interface Scenario {
 
 function db(s: Scenario = {}): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("server_version_num")) return { rows: [{ server_version_num: "180000" }] };
     if (text.includes("V2|trigger|")) {
       if (s.inventory === "error") return new Error("boom");
       return { rows: (s.inventory ?? [...CONSENT_OWNER_INVENTORY_ALLOWLIST]).map((line) => ({ line })) };
@@ -215,7 +216,8 @@ test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los r
     [{ memberships: [...base, edge("worker", "outbox_claimer", false, true)] }, /no esperada.*worker -> outbox_claimer/],
     [{ memberships: [...base, edge("integrity_verifier", "consent_owner", true, true)] }, /no esperada.*integrity_verifier -> consent_owner/],
     [{ memberships: [...base, edge("platform_rw", "rights_operator", true, true)] }, /no esperada.*platform_rw -> rights_operator/], // 0068: solo INHERIT FALSE, SET TRUE
-    [{ memberships: [...base, edge("ddl_breakglass", "grant_owner", false, true)] }, /no esperada.*ddl_breakglass/], // llega en PR-7
+    [{ memberships: [...base, edge("ddl_breakglass", "rights_operator", false, true)] }, /no esperada.*ddl_breakglass -> rights_operator/], // PR-7d: ddl_breakglass solo asume los 17 owners (0086)
+    [{ memberships: [...base, edge("consent_owner", "integrity_owner", false, true)] }, /no esperada.*consent_owner -> integrity_owner/], // PR-7d (C-1): revocado en ambos modos
     [{ memberships: base.filter((e) => !(e.member === "consent_owner" && e.role === "security_event_owner")) }, /falta la membresía.*consent_owner -> security_event_owner/],
     [{ memberships: base.filter((e) => e.role !== "outbox_claimer") }, /falta la membresía.*consent_migrator -> outbox_claimer/],
     [{ memberships: base.map((e) => (e.role === "tenant_resolve_owner" ? edge(e.member, e.role, true, true) : e)) }, /no esperada.*tenant_resolve_owner \{inherit: true/],
@@ -229,20 +231,21 @@ test("TEST-CNS-1344 ADR-010 PR-2 INV-DBR-03: no arranca si la membresia de los r
     assert.equal(result.ok, false, String(pattern));
     assert.ok(result.failures.some((f) => pattern.test(f)), `${pattern} :: ${result.failures.join(" | ")}`);
   }
-  // REAL_DATA esta definido pero no activado hasta PR-7: falla cerrado en vez de aceptar o saltarse la aserción.
+  // PR-7d: REAL_DATA es VERIFICABLE (aserción activa) pero sigue bloqueado por F-PR7-01 (no autoriza datos reales, F-PR7-12); con las membresias de IT0B tambien falla la aserción del modo.
   const real = await runStartupChecks(db(), { expectedEnvironment: "LOCAL", roleMode: "REAL_DATA" satisfies DbRoleMode });
   assert.equal(real.ok, false);
-  assert.ok(real.failures.some((f) => /REAL_DATA no está activado/.test(f)));
+  assert.ok(real.failures.some((f) => /REAL_DATA está bloqueado.*F-PR7-01/.test(f)));
+  assert.ok(real.failures.some((f) => /consent_owner -> /.test(f) && /INV-DBR-03/.test(f)), "las membresias SET de IT0B no son las de REAL_DATA");
 });
 
 test("TEST-CNS-1351 ADR-010 PR-2 P1-2/P1-3: runner y startup-checks reciben el MISMO modo declarado (CNS_DB_ROLE_MODE); vacio solo vale en LOCAL/DEV; el runner fija el GUC cns.db_role_mode", async () => {
   const migrations = [parseMigration("0000_roles.sql", "-- scope: cluster\nSELECT 1;\n")];
   const rows = EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC.map((e) => ({ member: e.member, role: e.role, inherit_option: e.inherit, set_option: e.set, admin_option: e.admin }));
-  const runner = (): FakeClient => new FakeClient((text) => (text.includes("u.rolname AS member") ? { rows } : undefined));
+  const runner = (): FakeClient => new FakeClient((text) => (text.includes("u.rolname AS member") ? { rows } : databaseLevelRows(text)));
   const saved = process.env.CNS_DB_ROLE_MODE;
   const outcomes = async (environment: "LOCAL" | "STAGING"): Promise<{ runner: boolean; startup: boolean }> => {
     const r = runner();
-    const runnerOk = await applyClusterScope(r, migrations, { environment }).then(() => true, () => false);
+    const runnerOk = await applyClusterScope(r, migrations, { environment }).then(() => true, (e) => { if (process.env.DBG) console.log(String(e)); return false; });
     // STAGING exige ademas retencion configurada (otro chequeo): aqui solo importa la parte de modo/membresia (INV-DBR-03).
     const result = await runStartupChecks(db({ catalog: [{ data_class: "SYNTHETIC", environment }] }), { expectedEnvironment: environment });
     const startupOk = !result.failures.some((f) => /INV-DBR-03/.test(f));
@@ -255,7 +258,7 @@ test("TEST-CNS-1351 ADR-010 PR-2 P1-2/P1-3: runner y startup-checks reciben el M
     process.env.CNS_DB_ROLE_MODE = "IT0B_SYNTHETIC";
     assert.deepEqual(await outcomes("STAGING"), { runner: true, startup: true });
     process.env.CNS_DB_ROLE_MODE = "REAL_DATA";
-    assert.deepEqual(await outcomes("LOCAL"), { runner: false, startup: false }, "REAL_DATA no esta activado: ambos fallan cerrado");
+    assert.deepEqual(await outcomes("LOCAL"), { runner: false, startup: false }, "REAL_DATA bloqueado por F-PR7-01 (REAL_DATA_BLOCKERS): ambos fallan cerrado");
     // El GUC lo fija el runner ANTES del SQL de cluster y se limpia despues.
     process.env.CNS_DB_ROLE_MODE = "IT0B_SYNTHETIC";
     const r = runner();

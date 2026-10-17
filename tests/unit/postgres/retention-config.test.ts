@@ -80,6 +80,7 @@ test("TEST-CNS-1312 el nucleo del CLI purga purge_run primero, llama ops.purge_p
 
 function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error", purgeExecRow?: { app_rw: boolean; platform_rw: boolean }): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("server_version_num")) return { rows: [{ server_version_num: "180000" }] };
     if (text.includes("V2|trigger|")) return { rows: CONSENT_OWNER_INVENTORY_ALLOWLIST.map((line) => ({ line })) }; // PR-7c (F-PR7-01): inventario de consent_owner = allowlist
     if (text.includes("pg_catalog.pg_settings")) return { rows: [] };
     if (text.includes("to_regprocedure")) return purgeExecRow === undefined ? { rows: [{ app_rw: false, platform_rw: false }] } : { rows: [purgeExecRow] };

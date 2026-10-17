@@ -56,3 +56,21 @@ export function fakePool(clients: FakeClient[]): { connect(): Promise<PoolClient
   };
   return state;
 }
+
+/**
+ * ADR-010 rev. 6 PR-7d: respuestas "sanas" de checkDatabaseLevel (database-level.ts) para dobles que ya responden la aserción de membresía. Devuelve undefined si la consulta no es del estado a nivel de base.
+ */
+export function databaseLevelRows(text: string, mode: "IT0B_SYNTHETIC" | "REAL_DATA" = "IT0B_SYNTHETIC"): Partial<QueryResult> | undefined {
+  if (text.includes("AS datdba_name")) return { rows: [{ datdba_name: "db_owner_nologin", public_privileges: ["USAGE"], owner_create: mode === "IT0B_SYNTHETIC", missing_connect: null }] };
+  if (text.includes("'db_owner_nologin', 'breakglass_log_owner', 'ddl_breakglass')")) {
+    const base = { rolcanlogin: false, rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false, rolinherit: false, rolconnlimit: -1, rolconfig: null, members: 0 };
+    return {
+      rows: [
+        { ...base, rolname: "db_owner_nologin" },
+        { ...base, rolname: "breakglass_log_owner" },
+        { ...base, rolname: "ddl_breakglass", rolconnlimit: 1, rolconfig: ["log_statement=ddl", "log_parameter_max_length=0", "log_parameter_max_length_on_error=0", "idle_in_transaction_session_timeout=10min"] },
+      ],
+    };
+  }
+  return undefined;
+}
