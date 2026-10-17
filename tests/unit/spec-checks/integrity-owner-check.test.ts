@@ -205,7 +205,7 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
   assert.equal(over.filter((e) => e.includes("fuera de la allowlist") && e.includes("transition_owner")).length, 1);
 });
 
-test("TEST-CNS-1854 CA-142 alineado (PR-7d, F-A10-09): ninguna migracion posterior al revoke (0086) asume un owner ni se concede su membresia; detecta las variantes (SET role =, dinamico, IN ROLE, ALTER GROUP, GRANT) y admite consent_owner", () => {
+test("TEST-CNS-1860 CA-142 alineado (PR-7d, F-A10-09): ninguna migracion posterior al revoke (0086) asume un owner ni se concede su membresia; detecta las variantes (SET role =, dinamico, IN ROLE, ALTER GROUP, GRANT) y admite consent_owner", () => {
   const files: { path: string; text: string }[] = [];
   collect(ROOT, files);
   assert.ok(files.some((f) => f.path === "db/migrations/0086_adr010_pr7d_revoke_and_database_level.sql"));

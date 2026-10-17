@@ -15,6 +15,7 @@ import { checkConsentOwnerInventory, checkInventoryServerVersion, inventoryAllow
 import { CONSENT_OWNER_INVENTORY_ALLOWLIST, CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS } from "../../../src/infra/adapters/postgres/consent-owner-inventory.allowlist.ts";
 import { DDL_BREAKGLASS_SETTINGS } from "../../../src/infra/adapters/postgres/database-level.ts";
 import { BREAKGLASS_OWNER_ROLES, CONSENT_OWNER_SET_ROLES, OWNER_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
+import { runStartupChecks } from "../../../src/infra/adapters/postgres/startup-checks.ts";
 import { formatBreakglassFindings } from "../../../src/server/entrypoints/chain-verifier/breakglass-watch.ts";
 import { scramVerifier } from "../../../tools/ceremony/scram-verifier.ts";
 import { FakeClient } from "./fakes.ts";
@@ -119,4 +120,42 @@ test("TEST-CNS-1853 inventario de consent_owner: allowlist por modo (REAL_DATA s
   assert.match(bad[0] ?? "", /PostgreSQL 16, 18 y el servidor es 19/);
   // Con una version no verificada el chequeo devuelve SOLO ese mensaje (no cientos de diferencias de md5).
   assert.deepEqual(await checkConsentOwnerInventory(version("190000"), "IT0B_SYNTHETIC"), bad);
+});
+
+test("TEST-CNS-1861 retencion NOT_APPLICABLE (F-PR7a-03): el chequeo mira current_user y todo rol alcanzable con SET (pg_has_role SET) y el criterio es consume o purga retencion", async () => {
+  const seen: string[] = [];
+  const db = new FakeClient((text) => {
+    if (text.includes("p.proname IN ('retention_status', 'purge_p34')")) {
+      seen.push(text);
+      return { rows: [{ name: "retention_status", via: "platform_rw" }, { name: "purge_p34", via: "security_event_owner" }] };
+    }
+    return undefined;
+  });
+  const result = await runStartupChecks(db, { expectedEnvironment: "LOCAL", retentionProfile: "NOT_APPLICABLE" });
+  assert.match(seen[0] ?? "", /pg_has_role\(current_user, x\.oid, 'SET'\)/);
+  assert.ok(result.failures.some((f) => /ops\.retention_status/.test(f) && /no consume ni purga retención/.test(f)));
+  assert.ok(result.failures.some((f) => /puede asumir security_event_owner, que ejecuta ops\.purge_p34/.test(f) && /F-PR7a-03/.test(f)));
+  const src = readFileSync(join(ROOT, "src/infra/adapters/postgres/runtime-process.ts"), "utf8") + readFileSync(join(ROOT, "src/infra/adapters/postgres/startup-checks.ts"), "utf8");
+  assert.ok(!/el proceso no purga ni escribe datos con retencion/.test(src), "la justificacion falsa (platform no escribe datos con retencion) ya no esta");
+  assert.match(src, /platform SI escribe ops\.security_event/);
+});
+
+test("TEST-CNS-1862 startup-checks: el estado a nivel de base (INV-DBR-09) es estricto con REAL_DATA o assertDatabaseLevel; en LOCAL/IT0B no se exige; REAL_DATA sigue bloqueado por F-PR7-01 (F-PR7-12)", async () => {
+  const seenDb: string[] = [];
+  const mk = (): FakeClient => new FakeClient((text) => {
+    if (text.includes("AS datdba_name")) {
+      seenDb.push(text);
+      return { rows: [{ datdba_name: "consent_owner", public_privileges: ["CONNECT"], owner_create: true, missing_connect: ["app_rw"] }] };
+    }
+    return undefined;
+  });
+  const lax = await runStartupChecks(mk(), { expectedEnvironment: "LOCAL" });
+  assert.equal(seenDb.length, 0, "IT0B en LOCAL: no se consulta el nivel de base");
+  assert.ok(!lax.failures.some((f) => /INV-DBR-09/.test(f)));
+  const strict = await runStartupChecks(mk(), { expectedEnvironment: "STAGING", roleMode: "IT0B_SYNTHETIC", assertDatabaseLevel: true });
+  assert.ok(strict.failures.some((f) => /dueño de la base es consent_owner/.test(f)));
+  assert.ok(strict.failures.some((f) => /PUBLIC tiene CONNECT/.test(f)));
+  const real = await runStartupChecks(mk(), { expectedEnvironment: "LOCAL", roleMode: "REAL_DATA" });
+  assert.ok(real.failures.some((f) => /REAL_DATA está bloqueado.*F-PR7-01/.test(f)), "REAL_DATA verificable no es autorizacion de datos reales");
+  assert.ok(real.failures.some((f) => /dueño de la base es consent_owner/.test(f)));
 });
