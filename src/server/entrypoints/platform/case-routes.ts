@@ -17,7 +17,7 @@ import type { CaseOutcome, PlatformCasePort } from "../../ports/platform-case.po
 import type { StepUpLimit } from "../../ports/platform-grant.port.ts";
 import type { PlatformSessionPort, SessionKind } from "../../ports/platform-session.port.ts";
 import { CASE_REF_RE } from "./auth-routes.ts";
-import { CASE_SESSION_COOKIE, COMMON, json, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, tooManyRequests } from "./http-util.ts";
+import { CASE_SESSION_COOKIE, COMMON, isUnavailable, json, notFound, p50Allows, parseCookies, PLATFORM_SESSION_COOKIE, serviceUnavailable, tooManyRequests } from "./http-util.ts";
 import type { OperatorLimitDeps } from "./http-util.ts";
 import type { Cidr } from "./rate-limit.ts";
 import { ipInCidrs } from "./rate-limit.ts";
@@ -159,6 +159,8 @@ export async function handleCaseRoute(req: IncomingMessage, res: ServerResponse,
       res.end(JSON.stringify({ code: "GUARD_EVALUATOR_UNAVAILABLE", status: 503, correlationId: randomUUID() }));
       return true;
     }
+    // PR-7a (F-PR7-10, T-10): indisponibilidad de la base = 503 uniforme (nunca "no existe"); el resto, fallo cerrado 404 sin detalle.
+    if (isUnavailable(error)) return serviceUnavailable(res), true;
     return notFound(res), true; // fallo cerrado, sin detalle
   }
 }

@@ -11,6 +11,7 @@ import type { RetentionConfig } from "../../../server/modules/common/retention.c
 import { createPool, guardBorrowedClient } from "./pool.ts";
 import { resolveDbRoleMode } from "./role-membership.ts";
 import { assertStartupChecks } from "./startup-checks.ts";
+import type { RetentionProfile } from "./startup-checks.ts";
 
 /** INV-DBR-02: rol LOGIN de cada proceso de runtime. Nombres reales de specs/db-roles.spec.yaml. */
 export const RUNTIME_PROCESS_ROLES = {
@@ -21,6 +22,19 @@ export const RUNTIME_PROCESS_ROLES = {
   reconciler: "integrity_reconciler", // ADR-010 rev. 5 PR-6e (G-9, F-PR6-29)
   "chain-verifier": "integrity_chain_verifier", // ADR-010 rev. 6 PR-6f (D-1 (b), F-PR6E-06): recomputo de la cadena; sin egress ni K_sub
 } as const;
+
+/**
+ * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1): perfil de retencion por proceso. Solo web (app_rw) y worker (purga) usan y contrastan CNS_RETENTION_* con ops.retention_policy; el resto (platform, verifier,
+ * reconciler, chain-verifier) declara NOT_APPLICABLE: no carga la configuracion, no llama a ops.retention_status() y el arranque asierta que su rol NO puede ejecutarla ni ops.purge_p34.
+ */
+export const RETENTION_PROFILE: Readonly<Record<keyof typeof RUNTIME_PROCESS_ROLES, RetentionProfile>> = {
+  web: "REQUIRED",
+  platform: "NOT_APPLICABLE",
+  worker: "REQUIRED",
+  verifier: "NOT_APPLICABLE",
+  reconciler: "NOT_APPLICABLE",
+  "chain-verifier": "NOT_APPLICABLE",
+};
 
 /** Pool de un proceso de runtime (alias para que los entrypoints no importen `pg`, ADR-001 §11). */
 export type ProcessPool = Pool;
@@ -102,8 +116,9 @@ export interface OpenProcessPoolOptions {
 export async function openProcessPool(options: OpenProcessPoolOptions): Promise<Pool> {
   const env = options.env ?? process.env;
   const url = readProcessDatabaseUrl(options.process, env);
-  let retention: RetentionConfig | undefined = options.retention;
-  if (retention === undefined) {
+  const retentionProfile = RETENTION_PROFILE[options.process];
+  let retention: RetentionConfig | undefined = retentionProfile === "REQUIRED" ? options.retention : undefined;
+  if (retentionProfile === "REQUIRED" && retention === undefined) {
     const loaded = loadRetentionConfig(env as NodeJS.ProcessEnv, options.environment);
     retention = loaded.status === "CONFIGURED" ? loaded.config : undefined;
   }
@@ -115,6 +130,7 @@ export async function openProcessPool(options: OpenProcessPoolOptions): Promise<
         expectedEnvironment: options.environment,
         expectedRole: expectedRoleFor(options.process),
         roleMode: resolveDbRoleMode(env, options.environment),
+        retentionProfile,
         ...(retention === undefined ? {} : { retention }),
       });
     } finally {

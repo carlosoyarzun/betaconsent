@@ -107,9 +107,9 @@ pgTest("TEST-CNS-1739 pg: 0072/0073: integrity_chain_verifier = LOGIN NOSUPERUSE
     ["integrity.audit_event.audit_event_chain_verifier_select", "integrity.chain_checkpoint.chain_checkpoint_verifier_insert", "integrity.chain_checkpoint.chain_checkpoint_verifier_select", "integrity.chain_run.chain_run_verifier_insert"]);
   const rls = (await admin.query<{ f: boolean; e: boolean }>("SELECT relforcerowsecurity AS f, relrowsecurity AS e FROM pg_class WHERE oid = 'integrity.audit_event'::regclass")).rows[0]!;
   assert.deepEqual([rls.e, rls.f], [true, true]);
-  // Esquemas: USAGE en integrity, app y ops; en ningun otro de dominio.
+  // Esquemas: USAGE en integrity y ops (app se revoca en 0074, SEC-6F-03); en ningun otro de dominio.
   const usage = (await admin.query<{ nspname: string }>(`SELECT nspname FROM pg_namespace WHERE nspname IN ${SCHEMAS} AND has_schema_privilege('integrity_chain_verifier', oid, 'USAGE') ORDER BY 1`)).rows.map((r) => r.nspname);
-  assert.deepEqual(usage, ["app", "integrity", "ops"]);
+  assert.deepEqual(usage, ["integrity", "ops"]);
   // Idempotencia: 0072 (cluster, superusuario) se puede re-ejecutar sin cambiar el estado. 0073 (base) ya NO se re-ejecuta aqui: sus aserciones globales ("1 sola policy del rol", "sin escritura en ninguna relacion") eran
   // exactas para el momento de migrar y dejan de valer tras 0076 (PR-7b); la aserción vigente transversal es 0079 (se aplica con el resto de migraciones en la plantilla).
   const sql72 = readFileSync(join(MIGRATIONS_DIR, "0072_adr010_pr6f_chain_verifier_role.sql"), "utf8");

@@ -51,6 +51,8 @@ const TENANTS_SQL = "SELECT DISTINCT tenant_id::text AS tenant_id FROM integrity
 const UNCHAINED_SQL =
   "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq IS NULL " +
   "AND occurred_at > (SELECT min(occurred_at) FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq = 1)";
+/** SEC-6F-07 (b), ADR-010 PR-7a: fuera de LOCAL no hay legado previo a 0013 (linea base IT0b, DEC-BR-021): CUALQUIER fila sin eslabon es exit 2, tambien en un tenant sin eslabon 1. */
+const UNCHAINED_STRICT_SQL = "SELECT count(*)::int AS n FROM integrity.audit_event WHERE tenant_id = $1 AND chain_seq IS NULL";
 
 interface EventRow {
   tenant_id: string;
@@ -197,7 +199,10 @@ export async function forEachTenantChainInSnapshot(pool: PoolLike, visit: (input
       const tenants = (await client.query<{ tenant_id: string }>(TENANTS_SQL)).rows.map((r) => r.tenant_id);
       options.onReadable?.({ catalogEnvironment, tenants: tenants.length });
       for (const tenantId of tenants) {
-        const unchained = (await client.query<{ n: number }>(UNCHAINED_SQL, [tenantId])).rows[0]?.n ?? 0;
+        // El environment sale del catalogo de la base (no de la configuracion): LOCAL conserva el legado previo a 0013; cualquier otro es estricto (PR-7a, T-15).
+        const unchainedRows =
+          catalogEnvironment === "LOCAL" ? await client.query<{ n: number }>(UNCHAINED_SQL, [tenantId]) : await client.query<{ n: number }>(UNCHAINED_STRICT_SQL, [tenantId]);
+        const unchained = unchainedRows.rows[0]?.n ?? 0;
         await visit({
           tenantId,
           unchainedAfterStart: unchained,
