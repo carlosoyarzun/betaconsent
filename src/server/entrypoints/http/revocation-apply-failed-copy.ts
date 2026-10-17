@@ -16,7 +16,7 @@ export const REVOCATION_APPLY_FAILED_COPY = {
   body: "Ocurrió un problema interno y tu retiro no se completó. Tu autorización sigue vigente. El código que usaste puede haber expirado: pide uno nuevo e inténtalo otra vez. Si el problema continúa, escríbenos a ayuda@example.invalid (correo provisorio de pruebas).",
   code: "ERR-RV-21",
   codeLabel: "Código",
-  primaryLabel: "Pedir un código nuevo",
+  primaryLabel: "Empezar de nuevo",
   helpLabel: "Escribir al equipo del estudio",
 } as const;
 

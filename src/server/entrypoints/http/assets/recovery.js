@@ -101,6 +101,10 @@
     function setBusy(isBusy) {
       confirmBtn.setAttribute("aria-disabled", isBusy ? "true" : "false");
       confirmBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
+      if (retryApplyBtn) {
+        retryApplyBtn.setAttribute("aria-disabled", isBusy ? "true" : "false");
+        retryApplyBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
+      }
       if (isBusy) {
         confirmBtn.dataset.label = confirmBtn.textContent;
         confirmBtn.textContent = "Confirmando…";

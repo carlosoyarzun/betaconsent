@@ -13,6 +13,7 @@
 // alcance/irreversibilidad del retiro (handoff §8, protocolo l.423). Ninguno se redacta aquí
 // (CLAUDE.md, copy legal de producción).
 
+import { alertHead } from "./guest-layout.ts";
 import { HELP_MAILTO, RECOVERY_APPLY_FAILED_COPY as APPLY_FAILED } from "./revocation-apply-failed-copy.ts";
 
 const HEAD = `<meta charset="utf-8">
@@ -67,7 +68,7 @@ export function renderRecoveryConfirmPage(): string {
     </div>
 
     <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-apply-failed" tabindex="-1" hidden>
-      <p><strong>${APPLY_FAILED.title}</strong></p>
+      ${alertHead("error", APPLY_FAILED.title)}
       <p>${APPLY_FAILED.body}</p>
       <p id="apply-failed-code">${APPLY_FAILED.codeLabel}: ${APPLY_FAILED.code}</p>
       <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-apply-btn">${APPLY_FAILED.primaryLabel}</button>

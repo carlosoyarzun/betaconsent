@@ -67,7 +67,7 @@
 
     // F-PR6-25 (hallazgo F-PR6-51): 503 GUARD_EVALUATOR_UNAVAILABLE de R3 + R4. NO es un acuse: el
     // aviso (role="alert") recibe el foco, no depende del color y trae el código ERR-RV-21 como texto.
-    // Acción primaria: enlace "Pedir un código nuevo" (reinicia desde /manage; no reintenta con el código viejo).
+    // Acción primaria: enlace "Empezar de nuevo" (rehace la solicitud completa desde /manage; no reintenta con el código viejo).
     function showApplyFailed() {
       hideStates();
       if (errorApplyFailed) {

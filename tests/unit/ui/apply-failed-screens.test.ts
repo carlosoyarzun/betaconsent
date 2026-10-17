@@ -22,7 +22,8 @@ class FakeEl {
   readonly id: string;
   readonly doc: FakeDoc;
   constructor(id: string, hidden: boolean, doc: FakeDoc) { this.id = id; this.hidden = hidden; this.doc = doc; }
-  setAttribute(): void {}
+  readonly attrs: Record<string, string> = {};
+  setAttribute(k: string, v: string): void { this.attrs[k] = v; }
   addEventListener(type: string, fn: () => void): void { (this.listeners[type] ??= []).push(fn); }
   focus(): void { this.doc.focused = this.id; }
   click(): void { for (const fn of this.listeners.click ?? []) fn(); }
@@ -65,7 +66,7 @@ test("TEST-CNS-1767: revocation-page.ts renderiza el aviso A con el copy literal
   assert.ok(html.includes("No pudimos completar tu retiro</span>"));
   assert.ok(html.includes(COPY_A.body));
   assert.match(html, /<p id="apply-failed-code">Código: ERR-RV-21<\/p>/);
-  assert.match(html, /<a href="\/manage" [^>]*id="new-code-link">Pedir un código nuevo<\/a>/);
+  assert.match(html, /<a href="\/manage" [^>]*id="new-code-link">Empezar de nuevo<\/a>/);
   assert.match(html, /<a href="mailto:ayuda@example\.invalid" class="lp-link" id="apply-failed-help">Escribir al equipo del estudio<\/a>/);
   assert.match(html, /class="lp-alert-icon" aria-hidden="true"/); // no depende del color
   for (const text of [COPY_A.title, COPY_A.body, COPY_B.title, COPY_B.body]) assert.doesNotMatch(text, NO_ACK);
@@ -117,7 +118,8 @@ test("TEST-CNS-1771: recovery.js distingue el 503 (aviso B: enlace aún válido,
   const html = renderRecoveryConfirmPage();
   assert.match(html, /id="error-uniform" hidden>\s*<p>No pudimos continuar con este retiro\.<\/p>\s*<p>El enlace puede no ser válido o haber expirado\./);
   assert.match(html, /<div role="alert" aria-live="assertive" class="lp-alert-error" id="error-apply-failed" tabindex="-1" hidden>/);
-  assert.ok(html.includes(`<strong>${COPY_B.title}</strong>`));
+  assert.match(html, /class="lp-alert-icon" aria-hidden="true"/);
+  assert.ok(html.includes(COPY_B.title));
   assert.ok(html.includes(COPY_B.body));
   assert.match(html, /<p id="apply-failed-code">Código: ERR-RV-22<\/p>/);
   assert.match(html, /id="retry-apply-btn">Volver a intentar<\/button>/);
@@ -148,8 +150,12 @@ test("TEST-CNS-1772: recovery.js 'Volver a intentar' tras el 503 reenvía /recov
   });
   doc.getElementById("confirm-recovery-btn")!.click();
   await settle();
-  doc.getElementById("retry-apply-btn")!.click();
+  const retry = doc.getElementById("retry-apply-btn")!;
+  retry.click();
+  assert.equal(retry.attrs["aria-busy"], "true"); // mientras se envía el reintento
+  assert.equal(retry.attrs["aria-disabled"], "true");
   await settle();
+  assert.equal(retry.attrs["aria-busy"], "false");
   assert.equal(calls, 2);
   assert.equal(doc.getElementById("error-apply-failed")!.hidden, true);
   assert.equal(doc.getElementById("state-applied")!.hidden, false);
