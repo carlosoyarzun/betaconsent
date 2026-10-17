@@ -19,7 +19,7 @@ export interface BreakglassSnapshot {
   /** Sesiones de ddl_breakglass visibles en pg_stat_activity (null: la vista no las muestra a este rol). */
   readonly sessions: number | null;
   readonly openCeremonies: readonly OpenCeremony[];
-  /** Diferencias del estado EXACTO del esquema breakglass y de pg_db_role_setting (F-PR7D-02/05); vacio o ausente = exacto. Solo nombres de objeto y de rol. */
+  /** Diferencias del estado EXACTO del esquema breakglass y de pg_db_role_setting (F-PR7D-08/05); vacio o ausente = exacto. Solo nombres de objeto y de rol. */
   readonly stateProblems?: readonly string[];
 }
 

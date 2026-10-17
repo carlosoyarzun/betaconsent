@@ -29,7 +29,7 @@ export class FakeClient extends EventEmitter {
     }
     const response = this.responder(text, values);
     if (response instanceof Error) throw response;
-    // El runner toma sus locks con pg_try_advisory_lock (F-PR7D-04): por defecto el doble los concede.
+    // El runner toma sus locks con pg_try_advisory_lock (F-PR7D-09): por defecto el doble los concede.
     if (response === undefined && text.includes("pg_try_advisory_lock")) return { rows: [{ locked: true }], rowCount: 1 } as unknown as QueryResult<R>;
     return { rows: [], rowCount: 0, ...response } as unknown as QueryResult<R>;
   }

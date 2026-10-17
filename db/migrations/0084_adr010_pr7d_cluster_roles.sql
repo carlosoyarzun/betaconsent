@@ -3,12 +3,12 @@
 -- F-PR7-04, F-PR7-06, F-PR7-12, F-PRB-06, F-PR7C-06, F-A10-10, F-A10-11; decisiones de Carlos del 2026-10-16 (C-1: revoke de integrity_owner en AMBOS modos; C-4: break-glass; C-5 (LEGAL DECISION): logs de ceremonia
 -- minimizados y solo DDL; C-9: textos); specs/db-roles.spec.yaml rev. 0.8. Regla de Carlos (2026-10-01): las migraciones mergeadas no se editan; esta es nueva.
 --
--- Roles de cluster nuevos de PR-7d y sus membresias. (Revision de seguridad del PR #109, F-PR7D-02: sin concesion transitoria a consent_owner; el esquema breakglass lo crea 0085 en cluster-post.) Se aplica ANTES de las migraciones de base (migrate.ts applyClusterScope, fase "cluster"); el REVOKE de integrity_owner, el cambio de dueño de la base y el modo REAL_DATA
+-- Roles de cluster nuevos de PR-7d y sus membresias. (Revision de seguridad del PR #109, F-PR7D-08: sin concesion transitoria a consent_owner; el esquema breakglass lo crea 0085 en cluster-post.) Se aplica ANTES de las migraciones de base (migrate.ts applyClusterScope, fase "cluster"); el REVOKE de integrity_owner, el cambio de dueño de la base y el modo REAL_DATA
 -- son de la fase POSTERIOR (0086, `-- scope: cluster-post`), que corre despues de las migraciones de base: una base nueva necesita que consent_owner conserve SET sobre integrity_owner mientras se aplican 0027, 0030, 0037...
 -- Se ejecuta como superusuario en CADA deploy y es idempotente (patron 0034/0075/0080). No fija contrasena (el repo no tiene credenciales; la de la ceremonia se entrega como verificador SCRAM, db/ceremonies/).
 --
 --   db_owner_nologin       NOLOGIN. Dueño de la BASE (ALTER DATABASE ... OWNER en 0086): quita a consent_owner el poder de DROP DATABASE y de conceder CREATE en la base. Sin miembros ni membresias.
---   breakglass_log_owner   NOLOGIN. Dueño del esquema breakglass y de breakglass.ceremony (0085). SIN miembros ni membresias, nunca (ni siquiera transitorias: F-PR7D-02): 0085 (cluster-post) lo asume con SET LOCAL ROLE desde el
+--   breakglass_log_owner   NOLOGIN. Dueño del esquema breakglass y de breakglass.ceremony (0085). SIN miembros ni membresias, nunca (ni siquiera transitorias: F-PR7D-08): 0085 (cluster-post) lo asume con SET LOCAL ROLE desde el
 --                          superusuario del deploy, sin membresia; nadie mas puede asumirlo (solo el superusuario del cluster escribe la tabla, en las ceremonias).
 --   ddl_breakglass         NOLOGIN al crearse, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, NOBYPASSRLS, NOINHERIT, CONNECTION LIMIT 1. Miembro (INHERIT FALSE, SET TRUE, sin ADMIN) de los 17 owners gobernados
 --                          (OWNER_ROLES de role-membership.ts menos consent_owner; la lista esta en 0086 y un test la compara). Es el UNICO rol que asume owners fuera de las migraciones aplicadas por consent_owner.
@@ -112,6 +112,6 @@ BEGIN
 
   SELECT * INTO rec FROM pg_catalog.pg_roles x WHERE x.rolname = 'breakglass_log_owner';
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member = rec.oid) THEN RAISE EXCEPTION '0084: breakglass_log_owner no es miembro de ningun rol'; END IF;
-  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid = rec.oid) THEN RAISE EXCEPTION '0084: breakglass_log_owner no puede tener miembros (INV-DBR-09, F-PR7D-02)'; END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.roleid = rec.oid) THEN RAISE EXCEPTION '0084: breakglass_log_owner no puede tener miembros (INV-DBR-09, F-PR7D-08)'; END IF;
 END
 $assert84$;

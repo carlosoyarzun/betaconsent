@@ -13,8 +13,8 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 import { evaluateBreakglass, readBreakglassSnapshot } from "../../../src/infra/adapters/postgres/breakglass-watch-reader.ts";
-import { checkDatabaseLevel, DDL_BREAKGLASS_SETTINGS } from "../../../src/infra/adapters/postgres/database-level.ts";
-import { applyClusterScope, loadMigrations } from "../../../src/infra/adapters/postgres/migrate.ts";
+import { checkBreakglassState, checkDatabaseLevel, DDL_BREAKGLASS_SETTINGS } from "../../../src/infra/adapters/postgres/database-level.ts";
+import { applyClusterPostScope, applyClusterScope, loadMigrations, revokeOnlyFailsafe } from "../../../src/infra/adapters/postgres/migrate.ts";
 import { BREAKGLASS_OWNER_ROLES, checkRoleMemberships, CONSENT_OWNER_SET_ROLES } from "../../../src/infra/adapters/postgres/role-membership.ts";
 import { checkConsentOwnerInventory } from "../../../src/infra/adapters/postgres/consent-owner-inventory.ts";
 import { generateCeremonyPassword, scramVerifier } from "../../../tools/ceremony/scram-verifier.ts";
@@ -39,7 +39,7 @@ pgTest("TEST-CNS-1854 pg: db_owner_nologin, breakglass_log_owner y ddl_breakglas
   assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
 
   // Estado a nivel de base: la base del test nace de CREATE DATABASE ... OWNER consent_owner (sin pasar por 0086), asi que se aplica la fase cluster-post dentro de una transaccion revertida.
-  assert.ok((await checkDatabaseLevel(admin, "IT0B_SYNTHETIC")).some((p) => /dueño de la base es consent_owner/.test(p)), "sin 0086 la base de este test es de consent_owner: lo detecta");
+  assert.deepEqual(await checkDatabaseLevel(admin, "IT0B_SYNTHETIC", { breakglassMustBeClosed: true }), [], "el harness deja las bases de test con el estado a nivel de base de 0086");
   for (const mode of ["IT0B_SYNTHETIC", "REAL_DATA"] as const) {
     await withClusterPostApplied(ctx, admin, mode, async () => {
       assert.deepEqual(await checkDatabaseLevel(admin, mode, { breakglassMustBeClosed: true }), [], mode);
@@ -188,8 +188,8 @@ pgTest("TEST-CNS-1858 pg: ENSAYO DE CEREMONIA (LOCAL, sintetico): abrir con veri
     u.password = encodeURIComponent(password);
     return u.toString();
   };
-  const run = (url: string, args: string[]): { out: string; err: string } => {
-    const r = spawnSync(psql, [url, "-v", "ON_ERROR_STOP=1", "-X", ...args], { encoding: "utf8", env: { ...process.env, PGOPTIONS: "" } });
+  const run = (url: string, args: string[], extraEnv: Record<string, string> = {}): { out: string; err: string } => {
+    const r = spawnSync(psql, [url, "-v", "ON_ERROR_STOP=1", "-X", ...args], { encoding: "utf8", env: { ...process.env, PGOPTIONS: "", ...extraEnv } });
     assert.equal(r.status, 0, `psql ${args.join(" ").replace(/verifier=\S+/, "verifier=<…>")}: ${r.stderr}`);
     return { out: r.stdout, err: r.stderr };
   };
@@ -212,7 +212,7 @@ pgTest("TEST-CNS-1858 pg: ENSAYO DE CEREMONIA (LOCAL, sintetico): abrir con veri
     step("before", { rolcanlogin: closed.canlogin, sessions: closed.sessions, watchFindings: 0 });
 
     // 1. ABRIR. El servidor solo recibe el verificador (hash salado); la contrasena en texto plano no sale del cliente.
-    const open = run(superuserUrl, ["-v", `ceremony_ref=${ref}`, "-v", "reason_code=REHEARSAL", "-v", "ticket_ref=CA-999", "-v", "valid_minutes=30", "-v", `verifier=${verifier}`, "-f", join(ROOT, "db/ceremonies/open.sql")]);
+    const open = run(superuserUrl, ["-v", `ceremony_ref=${ref}`, "-v", "reason_code=REHEARSAL", "-v", "ticket_ref=CA-999", "-v", "valid_minutes=30", "-f", join(ROOT, "db/ceremonies/open.sql")], { CNS_CEREMONY_VERIFIER: verifier });
     assert.match(open.out, /ceremonia abierta/);
     const opened = await state();
     assert.deepEqual([opened.canlogin, opened.hasPassword, opened.scram], [true, true, true]);
@@ -222,7 +222,7 @@ pgTest("TEST-CNS-1858 pg: ENSAYO DE CEREMONIA (LOCAL, sintetico): abrir con veri
     const row = (await admin.query("SELECT ceremony_ref, reason_code, ticket_ref, closed_at, valid_until - opened_at AS window FROM breakglass.ceremony WHERE ceremony_ref = $1", [ref])).rows[0];
     assert.deepEqual([row?.reason_code, row?.ticket_ref, row?.closed_at], ["REHEARSAL", "CA-999", null]);
     // Una segunda apertura con la ceremonia vigente se rechaza (una sola abierta).
-    const second = spawnSpawn(psql, superuserUrl, ["-v", "ON_ERROR_STOP=1", "-v", "ceremony_ref=CER-OTHER-0001", "-v", "reason_code=REHEARSAL", "-v", "ticket_ref=CA-999", "-v", "valid_minutes=5", "-v", `verifier=${verifier}`, "-f", join(ROOT, "db/ceremonies/open.sql")]);
+    const second = spawnSpawn(psql, superuserUrl, ["-v", "ON_ERROR_STOP=1", "-v", "ceremony_ref=CER-OTHER-0001", "-v", "reason_code=REHEARSAL", "-v", "ticket_ref=CA-999", "-v", "valid_minutes=5", "-f", join(ROOT, "db/ceremonies/open.sql")], { CNS_CEREMONY_VERIFIER: verifier });
     assert.notEqual(second.status, 0);
     assert.match(second.stdout + second.stderr, /ya hay una ceremonia abierta/);
     step("open", { rolcanlogin: true, scramVerifierStored: true, plaintextOnServer: false, reasonCode: "REHEARSAL", ticketRef: "CA-999", windowMinutes: 30 });
@@ -256,9 +256,16 @@ pgTest("TEST-CNS-1858 pg: ENSAYO DE CEREMONIA (LOCAL, sintetico): abrir con veri
     assert.equal((await admin.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'integrity' AND c.relname = 'ceremony_rehearsal_probe'")).rowCount, 0, "el DDL del ensayo no deja residuos en integrity");
     step("ddl", { script: "db/ceremonies/rehearsal-ddl.sql", scriptSha256: createHash("sha256").update(readFileSync(ddlFile)).digest("hex"), assumedRole: "integrity_owner", ownersAssumable: BREAKGLASS_OWNER_ROLES.length, deniedRoles: ["consent_owner", "consent_migrator", "app_rw"], logStatement: "ddl", logParameterMaxLength: 0 });
 
-    // 3. CERRAR.
+    // 3. CERRAR. Con una sesion de ddl_breakglass VIVA: close.sql la termina DESPUES del COMMIT de NOLOGIN y verifica que quedan 0 (F-PR7D-10).
+    const lingering = new pg.Client({ connectionString: asUser("ddl_breakglass", password) });
+    lingering.on("error", () => undefined); // la terminacion del backend emite un error en el cliente ocioso
+    await lingering.connect();
+    await lingering.query("SELECT 1");
+    assert.equal((await state()).sessions, 1);
     const close = run(superuserUrl, ["-v", `ceremony_ref=${ref}`, "-f", join(ROOT, "db/ceremonies/close.sql")]);
-    assert.match(close.out, /ceremonia cerrada/);
+    assert.match(close.out, /ceremonia cerrada.*0 verificadas/);
+    await assert.rejects(() => lingering.query("SELECT 1"), "la sesion viva fue terminada por close.sql");
+    await lingering.end().catch(() => undefined);
     const after = await state();
     assert.deepEqual([after.canlogin, after.hasPassword, after.sessions], [false, false, 0]);
     const closedRow = (await admin.query("SELECT closed_at IS NOT NULL AS closed FROM breakglass.ceremony WHERE ceremony_ref = $1", [ref])).rows[0];
@@ -292,8 +299,8 @@ pgTest("TEST-CNS-1858 pg: ENSAYO DE CEREMONIA (LOCAL, sintetico): abrir con veri
   assert.ok(!JSON.stringify(evidence).includes(password) && !JSON.stringify(evidence).includes(verifier));
 });
 
-function spawnSpawn(psql: string, url: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
-  return spawnSync(psql, [url, "-X", ...args], { encoding: "utf8" });
+function spawnSpawn(psql: string, url: string, args: string[], extraEnv: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
+  return spawnSync(psql, [url, "-X", ...args], { encoding: "utf8", env: { ...process.env, ...extraEnv } });
 }
 
 pgTest("TEST-CNS-1859 pg: breakglass-watch lee con integrity_chain_verifier (LOGIN de ddl_breakglass, sesiones y ceremonias abiertas) y no ve filas cerradas", async (ctx) => {
@@ -321,4 +328,159 @@ pgTest("TEST-CNS-1859 pg: breakglass-watch lee con integrity_chain_verifier (LOG
     await admin.query("ROLLBACK");
   }
   assert.ok(existsSync(join(ROOT, "infra/systemd/consent-breakglass-watch.timer")) && /OnUnitActiveSec=1min/.test(readFileSync(join(ROOT, "infra/systemd/consent-breakglass-watch.timer"), "utf8")));
+});
+
+// --- Correcciones de la revision de seguridad del PR #109 (F-PR7D-07..12). Viven en ESTE archivo (secuencial con 1858/1859): mutan roles globales y los demas archivos corren en paralelo. ---
+
+pgTest("TEST-CNS-1866 pg (DBR-12, F-PR7D-10): pg_db_role_setting (ALTER ROLE ... IN DATABASE ... SET) de un rol gobernado o una GUC sensible a nivel de base es diferencia en checkDatabaseLevel; una GUC inocua no", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const db = (await admin.query<{ d: string }>("SELECT quote_ident(current_database()) AS d")).rows[0]!.d;
+  await withClusterPostApplied(ctx, admin, "IT0B_SYNTHETIC", async () => {
+    assert.deepEqual(await checkDatabaseLevel(admin, "IT0B_SYNTHETIC", { breakglassMustBeClosed: true }), [], "linea base sana");
+    const deviations: Array<[string, RegExp]> = [
+      ["ALTER ROLE ddl_breakglass IN DATABASE %DB% SET log_statement = 'none'", /pg_db_role_setting fija log_statement para ddl_breakglass en esta base/],
+      ["ALTER ROLE ddl_breakglass IN DATABASE %DB% SET log_parameter_max_length = '-1'", /fija log_parameter_max_length para ddl_breakglass/],
+      ["ALTER ROLE integrity_owner IN DATABASE %DB% SET search_path = 'public'", /fija search_path para integrity_owner/],
+      ["ALTER ROLE integrity_chain_verifier IN DATABASE %DB% SET statement_timeout = '1s'", /fija statement_timeout para integrity_chain_verifier/],
+      ["ALTER DATABASE %DB% SET log_statement = 'none'", /fija log_statement a nivel de base/],
+      ["ALTER DATABASE %DB% SET session_replication_role = 'replica'", /fija session_replication_role a nivel de base/],
+    ];
+    for (const [sql, pattern] of deviations) {
+      await admin.query("SAVEPOINT dev");
+      await admin.query(sql.replaceAll("%DB%", db));
+      const problems = await checkDatabaseLevel(admin, "IT0B_SYNTHETIC", { breakglassMustBeClosed: true });
+      assert.ok(problems.some((p) => pattern.test(p)), `${sql} :: ${problems.join(" | ")}`);
+      await admin.query("ROLLBACK TO dev");
+    }
+    await admin.query("SAVEPOINT ok");
+    await admin.query(`ALTER DATABASE ${db} SET work_mem = '8MB'`);
+    assert.deepEqual(await checkDatabaseLevel(admin, "IT0B_SYNTHETIC", { breakglassMustBeClosed: true }), [], "una GUC inocua a nivel de base no es diferencia");
+    await admin.query("ROLLBACK TO ok");
+  });
+});
+
+pgTest("TEST-CNS-1867 pg (P1-1, F-PR7D-07): si la fase posterior falla, consent_owner NO conserva SET sobre integrity_owner ni breakglass_log_owner (transaccion propia de solo-REVOKE); los REVOKE confirmados sobreviven a un fallo de aserción; una ceremonia abierta falla antes de aplicar nada", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  const canSet = async (member: string, role: string): Promise<boolean> => (await admin.query<{ x: boolean }>("SELECT pg_has_role($1, $2, 'SET') AS x", [member, role])).rows[0]!.x;
+  const migrations = loadMigrations(MIGRATIONS_DIR);
+  const post = migrations.filter((m) => m.scope === "cluster-post");
+  const injected = { ...post[0]!, version: "9999", name: "falla_inyectada", sql: "-- scope: cluster-post\nSELECT 1/0;\n" };
+  await ctx.withRoleCatalogLock(async () => {
+    try {
+      // (1) Fallo inyectado ANTES de los REVOKE de 0086: el ROLLBACK de la fase deshace todo y la transaccion de solo-REVOKE deja a consent_owner sin SET. El catalogo de roles es GLOBAL y los demas archivos de test corren en
+      // paralelo: este test NO re-otorga el SET (partiria sus aserciones de membresia); que el solo-REVOKE revoca de verdad lo prueban TEST-CNS-1863 (orden, transaccion y parametros) y el replay de revokeOnlyFailsafe sobre el catalogo.
+      assert.equal(await canSet("consent_owner", "integrity_owner"), false, "estado inicial del cluster compartido");
+      await assert.rejects(() => applyClusterPostScope(admin, [injected, ...post], { mode: "IT0B_SYNTHETIC" }), (e: unknown) => codeOf(e) === "22012");
+      assert.equal(await canSet("consent_owner", "integrity_owner"), false, "P1-1: fallo inyectado en la fase post => consent_owner sin SET sobre integrity_owner");
+      assert.equal(await canSet("consent_owner", "breakglass_log_owner"), false);
+      assert.equal((await admin.query<{ t: string }>("SELECT current_setting('cns.db_role_mode', true) AS t")).rows[0]?.t ?? "", "", "el GUC de modo se limpia");
+      await revokeOnlyFailsafe(admin, "IT0B_SYNTHETIC"); // idempotente
+      assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
+
+      // (3) Los REVOKE se confirman en su transaccion y la aserción corre en otra: un fallo de aserción (esta base no es de db_owner_nologin) no los deshace.
+      const revokeOnly = { ...post[0]!, version: "9998", name: "solo_revoke", sql: "-- scope: cluster-post\nREVOKE integrity_owner FROM consent_owner;\n" };
+      const dbq = (await admin.query<{ d: string }>("SELECT quote_ident(current_database()) AS d")).rows[0]!.d;
+      await admin.query(`ALTER DATABASE ${dbq} OWNER TO consent_owner`); // fuerza el fallo de aserción de nivel de base (solo ESTA base)
+      try {
+        await assert.rejects(() => applyClusterPostScope(admin, [revokeOnly], { mode: "IT0B_SYNTHETIC" }), /Aserción de membresía de roles y de nivel de base.*dueño de la base es consent_owner/);
+      } finally {
+        await admin.query(`ALTER DATABASE ${dbq} OWNER TO db_owner_nologin`);
+      }
+      assert.equal(await canSet("consent_owner", "integrity_owner"), false, "el REVOKE confirmado sobrevive al fallo de aserción");
+
+      // (4) Ceremonia abierta (ddl_breakglass con LOGIN): la fase cluster falla ANTES de aplicar nada y la fase posterior deja el REVOKE.
+      await admin.query("ALTER ROLE ddl_breakglass LOGIN");
+      try {
+        const snapshot = async (): Promise<string> => JSON.stringify((await admin.query("SELECT u.rolname AS m, r.rolname AS r FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles u ON u.oid = a.member ORDER BY 1, 2")).rows);
+        const before = await snapshot();
+        await assert.rejects(() => applyClusterScope(admin, migrations, { mode: "IT0B_SYNTHETIC", deferPost: true }), /Precondición del deploy no cumplida \(nada se aplicó\).*ddl_breakglass tiene LOGIN/);
+        assert.equal(await snapshot(), before, "la fase cluster no toco el catalogo");
+        await assert.rejects(() => applyClusterPostScope(admin, post, { mode: "IT0B_SYNTHETIC" }), /Precondición del deploy no cumplida/);
+        assert.equal(await canSet("consent_owner", "integrity_owner"), false, "precondicion incumplida en la fase posterior: solo-REVOKE");
+      } finally {
+        await admin.query("ALTER ROLE ddl_breakglass NOLOGIN");
+      }
+    } finally {
+      await admin.query("REVOKE integrity_owner FROM consent_owner").catch(() => undefined);
+    }
+  });
+  assert.equal(await canSet("consent_owner", "integrity_owner"), false);
+  assert.deepEqual(await checkRoleMemberships(admin, "IT0B_SYNTHETIC"), []);
+});
+
+pgTest("TEST-CNS-1868 pg (P1-2, F-PR7D-08): nadie es miembro de breakglass_log_owner; el migrador no puede alterar breakglass.ceremony (triggers, policies, grants, esquema); el estado exacto se mantiene tras re-ejecutar la fase posterior y cada desvio (trigger deshabilitado, FORCE RLS, policy, ACL, dueño) es detectado por el deploy y por la vigilancia", async (ctx) => {
+  const admin = await ctx.connectAsSuperuser();
+  assert.equal((await admin.query("SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE r.rolname = 'breakglass_log_owner'")).rowCount, 0, "ni siquiera el migrador es miembro");
+  for (const who of ["consent_owner", "consent_migrator"]) {
+    assert.equal((await admin.query<{ x: boolean }>("SELECT pg_has_role($1, 'breakglass_log_owner', 'USAGE') OR pg_has_role($1, 'breakglass_log_owner', 'SET') AS x", [who])).rows[0]!.x, false, who);
+  }
+  // El migrador (consent_migrator -> SET ROLE consent_owner) no puede tocar el esquema ni la tabla.
+  const mig = await ctx.connectAs("consent_migrator");
+  await mig.query("BEGIN");
+  try {
+    await mig.query("SET LOCAL ROLE consent_owner");
+    await mig.query("SAVEPOINT s0");
+    await assert.rejects(() => mig.query("SET LOCAL ROLE breakglass_log_owner"), (e: unknown) => codeOf(e) === "42501");
+    await mig.query("ROLLBACK TO s0");
+    for (const sql of [
+      "ALTER TABLE breakglass.ceremony DISABLE TRIGGER ceremony_guard",
+      "ALTER TABLE breakglass.ceremony NO FORCE ROW LEVEL SECURITY",
+      "CREATE POLICY p ON breakglass.ceremony FOR ALL USING (true)",
+      "GRANT INSERT ON breakglass.ceremony TO consent_owner",
+      "DELETE FROM breakglass.ceremony",
+      "CREATE TABLE breakglass.intruso (x int)",
+      "DROP SCHEMA breakglass CASCADE",
+      "ALTER SCHEMA breakglass OWNER TO consent_owner",
+      "CREATE OR REPLACE FUNCTION breakglass.ceremony_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+    ]) {
+      await mig.query("SAVEPOINT s");
+      await assert.rejects(() => mig.query(sql), (e: unknown) => ["42501"].includes(codeOf(e) ?? ""), sql);
+      await mig.query("ROLLBACK TO s");
+    }
+  } finally {
+    await mig.query("ROLLBACK");
+  }
+  // Estado exacto: ahora, y tras re-ejecutar la fase posterior (0085 se re-ejecuta en cada deploy) en ambos modos.
+  assert.deepEqual(await checkBreakglassState(admin), []);
+  for (const mode of ["IT0B_SYNTHETIC", "REAL_DATA"] as const) {
+    await withClusterPostApplied(ctx, admin, mode, async () => {
+      assert.deepEqual(await checkBreakglassState(admin), [], `${mode}: tras re-ejecutar cluster-post`);
+      assert.equal((await admin.query("SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE r.rolname = 'breakglass_log_owner'")).rowCount, 0, `${mode}: sin membresias de breakglass_log_owner`);
+    });
+  }
+  // Desvios (superusuario, con ROLLBACK): el deploy (checkDatabaseLevel) y la vigilancia (readBreakglassSnapshot/evaluateBreakglass) los ven.
+  const ver = await ctx.connectAs("integrity_chain_verifier");
+  const deviations: Array<[string, RegExp]> = [
+    ["ALTER TABLE breakglass.ceremony DISABLE TRIGGER ceremony_guard", /falta trigger\|ceremony_guard\|A\|/],
+    ["ALTER TABLE breakglass.ceremony ENABLE REPLICA TRIGGER ceremony_no_truncate", /sobra trigger\|ceremony_no_truncate\|R\|/],
+    ["ALTER TABLE breakglass.ceremony ENABLE TRIGGER ceremony_guard", /sobra trigger\|ceremony_guard\|O\|/],
+    ["ALTER TABLE breakglass.ceremony NO FORCE ROW LEVEL SECURITY", /falta rel\|ceremony\|r\|breakglass_log_owner\|rls=true\|force=true/],
+    ["ALTER TABLE breakglass.ceremony DISABLE ROW LEVEL SECURITY", /falta rel\|ceremony\|r/],
+    ["CREATE POLICY extra ON breakglass.ceremony FOR ALL TO app_rw USING (true)", /sobra policy\|extra\|/],
+    ["GRANT INSERT ON breakglass.ceremony TO consent_owner", /sobra rel\|ceremony\|r/],
+    ["GRANT SELECT (reason_code) ON breakglass.ceremony TO integrity_chain_verifier", /sobra col_acl\|reason_code\|/],
+    ["GRANT CREATE ON SCHEMA breakglass TO consent_owner", /sobra schema\|/],
+    ["GRANT USAGE ON SCHEMA breakglass TO PUBLIC", /sobra schema\|/],
+    ["ALTER TABLE breakglass.ceremony OWNER TO consent_owner", /sobra rel\|ceremony\|r\|consent_owner/],
+    ["ALTER SCHEMA breakglass OWNER TO consent_owner", /sobra schema\|owner=consent_owner/],
+    ["ALTER FUNCTION breakglass.ceremony_guard() OWNER TO consent_owner", /sobra fn\|breakglass\.ceremony_guard\(\)\|consent_owner/],
+    ["CREATE TABLE breakglass.intruso (x int)", /sobra rel\|intruso\|r/],
+    ["CREATE FUNCTION breakglass.otra() RETURNS int LANGUAGE sql AS 'SELECT 1'", /sobra fn\|breakglass\.otra/],
+    ["ALTER TABLE breakglass.ceremony DROP CONSTRAINT ceremony_window", /falta constraint\|ceremony_window\|c/],
+  ];
+  for (const [sql, pattern] of deviations) {
+    await admin.query("BEGIN");
+    try {
+      await admin.query(sql);
+      const problems = await checkBreakglassState(admin);
+      assert.ok(problems.some((p) => pattern.test(p)), `${sql} :: ${problems.join(" | ")}`);
+      assert.ok((await checkDatabaseLevel(admin, "IT0B_SYNTHETIC")).some((p) => pattern.test(p)), `checkDatabaseLevel: ${sql}`);
+      const findings = evaluateBreakglass(await readBreakglassSnapshot(admin)).map((f) => f.code);
+      assert.ok(findings.includes("STATE_DRIFT"), `vigilancia: ${sql} :: ${findings.join(",")}`);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  }
+  // La vigilancia (con integrity_chain_verifier) ve el estado sano sin hallazgos.
+  assert.deepEqual(evaluateBreakglass(await readBreakglassSnapshot(ver)), []);
 });

@@ -8,7 +8,7 @@
 --
 -- Variables: ceremony_ref (referencia opaca, ^[A-Za-z0-9][A-Za-z0-9._-]{5,63}$), reason_code (DDL_LEDGER | DDL_SCHEMA | PRINCIPAL_BOOTSTRAP | INCIDENT_RECOVERY | REHEARSAL), ticket_ref (Jira CA-n), valid_minutes (1..60).
 -- El verificador (SCRAM-SHA-256$<iter>:<salt>$<StoredKey>:<ServerKey>) se lee del ENTORNO con \getenv (variable CNS_CEREMONY_VERIFIER; psql 15+), NUNCA por argv (-v verifier=...): un argumento de linea de comandos
--- queda visible en `ps` y en el historial del shell (F-PR7D-07). Sin personas, sin datos del dominio. Solo DDL en la sesion de la ceremonia (la sesion usa log_statement = 'ddl', sin parametros).
+-- queda visible en `ps` y en el historial del shell (F-PR7D-10). Sin personas, sin datos del dominio. Solo DDL en la sesion de la ceremonia (la sesion usa log_statement = 'ddl', sin parametros).
 -- El ancla firmada antes/despues de la ceremonia (Q13) llega con PR-7f (F-R6-1, C-7 pendiente de Carlos): hasta entonces la evidencia es SECUNDARIA (fila de ceremonia + log de sesion).
 
 \set ON_ERROR_STOP on
@@ -16,7 +16,7 @@
 -- Este script no deja el verificador ni nada de la ceremonia en el log del servidor de esta sesion de superusuario.
 SET log_statement = 'none';
 SET log_min_duration_statement = -1;
--- pg_stat_statements registraria el ALTER ROLE ... PASSWORD (utilidad) con el verificador: no se rastrean sentencias de utilidad en esta sesion (F-PR7D-07). Si la extension no esta cargada, es un placeholder inocuo.
+-- pg_stat_statements registraria el ALTER ROLE ... PASSWORD (utilidad) con el verificador: no se rastrean sentencias de utilidad en esta sesion (F-PR7D-10). Si la extension no esta cargada, es un placeholder inocuo.
 SET pg_stat_statements.track_utility = off;
 \getenv verifier CNS_CEREMONY_VERIFIER
 

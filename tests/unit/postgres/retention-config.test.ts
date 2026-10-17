@@ -80,7 +80,7 @@ test("TEST-CNS-1312 el nucleo del CLI purga purge_run primero, llama ops.purge_p
 
 function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error", purgeExecRow?: { app_rw: boolean; platform_rw: boolean }): FakeClient {
   return new FakeClient((text) => {
-    const dbLevel = databaseLevelRows(text); // PR-7d (F-PR7D-05): STAGING exige el estado a nivel de base
+    const dbLevel = databaseLevelRows(text); // PR-7d (F-PR7D-10): STAGING exige el estado a nivel de base
     if (dbLevel !== undefined) return dbLevel;
     if (text.includes("server_version_num")) return { rows: [{ server_version_num: "180000" }] };
     if (text.includes("V2|trigger|")) return { rows: CONSENT_OWNER_INVENTORY_ALLOWLIST.map((line) => ({ line })) }; // PR-7c (F-PR7-01): inventario de consent_owner = allowlist

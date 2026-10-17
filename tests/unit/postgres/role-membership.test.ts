@@ -78,7 +78,7 @@ test("TEST-CNS-1343 diffMemberships: igualdad exacta (extra, faltante, opciones 
   assert.throws(() => resolveDbRoleMode({ CNS_DB_ROLE_MODE: "otro" }, "LOCAL"), RoleModeError);
 });
 
-/** `applied`: versiones ya registradas en ops.schema_migration (el runner calcula con ellas si hay migraciones de base pendientes, F-PR7D-03). Por defecto la base esta al dia (0001). */
+/** `applied`: versiones ya registradas en ops.schema_migration (el runner calcula con ellas si hay migraciones de base pendientes, F-PR7D-09). Por defecto la base esta al dia (0001). */
 function fakeSuperuser(rows: readonly MembershipEdge[], mode: "IT0B_SYNTHETIC" | "REAL_DATA" = "IT0B_SYNTHETIC", applied: readonly string[] = ["0001"]): FakeClient {
   return new FakeClient((text) => {
     if (text.includes("to_regclass('ops.schema_migration')")) return { rows: [{ present: true }] };
@@ -107,7 +107,7 @@ test("TEST-CNS-1345 applyClusterScope: tras las migraciones de cluster afirma la
   // PR-7d: REAL_DATA esta activo como modo verificable: su lista exacta pasa y la de IT0B no.
   assert.deepEqual(await applyClusterScope(fakeSuperuser(EXPECTED_MEMBERSHIPS.REAL_DATA, "REAL_DATA"), migrations, { mode: "REAL_DATA" }), ["0000"]);
   await assert.rejects(() => applyClusterScope(fakeSuperuser(EXPECTED_MEMBERSHIPS.IT0B_SYNTHETIC, "REAL_DATA"), migrations, { mode: "REAL_DATA" }), /INV-DBR-03.*consent_owner -> /);
-  // Una ceremonia abierta (ddl_breakglass con LOGIN): las PRECONDICIONES fallan ANTES de la fase cluster (F-PR7D-01: nada se aplica, ni BEGIN ni SQL de cluster) y, si el LOGIN aparece despues, la aserción final
+  // Una ceremonia abierta (ddl_breakglass con LOGIN): las PRECONDICIONES fallan ANTES de la fase cluster (F-PR7D-07: nada se aplica, ni BEGIN ni SQL de cluster) y, si el LOGIN aparece despues, la aserción final
   // (FUERA de la transaccion, que ya confirmo) lo detecta (INV-DBR-09).
   const base = (text: string): Partial<import("pg").QueryResult> | undefined => {
     if (text.includes("to_regclass('ops.schema_migration')")) return { rows: [{ present: true }] };
@@ -128,7 +128,7 @@ test("TEST-CNS-1345 applyClusterScope: tras las migraciones de cluster afirma la
   await assert.rejects(() => applyClusterScope(lateOpen, migrations, { mode: "IT0B_SYNTHETIC" }), /ddl_breakglass tiene LOGIN fuera de una ceremonia/);
   const iCommit = lateOpen.queries.findIndex((q) => q.text === "COMMIT");
   const iAssertQuery = lateOpen.queries.findIndex((q) => q.text.includes("u.rolname AS member"));
-  assert.ok(iCommit >= 0 && iAssertQuery > iCommit, "la aserción corre DESPUES del COMMIT (un fallo de aserción ya no deshace el REVOKE; F-PR7D-01)");
+  assert.ok(iCommit >= 0 && iAssertQuery > iCommit, "la aserción corre DESPUES del COMMIT (un fallo de aserción ya no deshace el REVOKE; F-PR7D-07)");
   // deferPost: sin aserción ni archivos cluster-post (se hacen despues de las migraciones de base).
   const post = [parseMigration("0000_roles.sql", "-- scope: cluster\nSELECT 1;\n"), parseMigration("0002_post.sql", "-- scope: cluster-post\nSELECT 3;\n")];
   const deferred = fakeSuperuser([]);

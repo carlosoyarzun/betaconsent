@@ -8,7 +8,7 @@
 -- root/superusuario (R-03/R-16), cubierto por la vigilancia (breakglass-watch) y por la ancla externa de PR-7f (aun no implementada); NO es una garantia contra root.
 -- Ventana P-46 <= 60 min: CHECK en la tabla (valid_until > opened_at y <= opened_at + 60 min).
 --
--- Corre como SUPERUSUARIO del deploy en la fase `cluster-post` (F-PR7D-02, revision de seguridad del PR #109): el esquema y la tabla los crea el superusuario con SET LOCAL ROLE breakglass_log_owner, SIN que consent_owner (el
+-- Corre como SUPERUSUARIO del deploy en la fase `cluster-post` (F-PR7D-08, revision de seguridad del PR #109): el esquema y la tabla los crea el superusuario con SET LOCAL ROLE breakglass_log_owner, SIN que consent_owner (el
 -- migrador) sea miembro de ese rol en ningun momento. Antes (scope database) consent_owner recibia una membresia SET transitoria en CADA deploy y podia alterar breakglass.ceremony (DISABLE TRIGGER, DELETE/UPDATE, CREATE POLICY,
 -- GRANT INSERT a si mismo); ahora no puede asumir el rol ni tiene USAGE/CREATE en el esquema. Idempotente (se re-ejecuta en cada deploy). Las aserciones exactas (dueño, tgenabled = 'A' en los 2 triggers, RLS forzada, UNA policy,
 -- ACL exacta) las hace database-level.ts (checkDatabaseLevel: deploy, startup y vigilancia), no un bloque SQL de esta migracion. USAGE y SELECT por columnas de breakglass.ceremony para integrity_chain_verifier (vigilancia de

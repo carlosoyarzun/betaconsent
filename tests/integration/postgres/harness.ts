@@ -21,6 +21,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { CONNECT_ROLES } from "../../../src/infra/adapters/postgres/database-level.ts";
 import type { Client } from "pg";
 import {
   applyClusterPostScope,
@@ -303,6 +304,12 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
     try {
       const template = await provisionTemplate(config, admin);
       await admin.query(`CREATE DATABASE ${quoteIdent(dbName)} TEMPLATE ${quoteIdent(template)} OWNER consent_owner`);
+      // F-PR7D-10: STAGING exige el estado a nivel de base en el arranque; las bases de test lo cumplen (lo que hace 0086 en la base de la aplicacion). Solo ACL/dueño de ESTA base (no toca el catalogo global de roles).
+      const q = quoteIdent(dbName);
+      await admin.query(`ALTER DATABASE ${q} OWNER TO db_owner_nologin`);
+      await admin.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${q} FROM PUBLIC`);
+      for (const r of CONNECT_ROLES) await admin.query(`GRANT CONNECT ON DATABASE ${q} TO ${quoteIdent(r)}`);
+      await admin.query(`GRANT CREATE ON DATABASE ${q} TO consent_owner`);
     } finally {
       await admin.query("SELECT pg_advisory_unlock($1)", [HARNESS_LOCK_KEY]);
     }

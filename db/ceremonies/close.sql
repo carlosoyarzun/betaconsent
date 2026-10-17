@@ -19,7 +19,7 @@ SELECT (count(*) = 1) AS closed_ok FROM breakglass.ceremony WHERE ceremony_ref =
 \endif
 COMMIT;
 
--- Las sesiones se terminan DESPUES del COMMIT de NOLOGIN (F-PR7D-04): con la credencial ya vencida nadie puede abrir una sesion nueva entre la terminacion y el cambio. pg_terminate_backend es asincrono: se
+-- Las sesiones se terminan DESPUES del COMMIT de NOLOGIN (F-PR7D-10): con la credencial ya vencida nadie puede abrir una sesion nueva entre la terminacion y el cambio. pg_terminate_backend es asincrono: se
 -- reintenta y se VERIFICA que no queda ninguna sesion de ddl_breakglass; si queda alguna, el script falla (la fila ya esta cerrada; la vigilancia reportaria SESSION_WITHOUT_CEREMONY).
 SELECT pg_catalog.pg_terminate_backend(a.pid) FROM pg_catalog.pg_stat_activity a WHERE a.usename = 'ddl_breakglass';
 SELECT pg_catalog.pg_sleep(0.5);

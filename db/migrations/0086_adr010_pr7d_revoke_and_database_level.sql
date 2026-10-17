@@ -5,7 +5,7 @@
 --
 -- FASE POSTERIOR del alcance de superusuario (migrate.ts applyClusterPostScope): corre DESPUES de las migraciones de base, en CADA deploy, y es idempotente. Por que no esta en la fase cluster: 0026 re-otorga
 -- `consent_owner -> integrity_owner` (y 0028/0034/0046/0064/0080 los demas SET) en cada corrida; una base NUEVA aplica 0027, 0030, 0037, ... con SET LOCAL ROLE de esos owners, asi que el revoke solo puede ir al final del deploy.
--- Revision de seguridad del PR #109 (F-PR7D-01, F-PR7D-03): applyClusterScope solo difiere esta fase si hay migraciones de base pendientes (calculado antes con ops.schema_migration; en REAL_DATA no se difiere nunca si ops.schema_migration
+-- Revision de seguridad del PR #109 (F-PR7D-07, F-PR7D-09): applyClusterScope solo difiere esta fase si hay migraciones de base pendientes (calculado antes con ops.schema_migration; en REAL_DATA no se difiere nunca si ops.schema_migration
 -- existe); sin pendientes, cluster + cluster-post van en UNA transaccion. NO lleva bloque de aserciones: las aserciones (membresias exactas, nivel de base, esquema breakglass exacto) las hace el runner EN OTRA transaccion/consulta DESPUES
 -- de confirmar estos REVOKE (un fallo de aserción ya no deshace el revoke) y, si esta fase falla, el runner ejecuta una transaccion propia que solo revoca. Las PRECONDICIONES (ceremonia cerrada) se verifican antes de la fase cluster.
 -- Si el deploy se interrumpe entre ambas fases, startup-checks y la aserción de membresía lo detectan (INV-DBR-03; F-PR7-05).

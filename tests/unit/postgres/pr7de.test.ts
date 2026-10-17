@@ -1,6 +1,6 @@
 // Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7d/7e), decisiones de Carlos del 2026-10-16 (C-1, C-4, C-5, C-9), F-PR7-03/06/07/12, F-PR7C-08. Sin Postgres. SYNTHETIC ONLY.
 // TEST-CNS-1850 (vigilancia de break-glass: evaluacion pura), 1851 (verificador SCRAM: vector RFC 7677 y formato), 1852 (coherencia de los archivos SQL: lista derivada de owners, ceremonias solo DDL y sin contrasena en texto plano),
-// 1853 (inventario de consent_owner por modo, por dueño independiente del SET y por version mayor de PostgreSQL, F-PR7C-08, F-PR7D-06).
+// 1853 (inventario de consent_owner por modo, por dueño independiente del SET y por version mayor de PostgreSQL, F-PR7C-08, F-PR7D-11).
 
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
@@ -104,7 +104,7 @@ test("TEST-CNS-1853 inventario de consent_owner: allowlist por modo (REAL_DATA s
   const it0b = inventoryAllowlistFor("IT0B_SYNTHETIC");
   const real = inventoryAllowlistFor("REAL_DATA");
   assert.equal(it0b, CONSENT_OWNER_INVENTORY_ALLOWLIST);
-  // F-PR7D-06: allowlist POR DUEÑO, independiente del SET: integrity_owner (8) y breakglass_log_owner (1) estan en AMBOS modos aunque consent_owner no pueda asumirlos.
+  // F-PR7D-11: allowlist POR DUEÑO, independiente del SET: integrity_owner (8) y breakglass_log_owner (1) estan en AMBOS modos aunque consent_owner no pueda asumirlos.
   const fnRows = (list: readonly string[], owner: string): string[] => list.filter((l) => l.startsWith(`V2|fn|${owner}|`));
   assert.equal(fnRows(it0b, "integrity_owner").length, 8, "las 8 filas del ledger se reponen");
   assert.equal(fnRows(it0b, "breakglass_log_owner").length, 1);

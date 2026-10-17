@@ -20,10 +20,11 @@ Casos: DDL del ledger (capa 2, EN1, I9…), esquemas nuevos en REAL_DATA (F-PR7-
 2. **Verificador SCRAM en el cliente** (la contraseña en texto plano nunca llega al servidor ni a sus logs):
    `VERIFIER=$(node tools/ceremony/scram-verifier.ts)` — el verificador va a stdout; la contraseña aleatoria de 24 bytes va a **stderr**, se muestra una sola vez y se entrega fuera de banda a quien abrirá la sesión.
 3. **Abrir** (superusuario, conectado a la **base de la aplicación**):
-   `psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -v ceremony_ref=CER-AAAAMMDD-NN -v reason_code=DDL_LEDGER -v ticket_ref=CA-nnn -v valid_minutes=30 -v verifier="$VERIFIER" -f db/ceremonies/open.sql`
+   `CNS_CEREMONY_VERIFIER="$VERIFIER" psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -v ceremony_ref=CER-AAAAMMDD-NN -v reason_code=DDL_LEDGER -v ticket_ref=CA-nnn -v valid_minutes=30 -f db/ceremonies/open.sql`
+   El verificador entra por el **entorno** (`\getenv`, psql 15+), nunca por argv (`ps`, historial del shell); la sesión fija `pg_stat_statements.track_utility = off` (F-PR7D-10).
    Inserta la fila, habilita `LOGIN` con `VALID UNTIL` (≤ 60 min, P-46; CHECK de la tabla) y rechaza una segunda ceremonia abierta. La sesión de superusuario usa `log_statement = 'none'` para no escribir el verificador.
 4. **Ejecutar la DDL** como `ddl_breakglass` (`psql "postgresql://ddl_breakglass@host/db" -f <script>`). Una sola sesión a la vez.
-5. **Cerrar** (siempre, aunque falle la DDL): `psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -v ceremony_ref=… -f db/ceremonies/close.sql`. `NOLOGIN`, contraseña descartada, `VALID UNTIL` vencido, sesiones terminadas y `closed_at`.
+5. **Cerrar** (siempre, aunque falle la DDL): `psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -v ceremony_ref=… -f db/ceremonies/close.sql`. `NOLOGIN`, contraseña descartada, `VALID UNTIL` vencido y `closed_at` en una transacción; DESPUÉS del COMMIT termina las sesiones de `ddl_breakglass` y verifica que quedan 0 (falla si no).
 6. **Después**: verificar con `chain-verifier` (corrida manual) y, si hubo DDL de `integrity.*`, actualizar el spec/inventario; registrar el acta en Jira CA. Un **deploy con una ceremonia abierta falla cerrado** (aserción posterior al deploy, INV-DBR-09): cierre primero.
 
 ## Vigilancia (T-8, F-PR7-03, C-9)

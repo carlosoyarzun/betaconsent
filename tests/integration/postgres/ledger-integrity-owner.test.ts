@@ -65,7 +65,8 @@ pgTest("TEST-CNS-1231 pg: el ledger pertenece a integrity_owner, sin CREATE temp
   for (const o of owners) assert.equal(o.owner, "integrity_owner", o.what);
   // Supuesto de 0027: consent_owner es dueno de la base (si no, el GRANT CREATE ON DATABASE aborta la migracion).
   const dba = (await admin.query<{ owner: string }>("SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()")).rows[0];
-  assert.equal(dba?.owner, "consent_owner");
+  // (La base de prueba ya tiene el estado posterior a 0086: el harness la transfiere a db_owner_nologin, F-PR7D-10.)
+  assert.equal(dba?.owner, "db_owner_nologin");
   // La revocacion del CREATE temporal en la base la afirma 0027 dentro de su tx (la base de prueba nace con
   // CREATE DATABASE ... TEMPLATE, que no copia datacl, asi que verificarlo aqui no probaria nada).
   const wrong = (await admin.query<{ n: number }>(

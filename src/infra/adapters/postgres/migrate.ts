@@ -22,7 +22,7 @@ import { checkDatabaseLevel } from "./database-level.ts";
 import { BREAKGLASS_OWNER_ROLES, checkRoleMemberships, resolveDbRoleMode } from "./role-membership.ts";
 import type { DbRoleMode } from "./role-membership.ts";
 
-/** Tope de espera de un advisory lock del runner (ADR-010 rev. 6 PR-7d, F-PR7D-04): un lock tomado por otro proceso no bloquea el deploy para siempre. */
+/** Tope de espera de un advisory lock del runner (ADR-010 rev. 6 PR-7d, F-PR7D-09): un lock tomado por otro proceso no bloquea el deploy para siempre. */
 export const DEFAULT_LOCK_TIMEOUT_MS = 120_000;
 const LOCK_POLL_MS = 100;
 
@@ -32,7 +32,7 @@ async function acquireAdvisoryLock(db: Queryable, key: number, timeoutMs: number
   for (;;) {
     const r = await db.query<{ locked: boolean }>("SELECT pg_try_advisory_lock($1) AS locked", [key]);
     if (r.rows[0]?.locked === true) return;
-    if (Date.now() >= deadline) throw new MigrationError(`No se obtuvo el lock del runner de migraciones en ${timeoutMs} ms (otro deploy o una ceremonia lo retiene); no se aplica nada (F-PR7D-04).`);
+    if (Date.now() >= deadline) throw new MigrationError(`No se obtuvo el lock del runner de migraciones en ${timeoutMs} ms (otro deploy o una ceremonia lo retiene); no se aplica nada (F-PR7D-09).`);
     await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
   }
 }
@@ -118,7 +118,7 @@ export interface ClusterScopeOptions {
   /** Entorno del deploy (LOCAL/DEV/STAGING). Si falta CNS_DB_ROLE_MODE, solo LOCAL y DEV caen a IT0B_SYNTHETIC; sin entorno declarado es error. */
   environment?: string;
   /**
-   * ADR-010 rev. 6 PR-7d (F-PR7D-03): la fase `cluster-post` y su aserción se difieren SOLO si hay migraciones de base pendientes (el runner lo calcula con ops.schema_migration antes de empezar): una base nueva necesita que
+   * ADR-010 rev. 6 PR-7d (F-PR7D-09): la fase `cluster-post` y su aserción se difieren SOLO si hay migraciones de base pendientes (el runner lo calcula con ops.schema_migration antes de empezar): una base nueva necesita que
    * consent_owner conserve SET sobre integrity_owner (re-otorgado por 0026) mientras se aplican 0027, 0030, 0037... En REAL_DATA no se difiere nunca si ops.schema_migration existe (una base viva no puede dejar abierto el SET).
    * `true` fuerza el diferimiento (tests); `false`/ausente = decision automatica. Sin diferimiento la fase cluster y la posterior van en UNA transaccion (el catalogo no muestra el estado intermedio).
    */
@@ -137,14 +137,14 @@ async function withDeclaredMode<T>(superuser: Queryable, mode: DbRoleMode, fn: (
   }
 }
 
-/** Aserción posterior al deploy (INV-DBR-03, INV-DBR-09): membresias exactas del modo y estado a nivel de base (dueño, CONNECT, ddl_breakglass, esquema breakglass exacto). Cualquier diferencia aborta (fail-closed). Corre FUERA de la transaccion que confirmo los REVOKE (F-PR7D-01). */
+/** Aserción posterior al deploy (INV-DBR-03, INV-DBR-09): membresias exactas del modo y estado a nivel de base (dueño, CONNECT, ddl_breakglass, esquema breakglass exacto). Cualquier diferencia aborta (fail-closed). Corre FUERA de la transaccion que confirmo los REVOKE (F-PR7D-07). */
 async function assertDeployState(superuser: Queryable, mode: DbRoleMode, stage: string): Promise<void> {
   const problems = [...(await checkRoleMemberships(superuser, mode)), ...(await checkDatabaseLevel(superuser, mode, { breakglassMustBeClosed: true }))];
   if (problems.length > 0) throw new MigrationError(`Aserción de membresía de roles y de nivel de base ${stage} falló (INV-DBR-03, INV-DBR-09): ${problems.join("; ")}.`);
 }
 
 /**
- * ADR-010 rev. 6 PR-7d (F-PR7D-01/F-PR7-05): PRECONDICIONES de la fase posterior, verificadas ANTES de tocar nada (antes de la fase cluster, que re-otorga SET): ddl_breakglass sin LOGIN y sin ceremonia abierta. Un deploy con una
+ * ADR-010 rev. 6 PR-7d (F-PR7D-07/F-PR7-05): PRECONDICIONES de la fase posterior, verificadas ANTES de tocar nada (antes de la fase cluster, que re-otorga SET): ddl_breakglass sin LOGIN y sin ceremonia abierta. Un deploy con una
  * ceremonia abierta falla cerrado SIN haber cambiado el catalogo (no queda un SET re-otorgado ni a medio revocar). Superusuario conectado a la base de la aplicacion.
  */
 export async function assertDeployPreconditions(superuser: Queryable): Promise<void> {
@@ -163,7 +163,7 @@ export async function assertDeployPreconditions(superuser: Queryable): Promise<v
 }
 
 /**
- * ADR-010 rev. 6 PR-7d (F-PR7D-01, F-PR7-05): transaccion PROPIA que solo REVOCA. Se ejecuta si la fase posterior falla: el ROLLBACK de esa fase deshace el REVOKE y consent_owner conservaria el SET que re-otorga la fase
+ * ADR-010 rev. 6 PR-7d (F-PR7D-07, F-PR7-05): transaccion PROPIA que solo REVOCA. Se ejecuta si la fase posterior falla: el ROLLBACK de esa fase deshace el REVOKE y consent_owner conservaria el SET que re-otorga la fase
  * cluster (0026) sobre integrity_owner. Revoca integrity_owner y breakglass_log_owner a consent_owner en ambos modos y, en REAL_DATA, todo SET de consent_owner sobre los 17 owners y consent_migrator -> outbox_claimer.
  */
 export async function revokeOnlyFailsafe(superuser: Queryable, mode: DbRoleMode): Promise<void> {
@@ -287,7 +287,7 @@ export async function applyClusterScope(
 /**
  * Fase `cluster-post` (ADR-010 rev. 6 PR-7d): despues de las migraciones de base. Transaccion con los archivos `-- scope: cluster-post` (esquema breakglass y REVOKE/GRANT/dueño de la base) y, FUERA de ella, la aserción de membresía
  * y de nivel de base (que tambien repite la aserción tras la fase database, F-A10-11; una ceremonia de break-glass abierta falla cerrado). Si la transaccion falla, una transaccion propia que solo revoca deja a consent_owner sin SET
- * sobre integrity_owner (F-PR7D-01); si falla la aserción los REVOKE ya estan confirmados. `superuser` debe estar conectado a la base de la aplicacion (ALTER DATABASE actua sobre la base de la conexion).
+ * sobre integrity_owner (F-PR7D-07); si falla la aserción los REVOKE ya estan confirmados. `superuser` debe estar conectado a la base de la aplicacion (ALTER DATABASE actua sobre la base de la conexion).
  */
 export async function applyClusterPostScope(
   superuser: Queryable,

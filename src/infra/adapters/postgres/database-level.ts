@@ -34,7 +34,7 @@ export const DDL_BREAKGLASS_SETTINGS: readonly string[] = [
 ];
 
 /**
- * ADR-010 rev. 6 PR-7d (F-PR7D-02, P1-2): estado EXACTO del esquema `breakglass` (creado por 0085 en cluster-post como superusuario con SET LOCAL ROLE breakglass_log_owner). Cada elemento es un "hecho" del catalogo; la igualdad con
+ * ADR-010 rev. 6 PR-7d (F-PR7D-08, P1-2): estado EXACTO del esquema `breakglass` (creado por 0085 en cluster-post como superusuario con SET LOCAL ROLE breakglass_log_owner). Cada elemento es un "hecho" del catalogo; la igualdad con
  * esta lista es exacta (fail-closed): dueños del esquema, de la tabla y de la funcion; ACL del esquema, de la tabla y por columna; RLS habilitada y forzada; los 2 triggers con tgenabled = 'A' (ENABLE ALWAYS), su tipo y su funcion;
  * UNA sola policy; constraints (nombre y tipo); y ningun otro objeto en el esquema. Lo usan el deploy (assertDeployState), startup-checks (estricto) y la vigilancia (breakglass-watch).
  */
@@ -95,7 +95,7 @@ export async function checkBreakglassState(db: Queryable): Promise<string[]> {
   try {
     const r = await db.query<{ fact: string }>(BREAKGLASS_FACTS_SQL);
     const actual = r.rows.map((x) => x.fact);
-    if (actual.length === 0) return ["falta el esquema breakglass (0085, fase cluster-post; INV-DBR-09, F-PR7D-02)"];
+    if (actual.length === 0) return ["falta el esquema breakglass (0085, fase cluster-post; INV-DBR-09, F-PR7D-08)"];
     const problems: string[] = [];
     const count = (xs: readonly string[]): Map<string, number> => {
       const m = new Map<string, number>();
@@ -116,7 +116,7 @@ export async function checkBreakglassState(db: Queryable): Promise<string[]> {
 const SENSITIVE_DATABASE_GUCS: readonly string[] = ["role", "session_authorization", "log_statement", "log_parameter_max_length", "log_parameter_max_length_on_error", "session_replication_role", "search_path"];
 
 /**
- * ADR-010 rev. 6 PR-7d (F-PR7D-05, TEST-CNS-1863; "DBR-12" del plan: settings de ddl_breakglass): `ALTER ROLE ... IN DATABASE ... SET` (pg_db_role_setting) PISA el ALTER ROLE global de rolconfig. Ningun rol gobernado
+ * ADR-010 rev. 6 PR-7d (F-PR7D-10, TEST-CNS-1863; "DBR-12" del plan: settings de ddl_breakglass): `ALTER ROLE ... IN DATABASE ... SET` (pg_db_role_setting) PISA el ALTER ROLE global de rolconfig. Ningun rol gobernado
  * (los tres de nivel de base, los owners, el migrador y los de runtime) puede tener un setting propio en ESTA base, y a nivel de base (setrole = 0) no se fijan las GUC sensibles de auditoria o de rol.
  */
 export async function checkDbRoleSettings(db: Queryable): Promise<string[]> {
@@ -130,7 +130,7 @@ export async function checkDbRoleSettings(db: Queryable): Promise<string[]> {
           AND ((s.setrole <> 0 AND r.rolname = ANY($1::pg_catalog.text[])) OR (s.setrole = 0 AND pg_catalog.lower(pg_catalog.split_part(c, '=', 1)) = ANY($2::pg_catalog.text[])))`,
       [[...GOVERNED_ROLES, ...CONNECT_ROLES], [...SENSITIVE_DATABASE_GUCS]],
     );
-    return r.rows.map((x) => `pg_db_role_setting fija ${x.setting} ${x.for_role ? `para ${x.scope} en esta base (ALTER ROLE ... IN DATABASE ... SET pisa los settings del rol)` : "a nivel de base (ALTER DATABASE ... SET)"} (INV-DBR-09, F-PR7D-05)`);
+    return r.rows.map((x) => `pg_db_role_setting fija ${x.setting} ${x.for_role ? `para ${x.scope} en esta base (ALTER ROLE ... IN DATABASE ... SET pisa los settings del rol)` : "a nivel de base (ALTER DATABASE ... SET)"} (INV-DBR-09, F-PR7D-10)`);
   } catch {
     return ["no se pudo verificar pg_db_role_setting (INV-DBR-09)"];
   }

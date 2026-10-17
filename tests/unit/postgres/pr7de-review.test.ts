@@ -1,7 +1,7 @@
-// Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7d/7e), correcciones de la revision de seguridad del PR #109 (F-PR7D-01..07; P1-1, P1-2, P1-3 y P2). Sin Postgres. SYNTHETIC ONLY.
-// TEST-CNS-1865 (runner: precondiciones antes de la fase cluster, diferimiento solo con migraciones pendientes, REAL_DATA sin diferir, aserción despues del COMMIT, transaccion de solo-REVOKE ante un fallo de la fase posterior,
-// lock con tope de espera), 1866 (SQL: sin concesion transitoria a consent_owner, breakglass en cluster-post con SET LOCAL ROLE, ceremonias con \getenv y cierre con sesiones terminadas despues del COMMIT),
-// 1867 (checkBreakglassState y checkDbRoleSettings: hechos exactos y desvios sobre dobles).
+// Gobierna: ADR-010 rev. 6 §10 fila PR-7 (sub-PR 7d/7e), correcciones de la revision de seguridad del PR #109 (F-PR7D-07..12; P1-1, P1-2, P1-3 y P2). Sin Postgres. SYNTHETIC ONLY.
+// TEST-CNS-1863 (runner: precondiciones antes de la fase cluster, diferimiento solo con migraciones pendientes, REAL_DATA sin diferir, aserción despues del COMMIT, transaccion de solo-REVOKE ante un fallo de la fase posterior,
+// lock con tope de espera), 1864 (SQL: sin concesion transitoria a consent_owner, breakglass en cluster-post con SET LOCAL ROLE, ceremonias con \getenv y cierre con sesiones terminadas despues del COMMIT),
+// 1865 (checkBreakglassState y checkDbRoleSettings: hechos exactos y desvios sobre dobles).
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -47,7 +47,7 @@ const MIGS = [
 const texts = (c: FakeClient): string[] => c.queries.map((q) => q.text);
 const idx = (c: FakeClient, needle: string): number => texts(c).findIndex((t) => t.includes(needle));
 
-test("TEST-CNS-1865 runner (P1-1/P1-3): precondiciones antes de la fase cluster; diferimiento solo con migraciones pendientes; REAL_DATA no difiere si ops.schema_migration existe; aserción despues del COMMIT", async () => {
+test("TEST-CNS-1863 runner (P1-1/P1-3): precondiciones antes de la fase cluster; diferimiento solo con migraciones pendientes; REAL_DATA no difiere si ops.schema_migration existe; aserción despues del COMMIT", async () => {
   // Sin ops.schema_migration (base nueva): todas las migraciones de base estan pendientes => se difiere (sin archivos cluster-post ni aserción).
   const fresh = superuser();
   assert.deepEqual(await applyClusterScope(fresh, MIGS, { mode: "IT0B_SYNTHETIC" }), ["0000"]);
@@ -76,7 +76,7 @@ test("TEST-CNS-1865 runner (P1-1/P1-3): precondiciones antes de la fase cluster;
   assert.ok(idx(open, "pg_advisory_unlock") >= 0);
 });
 
-test("TEST-CNS-1865 runner (P1-1): si la fase posterior falla (diferida o en la transaccion unica) una transaccion PROPIA ejecuta solo REVOKE tras el ROLLBACK; si el solo-REVOKE tambien falla se informa; el error original se relanza", async () => {
+test("TEST-CNS-1863 runner (P1-1): si la fase posterior falla (diferida o en la transaccion unica) una transaccion PROPIA ejecuta solo REVOKE tras el ROLLBACK; si el solo-REVOKE tambien falla se informa; el error original se relanza", async () => {
   // Fase posterior diferida: 0002 falla => ROLLBACK, luego BEGIN + solo-REVOKE + COMMIT.
   const failing = superuser({ applied: ["0001"], failOn: "post-sql" });
   await assert.rejects(() => applyClusterPostScope(failing, MIGS, { mode: "IT0B_SYNTHETIC" }), /fallo inyectado/);
@@ -108,7 +108,7 @@ test("TEST-CNS-1865 runner (P1-1): si la fase posterior falla (diferida o en la 
   assert.ok(idx(preOpen, "SELECT pg_catalog.format('REVOKE %I FROM %I'") >= 0);
 });
 
-test("TEST-CNS-1865 runner (P1-3): el lock de roles espera con pg_try_advisory_lock hasta un tope y falla con MigrationError; no se queda esperando para siempre", async () => {
+test("TEST-CNS-1863 runner (P1-3): el lock de roles espera con pg_try_advisory_lock hasta un tope y falla con MigrationError; no se queda esperando para siempre", async () => {
   const held = new FakeClient((text) => (text.includes("pg_try_advisory_lock") ? { rows: [{ locked: false }] } : undefined));
   const started = Date.now();
   await assert.rejects(() => withClusterRoleLock(held, async () => "no", 250), /No se obtuvo el lock del runner de migraciones en 250 ms/);
@@ -124,7 +124,7 @@ test("TEST-CNS-1865 runner (P1-3): el lock de roles espera con pg_try_advisory_l
   assert.doesNotMatch(src, /"SELECT pg_advisory_lock\(\$1\)"/);
 });
 
-test("TEST-CNS-1866 SQL (P1-2, P2): 0084 sin concesion transitoria a consent_owner; 0085 es cluster-post con SET LOCAL ROLE breakglass_log_owner y sin consent_owner; 0086 sin bloque de aserciones; open.sql lee el verificador con \\getenv y track_utility=off; close.sql termina sesiones despues del COMMIT y verifica 0", () => {
+test("TEST-CNS-1864 SQL (P1-2, P2): 0084 sin concesion transitoria a consent_owner; 0085 es cluster-post con SET LOCAL ROLE breakglass_log_owner y sin consent_owner; 0086 sin bloque de aserciones; open.sql lee el verificador con \\getenv y track_utility=off; close.sql termina sesiones despues del COMMIT y verifica 0", () => {
   const sql84 = noComments(read("db/migrations/0084_adr010_pr7d_cluster_roles.sql"));
   assert.doesNotMatch(sql84, /GRANT breakglass_log_owner TO/i, "ninguna concesion de breakglass_log_owner (ni transitoria)");
   assert.match(sql84, /r\.rolname = 'breakglass_log_owner'\) LOOP/, "revoca cualquier membresia previa de breakglass_log_owner");
@@ -137,7 +137,7 @@ test("TEST-CNS-1866 SQL (P1-2, P2): 0084 sin concesion transitoria a consent_own
   assert.match(sql85, /FORCE ROW LEVEL SECURITY/);
   assert.match(sql85, /RESET ROLE;\s*$/);
   const sql86 = noComments(read("db/migrations/0086_adr010_pr7d_revoke_and_database_level.sql"));
-  assert.doesNotMatch(sql86, /RAISE EXCEPTION/, "las aserciones las hace el runner, en otra transaccion (F-PR7D-01)");
+  assert.doesNotMatch(sql86, /RAISE EXCEPTION/, "las aserciones las hace el runner, en otra transaccion (F-PR7D-07)");
   const open = read("db/ceremonies/open.sql");
   assert.match(open, /\\getenv verifier CNS_CEREMONY_VERIFIER/);
   assert.match(open, /SET pg_stat_statements\.track_utility = off;/);
@@ -149,7 +149,7 @@ test("TEST-CNS-1866 SQL (P1-2, P2): 0084 sin concesion transitoria a consent_own
   assert.match(close, /no_sessions[\s\S]*\\if :no_sessions[\s\S]*RAISE EXCEPTION 'close\.sql: ddl_breakglass sigue con sesiones/);
 });
 
-test("TEST-CNS-1867 checkBreakglassState / checkDbRoleSettings (P1-2, P2): hechos exactos del esquema breakglass; cualquier hecho de mas o de menos es diferencia; pg_db_role_setting de un rol gobernado en esta base es diferencia", async () => {
+test("TEST-CNS-1865 checkBreakglassState / checkDbRoleSettings (P1-2, P2): hechos exactos del esquema breakglass; cualquier hecho de mas o de menos es diferencia; pg_db_role_setting de un rol gobernado en esta base es diferencia", async () => {
   const facts = (rows: readonly string[]): FakeClient => new FakeClient((text) => (text.includes("'schema|owner='") ? { rows: rows.map((fact) => ({ fact })) } : undefined));
   assert.deepEqual(await checkBreakglassState(facts(BREAKGLASS_EXPECTED_FACTS)), []);
   assert.match((await checkBreakglassState(facts([])))[0] ?? "", /falta el esquema breakglass/);

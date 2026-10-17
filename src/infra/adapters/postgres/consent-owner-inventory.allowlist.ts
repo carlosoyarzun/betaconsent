@@ -1,5 +1,5 @@
 // Gobierna: ADR-010 rev. 6 PR-7c (F-PR7-01, C-3) y PR-7d (F-PR7C-08: version mayor de Postgres; modo: IT0B vs REAL_DATA). Allowlist EXACTA del inventario de consent-owner-inventory.ts, generada del catalogo de una base migrada (0000-0083, con 0075-0079 de PR-7b; incluye funciones de los roles a los que consent_owner puede hacer SET ROLE, huellas md5 de cuerpos, policies, triggers, constraints y defaults) y revisada.
-// PR-7d (C-1): consent_owner ya no tiene SET sobre integrity_owner en NINGUN modo. Revision de seguridad del PR #109 (F-PR7D-06): las filas V2|fn de integrity_owner (8) y de breakglass_log_owner (1) se REPONEN como allowlist POR DUEÑO,
+// PR-7d (C-1): consent_owner ya no tiene SET sobre integrity_owner en NINGUN modo. Revision de seguridad del PR #109 (F-PR7D-11): las filas V2|fn de integrity_owner (8) y de breakglass_log_owner (1) se REPONEN como allowlist POR DUEÑO,
 // independiente del SET: el inventario las lee siempre (en ambos modos), de modo que un ALTER FUNCTION ... OWNER TO posterior a 0086 (que el checker CA-142 no ve) o un cuerpo alterado aparece como diferencia.
 // Cambiarla es un cambio de superficie del migrador: requiere revision de Carlos (CODEOWNERS: src/infra/adapters/postgres/). Orden: collation C.
 
@@ -388,12 +388,12 @@ export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
  */
 export const CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS: readonly number[] = [16, 18];
 
-/** Duenos de funciones cuyas filas V2|fn forman parte del inventario en AMBOS modos, independientemente de que consent_owner pueda o no asumirlos (F-PR7D-06). */
+/** Duenos de funciones cuyas filas V2|fn forman parte del inventario en AMBOS modos, independientemente de que consent_owner pueda o no asumirlos (F-PR7D-11). */
 export const CONSENT_OWNER_INVENTORY_OWNER_INDEPENDENT_FN_OWNERS: readonly string[] = ["consent_owner", "integrity_owner", "breakglass_log_owner"];
 
 /**
  * ADR-010 rev. 6 PR-7d (F-PR7-01, F-PR7C-06): la lista es POR MODO. La lista base es la de IT0B_SYNTHETIC (consent_owner conserva SET sobre 15 owners). En REAL_DATA consent_owner no tiene ninguna membresia SET
- * (REVOKE explicito de 0086) y por tanto desaparecen las filas V2|fn|<owner>|... de los roles con SET; permanecen las de integrity_owner y breakglass_log_owner (por dueño, F-PR7D-06) y las de consent_owner (ninguna). Antes de cualquier cambio a REAL_DATA_BLOCKERS: F-PR7-01 sigue
+ * (REVOKE explicito de 0086) y por tanto desaparecen las filas V2|fn|<owner>|... de los roles con SET; permanecen las de integrity_owner y breakglass_log_owner (por dueño, F-PR7D-11) y las de consent_owner (ninguna). Antes de cualquier cambio a REAL_DATA_BLOCKERS: F-PR7-01 sigue
  * abierto porque el migrador aun es dueño de tablas de app/ops y de sus triggers, policies, constraints y defaults (filas V2 que SI permanecen en REAL_DATA).
  */
 export const CONSENT_OWNER_INVENTORY_ALLOWLIST_REAL_DATA: readonly string[] = CONSENT_OWNER_INVENTORY_ALLOWLIST.filter(

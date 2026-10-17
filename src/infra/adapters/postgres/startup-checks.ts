@@ -157,7 +157,7 @@ export async function runStartupChecks(db: Queryable, options: StartupCheckOptio
     // ADR-010 rev. 6 PR-7c (C-3): REAL_DATA no arranca mientras F-PR7-01 siga abierto (aunque la aserción de membresía del modo estuviera activa).
     if (roleMode === "REAL_DATA" && REAL_DATA_BLOCKERS.length > 0) failures.push(`el modo REAL_DATA está bloqueado mientras sigan abiertos: ${REAL_DATA_BLOCKERS.join(", ")} (el migrador aún es dueño de objetos compartidos)`);
     for (const problem of await checkRoleMemberships(db, roleMode)) failures.push(`${problem} (INV-DBR-03)`);
-    // ADR-010 rev. 6 PR-7d (INV-DBR-09): estado a nivel de base (dueño db_owner_nologin, CONNECT/TEMP de PUBLIC, CREATE explicito, ddl_breakglass). Estricto en REAL_DATA, en STAGING (F-PR7D-05) o con `assertDatabaseLevel`;
+    // ADR-010 rev. 6 PR-7d (INV-DBR-09): estado a nivel de base (dueño db_owner_nologin, CONNECT/TEMP de PUBLIC, CREATE explicito, ddl_breakglass). Estricto en REAL_DATA, en STAGING (F-PR7D-10) o con `assertDatabaseLevel`;
     // en LOCAL las bases desechables de los tests nacen de CREATE DATABASE ... OWNER consent_owner y no pasan por la fase cluster-post. El LOGIN de ddl_breakglass lo vigila breakglass-watch, no el arranque.
     if (roleMode === "REAL_DATA" || options.assertDatabaseLevel === true || options.expectedEnvironment === "STAGING") for (const problem of await checkDatabaseLevel(db, roleMode)) failures.push(problem);
   } catch (error) {

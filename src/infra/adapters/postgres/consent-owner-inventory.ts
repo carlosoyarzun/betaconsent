@@ -99,7 +99,7 @@ rows AS (
     FROM crels rl JOIN pg_catalog.pg_attribute at ON at.attrelid = rl.oid WHERE at.attacl IS NOT NULL AND NOT at.attisdropped GROUP BY rl.qname
   UNION ALL
   -- V2 funciones que consent_owner puede cambiar: las que posee y las de roles a los que puede hacer SET ROLE (shared_fn_owner, owners de esquema): identidad, SECURITY DEFINER, md5(prosrc), proconfig y ACL.
-  -- PR-7d (F-PR7D-06): ALLOWLIST POR DUEÑO, independiente del SET: tambien las de integrity_owner y breakglass_log_owner (consent_owner ya no las asume; si una migracion posterior hace ALTER FUNCTION ... OWNER TO consent_owner la fila aparece como V2|fn|consent_owner|...).
+  -- PR-7d (F-PR7D-11): ALLOWLIST POR DUEÑO, independiente del SET: tambien las de integrity_owner y breakglass_log_owner (consent_owner ya no las asume; si una migracion posterior hace ALTER FUNCTION ... OWNER TO consent_owner la fila aparece como V2|fn|consent_owner|...).
   SELECT 'V2|fn|' || pg_catalog.pg_get_userbyid(f.proowner)::pg_catalog.text || '|' || f.qname || '(' || f.args || ')|' || f.prosecdef::pg_catalog.text || '|' || pg_catalog.md5(p.prosrc) || '|' || COALESCE(p.proconfig::pg_catalog.text, '') || '|' || COALESCE(p.proacl::pg_catalog.text, '')
     FROM fns f JOIN pg_catalog.pg_proc p ON p.oid = f.oid
    WHERE f.proowner = (SELECT oid FROM co) OR (pg_catalog.pg_has_role('consent_owner', f.proowner, 'SET') AND pg_catalog.pg_get_userbyid(f.proowner)::pg_catalog.text !~ '^pg_')
