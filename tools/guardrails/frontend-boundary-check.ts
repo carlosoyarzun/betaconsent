@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Gobierna: ADR-001 rev. 8 F1 (fase A). CLI del guardrail de frontera de frontend/ (lógica en ./frontend-boundary.ts).
-// Uso: node tools/guardrails/frontend-boundary-check.ts  (escanea frontend/src y frontend/tests: .ts .tsx .css)
+// Uso: node tools/guardrails/frontend-boundary-check.ts  (escanea frontend/src y frontend/tests: .ts .tsx .js .jsx .mjs .cjs .css)
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { checkFrontendBoundary, type SourceFile } from "./frontend-boundary.ts";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCAN_ROOTS = ["frontend/src", "frontend/tests"];
-const SOURCE_RE = /\.(ts|tsx|css)$/;
+const SOURCE_RE = /\.(ts|tsx|js|jsx|mjs|cjs|css)$/;
 
 function walk(dir: string, out: SourceFile[]): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

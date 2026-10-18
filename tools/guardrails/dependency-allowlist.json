@@ -61,11 +61,11 @@
       "kind": "dependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "UI React 19 (ADR-001 F1)."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "UI React 19 (ADR-001 F1).",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "react-dom",
@@ -73,11 +73,11 @@
       "kind": "dependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Render DOM de React (ADR-001 F1)."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Render DOM de React (ADR-001 F1).",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@types/react",
@@ -85,11 +85,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Tipos de React (TypeScript estricto)."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Tipos de React (TypeScript estricto).",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@types/react-dom",
@@ -97,11 +97,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Tipos de react-dom."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Tipos de react-dom.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "vite",
@@ -109,11 +109,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Bundler/dev server de la SPA estática (ADR-001 F1); build con hash, sin inline."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Bundler/dev server de la SPA estática (ADR-001 F1); build con hash, sin inline.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@vitejs/plugin-react",
@@ -121,11 +121,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Transform JSX/React para Vite."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Transform JSX/React para Vite.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "vitest",
@@ -133,11 +133,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Runner de tests del frontend (comparte config con Vite)."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Runner de tests del frontend (comparte config con Vite).",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "jsdom",
@@ -145,11 +145,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Entorno DOM para Vitest."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Entorno DOM para Vitest.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@testing-library/react",
@@ -157,11 +157,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Tests de componentes sobre el DOM real."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Tests de componentes sobre el DOM real.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@testing-library/jest-dom",
@@ -169,11 +169,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Matchers de DOM (role, foco, hidden) para Vitest."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Matchers de DOM (role, foco, hidden) para Vitest.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@testing-library/user-event",
@@ -181,11 +181,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Interacciones de usuario realistas en tests."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Interacciones de usuario realistas en tests.",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@playwright/test",
@@ -193,11 +193,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Tests E2E de navegador (los usará QA; ADR-001 F1)."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Tests E2E de navegador (los usará QA; ADR-001 F1).",
+      "approvedAt": "2026-10-18"
     },
     {
       "name": "@axe-core/playwright",
@@ -205,11 +205,11 @@
       "kind": "devDependency",
       "owner": "Carlos Oyarzún",
       "proposedBy": "lampone-dev",
-      "status": "proposed",
-      "approvedBy": "PENDING — Carlos Oyarzún (revisión del PR, ADR-001 §5)",
-      "approvedOn": "PENDING",
-      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro.",
-      "reason": "Auditoría de accesibilidad con axe sobre Playwright (QA)."
+      "status": "approved",
+      "approvedBy": "Carlos Oyarzún — revisión CODEOWNERS del PR #114",
+      "decision": "Decisión de Carlos 2026-10-18: cumplir ADR-001 F1 (React + TypeScript). Versión: la última con más de 7 días de publicada al 2026-10-18 (ADR-001 §5), no la más reciente del registro. Aprobación efectiva al mergear el PR #114 (Carlos).",
+      "reason": "Auditoría de accesibilidad con axe sobre Playwright (QA).",
+      "approvedAt": "2026-10-18"
     }
   ]
 }

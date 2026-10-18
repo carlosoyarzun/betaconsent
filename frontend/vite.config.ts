@@ -5,6 +5,10 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const BACKEND = process.env.CNS_DEV_BACKEND ?? "http://127.0.0.1:3000";
+const DEV_ORIGIN = "http://127.0.0.1:5173";
+// SEC-UI-4: el backend de dev debe ser loopback (el proxy reescribe Origin hacia él).
+if (!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(BACKEND)) throw new Error("CNS_DEV_BACKEND debe ser http://127.0.0.1:<puerto> (loopback).");
+const here = import.meta.dirname;
 
 /** Rutas HTML de los titulares: en `dev:frontend` las sirve Vite (SPA); todo lo demás va al backend. */
 const PAGE_PATHS = new Set([
@@ -19,7 +23,7 @@ const PAGE_PATHS = new Set([
 ]);
 
 export default defineConfig({
-  root: import.meta.dirname,
+  root: here,
   plugins: [react()],
   build: {
     outDir: "../dist",
@@ -40,6 +44,9 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 5173,
+    cors: false, // sin CORS: ninguna otra página local puede leer lo proxeado (incluidos los sinks /__dev/*)
+    // Solo frontend/ y los dos CSS enlazados (design-system y el app.css del SSR, ver frontend-boundary.ts).
+    fs: { allow: [here, `${here}/../design-system`, `${here}/../src/server/entrypoints/http/assets/app.css`] },
     proxy: {
       // API JSON, canjes 303 (/i /m /r) y sinks dev -> backend. El navegador envía Origin del dev server; se reescribe al
       // del backend para pasar GRD-CM-10 sin tocar CNS_ALLOWED_ORIGIN (ver frontend/README.md, limitaciones).
@@ -53,12 +60,14 @@ export default defineConfig({
         },
         configure(proxy) {
           proxy.on("proxyReq", (proxyReq) => {
-            if (proxyReq.getHeader("origin")) proxyReq.setHeader("origin", BACKEND);
+            // Solo el Origin propio del dev server; cualquier otro se deja intacto y el backend lo rechaza.
+            if (proxyReq.getHeader("origin") === DEV_ORIGIN) proxyReq.setHeader("origin", BACKEND);
           });
         },
       },
     },
   },
+  preview: { proxy: {} }, // `vite preview` no hereda el proxy (ni la reescritura de Origin)
   test: {
     environment: "jsdom",
     environmentOptions: { jsdom: { url: "https://localhost/" } }, // las cookies __Host- exigen origen seguro
