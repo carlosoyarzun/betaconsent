@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionPage } from "../../src/pages/decision.tsx";
 import { navigation } from "../../src/router.ts";
-import { empty, expectNoInlineStyleOrScript, expectPostHeaders, json, offline, postBody, problem, setCsrfCookie, stubRoutes, type Routes } from "../b-helpers.ts";
+import { empty, expectNoInlineStyleOrScript, expectPostHeaders, json, offline, postBody, setCsrfCookie, stubRoutes, type Routes } from "../b-helpers.ts";
 
 const SERVED = { consentVersion: "v1", privacyNoticeVersion: "v1", text: "[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos]" };
 const STATE = { relationshipRefs: ["SYNTHETIC_GUARDIAN", "SYNTHETIC_TUTOR"], servedVersion: SERVED, subjectLabel: "Alumno de prueba 7" };
@@ -39,7 +39,7 @@ async function fillAll(choice: "Acepto" | "No acepto" = "Acepto") {
 const OK_STEPS: Routes = { "POST /decision/steps": [json({ result: "RECORDED" }), json({ servedVersion: SERVED }), json({}), json({})] };
 
 describe("/decision (equivale a decision-page.ts + decision.js)", () => {
-  it("TEST-CNS-1910: pide GET /decision/page-state y renderiza copy, ids, roles, ARIA y opciones del SSR sin preseleccionar nada", async () => {
+  it("TEST-CNS-1912: pide GET /decision/page-state y renderiza copy, ids, roles, ARIA y opciones del SSR sin preseleccionar nada", async () => {
     const { calls, container } = await renderReady();
     expect(calls[0]).toMatchObject({ method: "GET", path: "/decision/page-state" });
     expect(calls[0]!.init.credentials).toBe("same-origin");
@@ -92,7 +92,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expectNoInlineStyleOrScript(container);
   });
 
-  it("TEST-CNS-1910: sin subjectLabel no hay #subject-ref; el estado de carga no inventa copy y respeta el orden de foco (chips -> select -> casilla -> finalidades -> enviar)", async () => {
+  it("TEST-CNS-1912: sin subjectLabel no hay #subject-ref; el estado de carga no inventa copy y respeta el orden de foco (chips -> select -> casilla -> finalidades -> enviar)", async () => {
     stubRoutes({ "GET /decision/page-state": new Promise<Response>(() => undefined) as unknown as Response });
     const loading = render(<DecisionPage pageState="ready" />);
     expect(screen.getByRole("main")).toHaveAttribute("aria-busy", "true");
@@ -106,7 +106,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(order.at(-2)).toBe("submit-btn");
   });
 
-  it("TEST-CNS-1911: 'Enviar decisión' con campos pendientes (aria-disabled) muestra el resumen con enlaces y errores inline, enfoca el resumen y no envía nada", async () => {
+  it("TEST-CNS-1913: 'Enviar decisión' con campos pendientes (aria-disabled) muestra el resumen con enlaces y errores inline, enfoca el resumen y no envía nada", async () => {
     const { calls, container } = await renderReady();
     await userEvent.click(screen.getByRole("button", { name: "Enviar decisión" }));
     const summary = await screen.findByRole("alert");
@@ -138,7 +138,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(calls).toHaveLength(1); // solo el GET de page-state
   });
 
-  it("TEST-CNS-1912: flujo feliz GRANTED: 4 POST /decision/steps + /decision/submit con cabeceras CSRF y cuerpos exactos; reemplaza el formulario y enfoca el encabezado de confirmación", async () => {
+  it("TEST-CNS-1914: flujo feliz GRANTED: 4 POST /decision/steps + /decision/submit con cabeceras CSRF y cuerpos exactos; reemplaza el formulario y enfoca el encabezado de confirmación", async () => {
     const { calls, container } = await renderReady({ ...OK_STEPS, "POST /decision/submit": json({ state: "GRANTED", receiptRef: "RCPT-SYN-1" }) });
     await fillAll("Acepto");
     expect(screen.getByRole("button", { name: "Enviar decisión" })).toHaveAttribute("aria-disabled", "false");
@@ -173,15 +173,13 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expectNoInlineStyleOrScript(container);
   });
 
-  it("TEST-CNS-1913: 'No acepto' muestra #decline-notice (status) y el envío termina en DECLINED con el texto, comprobante y sin el paso de gestión", async () => {
+  it("TEST-CNS-1915: 'No acepto' muestra #decline-notice (status) y el envío termina en DECLINED con el texto, comprobante y sin el paso de gestión", async () => {
     const { container } = await renderReady({ ...OK_STEPS, "POST /decision/submit": json({ state: "DECLINED", receiptRef: "RCPT-SYN-2" }) });
     await fillAll("Acepto");
     expect(container.querySelector("#decline-notice")).toHaveAttribute("hidden");
     await userEvent.click(choiceButtons("No acepto")[2]!);
     expect(choiceButtons("No acepto")[2]).toHaveAttribute("aria-checked", "true");
     expect(choiceButtons("Acepto")[2]).toHaveAttribute("aria-checked", "false");
-    const notice = screen.getByRole("status", { name: "" , hidden: false });
-    void notice;
     expect(container.querySelector("#decline-notice")).not.toHaveAttribute("hidden");
     expect(container.querySelector("#decline-notice")).toHaveTextContent("Elegiste no aceptar al menos una finalidad.");
     await userEvent.click(screen.getByRole("button", { name: "Enviar decisión" }));
@@ -195,7 +193,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(state.querySelector(".lp-hero-icon")).toHaveTextContent("•");
   });
 
-  it("TEST-CNS-1914: 'No es mi estudiante' oculta autoridad y finalidades, bloquea el envío y NO cancela por sí solo; el botón explícito hace POST /decision/subject-mismatch y enfoca 'Registramos tu aviso'", async () => {
+  it("TEST-CNS-1916: 'No es mi estudiante' oculta autoridad y finalidades, bloquea el envío y NO cancela por sí solo; el botón explícito hace POST /decision/subject-mismatch y enfoca 'Registramos tu aviso'", async () => {
     const { calls, container } = await renderReady({ "POST /decision/subject-mismatch": json({ result: "INVITATION_CANCELLED" }) });
     await userEvent.click(screen.getByRole("radio", { name: "No es mi estudiante" }));
     expect(container.querySelector("#decision-rest")).toHaveAttribute("hidden");
@@ -214,7 +212,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(screen.getByText("Indicaste que no es tu estudiante. No se registró ninguna decisión.")).toBeInTheDocument();
   });
 
-  it("TEST-CNS-1914: subject-mismatch con respuesta distinta de 200 -> error uniforme y formulario oculto; con red -> aviso de conexión y el formulario sigue", async () => {
+  it("TEST-CNS-1916: subject-mismatch con respuesta distinta de 200 -> error uniforme y formulario oculto; con red -> aviso de conexión y el formulario sigue", async () => {
     stubRoutes({ "GET /decision/page-state": json(STATE), "POST /decision/subject-mismatch": [empty(404), offline()] });
     const { container } = render(<DecisionPage pageState="ready" />);
     await screen.findByRole("radio", { name: "No es mi estudiante" });
@@ -226,7 +224,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(report).toHaveAttribute("aria-busy", "false");
   });
 
-  it("TEST-CNS-1914: subject-mismatch con red muestra #error-network y deja el formulario visible", async () => {
+  it("TEST-CNS-1916: subject-mismatch con red muestra #error-network y deja el formulario visible", async () => {
     stubRoutes({ "GET /decision/page-state": json(STATE), "POST /decision/subject-mismatch": offline() });
     const { container } = render(<DecisionPage pageState="ready" />);
     await screen.findByRole("radio", { name: "No es mi estudiante" });
@@ -236,7 +234,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(container.querySelector("#decision-form")).not.toHaveAttribute("hidden");
   });
 
-  it("TEST-CNS-1915: 409 -> #error-conflict, 404 -> #error-uniform, 422 -> #error-validation (sin enlaces); la secuencia se detiene y el botón vuelve a habilitarse", async () => {
+  it("TEST-CNS-1917: 409 -> #error-conflict, 404 -> #error-uniform, 422 -> #error-validation (sin enlaces); la secuencia se detiene y el botón vuelve a habilitarse", async () => {
     for (const [status, id] of [[409, "error-conflict"], [404, "error-uniform"], [422, "error-validation"]] as const) {
       const { calls, container, unmount } = await renderReady({ "POST /decision/steps": [json({}), empty(status)] });
       await fillAll();
@@ -254,7 +252,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     }
   });
 
-  it("TEST-CNS-1915: falla de red a mitad del envío -> #error-network; 'Reintentar' repite la secuencia y la versión servida de CONSENT_VERSION_VIEWED reemplaza el texto", async () => {
+  it("TEST-CNS-1917: falla de red a mitad del envío -> #error-network; 'Reintentar' repite la secuencia y la versión servida de CONSENT_VERSION_VIEWED reemplaza el texto", async () => {
     const newServed = { consentVersion: "v2", privacyNoticeVersion: "v3", text: "[LEGAL DECISION — otro texto]" };
     const { calls, container } = await renderReady({
       "POST /decision/steps": [offline(), json({}), json({ servedVersion: newServed }), json({}), json({})],
@@ -273,7 +271,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(calls.filter((c) => c.path === "/decision/steps")).toHaveLength(5);
   });
 
-  it("TEST-CNS-1915: mientras envía el botón muestra 'Enviando…' con aria-busy/aria-disabled y no duplica", async () => {
+  it("TEST-CNS-1917: mientras envía el botón muestra 'Enviando…' con aria-busy/aria-disabled y no duplica", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => { release = r; });
     const { calls } = await renderReady({ "POST /decision/steps": async () => { await gate; return json({}); }, "POST /decision/submit": json({ state: "GRANTED", receiptRef: "R" }) });
@@ -288,13 +286,14 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     await screen.findByRole("heading", { name: "Listo, registramos tu decisión" });
   });
 
-  it("TEST-CNS-1916: pageState uniform-error o page-state 404 -> solo h1, alerta uniforme y ayuda; page-state caído -> aviso de conexión con Reintentar que vuelve a pedirlo", async () => {
-    render(<DecisionPage pageState="uniform-error" />);
+  it("TEST-CNS-1918: pageState uniform-error o page-state 404 -> solo h1, alerta uniforme y ayuda; page-state caído -> aviso de conexión con Reintentar que vuelve a pedirlo", async () => {
+    const uniform = render(<DecisionPage pageState="uniform-error" />);
     expect(screen.getByRole("alert")).toHaveTextContent("No pudimos continuar con esta decisión.");
     expect(screen.getByRole("alert")).toHaveAttribute("id", "error-uniform");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveAccessibleName("Revisa y decide");
     expect(screen.getByRole("link", { name: /ayuda@example.invalid/ })).toBeInTheDocument();
+    uniform.unmount();
     vi.unstubAllGlobals();
 
     const first = stubRoutes({ "GET /decision/page-state": empty(404) });
@@ -312,7 +311,7 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(third.calls).toHaveLength(2);
   });
 
-  it("TEST-CNS-1916: una respuesta de page-state fuera del contrato se trata como no disponible (no renderiza datos inventados)", async () => {
+  it("TEST-CNS-1918: una respuesta de page-state fuera del contrato se trata como no disponible (no renderiza datos inventados)", async () => {
     stubRoutes({ "GET /decision/page-state": json({ relationshipRefs: "x" }) });
     render(<DecisionPage pageState="ready" />);
     expect((await screen.findByRole("alert")).id).toBe("error-network");

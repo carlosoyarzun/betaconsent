@@ -15,8 +15,9 @@
    equivalente. Los hooks van ANTES del `return` temprano.
 6. Elementos ocultos del SSR (`hidden`): renderízalos siempre con `hidden={...}` para conservar el comportamiento de
    los `role="alert"` / `aria-live`; foco: replica exactamente `.focus()` del `.js` (con `useRef`/`useEffect`).
-7. Datos que hoy se interpolan en el servidor (`/decision`: relaciones, versión servida, etiqueta; `/manage`: variante
-   entrada/estado/revocada) NO están en el HTML de `spa`: requieren un endpoint JSON GET nuevo (decisión de contrato,
-   consultar a `lampone-architect`); no inventes uno sin ID gobernante.
+7. Datos que hoy se interpolan en el servidor: `/decision` y `/manage` los leen por `GET /decision/page-state` y
+   `GET /manage/page-state` (API-CNS-194/195, `api/pages-b.ts`: `loadDecisionPageState`/`loadManagePageState`; 404 -> `uniform`,
+   red/5xx/forma inválida -> `unavailable` con el aviso de conexión existente). Otro dato dinámico requiere endpoint nuevo con ID gobernante.
+   `components/b/` guarda las piezas de fase B (`VerifyScreen` con `scope`, `NetworkAlert`/`UniformAlert`, `useFocusWhen`).
 8. Test en `frontend/tests/pages/<ruta>.test.tsx` con el DOM real (`role`, foco, cabeceras de la petición mock).
 9. No importes nada de `src/` ni de `db/` (regla de guardrail); copy legal pendiente = `LEGAL DECISION`, no se redacta.

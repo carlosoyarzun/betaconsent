@@ -22,7 +22,7 @@ async function typeCodeAndSubmit(code = "123456") {
 }
 
 describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () => {
-  it("TEST-CNS-1904: renderiza el copy, ids, roles, ARIA y stepper del SSR; los avisos existen ocultos y no hay estilos ni scripts inline", () => {
+  it("TEST-CNS-1906: renderiza el copy, ids, roles, ARIA y stepper del SSR; los avisos existen ocultos y no hay estilos ni scripts inline", () => {
     const { container } = render(<VerifyPage pageState="ready" />);
     expect(document.title).toBe("Verifica el código · Consent App");
     const main = screen.getByRole("main");
@@ -64,7 +64,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
     expectNoInlineStyleOrScript(container);
   });
 
-  it("TEST-CNS-1905: envía POST /otp/submit con {code}, Content-Type y x-csrf-token; muestra Verificando… mientras espera y navega a /decision", async () => {
+  it("TEST-CNS-1907: envía POST /otp/submit con {code}, Content-Type y x-csrf-token; muestra Verificando… mientras espera y navega a /decision", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => { release = r; });
     const { calls } = stubRoutes({ "POST /otp/submit": async () => { await gate; return empty(200); } });
@@ -86,7 +86,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
   it.each([
     ["código incorrecto (OTP_CODE_REJECTED)", problem(422, "OTP_CODE_REJECTED")],
     ["código desconocido sin catálogo (se trata como incorrecto)", problem(422, "ALGO_NUEVO")],
-  ])("TEST-CNS-1906: %s -> aria-invalid y #code-error visible (role=alert), sin navegar", async (_name, reply) => {
+  ])("TEST-CNS-1908: %s -> aria-invalid y #code-error visible (role=alert), sin navegar", async (_name, reply) => {
     stubRoutes({ "POST /otp/submit": reply });
     const { container } = render(<VerifyPage pageState="ready" />);
     await typeCodeAndSubmit();
@@ -98,7 +98,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
     expect(navigation.assign).not.toHaveBeenCalled();
   });
 
-  it("TEST-CNS-1906: expirado/consumido muestra #state-expired; 'Solicitar nuevo código' hace POST /otp/request, vacía el campo y le devuelve el foco", async () => {
+  it("TEST-CNS-1908: expirado/consumido muestra #state-expired; 'Solicitar nuevo código' hace POST /otp/request, vacía el campo y le devuelve el foco", async () => {
     const { calls } = stubRoutes({ "POST /otp/submit": problem(422, "OTP_EXPIRED_OR_CONSUMED"), "POST /otp/request": empty(202) });
     render(<VerifyPage pageState="ready" />);
     await typeCodeAndSubmit();
@@ -114,7 +114,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
     expect(input).toHaveFocus();
   });
 
-  it.each(["OTP_LOCKED", "OTP_BUDGET_EXHAUSTED_DECISION", "OTP_BUDGET_EXHAUSTED_RIGHTS"])("TEST-CNS-1906: %s en scope DECISION muestra #state-locked con 'Solicitar nuevo código'", async (code) => {
+  it.each(["OTP_LOCKED", "OTP_BUDGET_EXHAUSTED_DECISION", "OTP_BUDGET_EXHAUSTED_RIGHTS"])("TEST-CNS-1908: %s en scope DECISION muestra #state-locked con 'Solicitar nuevo código'", async (code) => {
     stubRoutes({ "POST /otp/submit": problem(409, code) });
     render(<VerifyPage pageState="ready" />);
     await typeCodeAndSubmit();
@@ -125,7 +125,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
     expect(screen.getByLabelText("Código de verificación")).toBeVisible();
   });
 
-  it("TEST-CNS-1906: 404 -> error uniforme inline; sin código en el cuerpo no muestra nada; red -> aviso con Reintentar que repite el envío", async () => {
+  it("TEST-CNS-1908: 404 -> error uniforme inline; sin código en el cuerpo no muestra nada; red -> aviso con Reintentar que repite el envío", async () => {
     const { calls } = stubRoutes({ "POST /otp/submit": [empty(404), empty(500), offline(), empty(200)] });
     render(<VerifyPage pageState="ready" />);
     await typeCodeAndSubmit();
@@ -143,7 +143,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
     expect(postBody(calls[3]!)).toEqual({ code: "123456" });
   });
 
-  it("TEST-CNS-1907: 'Reenviar código' -> 202 anuncia éxito (polite) y limpia el error; 409 anuncia el límite; 404 uniforme; red", async () => {
+  it("TEST-CNS-1909: 'Reenviar código' -> 202 anuncia éxito (polite) y limpia el error; 409 anuncia el límite; 404 uniforme; red", async () => {
     const { calls } = stubRoutes({
       "POST /otp/submit": problem(422, "OTP_CODE_REJECTED"),
       "POST /otp/resend": [empty(202), problem(409, "OTP_RESEND_LIMIT"), empty(404), offline()],
@@ -172,7 +172,7 @@ describe("/verify scope DECISION (equivale a verify-page.ts + verify.js)", () =>
     expect((await screen.findByRole("alert")).id).toBe("error-network");
   });
 
-  it("TEST-CNS-1908: sin sesión (pageState uniform-error) muestra solo h1, alerta uniforme visible y ayuda, sin formulario ni stepper", () => {
+  it("TEST-CNS-1910: sin sesión (pageState uniform-error) muestra solo h1, alerta uniforme visible y ayuda, sin formulario ni stepper", () => {
     render(<VerifyPage pageState="uniform-error" />);
     expect(screen.getByRole("main")).toHaveAccessibleName("Verifica el código");
     expect(screen.getByRole("alert")).toHaveAttribute("id", "error-uniform");
@@ -187,7 +187,7 @@ describe("VerifyScreen scopes MANAGE/REVOCATION (UX-CNS-004 §3, INV-OT-06)", ()
   it.each([
     ["MANAGE", "/manage"],
     ["REVOCATION", "/manage/revocation/confirm"],
-  ] as const)("TEST-CNS-1909: scope %s no muestra stepper, navega a %s tras V3 y el bloqueo oculta el formulario, enfoca la alerta y nunca ofrece solicitar nuevo código", async (scope, next) => {
+  ] as const)("TEST-CNS-1911: scope %s no muestra stepper, navega a %s tras V3 y el bloqueo oculta el formulario, enfoca la alerta y nunca ofrece solicitar nuevo código", async (scope, _next) => {
     const { calls } = stubRoutes({ "POST /otp/submit": [problem(409, "OTP_LOCKED"), empty(200)] });
     const { container } = render(<VerifyScreen scope={scope} />);
     expect(screen.queryByText(/Paso 1 de 3/)).not.toBeInTheDocument();
@@ -206,7 +206,7 @@ describe("VerifyScreen scopes MANAGE/REVOCATION (UX-CNS-004 §3, INV-OT-06)", ()
     expect(navigation.assign).not.toHaveBeenCalled();
   });
 
-  it("TEST-CNS-1909: bloqueo RIGHTS -> 'Enviar enlace de recuperación' (POST /manage/recovery-link) y 'Abrir caso' (POST /rights-case/open) anuncian el resultado en #rights-locked-feedback", async () => {
+  it("TEST-CNS-1911: bloqueo RIGHTS -> 'Enviar enlace de recuperación' (POST /manage/recovery-link) y 'Abrir caso' (POST /rights-case/open) anuncian el resultado en #rights-locked-feedback", async () => {
     const { calls } = stubRoutes({
       "POST /otp/submit": problem(409, "OTP_BUDGET_EXHAUSTED_RIGHTS"),
       "POST /manage/recovery-link": [empty(202), empty(500), offline()],
@@ -233,7 +233,7 @@ describe("VerifyScreen scopes MANAGE/REVOCATION (UX-CNS-004 §3, INV-OT-06)", ()
     expect(feedback).not.toHaveTextContent("denegado");
   });
 
-  it("TEST-CNS-1909: scope MANAGE, tras V3 correcto navega a /manage", async () => {
+  it("TEST-CNS-1911: scope MANAGE, tras V3 correcto navega a /manage", async () => {
     stubRoutes({ "POST /otp/submit": empty(200) });
     render(<VerifyScreen scope="MANAGE" />);
     await typeCodeAndSubmit();

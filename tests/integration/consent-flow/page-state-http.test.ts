@@ -1,9 +1,12 @@
 // Gobierna: ADR-001 rev. 8 F1 (fase B; decisión de Carlos 2026-10-18), contracts/openapi/consent-it0.openapi.yaml API-CNS-194
 // (GET /decision/page-state) y API-CNS-195 (GET /manage/page-state). Los endpoints JSON entregan a la SPA lo que el SSR
 // interpola en GET /decision y GET /manage, con las MISMAS comprobaciones de sesión y el MISMO 404 uniforme (INV-CM-05),
-// solo lectura (INV-CM-08), no-store y sin PII. TEST-CNS-1896..1900 (traceability/test-matrix.csv).
+// solo lectura (INV-CM-08), no-store y sin PII. TEST-CNS-1898..1900 (traceability/test-matrix.csv).
 
 import test from "node:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { getServedConsentVersion } from "../../../src/server/entrypoints/http/served-consent-version.ts";
@@ -30,7 +33,7 @@ function assertJsonNoStore(res: Response): void {
   assert.equal(res.headers.get("referrer-policy"), "no-referrer");
 }
 
-test("TEST-CNS-1896: GET /decision/page-state con sesión verificada -> 200 JSON no-store con relaciones, versión servida (sin hash) y nada más", async () => {
+test("TEST-CNS-1898: GET /decision/page-state con sesión verificada -> 200 JSON no-store con relaciones, versión servida (sin hash) y nada más", async () => {
   await withWorld(async (world) => {
     const session = await verifiedDecisionSession(world, "ps1896");
     const res = await get(world, "/decision/page-state", { [SESSION_COOKIE_NAME]: session });
@@ -49,7 +52,7 @@ test("TEST-CNS-1896: GET /decision/page-state con sesión verificada -> 200 JSON
   });
 });
 
-test("TEST-CNS-1897: GET /decision/page-state sin sesión, con basura o con sesión solo LANDING -> 404 uniforme idéntico al de GET /decision, no-store", async () => {
+test("TEST-CNS-1899: GET /decision/page-state sin sesión, con basura o con sesión solo LANDING -> 404 uniforme idéntico al de GET /decision, no-store", async () => {
   await withWorld(async (world) => {
     const landing = await landingSession(world, "ps1897");
     const attempts: Array<Record<string, string>> = [{}, { [SESSION_COOKIE_NAME]: "basura.firma" }, { [SESSION_COOKIE_NAME]: landing }];
@@ -65,7 +68,7 @@ test("TEST-CNS-1897: GET /decision/page-state sin sesión, con basura o con sesi
   });
 });
 
-test("TEST-CNS-1898: GET /decision/page-state con invitación cancelada (I9) -> 404 uniforme (P-30), igual que GET /decision", async () => {
+test("TEST-CNS-1900: GET /decision/page-state con invitación cancelada (I9) -> 404 uniforme (P-30), igual que GET /decision", async () => {
   await withWorld(async (world) => {
     const session = await verifiedDecisionSession(world, "ps1898");
     assert.equal((await get(world, "/decision/page-state", { [SESSION_COOKIE_NAME]: session })).status, 200);
@@ -78,7 +81,7 @@ test("TEST-CNS-1898: GET /decision/page-state con invitación cancelada (I9) -> 
   });
 });
 
-test("TEST-CNS-1899: GET /manage/page-state devuelve solo la variante: entry (sin OTP MANAGE), status (post V3 MANAGE) y revoked (decisión REVOKED con OTP MANAGE)", async () => {
+test("TEST-CNS-1901: GET /manage/page-state devuelve solo la variante: entry (sin OTP MANAGE), status (post V3 MANAGE) y revoked (decisión REVOKED con OTP MANAGE)", async () => {
   await withWorld(async (world) => {
     await seedManageChain(world, "ps1899", "mgmt-token-ps1899");
     const entry = await manageEntrySession(world, "mgmt-token-ps1899");
@@ -105,7 +108,7 @@ test("TEST-CNS-1899: GET /manage/page-state devuelve solo la variante: entry (si
   });
 });
 
-test("TEST-CNS-1900: GET /manage/page-state sin handle ni sesión, o con sesión ilegible -> 404 uniforme no-store; con handle ilegible coincide con GET /manage", async () => {
+test("TEST-CNS-1902: GET /manage/page-state sin handle ni sesión, o con sesión ilegible -> 404 uniforme no-store; con handle ilegible coincide con GET /manage", async () => {
   await withWorld(async (world) => {
     await seedManageChain(world, "ps1900", "mgmt-token-ps1900");
     const none = await get(world, "/manage/page-state");
@@ -126,4 +129,32 @@ test("TEST-CNS-1900: GET /manage/page-state sin handle ni sesión, o con sesión
     assert.equal(garbage.status, 404);
     assert.equal(await garbage.text(), '{"status":404}');
   });
+});
+
+test("TEST-CNS-1925: con CNS_UI_MODE=spa los page-state responden igual (JSON no-store, 404 uniforme) y la ruta HTML sigue sirviendo index.html", async () => {
+  const dist = mkdtempSync(join(tmpdir(), "cns-pagestate-dist-"));
+  mkdirSync(join(dist, "assets"));
+  mkdirSync(join(dist, ".vite"));
+  writeFileSync(join(dist, ".vite", "manifest.json"), JSON.stringify({ "index.html": { file: "assets/index-Ab12Cd34.js", isEntry: true }, "style.css": { file: "assets/style-Ef56Gh78.css" } }));
+  writeFileSync(join(dist, "index.html"), '<!doctype html>\n<html lang="es"><head><meta charset="utf-8"><meta name="cns-page-state" content="ready"><title>Consent App</title>\n<script type="module" crossorigin src="/assets/index-Ab12Cd34.js"></script><link rel="stylesheet" crossorigin href="/assets/style-Ef56Gh78.css"></head>\n<body class="lp-guest-body"><div id="root"></div></body></html>\n');
+  writeFileSync(join(dist, "assets", "index-Ab12Cd34.js"), "console.log('synthetic');\n");
+  writeFileSync(join(dist, "assets", "style-Ef56Gh78.css"), ".lp-guest-body{margin:0}\n");
+  const world = await startWorld({ uiMode: "spa", spaDistDir: dist });
+  try {
+    const session = await verifiedDecisionSession(world, "ps1925");
+    const ok = await get(world, "/decision/page-state", { [SESSION_COOKIE_NAME]: session });
+    assert.equal(ok.status, 200);
+    assertJsonNoStore(ok);
+    assert.deepEqual(Object.keys(await ok.json() as object).filter((k) => k !== "subjectLabel").sort(), ["relationshipRefs", "servedVersion"]);
+    const html = await get(world, "/decision", { [SESSION_COOKIE_NAME]: session });
+    assert.equal(html.status, 200);
+    assert.match(html.headers.get("content-type") ?? "", /text\/html/);
+    assert.match(await html.text(), /id="root"/);
+    const none = await get(world, "/manage/page-state");
+    assert.equal(none.status, 404);
+    assert.equal(await none.text(), '{"status":404}');
+  } finally {
+    await world.close();
+    rmSync(dist, { recursive: true, force: true });
+  }
 });

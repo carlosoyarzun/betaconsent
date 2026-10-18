@@ -827,8 +827,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      // SPA: las opciones de relación, la versión servida y la etiqueta del titular salen del HTML en `ssr`; la página React
-      // las necesitará por un endpoint JSON (pendiente en su fase, ver frontend/src/pages/README.md). No se lee nada en `spa`.
+      // SPA: las opciones de relación, la versión servida y la etiqueta del titular salen del HTML en `ssr`; la página React las
+      // lee por GET /decision/page-state (API-CNS-194). No se lee nada aquí en `spa`.
       const decisionHtml = spa ? "" : renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion(), await resolveSubjectLabel(ports, session));
       sendPage(res, 200, () => decisionHtml);
       return;
@@ -914,7 +914,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Set-Cookie", cookiesToSet);
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
       // SEC-CNS-016: la lectura de la decisión corre BAJO el tenant de la sesión (inTenant).
-      // SPA: la variante (entrada/estado/revocada) se resolverá por JSON en la fase de /manage; en `spa` no se lee.
+      // SPA: la variante (entrada/estado/revocada) la lee la página React por GET /manage/page-state (API-CNS-195); en `spa` no se lee aquí.
       let manageHtml = "";
       if (!spa) {
         const variant = await resolveManageVariant(view.session);

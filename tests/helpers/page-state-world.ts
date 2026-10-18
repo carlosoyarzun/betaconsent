@@ -48,6 +48,7 @@ export async function startWorld(options: WorldOptions = {}): Promise<World> {
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     revocationPorts,
+    environment: "LOCAL",
     ...(options.uiMode ? { uiMode: options.uiMode } : {}),
     ...(options.spaDistDir ? { spaDistDir: options.spaDistDir } : {}),
   });
