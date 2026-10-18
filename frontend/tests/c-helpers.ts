@@ -7,13 +7,13 @@ export const json = (status: number, body: unknown = {}): Response =>
 export type Handler = (call: number) => Response | Promise<Response> | Error;
 
 /** Mock de fetch por ruta: cada ruta es un handler (recibe el nº de llamada, 1-based) o una respuesta fija. */
-export function stubFetch(routes: Record<string, Handler | Response>) {
+export function stubFetch(routes: Record<string, Handler | Response | Error>) {
   const counts: Record<string, number> = {};
   const fn = vi.fn(async (path: string) => {
     const route = routes[path];
     if (!route) throw new Error(`sin mock para ${path}`);
     counts[path] = (counts[path] ?? 0) + 1;
-    const result = typeof route === "function" ? route(counts[path]!) : route.clone();
+    const result = typeof route === "function" ? route(counts[path]!) : route instanceof Error ? route : route.clone();
     if (result instanceof Error) throw result;
     return result;
   });
