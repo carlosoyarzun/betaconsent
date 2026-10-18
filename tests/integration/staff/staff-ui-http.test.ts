@@ -705,9 +705,9 @@ test("TEST-CNS-1121 CSP estricta y cabeceras de seguridad en TODA respuesta HTML
     ];
     for (const r of responses) {
       const csp = r.headers.get("content-security-policy") ?? "";
-      for (const d of ["default-src 'none'", "script-src 'self'", "style-src 'self'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), `${r.status}: ${d}`);
+      for (const d of ["default-src 'none'", "script-src 'none'", "style-src 'self'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), `${r.status}: ${d}`);
       assert.ok(!/unsafe-inline|unsafe-eval|\*|https?:/.test(csp));
-      assert.equal(csp, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+      assert.equal(csp, "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
       assert.equal(r.headers.get("cache-control"), "no-store");
       assert.equal(r.headers.get("referrer-policy"), "same-origin");
       assert.equal(r.headers.get("x-content-type-options"), "nosniff");

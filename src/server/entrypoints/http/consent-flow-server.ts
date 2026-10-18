@@ -110,8 +110,8 @@ import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from ".
 import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
-import { HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
-import { DEFAULT_SPA_DIST_DIR, loadSpaBundle, type UiMode } from "./spa-assets.ts";
+import { HTML_CONTENT_SECURITY_POLICY, STAFF_HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
+import { assertSpaAllowed, DEFAULT_SPA_DIST_DIR, loadSpaBundle, type UiMode } from "./spa-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
 import { STAFF_LOGOUT_PATH } from "./staff-ui-pages.ts";
@@ -635,6 +635,7 @@ export type ConsentFlowHttpServerOptions = ConsentFlowHttpServerBaseOptions &
 export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOptions): Server {
   const config = loadRightsCaseHttpConfig(options.config);
   // ADR-001 F1: con `spa` el build se carga UNA vez al arrancar (falla si no existe: fail-closed).
+  if (options.uiMode === "spa") assertSpaAllowed(options.environment);
   const spa = options.uiMode === "spa" ? loadSpaBundle(options.spaDistDir ?? DEFAULT_SPA_DIST_DIR) : undefined;
   /** Cuerpo de una de las 8 páginas HTML del invitado. `ssr`: el HTML de la *-page.ts (perezoso). `spa`: el mismo
    * `index.html` en ambos casos; el 404 uniforme (INV-CM-05) lleva `cns-page-state=uniform-error` y el mismo status. */
@@ -1146,7 +1147,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "same-origin"); // formularios sin JS: con no-referrer Chromium manda Origin: null
-      res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
+      res.setHeader("Content-Security-Policy", STAFF_HTML_CONTENT_SECURITY_POLICY);
       if (consoleResponse.setCookies && consoleResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...consoleResponse.setCookies]);
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
       res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });
