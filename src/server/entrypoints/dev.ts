@@ -143,6 +143,8 @@ if (pgStore) {
     decisionMakerRefKey,
     invitationIssuancePolicy: staffIssuancePolicy,
     subjectDirectory,
+    // 2B: CNS_APPLY_ATTEMPT_SINK=enabled activa el registro durable (requiere el DDL de case_state.revocation_apply_attempt); otro valor o ausente = deshabilitado.
+    applyAttemptSink: process.env.CNS_APPLY_ATTEMPT_SINK === "enabled" ? "ENABLED" : "DISABLED_PENDING_DDL",
   });
   ports = pgBundle.ports;
 } else {

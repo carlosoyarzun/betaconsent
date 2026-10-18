@@ -1157,7 +1157,7 @@ export async function evaluateRecoveryTokenEligibilityByHash(
 export async function revokeWithRecoveryLinkByHash(ports: RevocationPorts, tokenHash: string): Promise<RecoveryRevokeOutcome> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved) return { kind: "UNIFORM" }; // hash sin token: respuesta uniforme, sin tx ni evento.
-  return guardedRecoveryRevoke(ports, resolved.tenantId, (attemptRef) =>
+  return guardedRecoveryRevoke(ports, resolved.tenantId, resolved.recoveryRef, (attemptRef) =>
     inTx(ports, resolved.tenantId, async (p) => {
       const record = await p.recoveryTokenRepo.findByRef(resolved.tenantId, resolved.recoveryRef);
       if (!record || record.tokenHash !== tokenHash) return { kind: "UNIFORM" };
@@ -1173,6 +1173,7 @@ export async function revokeWithRecoveryLinkByHash(ports: RevocationPorts, token
 function guardedRecoveryRevoke(
   ports: RevocationPorts,
   tenantId: string,
+  recoveryRef: string,
   run: (attemptRef: { readonly fresh: string; used: (ref: string) => void }) => Promise<RecoveryRevokeOutcome>,
 ): Promise<RecoveryRevokeOutcome> {
   const fresh: string = randomUUID();
@@ -1202,7 +1203,7 @@ function guardedRecoveryRevoke(
     }
     return outcome;
   };
-  return runBoundedApply<RecoveryRevokeOutcome>(guard, { tenantId, revocationRef: () => used }, attempt, readApplied);
+  return runBoundedApply<RecoveryRevokeOutcome>(guard, { tenantId, revocationRef: () => used, recoveryRef: () => recoveryRef }, attempt, readApplied);
 }
 
 /**
@@ -1245,7 +1246,7 @@ async function revokeWithRecoveryLinkResolving(
 ): Promise<RecoveryRevokeOutcome> {
   const resolved = await ports.tenantResolver.byRecoveryTokenHash(tokenHash);
   if (!resolved || resolved.tenantId !== tenantId) return { kind: "UNIFORM" }; // GRD-RV-06 onFail: ERR-RV-05
-  return guardedRecoveryRevoke(ports, tenantId, (attemptRef) => inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef, attemptRef)));
+  return guardedRecoveryRevoke(ports, tenantId, resolved.recoveryRef, (attemptRef) => inTx(ports, tenantId, (p) => revokeWithRecoveryLinkTx(p, tenantId, chainRef, revokedDecisionRef, tokenHash, resolved.recoveryRef, attemptRef)));
 }
 
 async function revokeWithRecoveryLinkTx(

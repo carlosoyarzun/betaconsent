@@ -17,7 +17,13 @@
 // LEGAL DECISION (F-PR6-25, no la decide este codigo ni ningun modelo): que se comunica al titular cuando se agotan los reintentos; si basta la alerta como registro de la voluntad expresada en R1r-R3r (donde no queda
 // ninguna fila); y si el plazo P-19 hasta R9 es aceptable tras una confirmacion fallida. Este modulo solo lanza el error uniforme; el handler HTTP no inventa texto para el titular.
 //
+// 2B (F-PR6-25, DEC-BR-017, diseño F-PR6-25-2B-R9 rev. 2 §2/C6): ademas de la alerta, y en OTRA tx posterior a ella (independiente: ninguna depende de la otra), el proceso WEB registra de forma durable y sin PII que
+// "informo un intento de revocacion confirmado y no aplicado" (ApplyAttemptSink). No cambia la Revocation, la Decision (sigue GRANTED), el ledger ni el outbox; nunca lanza ni cambia el error propagado; no se llama ante un
+// guard de dominio. Si falla, linea de log sin PII con attempt_id, attempt_ref y recovery_ref (nunca el token ni su hash). Valor probatorio del registro: LEGAL DECISION (c), no se decide aqui.
+//
 // Sin PII: el log y la alerta llevan solo codigo de motivo, ref opaca y hora.
+
+import { randomUUID } from "node:crypto";
 
 export const APPLY_ALERT_REASONS = ["R4_RETRIES_EXHAUSTED", "R4_BACKUP_APPLIED", "R4_BACKUP_FAILED", "R4_APPLY_FAILED"] as const;
 export type ApplyAlertReason = (typeof APPLY_ALERT_REASONS)[number];
@@ -30,6 +36,28 @@ export class RevocationApplyUnavailableError extends Error {
     this.name = "RevocationApplyUnavailableError";
   }
 }
+
+/** Motivos del registro 2B: subconjunto de los de la alerta (los de respaldo del worker no se registran aqui). */
+export const APPLY_ATTEMPT_REASONS = ["R4_RETRIES_EXHAUSTED", "R4_APPLY_FAILED"] as const;
+export type ApplyAttemptReason = (typeof APPLY_ATTEMPT_REASONS)[number];
+
+export interface ApplyAttemptInput {
+  readonly tenantId: string;
+  /** UUIDv4 generado UNA vez por llamada a runBoundedApply (un POST): clave de idempotencia del registro (C3). */
+  readonly attemptId: string;
+  /** Ref opaca (UUIDv4) de la Revocation usada por el intento (en R1r-R3r puede ser la generada para el intento). */
+  readonly attemptRef: string;
+  /** Ref opaca del registro del token de recuperacion (app.recovery_token.recovery_ref); NUNCA el token ni su hash. Presente solo en la via RECOVERY. */
+  readonly recoveryRef?: string;
+  readonly reason: ApplyAttemptReason;
+  /** Intentos de la tx completa realizados en este POST (1..10). */
+  readonly tries: number;
+}
+
+export type ApplyAttemptOutcome = "RECORDED" | "DUPLICATE" | "NOOP_APPLIED" | "NOOP_CAPPED";
+
+/** Escribe el registro 2B en una tx propia de tenant. Puede lanzar: el guardia cae al log. Obligatorio en web (C6); no existe en platform. */
+export type ApplyAttemptSink = (input: ApplyAttemptInput) => Promise<ApplyAttemptOutcome>;
 
 export interface ApplyAlertInput {
   readonly tenantId: string;
@@ -52,6 +80,8 @@ export interface ApplyGuardConfig {
   /** G-3 alcance (Carlos 2026-10-16, opcion A): true = guard de dominio (rechazo esperado: no es una falla de aplicar, no alerta). Todo otro error no transitorio dispara R4_APPLY_FAILED. */
   readonly isDomainGuard: (error: unknown) => boolean;
   readonly alert: ApplyAlertSink;
+  /** 2B: registro durable del intento no aplicado. Obligatorio en el proceso web (se comprueba al arrancar); ausente en platform. */
+  readonly attemptSink?: ApplyAttemptSink;
   /** Respaldo de la alerta (fail-closed): linea de log del proceso SIN PII. */
   readonly log: (line: string) => void;
   readonly now: () => Date;
@@ -81,10 +111,30 @@ export async function raiseApplyAlert(config: ApplyGuardConfig, input: ApplyAler
   }
 }
 
+/** Registro 2B: tx separada, DESPUES de la alerta y sin depender de ella. Nunca lanza; si falla, log sin PII. */
+export async function recordApplyAttempt(config: ApplyGuardConfig, input: ApplyAttemptInput): Promise<ApplyAttemptOutcome | "LOGGED" | "SKIPPED"> {
+  if (config.attemptSink === undefined) return "SKIPPED";
+  try {
+    const outcome = await config.attemptSink(input);
+    if (outcome === "NOOP_CAPPED") config.log(`revocation_apply_attempt_capped reason=${input.reason} at=${config.now().toISOString()}`);
+    return outcome;
+  } catch {
+    // Solo codigos y refs opacas con forma de UUID (el hash del token es hex de 64 y nunca pasa el filtro); jamas el mensaje del error.
+    const safe = (v: string | undefined): string => (v !== undefined && OPAQUE_REF.test(v) ? v : "invalid-ref");
+    const recovery = input.recoveryRef === undefined ? "" : ` recovery_ref=${safe(input.recoveryRef)}`;
+    config.log(`revocation_apply_attempt_unrecorded reason=${input.reason} attempt_id=${safe(input.attemptId)} attempt_ref=${safe(input.attemptRef)}${recovery} at=${config.now().toISOString()} persisted=false`);
+    return "LOGGED";
+  }
+}
+
 export interface BoundedApplyContext {
   readonly tenantId: string;
   /** Ref de la Revocation de ESTA solicitud, si ya se conoce (R3: la de la sesion; R1r-R3r: la existente o la generada para el intento). Puede completarse durante el intento. */
   readonly revocationRef: () => string | undefined;
+  /** 2B: UUIDv4 del POST (uno por llamada a runBoundedApply). Si falta se genera aqui; solo los tests lo fijan. */
+  readonly attemptId?: string;
+  /** 2B: ref opaca del token de recuperacion de esta solicitud (via RECOVERY), si la hay. */
+  readonly recoveryRef?: () => string | undefined;
 }
 
 /**
@@ -98,6 +148,11 @@ export async function runBoundedApply<T>(
   readApplied: (revocationRef: string) => Promise<T | null>,
 ): Promise<T> {
   validateApplyGuardConfig(config);
+  const attemptId = ctx.attemptId ?? randomUUID();
+  const register = (reason: ApplyAttemptReason, tries: number): Promise<unknown> => {
+    const recoveryRef = ctx.recoveryRef?.();
+    return recordApplyAttempt(config, { tenantId: ctx.tenantId, attemptId, attemptRef: ctx.revocationRef() ?? "", ...(recoveryRef === undefined ? {} : { recoveryRef }), reason, tries });
+  };
   for (let n = 1; n <= config.maxAttempts; n += 1) {
     try {
       return await attempt();
@@ -107,6 +162,7 @@ export async function runBoundedApply<T>(
         // RevocationApplyUnavailableError ya es el error uniforme de "aplicacion no disponible": no se alerta dos veces.
         if (!(error instanceof RevocationApplyUnavailableError) && !config.isDomainGuard(error)) {
           await raiseApplyAlert(config, { tenantId: ctx.tenantId, revocationRef: ctx.revocationRef() ?? "", reason: "R4_APPLY_FAILED" });
+          await register("R4_APPLY_FAILED", n);
         }
         throw error;
       }
@@ -126,5 +182,6 @@ export async function runBoundedApply<T>(
   }
   const ref = ctx.revocationRef();
   await raiseApplyAlert(config, { tenantId: ctx.tenantId, revocationRef: ref ?? "", reason: "R4_RETRIES_EXHAUSTED" });
+  await register("R4_RETRIES_EXHAUSTED", config.maxAttempts);
   throw new RevocationApplyUnavailableError();
 }

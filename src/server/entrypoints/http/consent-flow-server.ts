@@ -86,7 +86,7 @@ import {
 } from "./revocation-flow.handler.ts";
 import { parseCookies } from "./cookies.ts";
 import { decodeSession } from "./consent-session.ts";
-import { createApplyGuardConfig, createTenantAlertSink } from "../../../infra/adapters/postgres/apply-guard.adapter.ts";
+import { assertWebApplyGuard, createApplyGuardConfig, createTenantAlertSink, createTenantAttemptSink } from "../../../infra/adapters/postgres/apply-guard.adapter.ts";
 import { deriveStaffSessionKey } from "./staff-session.ts";
 import { createInMemoryStaffSessionStore } from "../../../infra/adapters/in-memory-staff-session-store.adapter.ts";
 import { createPgStaffSessionStore } from "../../../infra/adapters/postgres/staff-session.adapter.ts";
@@ -399,6 +399,11 @@ export interface PostgresFlowConfig {
   readonly invitationIssuancePolicy?: InvitationIssuancePolicy;
   /** API-CNS-116: directorio SINTETICO de etiquetas (solo LOCAL/CI). Sin el, subjectLabel = null. */
   readonly subjectDirectory?: SubjectDirectoryPort;
+  /**
+   * 2B (F-PR6-25, C6): registro durable del intento de revocacion no aplicado. "ENABLED" instala el sink y el arranque comprueba que exista (fail-closed). Por defecto queda DESHABILITADO hasta que el DDL de
+   * case_state.revocation_apply_attempt exista en la base (F-2B-DDL: tras 0086 la DDL de owners va por ceremonia, CA-142); con la funcion ausente cada agotamiento caeria al log de respaldo.
+   */
+  readonly applyAttemptSink?: "ENABLED" | "DISABLED_PENDING_DDL";
 }
 
 /** Cableado Postgres de los tres bolsos de puertos. Repos/ledger/outbox/catálogo del bolso son los
@@ -452,7 +457,9 @@ export function createPostgresFlowPorts(
       uow: store.uow,
       tenantResolver: store.tenantResolver,
       // ADR-010 rev. 5 §4.2.a (G-3): reintentos acotados de la tx completa R3/R3r + R4, commit ambiguo y alerta en tx separada.
-      applyGuard: createApplyGuardConfig(createTenantAlertSink(store.uow)),
+      applyGuard: cfg.applyAttemptSink === "ENABLED"
+        ? assertWebApplyGuard(createApplyGuardConfig(createTenantAlertSink(store.uow), { attemptSink: createTenantAttemptSink(store.uow) }))
+        : createApplyGuardConfig(createTenantAlertSink(store.uow)),
     },
     rightsCase: { rightsCaseRepo: o.rightsCaseRepo, ledger: o.ledger, uow: store.uow },
   };

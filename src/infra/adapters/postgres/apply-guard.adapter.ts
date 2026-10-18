@@ -4,11 +4,13 @@
 
 import { DomainError } from "../../../server/modules/common/errors.ts";
 import { DEFAULT_APPLY_MAX_ATTEMPTS } from "../../../server/modules/revocation/apply-guard.ts";
-import type { ApplyAlertSink, ApplyGuardConfig } from "../../../server/modules/revocation/apply-guard.ts";
+import type { ApplyAlertSink, ApplyAttemptOutcome, ApplyAttemptSink, ApplyGuardConfig } from "../../../server/modules/revocation/apply-guard.ts";
 import { isTransientTxError } from "./transient-error.ts";
 import type { PgUnitOfWork } from "./unit-of-work.ts";
 
 export interface ApplyGuardOptions {
+  /** 2B (C6): registro durable del intento no aplicado. Web lo exige (assertWebApplyGuard); platform no lo lleva. */
+  readonly attemptSink?: ApplyAttemptSink;
   readonly maxAttempts?: number;
   readonly backoffBaseMs?: number;
   readonly backoffCapMs?: number;
@@ -34,6 +36,7 @@ export function createApplyGuardConfig(alert: ApplyAlertSink, options: ApplyGuar
     isTransient: isTransientTxError,
     isDomainGuard: isDomainGuardError,
     alert,
+    ...(options.attemptSink === undefined ? {} : { attemptSink: options.attemptSink }),
     log: options.log ?? ((line) => console.error(line)),
     now: options.now ?? (() => new Date()),
   };
@@ -46,4 +49,29 @@ export function createTenantAlertSink(uow: PgUnitOfWork): ApplyAlertSink {
       await tx.query("SELECT ops.record_revocation_apply_alert($1::text, $2::text)", [revocationRef, reason]);
     });
   };
+}
+
+const OUTCOMES: ReadonlySet<string> = new Set<ApplyAttemptOutcome>(["RECORDED", "DUPLICATE", "NOOP_APPLIED", "NOOP_CAPPED"]);
+
+/**
+ * 2B: registro del intento en una tx de tenant SEPARADA (posterior a la alerta). El tenant NUNCA es parametro: la funcion lo toma de app.current_tenant_id() (R-09: el GUC lo fija app_rw; aceptado solo IT0).
+ * La funcion case_state.record_revocation_apply_attempt (EXECUTE solo app_rw) valida la matriz de estados, el token y el tope por ciclo; ante un caso no admitido lanza (el guardia cae al log).
+ */
+export function createTenantAttemptSink(uow: PgUnitOfWork): ApplyAttemptSink {
+  return async ({ tenantId, attemptId, attemptRef, recoveryRef, reason, tries }) =>
+    uow.withTenantTx(tenantId, async (tx) => {
+      const r = await tx.query<{ outcome: string }>(
+        "SELECT case_state.record_revocation_apply_attempt($1::uuid, $2::text, $3::text, $4::text, $5::integer) AS outcome",
+        [attemptId, attemptRef, recoveryRef ?? null, reason, tries],
+      );
+      const outcome = r.rows[0]?.outcome;
+      if (outcome === undefined || !OUTCOMES.has(outcome)) throw new Error("resultado de registro 2B inesperado");
+      return outcome as ApplyAttemptOutcome;
+    });
+}
+
+/** C6 (SEC-2B-10): el proceso web NO arranca con la guardia de R4 sin sink de registro 2B (fail-closed). Platform no llama a esta funcion. */
+export function assertWebApplyGuard(config: ApplyGuardConfig): ApplyGuardConfig {
+  if (config.attemptSink === undefined) throw new Error("web: la guardia de R4 exige ApplyAttemptSink (registro 2B, C6). Abortando (fail-closed).");
+  return config;
 }
