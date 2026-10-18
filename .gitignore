@@ -52,3 +52,6 @@ __pycache__/
 !tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/
 !tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/client-s3/
 !tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/client-s3/index.js
+
+# Perfil de Chrome generado por herramientas de navegador cuando userDataDir llega undefined; nunca se versiona
+/undefined/
