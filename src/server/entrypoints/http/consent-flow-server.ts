@@ -715,6 +715,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     const url = req.url ?? "";
     const path = url.split("?", 1)[0] ?? "";
 
+    // Despliegue manual (tools/deploy/verify.sh, nginx): liveness del proceso. No toca la base, no lee cookies ni estado, no
+    // devuelve datos; mismo contrato que GET /healthz del proceso platform.
+    if (req.method === "GET" && path === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ status: "ok", process: "web" }));
+      return;
+    }
+
     if (req.method === "GET" && path.startsWith("/i/") && path.length > "/i/".length) {
       // API-CNS-101 (P-12, SEC-CNS-014): único GET de canje de este entrypoint IT0 (INV-CM-08
       // reforzado, Carlos 2026-09-28 opción a). SIEMPRE el mismo 303, sin leer la BD: un

@@ -53,6 +53,105 @@ export const RH3_DEV_REFS: Rh3DevRefs = {
   receiptRef: "0b2d4f6a-8c1e-4a37-9d52-3e5a7c9b1d4f",
 };
 
+type RevocationTx = Parameters<Parameters<RevocationFlowPorts["revocation"]["uow"]["inTenant"]>[1]>[0];
+
+/** Siembra, DENTRO de la tx del tenant, una decision GRANTED por el MISMO camino del dominio que el flujo real (invitacion DRAFT->READY->SENT->OPENED, OTP, decision PENDING + 4 pasos + GRANTED, invitacion COMPLETED). La
+ * base (derivacion del ledger, ADR-010 rev. 5) rechaza insertar una decision ya GRANTED. Compartida por el caso RH3 y por el enlace de gestion /m/<token> de dev.ts con Postgres. */
+export async function seedGrantedDevDecisionInTx(tx: RevocationTx, tenantId: string, refs: Rh3DevRefs): Promise<void> {
+  // ADR-010 rev. 5 PR-b: la base solo admite el ciclo legal (estado inicial fijo, grafo, cruces entre filas) y deriva el ledger de las filas; la decision GRANTED sembrada recorre el MISMO
+  // camino que el flujo real: invitacion DRAFT->READY->SENT->OPENED, OTP CODE_SENT->VERIFIED, invitacion VERIFIED, decision PENDING + 4 pasos + GRANTED, invitacion COMPLETED.
+  const subjectRef = refs.subjectRef;
+  const invitationRef = refs.invitationRef;
+  const verificationRef = refs.verificationRef;
+  const dmRef = refs.dmRef;
+  const enrollmentRef = refs.enrollmentRef;
+  const participationRef = refs.participationRef;
+  const served = getServedConsentVersion();
+  const channel = "dev-rh3@example.invalid";
+  const invBase = {
+    invitationRef, tenantId, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef, subjectRef, enrollmentRef, participationRef,
+  } as const;
+  const expiresAt = new Date(Date.now() + 24 * 3_600_000);
+  const tokenHash = createHash("sha256").update(randomUUID()).digest("hex");
+  await tx.invitationRepo.save({ ...invBase, state: "DRAFT" });
+  const ready = { ...invBase, state: "READY" as const, consentVersion: served.consentVersion, expiresAt, recipientBinding: "RECIPIENT_CHANNEL" as const, recipientChannelRef: channel };
+  await tx.invitationRepo.save(ready);
+  const sent = { ...ready, state: "SENT" as const, tokenHash, deliveryChannel: "CONSENT_APP_EMAIL" as const };
+  await tx.invitationRepo.save(sent);
+  const opened = { ...sent, state: "OPENED" as const };
+  await tx.invitationRepo.save(opened);
+  const otp = {
+    verificationRef, tenantId, scope: "DECISION" as const, parentRef: invitationRef, channelRef: channel, codeHash: "0".repeat(64), attempts: 0, expiresAt,
+    state: "CODE_SENT" as const, resendCount: 0,
+  };
+  await tx.otpRepo.save(otp);
+  await tx.otpRepo.save({ ...otp, attempts: 1, state: "VERIFIED", consumedAt: new Date(), decisionMakerRef: dmRef, dmRefKeyVersion: 2 });
+  const verified = { ...opened, state: "VERIFIED" as const, boundDecisionMakerRef: dmRef, verifiedByRef: verificationRef, dmRefKeyVersion: 2 };
+  await tx.invitationRepo.save(verified);
+  const pending = {
+    consentId: refs.consentId,
+    tenantId,
+    contextRef: LECTORPRO_BETA_CONFIG.contextRef,
+    productRef: LECTORPRO_BETA_CONFIG.productRef,
+    subjectRef,
+    decisionMakerRef: dmRef,
+    invitationRef,
+    verificationRef,
+    chainRef: refs.chainRef,
+    state: "PENDING" as const,
+    purposes: [],
+    priorStepsComplete: false,
+    stepsRecorded: [] as string[],
+  };
+  await tx.consentDecisionRepo.save(pending);
+  const stepsAll = ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"];
+  let current: ConsentDecisionRecord = pending;
+  for (const step of stepsAll) {
+    current = {
+      ...current,
+      stepsRecorded: [...current.stepsRecorded, step],
+      priorStepsComplete: ["CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"].every((k) => [...current.stepsRecorded, step].includes(k)),
+      ...(step === "CONSENT_VERSION_VIEWED" ? { consentVersion: served.consentVersion, consentTextHash: served.consentTextHash, privacyNoticeVersion: served.privacyNoticeVersion } : {}),
+      ...(step === "DECISION_MAKER_AUTHORITY_DECLARED" ? { relationshipRef: "SYNTHETIC_GUARDIAN" } : {}),
+    };
+    await tx.consentDecisionRepo.save(current);
+  }
+  await tx.consentDecisionRepo.save({
+    ...current,
+    state: "GRANTED",
+    purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
+    receiptRef: refs.receiptRef,
+    consentVersion: served.consentVersion,
+    consentTextHash: served.consentTextHash,
+    privacyNoticeVersion: served.privacyNoticeVersion,
+  });
+  await tx.invitationRepo.save({ ...verified, state: "COMPLETED", closedByConsentId: refs.consentId });
+}
+
+/** Enlace de gestion /m/<token> de dev.ts con CONSENT_STORE=postgres: refs UUIDv4 propias (la base y el ledger exigen Ref UUIDv4; las constantes de texto de la siembra en memoria no sirven) y chain/decision distintas de RH3. */
+export const MGMT_DEV_REFS: Rh3DevRefs = {
+  chainRef: "d2f4a6c8-0b1e-4d37-9a59-3c5e7a9b1d2f",
+  consentId: "e3a5b7d9-1c2f-4e48-8b60-4d6f8a0c2e3a",
+  caseRef: "f4b6c8e0-2d3a-4f59-9c71-5e7a9b1d3f4b",
+  revocationRef: "a5c7d9f1-3e4b-4a60-8d82-6f8b0c2e4a5c",
+  subjectRef: "b6d8e0a2-4f5c-4b71-9e93-7a9c1d3f5b6d",
+  invitationRef: "c7e9f1b3-5a6d-4c82-8fa4-8b0d2e4a6c7e",
+  verificationRef: "d8fa02c4-6b7e-4d93-90b5-9c1e3f5b7d8f",
+  dmRef: "e90b13d5-7c8f-4ea4-81c6-0d2f4a6c8e90",
+  enrollmentRef: "fa1c24e6-8d90-4fb5-92d7-1e3a5b7d9fa1",
+  participationRef: "0b2d35f7-9ea1-4ac6-83e8-2f4b6c8e0a1b",
+  receiptRef: "1c3e46a8-0fb2-4bd7-94f9-3a5c7d9f1b2c",
+};
+
+/** Siembra idempotente (por consulta) de la decision GRANTED del enlace /m/<token> con Postgres. Devuelve false si ya existe. */
+export async function seedMgmtDevDecision(revocationPorts: RevocationFlowPorts, tenantId: string, refs: Rh3DevRefs = MGMT_DEV_REFS): Promise<boolean> {
+  return revocationPorts.revocation.uow.inTenant(tenantId, async (tx) => {
+    if (await tx.consentDecisionRepo.findByConsentId(tenantId, refs.consentId)) return false;
+    await seedGrantedDevDecisionInTx(tx, tenantId, refs);
+    return true;
+  });
+}
+
 /** Siembra atomica (UNA tx del tenant, SEC-CNS-017 F4): o queda todo el caso o nada. Idempotente por consulta, no por
  * captura de errores: si el caso ya existe devuelve false sin escribir. Cualquier otro error propaga. */
 export async function seedRh3DevCase(_ports: ConsentFlowPorts, revocationPorts: RevocationFlowPorts, tenantId: string, refs: Rh3DevRefs = RH3_DEV_REFS): Promise<boolean> {
@@ -61,74 +160,7 @@ export async function seedRh3DevCase(_ports: ConsentFlowPorts, revocationPorts: 
   const rv = revocationPorts.revocation;
   return rv.uow.inTenant(tenantId, async (tx) => {
     if (await tx.rightsCaseRepo.findByRef(tenantId, refs.caseRef)) return false;
-    // ADR-010 rev. 5 PR-b: la base solo admite el ciclo legal (estado inicial fijo, grafo, cruces entre filas) y deriva el ledger de las filas; la decision GRANTED sembrada recorre el MISMO
-    // camino que el flujo real: invitacion DRAFT->READY->SENT->OPENED, OTP CODE_SENT->VERIFIED, invitacion VERIFIED, decision PENDING + 4 pasos + GRANTED, invitacion COMPLETED.
-    const subjectRef = refs.subjectRef;
-    const invitationRef = refs.invitationRef;
-    const verificationRef = refs.verificationRef;
-    const dmRef = refs.dmRef;
-    const enrollmentRef = refs.enrollmentRef;
-    const participationRef = refs.participationRef;
-    const served = getServedConsentVersion();
-    const channel = "dev-rh3@example.invalid";
-    const invBase = {
-      invitationRef, tenantId, contextRef: LECTORPRO_BETA_CONFIG.contextRef, productRef: LECTORPRO_BETA_CONFIG.productRef, subjectRef, enrollmentRef, participationRef,
-    } as const;
-    const expiresAt = new Date(Date.now() + 24 * 3_600_000);
-    const tokenHash = createHash("sha256").update(randomUUID()).digest("hex");
-    await tx.invitationRepo.save({ ...invBase, state: "DRAFT" });
-    const ready = { ...invBase, state: "READY" as const, consentVersion: served.consentVersion, expiresAt, recipientBinding: "RECIPIENT_CHANNEL" as const, recipientChannelRef: channel };
-    await tx.invitationRepo.save(ready);
-    const sent = { ...ready, state: "SENT" as const, tokenHash, deliveryChannel: "CONSENT_APP_EMAIL" as const };
-    await tx.invitationRepo.save(sent);
-    const opened = { ...sent, state: "OPENED" as const };
-    await tx.invitationRepo.save(opened);
-    const otp = {
-      verificationRef, tenantId, scope: "DECISION" as const, parentRef: invitationRef, channelRef: channel, codeHash: "0".repeat(64), attempts: 0, expiresAt,
-      state: "CODE_SENT" as const, resendCount: 0,
-    };
-    await tx.otpRepo.save(otp);
-    await tx.otpRepo.save({ ...otp, attempts: 1, state: "VERIFIED", consumedAt: new Date(), decisionMakerRef: dmRef, dmRefKeyVersion: 2 });
-    const verified = { ...opened, state: "VERIFIED" as const, boundDecisionMakerRef: dmRef, verifiedByRef: verificationRef, dmRefKeyVersion: 2 };
-    await tx.invitationRepo.save(verified);
-    const pending = {
-      consentId: refs.consentId,
-      tenantId,
-      contextRef: LECTORPRO_BETA_CONFIG.contextRef,
-      productRef: LECTORPRO_BETA_CONFIG.productRef,
-      subjectRef,
-      decisionMakerRef: dmRef,
-      invitationRef,
-      verificationRef,
-      chainRef: refs.chainRef,
-      state: "PENDING" as const,
-      purposes: [],
-      priorStepsComplete: false,
-      stepsRecorded: [] as string[],
-    };
-    await tx.consentDecisionRepo.save(pending);
-    const stepsAll = ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"];
-    let current: ConsentDecisionRecord = pending;
-    for (const step of stepsAll) {
-      current = {
-        ...current,
-        stepsRecorded: [...current.stepsRecorded, step],
-        priorStepsComplete: ["CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"].every((k) => [...current.stepsRecorded, step].includes(k)),
-        ...(step === "CONSENT_VERSION_VIEWED" ? { consentVersion: served.consentVersion, consentTextHash: served.consentTextHash, privacyNoticeVersion: served.privacyNoticeVersion } : {}),
-        ...(step === "DECISION_MAKER_AUTHORITY_DECLARED" ? { relationshipRef: "SYNTHETIC_GUARDIAN" } : {}),
-      };
-      await tx.consentDecisionRepo.save(current);
-    }
-    await tx.consentDecisionRepo.save({
-      ...current,
-      state: "GRANTED",
-      purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
-      receiptRef: refs.receiptRef,
-      consentVersion: served.consentVersion,
-      consentTextHash: served.consentTextHash,
-      privacyNoticeVersion: served.privacyNoticeVersion,
-    });
-    await tx.invitationRepo.save({ ...verified, state: "COMPLETED", closedByConsentId: refs.consentId });
+    await seedGrantedDevDecisionInTx(tx, tenantId, refs);
     if (tx.rightsCaseTransitions !== undefined && tx.revocationTransitions !== undefined) {
       // ADR-010 rev. 5 (6d parte 2): con Postgres el caso llega a IN_VERIFICATION por el CAMINO LEGAL con las funciones de la base que SI ejecuta app_rw (RC1 -> RC2u -> RC3), sin
       // siembras seed_local_* (la base las revoca a app_rw en 0070). RH2 (propuesta y aprobacion) y RH3 solo existen en el proceso `platform`, con sesion CASE/PLATFORM: aqui no se simulan.
