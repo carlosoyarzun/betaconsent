@@ -22,7 +22,7 @@ test.describe("seguridad HTTP", () => {
       const h = res.headers();
       expect(h["content-type"], route).toContain("text/html");
       expect(h["content-security-policy"], `CSP en ${route}`).toBeTruthy();
-      expect(h["content-security-policy"], route).toContain("default-src 'self'");
+      expect(h["content-security-policy"], route).toMatch(/default-src '(self|none)'/);
       expect(h["content-security-policy"], `sin unsafe-inline/eval en ${route}`).not.toMatch(/unsafe-inline|unsafe-eval/);
       expect(h["cache-control"], route).toContain("no-store");
       expect(h["referrer-policy"], route).toBe("no-referrer");
@@ -39,7 +39,7 @@ test.describe("seguridad HTTP", () => {
     }
     for (const d of ok) {
       const h = d.headers();
-      expect(h["content-security-policy"], d.url()).toContain("default-src 'self'");
+      expect(h["content-security-policy"], d.url()).toMatch(/default-src '(self|none)'/);
       expect(h["cache-control"], d.url()).toContain("no-store");
       expect(h["referrer-policy"], d.url()).toBe("no-referrer");
     }
@@ -56,8 +56,7 @@ test.describe("seguridad HTTP", () => {
     expect(res200!.headers()["cross-origin-opener-policy"]).toBe("same-origin");
   });
 
-  test("E2E-CNS-075 hallazgo F-E2E-03: las páginas HTML del invitado (incluida la confirmación de retiro) no deberían poder enmarcarse (frame-ancestors 'none' o X-Frame-Options)", async ({ request }) => {
-    test.fail(true, "F-E2E-03 (P2): solo /recovery/confirm declara frame-ancestors; las otras 7 páginas (incl. /manage/revocation/confirm) sin frame-ancestors ni X-Frame-Options => clickjacking posible");
+  test("E2E-CNS-075 (F-E2E-03, corregido en #114) las páginas HTML del invitado (incluida la confirmación de retiro) no deberían poder enmarcarse (frame-ancestors 'none' o X-Frame-Options)", async ({ request }) => {
     for (const route of HTML_ROUTES.filter((r) => r !== "/recovery/confirm")) {
       const h = (await request.get(route)).headers();
       const csp = h["content-security-policy"] ?? "";

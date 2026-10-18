@@ -19,7 +19,8 @@
     "test:frontend": "vitest run --config frontend/vite.config.ts",
     "dev:frontend": "vite --config frontend/vite.config.ts",
     "guardrail:frontend-boundary": "node tools/guardrails/frontend-boundary-check.ts",
-    "guardrail:dist-csp": "node tools/guardrails/dist-csp-check.ts"
+    "guardrail:dist-csp": "node tools/guardrails/dist-csp-check.ts",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
     "pg": "8.23.0",

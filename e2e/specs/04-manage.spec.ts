@@ -75,7 +75,7 @@ test.describe("manage", () => {
     await expect(page.getByLabel("Código de verificación")).toBeHidden();
   });
 
-  test("E2E-CNS-041 desde el bloqueo, 'Enviar enlace de recuperación' responde de forma uniforme y el sink recibe /r/{token} (API-CNS-134, GRD-RV-17)", async ({ page, app }) => {
+  test("E2E-CNS-041 desde el bloqueo, 'Enviar enlace de recuperación' responde de forma uniforme y el sink recibe /r/{token} (API-CNS-134)", async ({ page, app }) => {
     await toManageVerify(page, app.managementPath);
     const wrong = (await app.readLatestOtp()) === "000000" ? "111111" : "000000";
     const locked = page.getByRole("alert").filter({ hasText: "Bloqueamos este código" });

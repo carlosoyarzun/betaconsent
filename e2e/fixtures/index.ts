@@ -29,6 +29,9 @@ export interface App {
   forceApplyFailure(page: Page, path: "/manage/revocation/confirm" | "/recovery/revoke"): Promise<void>;
 }
 
+// Contador de alumnos sintéticos del modo externo (servidor compartido: 6 por arranque, workers=1).
+let nextStudent = 0;
+
 const external = process.env.E2E_BASE_URL !== undefined || process.env.E2E_START_SERVER === "1";
 
 export const test = base.extend<{ server: DevServer | null; app: App }>({
@@ -42,7 +45,6 @@ export const test = base.extend<{ server: DevServer | null; app: App }>({
   app: async ({ server, baseURL }, use) => {
     const url = baseURL!;
     let seededUsed = false;
-    let nextStudent = 0;
     const app: App = {
       baseURL: url,
       managementPath: server?.managementPath ?? process.env.E2E_MANAGEMENT_PATH ?? "/m/dev-mgmt-token-001",

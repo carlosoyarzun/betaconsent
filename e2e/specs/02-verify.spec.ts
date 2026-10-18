@@ -66,6 +66,8 @@ test.describe("verify", () => {
     const before = await app.otpCount();
     await locked.getByRole("button", { name: "Solicitar nuevo código" }).click();
     await expect.poll(() => app.otpCount()).toBe(before + 1);
+    // la UI limpia y enfoca el campo al recibir la respuesta: esperar antes de escribir el código nuevo
+    await expect(page.getByLabel("Código de verificación")).toBeFocused();
     await typeOtp(page, await app.readLatestOtp());
     await expect(page).toHaveURL(/\/decision$/);
   });

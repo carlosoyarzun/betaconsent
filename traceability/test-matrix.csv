@@ -953,3 +953,92 @@ TEST-CNS-1892,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: 
 TEST-CNS-1893,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: estáticos SSR siguen no-store; rutas desconocidas siguen en 404 JSON","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1894,integration,tests/integration/consent-flow/spa-http.test.ts,"ssr (default): /welcome sin sesión sigue siendo el HTML SSR uniforme; assets de dist no se sirven","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1895,integration,tests/integration/consent-flow/spa-http.test.ts,"CNS_UI_MODE: default ssr, inválidos abortan y spa sin build falla al arrancar","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
+TEST-CNS-1966,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-001: canje GET /i/{token} responde 303 a /welcome sin exponer el token","UX-CNS-001, API-CNS-101",ACTIVE
+TEST-CNS-1967,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-002: /welcome muestra título, detalle de invitación y los 3 pasos de 'Cómo funciona'","UX-CNS-001",ACTIVE
+TEST-CNS-1968,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-003: insignia de entorno 'Prueba · IT0' visible en escritorio","marca de agua IT0, DEC-BR-014",ACTIVE
+TEST-CNS-1968,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-003: insignia de entorno 'Prueba · IT0' visible en móvil","marca de agua IT0, DEC-BR-014",ACTIVE
+TEST-CNS-1969,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-004: botón principal 'Continuar' único, visible y habilitado; foco inicial en el documento","UX-CNS-001, WCAG 2.4.3",ACTIVE
+TEST-CNS-1970,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-005: 'Continuar' abre la invitación, emite un OTP al sink y navega a /verify","UX-CNS-001, API-CNS-101/103",ACTIVE
+TEST-CNS-1971,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-006: enlace inválido: /welcome muestra el error uniforme con role=alert, sin 'Continuar', y no emite OTP","INV-CM-05",ACTIVE
+TEST-CNS-1972,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-007: GET /welcome sin sesión entrega la pantalla de error uniforme en HTML (no JSON)","INV-CM-05",ACTIVE
+TEST-CNS-1973,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-008: línea base: una invitación OPENED se puede reabrir desde otro contexto y llega a /verify sin emitir un OTP nuevo (observación O-1, ver PR)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-1974,e2e,e2e/specs/01-welcome.spec.ts,"E2E-CNS-009: error de red: aviso 'No pudimos conectar.' y 'Reintentar' completa el flujo","UX-CNS-001",ACTIVE
+TEST-CNS-1975,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-010: /verify muestra paso 1 de 3, campo de código con etiqueta, 'Verificar' y 'Reenviar código'","UX-CNS-002",ACTIVE
+TEST-CNS-1976,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-011: observación O-2: el texto de ayuda de /verify muestra marcadores de parámetro sin resolver ([N], P-01, P-02, P-06)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-1977,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-012: OTP correcto navega a /decision","UX-CNS-002, API-CNS-104",ACTIVE
+TEST-CNS-1978,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-013: OTP incorrecto: mensaje con role=alert, aria-invalid=true, permanece en /verify y no revela intentos","ERR-OT-02",ACTIVE
+TEST-CNS-1979,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-014: tras el rechazo, el botón 'Verificar' vuelve a estar disponible (aria-busy=false)","UX-CNS-002",ACTIVE
+TEST-CNS-1980,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-015: bloqueado: 'Solicitar nuevo código' emite un OTP nuevo que permite continuar a /decision","UX-CNS-002, GRD-OT-08",ACTIVE
+TEST-CNS-1981,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-016: aviso de código expirado (respuesta OTP_EXPIRED_OR_CONSUMED simulada en el navegador) con role=alert y 'Solicitar nuevo código'","UX-CNS-002",ACTIVE
+TEST-CNS-1982,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-017: bloqueo por intentos fallidos: aviso 'Bloqueamos este código…' con role=alert; el código correcto deja de servir","SEC-CNS-021, P-03",ACTIVE
+TEST-CNS-1983,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-018: observación O-3: con la política LOCAL, 'Reenviar código' responde ya el límite (P-06 sin valor) en una región de estado y no emite OTP","UX-CNS-002, API-CNS-105",ACTIVE
+TEST-CNS-1984,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-019: el aviso de límite de reenvíos no revela cifra y el código original sigue sirviendo (P-06)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-1985,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-020: error de red al verificar: 'No pudimos conectar.' con 'Reintentar' que reenvía la acción","UX-CNS-002",ACTIVE
+TEST-CNS-1986,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-021: navegación por teclado: Tab llega al campo, Enter en 'Verificar' envía y Escape no rompe el flujo (WCAG 2.1.1)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-1987,e2e,e2e/specs/02-verify.spec.ts,"E2E-CNS-022: GET /verify sin sesión entrega la pantalla de error uniforme en HTML","INV-CM-05",ACTIVE
+TEST-CNS-1988,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-023: /decision muestra paso 2 de 3, texto y versión del consentimiento, alumno sintético y 4 finalidades","UX-CNS-003, GRD-CD-03",ACTIVE
+TEST-CNS-1989,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-024: 'Enviar decisión' parte deshabilitado (aria-disabled) con ayuda de estado y se habilita al completar todo","UX-CNS-003",ACTIVE
+TEST-CNS-1990,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-025: enviar incompleto muestra 'Falta completar algo antes de enviar.' con role=alert y no registra la decisión","UX-CNS-003",ACTIVE
+TEST-CNS-1991,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-026: aceptar las 4 finalidades: confirmación 'Listo, registramos tu decisión', comprobante, marca IT0 y foco en el título","UX-CNS-003, WCAG 2.4.3",ACTIVE
+TEST-CNS-1992,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-027: al aceptar, el sink recibe comprobante y, aparte, el enlace de gestión","UX-CNS-006/006b, D-03",ACTIVE
+TEST-CNS-1993,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-028: no aceptar una finalidad: aviso previo y confirmación 'Registramos tu decisión' (el estudiante no participará)","UX-CNS-003, Q-13",ACTIVE
+TEST-CNS-1994,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-029: 'No es mi estudiante' (subject mismatch): aviso, 'Informar…' cancela la invitación y no registra decisión","UX-CNS-003, API-CNS-109",ACTIVE
+TEST-CNS-1995,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-030: tras registrar la decisión, volver a /decision entrega el error uniforme","INV-CM-05, no doble envío",ACTIVE
+TEST-CNS-1996,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-031: invitación COMPLETADA: reabrir /i/{token} en otro contexto no permite continuar","INV-CM-05",ACTIVE
+TEST-CNS-1997,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-032: GET /decision sin sesión verificada entrega el error uniforme en HTML","INV-CM-05",ACTIVE
+TEST-CNS-1998,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-033: error de red al enviar: 'No pudimos conectar.' y 'Reintentar' registra la decisión","UX-CNS-003",ACTIVE
+TEST-CNS-1999,e2e,e2e/specs/03-decision.spec.ts,"E2E-CNS-034: los controles del formulario son operables con teclado (radios, casilla, select) (WCAG 2.1.1)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2000,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-035: canje GET /m/{token} responde 303 a /manage sin leer ni exponer el token","UX-CNS-004",ACTIVE
+TEST-CNS-2001,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-036: /manage (entrada) pide verificar identidad antes de mostrar información","UX-CNS-004",ACTIVE
+TEST-CNS-2002,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-037: 'Verificar mi identidad' emite un OTP de gestión y navega a /manage/verify sin paso de decisión","UX-CNS-004",ACTIVE
+TEST-CNS-2003,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-038: OTP de gestión correcto muestra el estado: 'Consentimiento otorgado', 4 finalidades y 'Retirar mi consentimiento'","UX-CNS-004",ACTIVE
+TEST-CNS-2004,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-039: OTP de gestión incorrecto: error con role=alert y se permanece en /manage/verify","ERR-OT-02",ACTIVE
+TEST-CNS-2005,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-040: bloqueo en gestión: nunca ofrece 'Solicitar nuevo código'; ofrece enlace de recuperación y caso humano, con foco en el aviso","INV-OT-06, SEC-CNS-021",ACTIVE
+TEST-CNS-2006,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-041: desde el bloqueo, 'Enviar enlace de recuperación' responde de forma uniforme y el sink recibe /r/{token}","API-CNS-134",ACTIVE
+TEST-CNS-2007,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-042: desde el bloqueo, 'Abrir caso con soporte humano' anuncia que se abrió un caso (RC1 BEARER; nunca 'denegado')","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2008,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-043: GET /manage sin sesión entrega 'Este enlace ya no está disponible.' en HTML con vía a soporte","INV-CM-05",ACTIVE
+TEST-CNS-2009,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-044: GET /manage/verify sin sesión de gestión entrega el error uniforme en HTML","INV-CM-05",ACTIVE
+TEST-CNS-2010,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-045: enlace de gestión inválido: /manage entrega el error uniforme sin 'Verificar mi identidad' ni OTP","INV-CM-05",ACTIVE
+TEST-CNS-2011,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-046: error de red en 'Verificar mi identidad': 'No pudimos conectar.' y 'Reintentar' continúa","UX-CNS-004",ACTIVE
+TEST-CNS-2012,e2e,e2e/specs/04-manage.spec.ts,"E2E-CNS-047: hallazgo F-E2E-01: el enlace de gestión sembrado por dev.ts permite verificar el OTP y llegar al estado (hoy POST /otp/submit responde 500 LedgerPayloadViolationError)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2013,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-048: 'Retirar mi consentimiento' lleva a /manage/revocation/verify (OTP de clase RIGHTS, sin paso de decisión) y emite un OTP","UX-CNS-004",ACTIVE
+TEST-CNS-2014,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-049: OTP de retiro incorrecto: error con role=alert y se permanece en /manage/revocation/verify","ERR-OT-02",ACTIVE
+TEST-CNS-2015,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-050: bloqueo en retiro: sin 'Solicitar nuevo código', con recuperación y soporte humano","INV-OT-06: el retiro nunca se cierra",ACTIVE
+TEST-CNS-2016,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-051: /manage/revocation/confirm muestra el alcance del retiro total y los botones 'Confirmar retiro total' / 'Cancelar solicitud de retiro'","UX-CNS-004, REQ-CNS-033",ACTIVE
+TEST-CNS-2017,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-052: flujo completo hasta APPLIED: 'Retiramos tu consentimiento', comprobante, marca IT0 y foco en el título","UX-CNS-004, API-CNS-132",ACTIVE
+TEST-CNS-2018,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-053: al aplicar el retiro, el outbox LOCAL recibe un consent.revoked con refs opacas","CA-127, PRIV: sin PII",ACTIVE
+TEST-CNS-2019,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-054: tras APPLIED, el enlace de gestión muestra 'Tu consentimiento ya fue retirado.' sin acción de retiro pendiente","UX-CNS-004",ACTIVE
+TEST-CNS-2020,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-055: 'Cancelar solicitud de retiro': 'Cancelamos tu solicitud de retiro', el consentimiento sigue vigente","UX-CNS-004, API-CNS-133",ACTIVE
+TEST-CNS-2021,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-056: ERR-RV-21 (copy interino): ante 503 en confirmar se muestra 'No pudimos completar tu retiro', código ERR-RV-21, role=alert con foco y salidas","UX-CNS-015",ACTIVE
+TEST-CNS-2022,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-057: ERR-RV-21: 'Empezar de nuevo' vuelve a /manage y el retiro puede completarse con un OTP nuevo","UX-CNS-015",ACTIVE
+TEST-CNS-2023,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-058: hook de servidor para 503 del retiro (GUARD_EVALUATOR_UNAVAILABLE) y token/OTP no consumido tras 503","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2024,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-059: GET /manage/revocation/confirm sin OTP de retiro verificado entrega el error uniforme en HTML","INV-CM-05",ACTIVE
+TEST-CNS-2025,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-060: GET /manage/revocation/verify sin sesión entrega el error uniforme en HTML","INV-CM-05",ACTIVE
+TEST-CNS-2026,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-061: error de red al confirmar: 'No pudimos conectar.' y 'Reintentar' completa el retiro","UX-CNS-004",ACTIVE
+TEST-CNS-2027,e2e,e2e/specs/05-revocation.spec.ts,"E2E-CNS-062: flujo de revocación operable solo con teclado (Tab/Enter/Space) desde /manage hasta APPLIED (WCAG 2.1.1, 2.4.3)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2028,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-063: canje GET /r/{token} responde 303 a /recovery/confirm sin leer la BD y /recovery/confirm muestra el retiro total","UX-CNS-004, SEC-CNS-014",ACTIVE
+TEST-CNS-2029,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-064: 'Confirmar retiro total' vía enlace de recuperación: 'Retiramos tu consentimiento' con foco en el título","UX-CNS-004",ACTIVE
+TEST-CNS-2030,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-065: enlace de recuperación inválido: /recovery/confirm entrega el error uniforme en HTML con vía a soporte","INV-CM-05",ACTIVE
+TEST-CNS-2031,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-066: GET /recovery/confirm sin cookie de recuperación: 404 HTML uniforme, con CSP frame-ancestors 'none'","SEC-CNS-014",ACTIVE
+TEST-CNS-2032,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-067: un enlace de recuperación ya usado no vuelve a ofrecer la confirmación","token de un solo uso, GRD-RV-06",ACTIVE
+TEST-CNS-2033,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-068: ERR-RV-22 (copy interino): ante 503 se muestra 'No pudimos completar tu retiro ahora', código ERR-RV-22, role=alert con foco","UX-CNS-015",ACTIVE
+TEST-CNS-2034,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-069: ERR-RV-22: 'Volver a intentar' reenvía la confirmación y, sin el fallo, completa el retiro","UX-CNS-015",ACTIVE
+TEST-CNS-2035,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-070: el token de recuperación no se consume tras un 503 real del apply-guard","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2036,e2e,e2e/specs/06-recovery.spec.ts,"E2E-CNS-071: error de red al confirmar por recuperación: 'No pudimos conectar.' y 'Reintentar' completa el retiro","UX-CNS-004",ACTIVE
+TEST-CNS-2037,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-072: las 8 páginas HTML (variante sin sesión) llevan CSP, no-store y no-referrer","UX-CNS-001",ACTIVE
+TEST-CNS-2038,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-073: las páginas HTML en 200 (flujo real hasta la confirmación de retiro) llevan las mismas cabeceras","UX-CNS-001",ACTIVE
+TEST-CNS-2039,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-074: /recovery/confirm (200 y 404) lleva frame-ancestors 'none' y COOP same-origin","SEC-CNS-014",ACTIVE
+TEST-CNS-2040,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-075: hallazgo F-E2E-03: las páginas HTML del invitado (incluida la confirmación de retiro) no deberían poder enmarcarse (frame-ancestors 'none' o X-Frame-Options)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2041,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-076: hallazgo F-E2E-02: las páginas HTML deberían llevar X-Content-Type-Options: nosniff (como /staff y el roster)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2042,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-077: cookies __Host-*: Secure, Path=/, sin Domain; sesión HttpOnly + SameSite=Lax; CSRF legible por JS con SameSite=Lax","SEC-CNS-014",ACTIVE
+TEST-CNS-2043,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-078: POST sin x-csrf-token o con Origin ajeno se rechaza con 403","GRD-CM-10 csrf_and_origin",ACTIVE
+TEST-CNS-2044,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-079: rutas fuera del catálogo responden 404 JSON uniforme (sin HTML ni stack) en GET y POST","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2045,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-080: higiene de URL: ninguna navegación del flujo completo expone tokens, OTP ni query string (PRIV: cero credenciales en URL)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2046,e2e,e2e/specs/07-security.spec.ts,"E2E-CNS-081: los activos estáticos del invitado se sirven con no-store y solo desde la lista cerrada /assets/** (static-assets.ts)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2047,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-082: axe (WCAG 2.2 AA) en las 8 pantallas: 0 violaciones serious/critical; moderate/minor listadas","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2048,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-083: axe sobre los estados de error uniforme (sin sesión) de las 8 rutas: 0 serious/critical","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2049,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-084: reflow a 320 px: sin desplazamiento horizontal en las 8 pantallas","WCAG 1.4.10",ACTIVE
+TEST-CNS-2050,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-085: reflow a 390 px: sin desplazamiento horizontal en las 8 pantallas","WCAG 1.4.10",ACTIVE
+TEST-CNS-2051,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-086: foco visible: el control enfocado por teclado tiene indicador (outline/box-shadow) en las pantallas con botones (WCAG 2.4.7)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2052,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-087: cada pantalla tiene lang=es, un único h1 visible y una región main con nombre accesible (WCAG 3.1.1, 1.3.1, 2.4.1)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+TEST-CNS-2053,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-088: hallazgo F-E2E-04: objetivos táctiles >= 24 px (WCAG 2.5.8, regla axe target-size) en las 8 pantallas","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
