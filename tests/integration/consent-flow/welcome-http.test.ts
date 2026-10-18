@@ -114,6 +114,7 @@ test("TEST-CNS-538: GET /welcome con sesión válida responde 200, HTML con un h
     assert.equal(res.headers.get("cache-control"), "no-store");
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     const html = await res.text();
     assert.match(html, /<html lang="es">/);
     assert.match(html, /<h1[^>]*>Bienvenida a la invitación<\/h1>/);

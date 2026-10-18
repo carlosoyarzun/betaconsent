@@ -124,6 +124,7 @@ test("TEST-CNS-1889: spa — GET /welcome con sesión válida (canje /i/{token})
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /^text\/html; charset=utf-8/);
     assert.equal(res.headers.get("content-security-policy"), ADR_001_CSP);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     assert.equal(res.headers.get("cache-control"), "no-store");
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     const cookies = parseAllSetCookies(res);
@@ -144,6 +145,7 @@ test("TEST-CNS-1890: spa — las 8 rutas HTML sin sesión/handle responden 404 c
       assert.equal(res.status, 404, path);
       assert.match(res.headers.get("content-type") ?? "", /^text\/html; charset=utf-8/, path);
       assert.equal(res.headers.get("content-security-policy"), ADR_001_CSP, path);
+      assert.equal(res.headers.get("x-content-type-options"), "nosniff", path); // F-E2E-02
       assert.equal(res.headers.get("cache-control"), "no-store", path);
       const html = await res.text();
       assert.match(html, /<meta name="cns-page-state" content="uniform-error">/, path);
@@ -159,6 +161,7 @@ test("TEST-CNS-1891: spa — /recovery/confirm conserva COOP same-origin y el re
     const res = await fetch(`${h.baseUrl}/recovery/confirm`);
     assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin");
     assert.equal(res.headers.get("content-security-policy"), ADR_001_CSP);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
   });
 });
@@ -206,6 +209,7 @@ test("TEST-CNS-1894: ssr (default) — /welcome sin sesión sigue siendo el HTML
     assert.match(html, /id="error-uniform"/);
     assert.doesNotMatch(html, /cns-page-state/);
     assert.equal(res.headers.get("content-security-policy"), ADR_001_CSP);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     assert.equal((await fetch(`${h.baseUrl}/assets/${JS_NAME}`)).status, 404);
   } finally {
     await h.close();

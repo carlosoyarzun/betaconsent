@@ -5,3 +5,7 @@
 
 export const HTML_CONTENT_SECURITY_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+// F-E2E-02: todo HTML de titulares (SSR, SPA y consola dev) lleva `nosniff` (la consola staff ya lo traía en su propio
+// mapa de cabeceras). Valor único para que ninguna ruta lo omita.
+export const HTML_X_CONTENT_TYPE_OPTIONS = "nosniff";
