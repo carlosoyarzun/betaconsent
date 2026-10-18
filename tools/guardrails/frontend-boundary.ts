@@ -28,13 +28,15 @@ const JS_PATTERNS: readonly RegExp[] = [
   /\b(?:import|export)\s+(type\s+)?(?:[^'"`;]*?\s+from\s+)?["']([^"']+)["']/g,
   /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
   /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
+  /\bnew\s+URL\s*\(\s*["']([^"']+)["']/g, // SEC-UI R6: new URL("../../src/x", import.meta.url)
+  /\bimport\.meta\.glob(?:Eager)?\s*\(\s*\[?\s*["']([^"']+)["']/g, // import.meta.glob("../../src/**")
 ];
-const CSS_PATTERN = /@import\s+(?:url\(\s*)?["']([^"']+)["']/g;
+const CSS_PATTERNS: readonly RegExp[] = [/@import\s+(?:url\(\s*)?["']([^"']+)["']/g, /\burl\(\s*["']?([^"')\s]+)["']?\s*\)/g];
 
 export function extractSpecifiers(path: string, content: string): Specifier[] {
   const out: Specifier[] = [];
   if (path.endsWith(".css")) {
-    for (const m of content.matchAll(CSS_PATTERN)) out.push({ value: m[1] as string, typeOnly: false });
+    for (const re of CSS_PATTERNS) for (const m of content.matchAll(re)) out.push({ value: m[1] as string, typeOnly: false });
     return out;
   }
   const first = JS_PATTERNS[0] as RegExp;

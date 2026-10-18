@@ -72,6 +72,10 @@ function directDeps(record: DepRecord | undefined): DepRecord {
 export function validateAllowlistEntries(allowlist: Allowlist): string[] {
   const violations: string[] = [];
   for (const entry of allowlist.entries) {
+    // SEC-UI-2 (fail-closed): una entrada "proposed"/sin aprobar no habilita la dependencia.
+    if (entry.status !== "approved") {
+      violations.push(`La entrada "${entry.name}" tiene status "${String(entry.status)}"; solo "approved" habilita una dependencia (ADR-001 §5).`);
+    }
     if (!EXACT_VERSION_RE.test(entry.version)) {
       violations.push(
         `El allowlist fija "${entry.name}" con version "${entry.version}", que no es una versión exacta ` +

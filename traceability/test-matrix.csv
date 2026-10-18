@@ -953,3 +953,5 @@ TEST-CNS-1892,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: 
 TEST-CNS-1893,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: estáticos SSR siguen no-store; rutas desconocidas siguen en 404 JSON","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1894,integration,tests/integration/consent-flow/spa-http.test.ts,"ssr (default): /welcome sin sesión sigue siendo el HTML SSR uniforme; assets de dist no se sirven","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1895,integration,tests/integration/consent-flow/spa-http.test.ts,"CNS_UI_MODE: default ssr, inválidos abortan y spa sin build falla al arrancar","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
+TEST-CNS-1897,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: solo con catálogo LOCAL; dist con inline o symlink aborta el arranque","ADR-001 rev.8 F1;SEC-UI-R1;SEC-UI-R2;SEC-UI-R4",ACTIVE
+TEST-CNS-1896,unit,tests/unit/framework/frontend-boundary.test.ts,"frontend-boundary: rechaza new URL, import.meta.glob y url() de CSS hacia fuera de frontend/","ADR-001 rev.8 F1;SEC-UI-R6",ACTIVE
