@@ -6,6 +6,7 @@
 // Levanta el servidor HTTP real (node:http) en un puerto efímero de localhost con adapters
 // in-memory. Cero PII: subjectRef/channelRef con dominio example.invalid.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +38,7 @@ interface Harness {
 
 function startServer(): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -117,7 +118,7 @@ test("TEST-CNS-510: GET /i/{token} con token inexistente, expirado o de otro ten
         headers: { cookie: `${INVITATION_HANDLE_COOKIE_NAME}=${parseSetCookie(res)[INVITATION_HANDLE_COOKIE_NAME]}` },
       });
       assert.equal(welcome.status, 404);
-      assert.match(await welcome.text(), /No pudimos abrir esta invitación\./);
+      assert.match(await welcome.text(), /<meta name="cns-page-state" content="uniform-error">/); // E2E-CNS-006 / TEST-CNS-1971
     }
   } finally {
     await harness.close();

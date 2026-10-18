@@ -129,11 +129,21 @@ test.describe("seguridad HTTP", () => {
     }
   });
 
-  test("E2E-CNS-081 los activos estáticos del invitado se sirven con no-store y solo desde la lista cerrada /assets/** (static-assets.ts)", async ({ request }) => {
-    for (const p of ["/assets/app.css", "/assets/welcome.js", "/assets/design-system/index.css"]) {
+  test("E2E-CNS-081 los activos del invitado se sirven solo desde la lista cerrada /assets/**: bundle con hash (immutable, nosniff), DS no-store; los JS del SSR retirado y el traversal responden 404", async ({ request }) => {
+    const shell = await (await request.get("/welcome")).text(); // el shell (404 uniforme) lista los assets del build
+    const refs = [...shell.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1] as string);
+    expect(refs.length, "el shell referencia el bundle JS y CSS").toBeGreaterThanOrEqual(2);
+    for (const p of refs) {
       const res = await request.get(p);
       expect(res.status(), p).toBe(200);
-      expect(res.headers()["cache-control"], p).toContain("no-store");
+      expect(res.headers()["cache-control"], p).toContain("immutable");
+      expect(res.headers()["x-content-type-options"], p).toBe("nosniff");
+    }
+    const ds = await request.get("/assets/design-system/index.css");
+    expect(ds.status()).toBe(200);
+    expect(ds.headers()["cache-control"]).toContain("no-store");
+    for (const gone of ["/assets/welcome.js", "/assets/verify.js", "/assets/decision.js", "/assets/manage.js", "/assets/revocation.js", "/assets/recovery.js"]) {
+      expect((await request.get(gone)).status(), gone).toBe(404);
     }
     expect((await request.get("/assets/../../package.json")).status()).toBe(404);
   });

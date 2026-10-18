@@ -1,5 +1,5 @@
 /* Único bundle CSS de la SPA (ADR-001 F1). No se reescriben estilos: se importan tal cual el CSS del design system
-   (tokens --lp-*, layouts, components, patterns) y el app.css del flujo del invitado v2 (clases lp-*), que hoy sirve el
-   SSR. Vite inlinea los @import en UN archivo con hash. Al retirar el SSR, app.css se mueve a esta carpeta. */
+   (tokens --lp-*, layouts, components, patterns) y el app.css del flujo del invitado (clases lp-*), ahora en esta carpeta.
+   Vite inlinea los @import en UN archivo con hash. */
 @import "../../../design-system/index.css";
-@import "../../../src/server/entrypoints/http/assets/app.css";
+@import "./app.css";

@@ -12,7 +12,7 @@
 // El estado de cada fila se mapea por el enum de API-CNS-116 (nunca por texto).
 
 import type { StaffInvitationStatus } from "../../ports/staff-roster.port.ts";
-import { escapeHtml } from "./welcome-page.ts";
+import { escapeHtml } from "./html-escape.ts";
 
 export const STAFF_ENTRY_PATH = "/staff";
 export const STAFF_LIST_PATH = "/staff/students";

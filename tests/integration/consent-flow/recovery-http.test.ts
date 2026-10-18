@@ -16,6 +16,7 @@
 // TEST-CNS-592..600,604,605 (unidad complementaria del dominio: TEST-CNS-589..591,598 en
 // tests/unit/revocation/revocation-self-service.test.ts).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
@@ -132,7 +133,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     revokedDecisionRef: consentId,
   });
 
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     revocationPorts,
@@ -182,10 +183,6 @@ async function renderRecoveryConfirm(baseUrl: string, recoveryCookie: string): P
   return { res, csrfToken };
 }
 
-function stripHtmlComments(html: string): string {
-  return html.replace(/<!--[\s\S]*?-->/g, "");
-}
-
 const CONSENT_592 = "592a3c52-8d4e-4a7b-9c21-0e5a7d3b9f92";
 
 test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token} -> /recovery/confirm -> POST /recovery/revoke llega a CONFIRMED (R1r+R2r+R3r)", async () => {
@@ -202,7 +199,7 @@ test("TEST-CNS-592: /m -> RV0 BEARER -> leer el enlace del sink -> GET /r/{token
 
     const { res: confirmPage, csrfToken } = await renderRecoveryConfirm(baseUrl, recoveryCookie);
     assert.equal(confirmPage.status, 200);
-    assert.match(await confirmPage.text(), /confirm-recovery-btn/);
+    assert.match(await confirmPage.text(), /<meta name="cns-page-state" content="ready">/); // shell de la SPA; el botón lo cubre TEST-CNS-1954
     assert.ok(csrfToken, "GET /recovery/confirm debe fijar el CSRF ligado al handle");
 
     const revoke = await post(baseUrl, {
@@ -315,33 +312,17 @@ test("TEST-CNS-595: un segundo enlace de recuperación sobre una Revocation ya A
   }
 });
 
-test("TEST-CNS-596: GET /recovery/confirm sin cookie de recuperación (sin canjear /r/{token} antes) muestra el error uniforme (33:106), nunca un 404 JSON crudo", async () => {
+test("TEST-CNS-596: GET /recovery/confirm sin cookie de recuperación (sin canjear /r/{token} antes) responde 404 con el shell uniform-error de la SPA (33:106), nunca un 404 JSON crudo", async () => {
   const { server, baseUrl } = await setUp(fixtureUuid("chain-593"), fixtureUuid("consent-593"), "mgmt-token-593");
   try {
     const res = await fetch(`${baseUrl}/recovery/confirm`, { redirect: "manual" });
     assert.equal(res.status, 404);
     const html = await res.text();
-    assert.match(html, /error-uniform/);
-    assert.match(html, /No pudimos continuar con este retiro\./);
+    assert.match(html, /<meta name="cns-page-state" content="uniform-error">/); // E2E-CNS-066 / TEST-CNS-2031
+    assert.doesNotMatch(html, /"status":404/);
     assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin");
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve(undefined)));
-  }
-});
-
-test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [LEGAL DECISION] (efecto sobre los datos, y alcance/irreversibilidad), nunca solo dentro de un comentario HTML", async () => {
-  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-594"), fixtureUuid("consent-594"), "mgmt-token-594");
-  try {
-    const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-594");
-    const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
-
-    const { res: confirmPage } = await renderRecoveryConfirm(baseUrl, recoveryCookie);
-    const visible = stripHtmlComments(await confirmPage.text());
-    assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar \(supresión\/plazos\), protocolo l\.522\]/);
-    assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro \(total, sin retiro parcial\) e irreversibilidad desde esta pantalla \(protocolo l\.423\)\]/);
-    assert.match(visible, /class="lp-btn lp-btn-danger lp-cta lp-revocation-cta lp-verify-tap-target" id="confirm-recovery-btn"/);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
@@ -430,7 +411,7 @@ test("TEST-CNS-601: GET /recovery/confirm responde 404 byte-idéntico (33:106) p
     // Expirado: TTL del handle (P-18) vencido -> decodeRecoveryHandle ya lo trata como ausente.
     const expiringServer = await setUp(fixtureUuid("chain-601b"), fixtureUuid("consent-601b"), "mgmt-token-601b");
     try {
-      const almostExpiredServer = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+      const almostExpiredServer = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
         config: { allowedOrigin: ALLOWED_ORIGIN },
         ports: expiringServer.ports,
         revocationPorts: expiringServer.revocationPorts,
@@ -523,7 +504,7 @@ test("TEST-CNS-605: aislamiento de cookies — una sesión MANAGE/DECISION no si
     const manageWithRecoveryCookie = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${recoveryCookie}` } });
     assert.equal(manageWithRecoveryCookie.status, 404);
     const manageHtml = await manageWithRecoveryCookie.text();
-    assert.match(manageHtml, /error-uniform/);
+    assert.match(manageHtml, /<meta name="cns-page-state" content="uniform-error">/);
 
     const decisionWithRecoveryCookie = await fetch(`${baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${recoveryCookie}` } });
     assert.equal(decisionWithRecoveryCookie.status, 404);

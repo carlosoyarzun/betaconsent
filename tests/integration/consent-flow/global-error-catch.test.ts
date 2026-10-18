@@ -1,6 +1,7 @@
 // Gobierna: SEC-CNS-017 F1 (P1). Un throw dentro del callback async de createServer no debe matar
 // el proceso ni filtrar message/detail de pg: 500 uniforme, proceso vivo. TEST-CNS-877.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -29,7 +30,7 @@ test("TEST-CNS-877: un throw con detail de pg responde 500 uniforme sin message/
   const logs: string[] = [];
   const origError = console.error;
   console.error = (...a: unknown[]) => void logs.push(a.join(" "));
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: "http://consola-consent.test.localhost" }, ports, environment: "LOCAL", sessionSecret: SESSION_SECRET });
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: "http://consola-consent.test.localhost" }, ports, environment: "LOCAL", sessionSecret: SESSION_SECRET });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   armed = true;
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

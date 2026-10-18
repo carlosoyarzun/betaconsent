@@ -6,6 +6,7 @@
 // GET /welcome (csrf.ts) es la misma que welcome.js copiaría al header x-csrf-token.
 // TEST-CNS-538..TEST-CNS-544 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -41,7 +42,7 @@ interface Harness {
 
 function startServer(): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -103,7 +104,7 @@ async function getWelcome(baseUrl: string, sessionCookie: string | undefined): P
   return fetch(`${baseUrl}/welcome`, { headers });
 }
 
-test("TEST-CNS-538: GET /welcome con sesión válida responde 200, HTML con un h1, lang=es y las cabeceras de seguridad (Cache-Control, Referrer-Policy, CSP)", async () => {
+test("TEST-CNS-538: GET /welcome con sesión válida responde 200 con el shell de la SPA (CSP única, no-store, no-referrer, nosniff) y fija la cookie CSRF", async () => {
   const harness = await startServer();
   try {
     const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-538"), fixtureUuid("subject-538"));
@@ -117,53 +118,31 @@ test("TEST-CNS-538: GET /welcome con sesión válida responde 200, HTML con un h
     assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     const html = await res.text();
     assert.match(html, /<html lang="es">/);
-    assert.match(html, /<h1[^>]*>Bienvenida a la invitación<\/h1>/);
-    assert.match(html, /<script src="\/assets\/welcome\.js" defer><\/script>/);
+    assert.match(html, /<div id="root"><\/div>/); // el contenido lo pinta la SPA (E2E-CNS-002 / TEST-CNS-1967)
+    assert.match(html, /<meta name="cns-page-state" content="ready">/);
     assert.doesNotMatch(html, /<script>/); // sin inline scripts (CSP ADR-001 §3: script-src 'self')
+    const cookies = parseAllSetCookies(res);
+    assert.ok(cookies[CSRF_COOKIE_NAME], "fija la cookie CSRF del double-submit");
   } finally {
     await harness.close();
   }
 });
 
-test("TEST-CNS-539: GET /welcome sin sesión (sin canjear /i/{token}) muestra el estado de error uniforme de la propia pantalla, nunca el 404 JSON crudo del framework", async () => {
+test("TEST-CNS-539: GET /welcome sin sesión (sin canjear /i/{token}) responde 404 con el shell uniform-error de la SPA, nunca el 404 JSON crudo del framework", async () => {
   const harness = await startServer();
   try {
     const res = await getWelcome(harness.baseUrl, undefined);
+    assert.equal(res.status, 404);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
-    assert.match(html, /No pudimos abrir esta invitación\./);
+    assert.match(html, /<meta name="cns-page-state" content="uniform-error">/); // la SPA pinta el error (E2E-CNS-006 / TEST-CNS-1971)
     assert.doesNotMatch(html, /"status":404/); // no es el {"status":404} JSON del resto del entrypoint
   } finally {
     await harness.close();
   }
 });
 
-test("TEST-CNS-540: GET /welcome contiene el copy exacto del handoff (welcome-handoff.md §3)", async () => {
-  const harness = await startServer();
-  try {
-    const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-540"), fixtureUuid("subject-540"));
-    const session = await redeem(harness.baseUrl, token);
-    const html = await (await getWelcome(harness.baseUrl, session)).text();
-    assert.match(html, /Colegio Ejemplo te invita a participar en el Estudio Beta de LectorPro\./);
-    assert.match(
-      html,
-      /LectorPro es una aplicación que apoya la lectura del estudiante\. El colegio invita a las familias a sumarse a un estudio piloto\./,
-    );
-    assert.match(html, /Cómo funciona/);
-    assert.match(
-      html,
-      /A continuación te enviaremos un código de verificación\. Después de confirmarlo, podrás revisar la información y decidir si participar\./,
-    );
-    assert.match(html, />Continuar<\/button>/);
-    assert.match(html, /¿Necesitas ayuda\? Escríbenos a ayuda@example\.invalid/);
-    assert.match(html, /No pudimos conectar\./);
-    assert.match(html, /Revisa tu conexión e inténtalo nuevamente\./);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-541: los estáticos de la lista blanca (design system, app.css, welcome.js) responden 200 con su content-type", async () => {
+test("TEST-CNS-541: los estáticos de la lista blanca (design system, app.css de staff) responden 200 con su content-type; los JS del SSR retirado ya no existen (404)", async () => {
   const harness = await startServer();
   try {
     const dsIndex = await fetch(`${harness.baseUrl}/assets/design-system/index.css`);
@@ -176,12 +155,10 @@ test("TEST-CNS-541: los estáticos de la lista blanca (design system, app.css, w
 
     const appCss = await fetch(`${harness.baseUrl}/assets/app.css`);
     assert.equal(appCss.status, 200);
-    assert.match(await appCss.text(), /min-height: 48px/);
+    assert.match(appCss.headers.get("content-type") ?? "", /text\/css/);
 
-    const js = await fetch(`${harness.baseUrl}/assets/welcome.js`);
-    assert.equal(js.status, 200);
-    assert.match(js.headers.get("content-type") ?? "", /javascript/);
-    assert.match(await js.text(), /x-csrf-token/);
+    const js = await fetch(`${harness.baseUrl}/assets/welcome.js`); // SSR retirado (ADR-001 F1, AD-1 cerrada)
+    assert.equal(js.status, 404);
   } finally {
     await harness.close();
   }
@@ -219,7 +196,7 @@ test("TEST-CNS-542: una ruta fuera de la lista blanca, incluido un intento de tr
   }
 });
 
-test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/open -> POST /otp/request replica exactamente la secuencia y el CSRF double-submit que ejecuta welcome.js", async () => {
+test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/open -> POST /otp/request replica exactamente la secuencia y el CSRF double-submit que ejecuta la página welcome (frontend/src/pages/welcome.tsx)", async () => {
   const harness = await startServer();
   try {
     const token = await seedSentInvitation(harness.ports, fixtureUuid("inv-543"), fixtureUuid("subject-543"));
@@ -276,13 +253,14 @@ test("TEST-CNS-543: flujo GET /i/{token} -> GET /welcome -> POST /invitation/ope
   }
 });
 
-test("TEST-CNS-544: GET /verify sin sesión con OTP ya solicitado muestra el estado de error uniforme de la propia pantalla (UX-CNS-002), no un 404 JSON crudo", async () => {
+test("TEST-CNS-544: GET /verify sin sesión con OTP ya solicitado responde 404 con el shell uniform-error de la SPA (UX-CNS-002), no un 404 JSON crudo", async () => {
   const harness = await startServer();
   try {
     const res = await fetch(`${harness.baseUrl}/verify`);
+    assert.equal(res.status, 404);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
-    assert.match(html, /No pudimos continuar con esta verificación\./);
+    assert.match(html, /<meta name="cns-page-state" content="uniform-error">/); // E2E-CNS-022 / TEST-CNS-1987
     assert.doesNotMatch(html, /"status":404/);
   } finally {
     await harness.close();

@@ -1,4 +1,5 @@
-// Gobierna: CLAUDE.md (UX-CNS-001, /welcome). Lista blanca explícita de estáticos servidos
+// Gobierna: CLAUDE.md (UX-CNS-001, /welcome). ADR-001 F1: los JS de cliente del SSR de titulares se retiraron; la SPA se sirve
+// desde dist/ (spa-assets.ts) y aquí solo quedan el CSS del design system y las hojas de staff/consola dev. Lista blanca explícita de estáticos servidos
 // bajo /assets/**: el lookup es por IGUALDAD EXACTA de la ruta contra las claves de un Map ya
 // construido en memoria, nunca por `path.join(baseDir, req.path)`. Eso hace que un intento de
 // traversal (`/assets/../otp-policy.config.ts`, `%2e%2e`, etc.) simplemente no tenga entrada en
@@ -38,12 +39,6 @@ const STATIC_ASSETS: ReadonlyMap<string, StaticAsset> = new Map([
   ["/assets/design-system/css/patterns.css", { filePath: designSystemPath("css/patterns.css"), contentType: "text/css; charset=utf-8" }],
   ["/assets/app.css", { filePath: appAssetPath("app.css"), contentType: "text/css; charset=utf-8" }],
   ["/assets/dev-console.css", { filePath: appAssetPath("dev-console.css"), contentType: "text/css; charset=utf-8" }],
-  ["/assets/welcome.js", { filePath: appAssetPath("welcome.js"), contentType: "text/javascript; charset=utf-8" }],
-  ["/assets/verify.js", { filePath: appAssetPath("verify.js"), contentType: "text/javascript; charset=utf-8" }],
-  ["/assets/decision.js", { filePath: appAssetPath("decision.js"), contentType: "text/javascript; charset=utf-8" }],
-  ["/assets/manage.js", { filePath: appAssetPath("manage.js"), contentType: "text/javascript; charset=utf-8" }],
-  ["/assets/revocation.js", { filePath: appAssetPath("revocation.js"), contentType: "text/javascript; charset=utf-8" }],
-  ["/assets/recovery.js", { filePath: appAssetPath("recovery.js"), contentType: "text/javascript; charset=utf-8" }],
 ]);
 
 export interface ResolvedStaticAsset {

@@ -1,6 +1,7 @@
 // Gobierna: despliegue manual en modo sintetico (PR-F, orden de Carlos 2026-10-18; ADR-003 rev. 7 host propio). GET /healthz del proceso web:
 // liveness sin tocar la base, sin cookies ni estado y sin datos; solo GET. Mismo contrato que GET /healthz del proceso platform.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -11,7 +12,7 @@ import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_
 const ORIGIN = "http://consola-consent.test.localhost";
 
 async function withServer(fn: (base: string) => Promise<void>): Promise<void> {
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR,
     guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports: createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET),

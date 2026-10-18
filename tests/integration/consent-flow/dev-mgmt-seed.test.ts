@@ -5,6 +5,7 @@
 // TEST-CNS-1931: las refs sembradas son UUIDv4 distintas y dev.ts no reintroduce literales no-UUID.
 // TEST-CNS-1932: el enlace sembrado con esas refs recorre /m -> /manage -> POST /otp/request -> POST /otp/submit con 200 (MANAGE VERIFIED).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -54,7 +55,7 @@ test("TEST-CNS-1932: el enlace de gestión sembrado como en dev.ts permite POST 
   });
   const revocationPorts = createDefaultRevocationFlowPorts({ ttlMs: 60_000 }, ports.decision.ledger, ports.decision.repo);
   (revocationPorts.tenantHandle as InMemoryTenantHandleAdapter).issue({ handle: TOKEN, tenantId: TENANT_ID, chainRef: DEV_MGMT_SEED_REFS.chainRef, revokedDecisionRef: DEV_MGMT_SEED_REFS.consentId });
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   const baseUrl = await new Promise<string>((resolve) => server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
   try {
     const redeemed = await fetch(`${baseUrl}/m/${TOKEN}`, { redirect: "manual" });

@@ -1,13 +1,13 @@
 // Gobierna: ADR-001 rev. 8 F1 (React SPA servida por el backend, fase A) y §3 (CSP sin inline); decisión de Carlos 2026-10-18.
-// CNS_UI_MODE=spa: las 8 rutas HTML del invitado devuelven dist/index.html conservando la lógica previa de cookie/sesión
-// (200 con sesión + cookie CSRF; 404 uniforme sin ella, INV-CM-05), con la CSP única; los assets con hash se sirven por
-// igualdad exacta (immutable); el resto sigue en 404 JSON. El dist es SINTÉTICO (directorio temporal), no depende del build.
-// TEST-CNS-1889..TEST-CNS-1895 y 1897 (traceability/test-matrix.csv).
+// La SPA es el único modo (AD-1 cerrada, SSR retirado): las 8 rutas HTML del invitado devuelven dist/index.html conservando la
+// lógica de cookie/sesión (200 con sesión + cookie CSRF; 404 uniforme sin ella, INV-CM-05), con la CSP única; los assets con hash
+// se sirven por igualdad exacta (immutable); el resto sigue en 404 JSON. El dist es SINTÉTICO (directorio temporal), no depende
+// del build. TEST-CNS-1889..TEST-CNS-1895, 1897 y 2064 (traceability/test-matrix.csv).
 
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 
 import { createConsentFlowHttpServer, createDefaultConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow-server.ts";
 import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/consent-flow.handler.ts";
-import { parseUiMode } from "../../../src/server/entrypoints/http/spa-assets.ts";
+import { makeSyntheticDist, SYNTHETIC_CSS_NAME as CSS_NAME, SYNTHETIC_INDEX_HTML as INDEX_HTML, SYNTHETIC_JS_NAME as JS_NAME } from "../../helpers/synthetic-spa-dist.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../../../src/server/modules/invitation/invitation.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
@@ -30,26 +30,7 @@ const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHET
 
 const ADR_001_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-const JS_NAME = "index-Ab12Cd34.js";
-const CSS_NAME = "style-Ef56Gh78.css";
-const INDEX_HTML = `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="cns-page-state" content="ready"><title>Consent App</title>
-<script type="module" crossorigin src="/assets/${JS_NAME}"></script><link rel="stylesheet" crossorigin href="/assets/${CSS_NAME}"></head>
-<body class="lp-guest-body"><div id="root"></div></body></html>
-`;
 const HTML_PAGES = ["/welcome", "/verify", "/decision", "/manage", "/manage/verify", "/manage/revocation/verify", "/manage/revocation/confirm", "/recovery/confirm"] as const;
-
-function makeSyntheticDist(): string {
-  const dir = mkdtempSync(join(tmpdir(), "cns-spa-dist-"));
-  mkdirSync(join(dir, "assets"));
-  mkdirSync(join(dir, ".vite"));
-  writeFileSync(join(dir, "index.html"), INDEX_HTML);
-  writeFileSync(join(dir, "assets", JS_NAME), "console.log('synthetic');\n");
-  writeFileSync(join(dir, "assets", CSS_NAME), ".lp-guest-body{margin:0}\n");
-  writeFileSync(join(dir, ".vite", "manifest.json"), JSON.stringify({ "index.html": { file: `assets/${JS_NAME}`, isEntry: true }, "style.css": { file: `assets/${CSS_NAME}` } }));
-  writeFileSync(join(dir, "assets", "huerfano-00000000.js"), "// no está en el manifiesto\n");
-  return dir;
-}
 
 interface Harness {
   readonly baseUrl: string;
@@ -57,7 +38,7 @@ interface Harness {
   close(): Promise<void>;
 }
 
-function startServer(uiMode: "ssr" | "spa", spaDistDir?: string): Promise<Harness> {
+function startServer(spaDistDir: string): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const server: Server = createConsentFlowHttpServer({
     guestMessageChannel: TEST_GUEST_CHANNEL,
@@ -66,8 +47,7 @@ function startServer(uiMode: "ssr" | "spa", spaDistDir?: string): Promise<Harnes
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     environment: "LOCAL",
-    uiMode,
-    ...(spaDistDir ? { spaDistDir } : {}),
+    spaDistDir,
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -106,7 +86,7 @@ async function seedSentInvitation(ports: ConsentFlowPorts): Promise<string> {
 
 async function withSpa(fn: (h: Harness) => Promise<void>): Promise<void> {
   const dist = makeSyntheticDist();
-  const h = await startServer("spa", dist);
+  const h = await startServer(dist);
   try {
     await fn(h);
   } finally {
@@ -115,7 +95,7 @@ async function withSpa(fn: (h: Harness) => Promise<void>): Promise<void> {
   }
 }
 
-test("TEST-CNS-1889: spa — GET /welcome con sesión válida (canje /i/{token}) responde 200 con index.html, CSP ADR-001 §3, no-store y cookies de sesión + CSRF", async () => {
+test("TEST-CNS-1889: GET /welcome con sesión válida (canje /i/{token}) responde 200 con index.html, CSP ADR-001 §3, no-store y cookies de sesión + CSRF", async () => {
   await withSpa(async (h) => {
     const token = await seedSentInvitation(h.ports);
     const redeemed = await fetch(`${h.baseUrl}/i/${token}`, { redirect: "manual" });
@@ -130,8 +110,8 @@ test("TEST-CNS-1889: spa — GET /welcome con sesión válida (canje /i/{token})
     assert.equal(res.headers.get("cache-control"), "no-store");
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     const cookies = parseAllSetCookies(res);
-    assert.ok(cookies[SESSION_COOKIE_NAME], "fija la sesión real como en ssr");
-    assert.ok(cookies[CSRF_COOKIE_NAME], "fija la cookie CSRF como en ssr");
+    assert.ok(cookies[SESSION_COOKIE_NAME], "fija la sesión real como el flujo previo");
+    assert.ok(cookies[CSRF_COOKIE_NAME], "fija la cookie CSRF como el flujo previo");
     const html = await res.text();
     assert.equal(html, INDEX_HTML);
     assert.match(html, /content="ready"/);
@@ -139,7 +119,7 @@ test("TEST-CNS-1889: spa — GET /welcome con sesión válida (canje /i/{token})
   });
 });
 
-test("TEST-CNS-1890: spa — las 8 rutas HTML sin sesión/handle responden 404 con index.html (cns-page-state=uniform-error), misma CSP y sin revelar la causa", async () => {
+test("TEST-CNS-1890: las 8 rutas HTML sin sesión/handle responden 404 con index.html (cns-page-state=uniform-error), misma CSP y sin revelar la causa", async () => {
   await withSpa(async (h) => {
     const bodies = new Set<string>();
     for (const path of HTML_PAGES) {
@@ -158,7 +138,7 @@ test("TEST-CNS-1890: spa — las 8 rutas HTML sin sesión/handle responden 404 c
   });
 });
 
-test("TEST-CNS-1891: spa — /recovery/confirm conserva COOP same-origin y el resto de cabeceras de seguridad de la página", async () => {
+test("TEST-CNS-1891: /recovery/confirm conserva COOP same-origin y el resto de cabeceras de seguridad de la página", async () => {
   await withSpa(async (h) => {
     const res = await fetch(`${h.baseUrl}/recovery/confirm`);
     assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin");
@@ -168,7 +148,7 @@ test("TEST-CNS-1891: spa — /recovery/confirm conserva COOP same-origin y el re
   });
 });
 
-test("TEST-CNS-1892: spa — assets con hash: 200, MIME correcto, immutable; fuera de la lista blanca (traversal, .vite, inexistente) 404 JSON", async () => {
+test("TEST-CNS-1892: assets con hash: 200, MIME correcto, immutable; fuera de la lista blanca (traversal, .vite, inexistente) 404 JSON", async () => {
   await withSpa(async (h) => {
     const js = await fetch(`${h.baseUrl}/assets/${JS_NAME}`);
     assert.equal(js.status, 200);
@@ -188,7 +168,7 @@ test("TEST-CNS-1892: spa — assets con hash: 200, MIME correcto, immutable; fue
   });
 });
 
-test("TEST-CNS-1893: spa — los estáticos del SSR (app.css, DS) siguen sirviéndose no-store para las pantallas staff; rutas desconocidas siguen en 404 JSON", async () => {
+test("TEST-CNS-1893: los estáticos de staff/consola dev (app.css, DS) siguen sirviéndose no-store; rutas desconocidas siguen en 404 JSON", async () => {
   await withSpa(async (h) => {
     const css = await fetch(`${h.baseUrl}/assets/app.css`);
     assert.equal(css.status, 200);
@@ -200,53 +180,44 @@ test("TEST-CNS-1893: spa — los estáticos del SSR (app.css, DS) siguen sirvié
   });
 });
 
-test("TEST-CNS-1894: ssr (default) — /welcome sin sesión sigue siendo el HTML SSR uniforme y los assets con hash de dist no se sirven", async () => {
-  const dist = makeSyntheticDist();
-  const h = await startServer("ssr", dist);
-  try {
+test("TEST-CNS-1894: el SSR de titulares ya no existe — los JS de cliente y las *-page.ts retiradas no se sirven (404 JSON) y las 8 rutas devuelven solo el shell de la SPA", async () => {
+  await withSpa(async (h) => {
+    for (const asset of ["welcome", "verify", "decision", "manage", "revocation", "recovery"]) {
+      const res = await fetch(`${h.baseUrl}/assets/${asset}.js`);
+      assert.equal(res.status, 404, asset);
+      assert.deepEqual(await res.json(), { status: 404 }, asset);
+    }
     const res = await fetch(`${h.baseUrl}/welcome`);
     assert.equal(res.status, 404);
     const html = await res.text();
-    assert.match(html, /<h1[^>]*>Bienvenida a la invitación<\/h1>/);
-    assert.match(html, /id="error-uniform"/);
-    assert.doesNotMatch(html, /cns-page-state/);
+    assert.doesNotMatch(html, /Bienvenida a la invitación|id="error-uniform"/); // sin copy renderizado por el servidor
+    assert.match(html, /cns-page-state" content="uniform-error"/);
     assert.equal(res.headers.get("content-security-policy"), ADR_001_CSP);
-    assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
-    assert.equal((await fetch(`${h.baseUrl}/assets/${JS_NAME}`)).status, 404);
-  } finally {
-    await h.close();
-    rmSync(dist, { recursive: true, force: true });
-  }
+  });
 });
 
-test("TEST-CNS-1895: CNS_UI_MODE — default ssr, valores inválidos abortan y spa sin build falla al arrancar (fail-closed)", async () => {
-  assert.equal(parseUiMode(undefined), "ssr");
-  assert.equal(parseUiMode(""), "ssr");
-  assert.equal(parseUiMode("ssr"), "ssr");
-  assert.equal(parseUiMode("spa"), "spa");
-  assert.throws(() => parseUiMode("SPA"), /CNS_UI_MODE/);
-  assert.throws(() => parseUiMode("react"), /CNS_UI_MODE/);
+test("TEST-CNS-1895: el web sin build válido de la SPA no arranca (fail-closed): dist ausente, sin marcador de estado o sin manifiesto", async () => {
   const empty = mkdtempSync(join(tmpdir(), "cns-spa-empty-"));
   try {
-    await assert.rejects(async () => startServer("spa", empty), /build:frontend/);
+    await assert.rejects(async () => startServer(empty), /build:frontend/);
     // dist sin el marcador de estado de página: no es un build válido
     writeFileSync(join(empty, "index.html"), "<!doctype html><html></html>");
-    await assert.rejects(async () => startServer("spa", empty), /cns-page-state/);
+    await assert.rejects(async () => startServer(empty), /cns-page-state/);
     // sin manifiesto de Vite: no es un build válido
     writeFileSync(join(empty, "index.html"), INDEX_HTML);
-    await assert.rejects(async () => startServer("spa", empty), /manifest/);
+    await assert.rejects(async () => startServer(empty), /manifest/);
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }
 });
 
-test("TEST-CNS-1897: spa — solo con catálogo LOCAL (punto único de cambio SPA_ALLOWED_ENVIRONMENTS); dist con inline o symlink aborta el arranque (fail-closed)", async () => {
+test("TEST-CNS-1897: la SPA se sirve en cualquier entorno (sin CNS_UI_MODE ni lista de entornos); dist con inline o symlink aborta el arranque (fail-closed)", async () => {
   const dist = makeSyntheticDist();
   try {
     const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-    const base = { guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, uiMode: "spa" as const, spaDistDir: dist };
-    assert.throws(() => createConsentFlowHttpServer(base), /LOCAL/); // sin environment
-    assert.throws(() => createConsentFlowHttpServer({ ...base, environment: "STAGING" }), /LOCAL/);
+    const base = { guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, spaDistDir: dist };
+    // Ya no hay restricción por entorno: sin `environment` el servidor arranca con la SPA (antes lanzaba /LOCAL/).
+    createConsentFlowHttpServer(base).close();
     // R2: un <script> inline en index.html aborta el arranque
     writeFileSync(join(dist, "index.html"), INDEX_HTML.replace("</body>", "<script>alert(1)</script></body>"));
     assert.throws(() => createConsentFlowHttpServer({ ...base, environment: "LOCAL" }), /inline/);

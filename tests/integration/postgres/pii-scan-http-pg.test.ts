@@ -5,6 +5,7 @@
 // password de la base y el secreto de sesion cuentan como secretos de entorno. TEST-CNS-953.
 // Requiere Postgres real (harness.ts); SYNTHETIC DATA ONLY.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
@@ -72,7 +73,7 @@ pgTest("TEST-CNS-953 PII scan e2e (Postgres): /i -> OTP -> decision, /m -> retir
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
   const { ports, revocationPorts, staffConsole } = bundle;
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: SCAN_ORIGIN },
     ports,
     revocationPorts,

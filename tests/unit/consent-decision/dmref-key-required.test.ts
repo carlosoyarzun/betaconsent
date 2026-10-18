@@ -1,6 +1,7 @@
 // Gobierna: INV-CM-09 rev. 4g / OPEN-CM-10, revision lampone-security P2-6.
 // Sin default aleatorio para la clave del decisionMakerRef / chainRef: el servidor no arranca sin ella.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -22,10 +23,10 @@ test("TEST-CNS-1246: createDefaultConsentFlowPorts sin decisionMakerRefKey falla
 
 test("TEST-CNS-1247: createConsentFlowHttpServer sin clave (ni ports) no arranca; con claves explicitas si", () => {
   assert.throws(
-    () => createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, otpSecret: TEST_OTP_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }),
+    () => createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, otpPolicy: OTP, relationshipConfig: REL, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, otpSecret: TEST_OTP_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }),
     /obligatoria/,
   );
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     otpPolicy: OTP,
     relationshipConfig: REL,
@@ -43,5 +44,5 @@ test("TEST-CNS-1247: createConsentFlowHttpServer sin clave (ni ports) no arranca
 
 test("TEST-CNS-1248: ports inyectados sin decisionMakerRefKey hacen fallar el arranque del servidor", () => {
   const ports = { ...createDefaultConsentFlowPorts(OTP, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET), decisionMakerRefKey: undefined as unknown as DecisionMakerRefKey };
-  assert.throws(() => createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, ports, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }), /decisionMakerRefKey es obligatoria/);
+  assert.throws(() => createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, config: { allowedOrigin: ORIGIN }, ports, environment: "LOCAL", sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY }), /decisionMakerRefKey es obligatoria/);
 });

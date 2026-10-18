@@ -9,6 +9,7 @@
 // FAILED de la Revocation).
 // TEST-CNS-581..TEST-CNS-585.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import { assertRevocationEvidence } from "../../contract/revocation-evidence.ts";
@@ -130,7 +131,7 @@ async function setUp(chainRef: string, consentId: string, mgmtToken: string): Pr
     revokedDecisionRef: consentId,
   });
 
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   const baseUrl = await new Promise<string>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -152,7 +153,9 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
 
     const manageEntry = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     assert.equal(manageEntry.status, 200);
-    assert.match(await manageEntry.text(), /start-verify-btn/);
+    assert.match(await manageEntry.text(), /<meta name="cns-page-state" content="ready">/); // shell de la SPA
+    const entryState = await fetch(`${baseUrl}/manage/page-state`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
+    assert.deepEqual(await entryState.json(), { variant: "entry" }); // la SPA ofrece "Verificar mi identidad" (TEST-CNS-1919)
 
     const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
     assert.equal(requested.status, 202);
@@ -169,7 +172,9 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
 
     const manageStatus = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     assert.equal(manageStatus.status, 200);
-    assert.match(await manageStatus.text(), /start-revocation-btn/);
+    assert.match(await manageStatus.text(), /<meta name="cns-page-state" content="ready">/);
+    const statusState = await fetch(`${baseUrl}/manage/page-state`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
+    assert.deepEqual(await statusState.json(), { variant: "status" }); // la SPA ofrece "Retirar mi consentimiento" (TEST-CNS-1919)
 
     const r1 = await post(baseUrl, { path: "/manage/revocation", ...VALID_CSRF, sessionCookie });
     assert.equal(r1.status, 200);
@@ -191,7 +196,7 @@ test("TEST-CNS-581: GET /m/{token} -> verificación MANAGE -> estado -> R1 -> ve
 
     const confirmPage = await fetch(`${baseUrl}/manage/revocation/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
     assert.equal(confirmPage.status, 200);
-    assert.match(await confirmPage.text(), /LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro \(total, sin retiro parcial\) e irreversibilidad desde esta pantalla \(protocolo l\.423\)/);
+    assert.match(await confirmPage.text(), /<meta name="cns-page-state" content="ready">/); // shell de la SPA; los marcadores [LEGAL DECISION] los cubre TEST-CNS-1945
 
     const r2 = await post(baseUrl, { path: "/manage/revocation/verify", ...VALID_CSRF, sessionCookie });
     assert.equal(r2.status, 200);
@@ -286,13 +291,6 @@ test("TEST-CNS-583: bloqueo por intentos incorrectos en scope REVOCATION (V4, LO
   }
 });
 
-// Quita cualquier comentario HTML antes de buscar un marcador (fix Carlos, revisión en
-// navegador con dev.ts): si el marcador solo existiera dentro de `<!-- ... -->` el usuario nunca
-// lo vería; assert.match sobre el HTML "limpio" lo detecta.
-function stripHtmlComments(html: string): string {
-  return html.replace(/<!--[\s\S]*?-->/g, "");
-}
-
 async function bringToRevocationConfirmSession(baseUrl: string, ports: ConsentFlowPorts, mgmtToken: string): Promise<string> {
   let sessionCookie = await redeemManage(baseUrl, mgmtToken);
   const sink = ports.otp.channel as InMemoryOtpChannelSink;
@@ -315,94 +313,7 @@ async function bringToRevocationConfirmSession(baseUrl: string, ports: ConsentFl
   return sessionCookie;
 }
 
-test("TEST-CNS-585: GET /manage (estado) muestra como texto visible el marcador [LEGAL DECISION] de alcance del retiro (33:21), nunca solo dentro de un comentario HTML", async () => {
-  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-585"), fixtureUuid("consent-585"), "mgmt-token-585");
-  try {
-    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-585");
-    const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
-    sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
-    const sink = ports.otp.channel as InMemoryOtpChannelSink;
-    const code = sink.sent[sink.sent.length - 1]?.code ?? "";
-    const submitted = await post(baseUrl, { path: "/otp/submit", ...VALID_CSRF, sessionCookie, body: { code } });
-    sessionCookie = parseSetCookie(submitted)[SESSION_COOKIE_NAME] ?? sessionCookie;
-
-    const manageStatus = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
-    const visible = stripHtmlComments(await manageStatus.text());
-    assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro \(total, sin retiro parcial\), protocolo l\.423\]/);
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve(undefined)));
-  }
-});
-
-test("TEST-CNS-586: GET /manage/revocation/confirm muestra visibles los dos marcadores [LEGAL DECISION] (efecto sobre los datos, y alcance/irreversibilidad) y el del comprobante (33:45/33:54)", async () => {
-  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-586"), fixtureUuid("consent-586"), "mgmt-token-586");
-  try {
-    const sessionCookie = await bringToRevocationConfirmSession(baseUrl, ports, "mgmt-token-586");
-    const confirmPage = await fetch(`${baseUrl}/manage/revocation/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
-    const visible = stripHtmlComments(await confirmPage.text());
-    assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar \(supresión\/plazos\), protocolo l\.522\]/);
-    assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro \(total, sin retiro parcial\) e irreversibilidad desde esta pantalla \(protocolo l\.423\)\]/);
-    // El marcador del comprobante (33:54) vive en el bloque #state-applied (oculto hasta R3,
-    // pero ya presente como texto en el HTML servido, no dentro de un comentario).
-    const appliedBlockMatch = visible.match(/<div role="status"[^>]*id="state-applied"[\s\S]*?<\/div>/);
-    assert.ok(appliedBlockMatch, "debe existir el bloque #state-applied");
-    assert.match(
-      appliedBlockMatch![0],
-      /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar \(supresión\/plazos\), protocolo l\.522\]/,
-    );
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve(undefined)));
-  }
-});
-
-test("TEST-CNS-587: el estado bloqueado REVOCATION/MANAGE (33:11) oculta el formulario (#verify-form) y mueve el foco a la alerta; el formulario vuelve a mostrarse en cualquier otro estado", async () => {
-  const { server, baseUrl } = await setUp(fixtureUuid("chain-587"), fixtureUuid("consent-587"), "mgmt-token-587");
-  try {
-    const verifyJs = await (await fetch(`${baseUrl}/assets/verify.js`)).text();
-    assert.match(verifyJs, /function showLocked\(\) \{\s*hideStates\(\);/);
-    assert.match(verifyJs, /if \(isRights\) \{\s*if \(verifyForm\) verifyForm\.hidden = true;/);
-    assert.match(verifyJs, /stateLockedRights\.focus\(\)/);
-    assert.match(verifyJs, /function hideStates\(\) \{[\s\S]*?if \(verifyForm\) verifyForm\.hidden = false;/);
-
-    const managePage = await fetch(`${baseUrl}/manage/verify`, { redirect: "manual" });
-    void managePage; // 404 esperado sin sesión con manageVerificationRef; solo valida que la ruta existe.
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve(undefined)));
-  }
-});
-
-test("TEST-CNS-588: el CTA y el enlace de ayuda quedan apilados (no en la misma línea) en /manage (entrada y estado) y en confirmar-retiro, que además ahora incluye el enlace de ayuda", async () => {
-  const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-588"), fixtureUuid("consent-588"), "mgmt-token-588");
-  try {
-    let sessionCookie = await redeemManage(baseUrl, "mgmt-token-588");
-
-    const manageEntry = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
-    const entryHtml = await manageEntry.text();
-    assert.match(entryHtml, /id="start-verify-btn"[^<]*<\/button>\s*<\/section>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
-
-    const requested = await post(baseUrl, { path: "/otp/request", ...VALID_CSRF, sessionCookie });
-    sessionCookie = parseSetCookie(requested)[SESSION_COOKIE_NAME] ?? sessionCookie;
-    const sink = ports.otp.channel as InMemoryOtpChannelSink;
-    const code = sink.sent[sink.sent.length - 1]?.code ?? "";
-    const submitted = await post(baseUrl, { path: "/otp/submit", ...VALID_CSRF, sessionCookie, body: { code } });
-    sessionCookie = parseSetCookie(submitted)[SESSION_COOKIE_NAME] ?? sessionCookie;
-
-    const manageStatus = await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } });
-    const statusHtml = await manageStatus.text();
-    assert.match(statusHtml, /id="start-revocation-btn"[^<]*<\/button>\s*<\/div>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
-
-    const confirmSessionCookie = await bringToRevocationConfirmSession(baseUrl, ports, "mgmt-token-588");
-    const confirmPage = await fetch(`${baseUrl}/manage/revocation/confirm`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${confirmSessionCookie}` } });
-    const confirmHtml = await confirmPage.text();
-    // La ayuda faltaba por completo en confirmar-retiro; ahora está presente y apilada bajo
-    // "Cancelar solicitud de retiro" (no en la misma línea que ningún botón).
-    assert.match(confirmHtml, /id="withdraw-btn"[^<]*<\/button>\s*<\/div>\s*<p class="lp-guest-help"><a href="mailto:ayuda@example\.invalid"/);
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve(undefined)));
-  }
-});
-
-test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dice GRANTED ni ofrece retirar; R1 sobre esa cadena es uniforme (ERR-RV-02) y no crea revocación", async () => {
+test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP responde la variante revoked (sin GRANTED ni oferta de retirar); R1 sobre esa cadena es uniforme (ERR-RV-02) y no crea revocación", async () => {
   const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-703"), fixtureUuid("consent-703"), "mgmt-token-703");
   try {
     const sink = ports.otp.channel as InMemoryOtpChannelSink;
@@ -416,8 +327,8 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
     }
 
     let sessionCookie = await verifyManage();
-    const before = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).text();
-    assert.match(before, /start-revocation-btn/);
+    const before = await (await fetch(`${baseUrl}/manage/page-state`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).json();
+    assert.deepEqual(before, { variant: "status" }); // la SPA ofrece "Retirar mi consentimiento" (TEST-CNS-1919)
 
     const r1 = await post(baseUrl, { path: "/manage/revocation", ...VALID_CSRF, sessionCookie });
     sessionCookie = parseSetCookie(r1)[SESSION_COOKIE_NAME] ?? sessionCookie;
@@ -432,14 +343,9 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
 
     // Reproducción del FINDING: volver a /m/<token>, verificar con OTP y abrir /manage.
     const again = await verifyManage();
-    const html = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${again}` } })).text();
-    assert.doesNotMatch(html, /start-revocation-btn/);
-    assert.doesNotMatch(html, /Retirar mi consentimiento/);
-    assert.doesNotMatch(html, /GRANTED/);
-    assert.match(html, /id="manage-revoked"/);
-    assert.match(html, /role="status"/);
-    assert.doesNotMatch(html, /\[UX — copy pendiente/);
-    assert.match(html, /Tu consentimiento ya fue retirado\./);
+    const afterRaw = await (await fetch(`${baseUrl}/manage/page-state`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${again}` } })).text();
+    assert.equal(afterRaw, '{"variant":"revoked"}'); // la SPA no ofrece retirar ni dice GRANTED (TEST-CNS-1919, E2E-CNS-054)
+    assert.doesNotMatch(afterRaw, /GRANTED/);
 
     // R1 sobre la cadena revocada: 202 uniforme, sin revocationRef ni Revocation nueva.
     const r1Again = await post(baseUrl, { path: "/manage/revocation", ...VALID_CSRF, sessionCookie: again });
@@ -450,17 +356,15 @@ test("TEST-CNS-703: tras revocar (C6/REVOKED), /manage verificado con OTP no dic
   }
 });
 
-test("TEST-CNS-706: /manage con la decisión REVOKED pero sin sesión MANAGE verificada muestra la entrada, no el estado ya-retirado", async () => {
+test("TEST-CNS-706: /manage con la decisión REVOKED pero sin sesión MANAGE verificada responde la variante entry (page-state), no la ya-retirada", async () => {
   const { ports, server, baseUrl } = await setUp(fixtureUuid("chain-706"), fixtureUuid("consent-706"), "mgmt-token-706");
   try {
     const seeded = await ports.decision.repo.findByConsentId(TENANT_ID, fixtureUuid("consent-706"));
     assert.ok(seeded);
     await ports.decision.repo.save({ ...seeded, state: "REVOKED" });
     const sessionCookie = await redeemManage(baseUrl, "mgmt-token-706");
-    const html = await (await fetch(`${baseUrl}/manage`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).text();
-    assert.match(html, /start-verify-btn/);
-    assert.doesNotMatch(html, /manage-revoked/);
-    assert.doesNotMatch(html, /ya fue retirado/);
+    const state = await (await fetch(`${baseUrl}/manage/page-state`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` } })).json();
+    assert.deepEqual(state, { variant: "entry" }); // la SPA pide verificar identidad (TEST-CNS-1919); no muestra "ya fue retirado"
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
