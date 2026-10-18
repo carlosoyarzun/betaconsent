@@ -9,6 +9,7 @@ import { claimOutbox, createPgOutboxAdapter } from "../../../src/infra/adapters/
 import { createPool } from "../../../src/infra/adapters/postgres/pool.ts";
 import { PgUnitOfWork } from "../../../src/infra/adapters/postgres/unit-of-work.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
+import { qualified, tableOwner, tableSchema } from "../../helpers/table-schema.ts";
 import { pgTest, pgTestRaw } from "./harness.ts";
 
 const codeOf = (error: unknown): string | undefined => (error as { code?: string }).code;
@@ -32,18 +33,18 @@ async function columnsWith(admin: Client, table: string, role: string, privilege
 pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_tenant_id() solo para app_rw, sin DELETE/TRUNCATE y grants minimos por columna", async (ctx) => {
   const admin = await ctx.connectAsSuperuser();
   for (const table of [...AGGREGATES, ...READ_ONLY]) {
-    const qname = `app.${table}`;
+    const qname = qualified(table);
     const rel = (await admin.query<{ rls: boolean; force: boolean; owner: string }>(
       "SELECT relrowsecurity AS rls, relforcerowsecurity AS force, pg_get_userbyid(relowner) AS owner FROM pg_class WHERE oid = $1::regclass",
       [qname],
     )).rows[0];
-    assert.deepEqual(rel, { rls: true, force: true, owner: "consent_owner" }, qname);
+    assert.deepEqual(rel, { rls: true, force: true, owner: tableOwner(table) }, qname); // PR-7c (0081): revocation es de case_state_owner
 
     const policies = (await admin.query<{ cmd: string; roles: string[]; qual: string | null; with_check: string | null }>(
-      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = 'app' AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$' AND policyname !~ '_worker_recovery_select$' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
-      [table],
+      "SELECT cmd, roles::text[] AS roles, qual, with_check FROM pg_policies WHERE schemaname = $2 AND tablename = $1 AND policyname !~ '_roster_owner_select$' AND policyname !~ '_transition_' AND policyname !~ '_worker_select$' AND policyname !~ '_worker_recovery_select$' AND policyname !~ '_recovery_reader_select$' AND NOT (policyname ~ '_reconciler_select$' AND roles = '{integrity_reconciler}' AND cmd = 'SELECT' AND qual = 'true')",
+      [table, tableSchema(table)],
     )).rows;
-    // ADR-010 PR-5a: app_rw solo lee app.revocation (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_* abajo).
+    // ADR-010 PR-5a: app_rw solo lee case_state.revocation (INSERT/UPDATE son de transition_owner via case_state.*, policies *_transition_* abajo).
     const expectedCmds = READ_ONLY.includes(table as (typeof READ_ONLY)[number]) || table === "revocation" ? ["SELECT"] : ["INSERT", "SELECT", "UPDATE"];
     assert.deepEqual(policies.map((p) => p.cmd).sort(), expectedCmds, `${qname}: policies`);
     for (const p of policies) {
@@ -85,7 +86,7 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
 
   // Policies de transition_owner (0037): exactas por tabla, siempre acotadas por tenant.
   const transitionPolicies = (await admin.query<{ t: string; p: string; c: string }>(
-    "SELECT tablename AS t, policyname AS p, cmd AS c FROM pg_policies WHERE schemaname = 'app' AND roles = '{transition_owner}' ORDER BY 1, 2",
+    "SELECT tablename AS t, policyname AS p, cmd AS c FROM pg_policies WHERE schemaname IN ('app', 'case_state') AND roles = '{transition_owner}' ORDER BY 1, 2",
   )).rows.map((r) => `${r.t}.${r.p}:${r.c}`);
   assert.deepEqual(transitionPolicies, [
     "consent_decision.consent_decision_transition_select:SELECT", "consent_decision.consent_decision_transition_update:UPDATE",
@@ -93,13 +94,13 @@ pgTest("TEST-CNS-807 pg: tablas de PR-C con FORCE RLS, policies por app.current_
     "invitation.invitation_transition_update:UPDATE",
     "outbox.outbox_transition_insert:INSERT", "outbox.outbox_transition_select:SELECT",
     "recovery_token.recovery_token_transition_select:SELECT", "recovery_token.recovery_token_transition_update:UPDATE",
-    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_recovery_select:SELECT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
+    "revocation.revocation_transition_insert:INSERT", "revocation.revocation_transition_select:SELECT", "revocation.revocation_transition_update:UPDATE",
     "rights_case.rights_case_transition_insert:INSERT", "rights_case.rights_case_transition_select:SELECT", "rights_case.rights_case_transition_update:UPDATE", // 0038 (PR-5b)
   ]);
   assert.deepEqual(await columnsWith(admin, "app.consent_decision", "app_rw", "UPDATE"), ["consent_text_hash", "consent_version", "prior_steps_complete", "privacy_notice_version", "purposes", "receipt_ref", "relationship_ref", "state", "steps_recorded"]); // 0049 (PR-b): columnas de las que la base deriva el ledger, solo UPDATE
-  // ADR-010 PR-5a (INV-RV-12, F-A10-01): app_rw ya no escribe app.revocation (ni INSERT ni UPDATE); solo transition_owner via case_state.*.
-  assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "UPDATE"), []);
-  assert.deepEqual(await columnsWith(admin, "app.revocation", "app_rw", "INSERT"), []);
+  // ADR-010 PR-5a (INV-RV-12, F-A10-01): app_rw ya no escribe case_state.revocation (ni INSERT ni UPDATE); solo transition_owner via case_state.*.
+  assert.deepEqual(await columnsWith(admin, "case_state.revocation", "app_rw", "UPDATE"), []);
+  assert.deepEqual(await columnsWith(admin, "case_state.revocation", "app_rw", "INSERT"), []);
   assert.deepEqual(await columnsWith(admin, "app.recovery_token", "app_rw", "UPDATE"), ["consumed_at"]);
   assert.deepEqual(await columnsWith(admin, "app.recovery_token", "app_rw", "INSERT"), [
     "chain_ref", "consumed_at", "expires_at", "recovery_ref", "revoked_decision_ref", "tenant_id", "token_hash",
@@ -127,18 +128,18 @@ pgTestRaw("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, en
   try {
     // data_class distinto de SYNTHETIC en cada tabla (incluidas las de catalogo y tenant_resolve).
     await expectFail("INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete, data_class) VALUES ($1, 'c', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '[]', true, 'REAL')", [t], "consent_decision_data_class_synthetic");
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ('dec', $1, 'r', 'ch', 'REQUESTED', 'REAL')", [t], "revocation_data_class_synthetic");
+    await expectFail("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ('dec', $1, 'r', 'ch', 'REQUESTED', 'REAL')", [t], "revocation_data_class_synthetic");
     await expectFail("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at, data_class) VALUES ($1, 'r', $2, 'ch', 'd', now(), 'REAL')", [t, hex("h808")], "recovery_token_data_class_synthetic");
     await expectFail("INSERT INTO app.subject (tenant_id, subject_ref, data_class) VALUES ($1, 's', 'REAL')", [t], "subject_data_class_synthetic");
     await expectFail("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status, data_class) VALUES ($1, 'p', 'c', 'p', 'ACTIVE', 'REAL')", [t], "school_participation_data_class_synthetic");
     await expectFail("INSERT INTO tenant_resolve.recovery_token (token_hash, tenant_id, recovery_ref, data_class) VALUES ($1, $2, 'r', 'REAL')", [hex("h808b"), t], "recovery_token_data_class_synthetic");
 
     // Enums, formas y pares.
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r', 'ch', 'EXPIRED')", [t], "revocation_status_enum");
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, verified_auth_path) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'SMS')", [t], "revocation_auth_path_enum");
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, reason_code) VALUES ('dec', $1, 'r', 'ch', 'FAILED', 'OTHER')", [t], "revocation_reason_code_enum");
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, attested_case_ref) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'case')", [t], "revocation_attestation_pair");
-    await expectFail("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, '', 'ch', 'REQUESTED')", [t], "revocation_ref_len");
+    await expectFail("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r', 'ch', 'EXPIRED')", [t], "revocation_status_enum");
+    await expectFail("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, verified_auth_path) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'SMS')", [t], "revocation_auth_path_enum");
+    await expectFail("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, reason_code) VALUES ('dec', $1, 'r', 'ch', 'FAILED', 'OTHER')", [t], "revocation_reason_code_enum");
+    await expectFail("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, attested_case_ref) VALUES ('dec', $1, 'r', 'ch', 'VERIFIED', 'case')", [t], "revocation_attestation_pair");
+    await expectFail("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, '', 'ch', 'REQUESTED')", [t], "revocation_ref_len");
     await expectFail("INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete) VALUES ($1, 'c', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'MAYBE', '[]', true)", [t], "consent_decision_state_enum");
     await expectFail("INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete) VALUES ($1, 'c', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '{}', true)", [t], "consent_decision_purposes_array");
     await expectFail("INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'r', 'no-es-sha256', 'ch', 'd', now())", [t], "recovery_token_hash_shape");
@@ -146,8 +147,8 @@ pgTestRaw("TEST-CNS-808 pg: CHECK de las tablas nuevas (data_class SYNTHETIC, en
     await expectFail("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, 'p', 'c', 'p', 'ARCHIVED')", [t], "school_participation_status_enum");
 
     // Y una fila valida SI entra (los CHECK no son vacuos): data_class queda SYNTHETIC por defecto.
-    await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'ok', 'ch', 'REQUESTED')", [t]);
-    const row = (await admin.query<{ data_class: string }>("SELECT data_class FROM app.revocation WHERE tenant_id = $1", [t])).rows[0];
+    await admin.query("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'ok', 'ch', 'REQUESTED')", [t]);
+    const row = (await admin.query<{ data_class: string }>("SELECT data_class FROM case_state.revocation WHERE tenant_id = $1", [t])).rows[0];
     assert.equal(row?.data_class, "SYNTHETIC");
   } finally {
     await admin.query("ROLLBACK");
@@ -161,7 +162,7 @@ pgTestRaw("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id 
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
   await admin.query("INSERT INTO app.subject (tenant_id, subject_ref) VALUES ($1, 's809')", [ta]);
   await admin.query("INSERT INTO app.school_participation (tenant_id, participation_ref, context_ref, product_ref, status) VALUES ($1, 'p809', 'c', 'p', 'ACTIVE')", [ta]);
-  await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r809', 'ch', 'REQUESTED')", [ta]);
+  await admin.query("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r809', 'ch', 'REQUESTED')", [ta]);
   await admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'c809', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '[]', true)`,
@@ -173,10 +174,10 @@ pgTestRaw("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id 
   // Sin set_config: 0 filas (la conexion es app_rw, FORCE RLS).
   const app = await ctx.connectAs("app_rw");
   for (const table of tables) {
-    assert.equal((await app.query(`SELECT 1 FROM app.${table}`)).rows.length, 0, `${table}: sin tenant debe dar 0 filas`);
+    assert.equal((await app.query(`SELECT 1 FROM ${qualified(table)}`)).rows.length, 0, `${table}: sin tenant debe dar 0 filas`);
   }
   await assert.rejects(
-    () => app.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'x', 'ch', 'REQUESTED')", [ta]),
+    () => app.query("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'x', 'ch', 'REQUESTED')", [ta]),
     (e: unknown) => codeOf(e) === "42501",
     "INSERT sin tenant rechazado por RLS",
   );
@@ -188,7 +189,7 @@ pgTestRaw("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id 
       uow.withTenantTx(tenant, async (tx) => {
         const pid = (await tx.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid ?? -1;
         const n: Record<string, number> = {};
-        for (const table of tables) n[table] = (await tx.query<{ c: number }>(`SELECT count(*)::int AS c FROM app.${table}`)).rows[0]?.c ?? -1;
+        for (const table of tables) n[table] = (await tx.query<{ c: number }>(`SELECT count(*)::int AS c FROM ${qualified(table)}`)).rows[0]?.c ?? -1;
         return { pid, n };
       });
     const a = await counts(ta);
@@ -199,7 +200,7 @@ pgTestRaw("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id 
 
     // tenant_id falso (WITH CHECK): B no puede insertar ni "mover" filas hacia A. Una unidad por intento.
     for (const sql of [
-      "INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'falso', 'ch', 'REQUESTED')",
+      "INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'falso', 'ch', 'REQUESTED')",
       "INSERT INTO app.recovery_token (tenant_id, recovery_ref, token_hash, chain_ref, revoked_decision_ref, expires_at) VALUES ($1, 'falso', $2, 'ch', 'd', now())",
     ]) {
       await assert.rejects(
@@ -209,21 +210,21 @@ pgTestRaw("TEST-CNS-809 pg: sin tenant 0 filas y escritura rechazada; tenant_id 
       );
     }
     // UPDATE de filas ajenas: 0 filas afectadas bajo RLS (y no cambia nada).
-    // ADR-010 PR-5a: app_rw ya no tiene UPDATE sobre app.revocation (0037): el rechazo es por privilegio (42501), antes de RLS.
+    // ADR-010 PR-5a: app_rw ya no tiene UPDATE sobre case_state.revocation (0037): el rechazo es por privilegio (42501), antes de RLS.
     await assert.rejects(
-      () => uow.withTenantTx(tb, (tx) => tx.query("UPDATE app.revocation SET status = 'FAILED' WHERE revocation_ref = 'r809'")),
+      () => uow.withTenantTx(tb, (tx) => tx.query("UPDATE case_state.revocation SET status = 'FAILED' WHERE revocation_ref = 'r809'")),
       (e: unknown) => codeOf(e) === "42501",
     );
     // Mover una fila propia a otro tenant tambien falla (WITH CHECK del UPDATE): tenant_id ni siquiera es actualizable.
     await assert.rejects(
-      () => uow.withTenantTx(ta, (tx) => tx.query("UPDATE app.revocation SET tenant_id = $1 WHERE revocation_ref = 'r809'", [tb])),
+      () => uow.withTenantTx(ta, (tx) => tx.query("UPDATE case_state.revocation SET tenant_id = $1 WHERE revocation_ref = 'r809'", [tb])),
       (e: unknown) => codeOf(e) === "42501",
     );
   } finally {
     await pool.end();
   }
-  assert.equal((await admin.query("SELECT 1 FROM app.revocation WHERE tenant_id = $1", [tb])).rows.length, 0);
-  assert.equal((await admin.query<{ status: string }>("SELECT status FROM app.revocation WHERE revocation_ref = 'r809'")).rows[0]?.status, "REQUESTED");
+  assert.equal((await admin.query("SELECT 1 FROM case_state.revocation WHERE tenant_id = $1", [tb])).rows.length, 0);
+  assert.equal((await admin.query<{ status: string }>("SELECT status FROM case_state.revocation WHERE revocation_ref = 'r809'")).rows[0]?.status, "REQUESTED");
 });
 
 pgTest("TEST-CNS-810 pg: tenant_resolve cerrado para runtime; funciones SECURITY DEFINER de tenant_resolve_owner con search_path fijo y EXECUTE solo para app_rw", async (ctx) => {
@@ -373,7 +374,8 @@ pgTest("TEST-CNS-812 pg: email solo de dominios reservados (P1-5): funcion app.i
        FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid AND c.relkind IN ('r', 'p')
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname IN ('app', 'integrity', 'ops', 'tenant_resolve') AND a.attnum > 0 AND NOT a.attisdropped
-        AND (a.attname ~* '^(rut|run|rol_unico)$' OR a.attname ~* '(^|_)(rut|run)(_|$)')`,
+        AND (a.attname ~* '^(rut|run|rol_unico)$' OR a.attname ~* '(^|_)(rut|run)(_|$)')
+        AND NOT (a.attname = 'run_id' AND n.nspname = 'integrity' AND c.relname IN ('chain_run', 'chain_checkpoint', 'reconcile_run', 'anchor'))`, // PR-7b: run_id = id de CORRIDA del chain-verifier/reconciler (uuid), no el RUN chileno
   );
   assert.deepEqual(rut.rows, []);
 
@@ -381,6 +383,10 @@ pgTest("TEST-CNS-812 pg: email solo de dominios reservados (P1-5): funcion app.i
   const migrator = await ctx.connectAs("consent_migrator");
   await migrator.query("BEGIN");
   try {
+    // ADR-010 PR-7c (0082, F-PR7-01): app.is_reserved_email es de shared_fn_owner y consent_owner ya no la ejecuta; la meta-prueba inserta como consent_owner, asi que se le concede EXECUTE (dentro del ROLLBACK).
+    await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query("SET LOCAL ROLE shared_fn_owner");
+    await migrator.query("GRANT EXECUTE ON FUNCTION app.is_reserved_email(text) TO consent_owner");
     await migrator.query("SET LOCAL ROLE consent_owner");
     await migrator.query("CREATE TABLE app.probe_contact (contact_email text)");
     assert.deepEqual(await unguardedEmailColumns(migrator), ["app.probe_contact.contact_email"]);
@@ -453,7 +459,7 @@ pgTestRaw("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el 
   const t = fixtureUuid("t814");
   const admin = await ctx.connectAsSuperuser();
   await admin.query("SELECT set_config('case_state.effect', 'seed_local_revocation', false)"); // ADR-010 PR-5a: siembra LOCAL como superusuario (0037)
-  await admin.query("INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r814', 'ch', 'REQUESTED')", [t]);
+  await admin.query("INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status) VALUES ('dec', $1, 'r814', 'ch', 'REQUESTED')", [t]);
   await admin.query(
     `INSERT INTO app.consent_decision (tenant_id, consent_id, context_ref, product_ref, subject_ref, decision_maker_ref, invitation_ref, verification_ref, chain_ref, state, purposes, prior_steps_complete)
      VALUES ($1, 'c814', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'GRANTED', '[]', true)`,
@@ -465,29 +471,29 @@ pgTestRaw("TEST-CNS-814 pg: las columnas de identidad no son actualizables y el 
   try {
     const uow = new PgUnitOfWork(pool);
     const denied = [
-      "UPDATE app.revocation SET chain_ref = 'otra' WHERE revocation_ref = 'r814'",
-      "UPDATE app.revocation SET revoked_decision_ref = 'otra' WHERE revocation_ref = 'r814'",
-      "UPDATE app.revocation SET data_class = 'REAL' WHERE revocation_ref = 'r814'",
+      "UPDATE case_state.revocation SET chain_ref = 'otra' WHERE revocation_ref = 'r814'",
+      "UPDATE case_state.revocation SET revoked_decision_ref = 'otra' WHERE revocation_ref = 'r814'",
+      "UPDATE case_state.revocation SET data_class = 'REAL' WHERE revocation_ref = 'r814'",
       "UPDATE app.consent_decision SET chain_ref = 'otra' WHERE consent_id = 'c814'",
       "UPDATE app.consent_decision SET subject_ref = 'otro' WHERE consent_id = 'c814'",
       "UPDATE app.recovery_token SET expires_at = now() + interval '100 years' WHERE recovery_ref = 'rec814'",
       "UPDATE app.recovery_token SET token_hash = repeat('a', 64) WHERE recovery_ref = 'rec814'",
-      "DELETE FROM app.revocation WHERE revocation_ref = 'r814'",
+      "DELETE FROM case_state.revocation WHERE revocation_ref = 'r814'",
       "DELETE FROM app.consent_decision WHERE consent_id = 'c814'",
       "DELETE FROM app.recovery_token WHERE recovery_ref = 'rec814'",
       "TRUNCATE app.recovery_token",
-      "INSERT INTO app.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ('dec', current_setting('app.tenant_id')::uuid, 'x', 'ch', 'REQUESTED', 'SYNTHETIC')",
+      "INSERT INTO case_state.revocation (revoked_decision_ref, tenant_id, revocation_ref, chain_ref, status, data_class) VALUES ('dec', current_setting('app.tenant_id')::uuid, 'x', 'ch', 'REQUESTED', 'SYNTHETIC')",
       "UPDATE tenant_resolve.recovery_token SET tenant_id = tenant_id",
     ];
     for (const sql of denied) {
       await assert.rejects(() => uow.withTenantTx(t, (tx) => tx.query(sql)), (e: unknown) => codeOf(e) === "42501", sql);
     }
-    // ADR-010 PR-5a: el estado de app.revocation ya NO lo cambia app_rw (solo las funciones case_state); el consumo del token si.
-    await assert.rejects(() => uow.withTenantTx(t, (tx) => tx.query("UPDATE app.revocation SET status = 'VERIFIED' WHERE revocation_ref = 'r814'")), (e: unknown) => codeOf(e) === "42501");
+    // ADR-010 PR-5a: el estado de case_state.revocation ya NO lo cambia app_rw (solo las funciones case_state); el consumo del token si.
+    await assert.rejects(() => uow.withTenantTx(t, (tx) => tx.query("UPDATE case_state.revocation SET status = 'VERIFIED' WHERE revocation_ref = 'r814'")), (e: unknown) => codeOf(e) === "42501");
     await uow.withTenantTx(t, (tx) => tx.query("UPDATE app.recovery_token SET consumed_at = now() WHERE recovery_ref = 'rec814'"));
   } finally {
     await pool.end();
   }
-  const row = (await admin.query<{ status: string; chain_ref: string }>("SELECT status, chain_ref FROM app.revocation WHERE revocation_ref = 'r814'")).rows[0];
+  const row = (await admin.query<{ status: string; chain_ref: string }>("SELECT status, chain_ref FROM case_state.revocation WHERE revocation_ref = 'r814'")).rows[0];
   assert.deepEqual(row, { status: "REQUESTED", chain_ref: "ch" });
 });

@@ -2,6 +2,7 @@
 // TEST-CNS-1312: configuracion CNS_RETENTION_* (sin default; STAGING exige; LOCAL/DEV sin variables = DISABLED_LOCAL) y nucleo del CLI.
 // TEST-CNS-1323: chequeos de arranque de retencion y senal retention_purge_stale (< 26 h por store). Sin Postgres: dobles.
 
+import { CONSENT_OWNER_INVENTORY_ALLOWLIST } from "../../../src/infra/adapters/postgres/consent-owner-inventory.allowlist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PLACEHOLDER_P34_RETENTION_DAYS } from "../../../src/server/modules/common/approved-parameters.ts";
@@ -79,6 +80,7 @@ test("TEST-CNS-1312 el nucleo del CLI purga purge_run primero, llama ops.purge_p
 
 function healthyDb(status: Array<{ store: string; retention_days: string; last_run_at: Date | null }> | "error", purgeExecRow?: { app_rw: boolean; platform_rw: boolean }): FakeClient {
   return new FakeClient((text) => {
+    if (text.includes("V2|trigger|")) return { rows: CONSENT_OWNER_INVENTORY_ALLOWLIST.map((line) => ({ line })) }; // PR-7c (F-PR7-01): inventario de consent_owner = allowlist
     if (text.includes("pg_catalog.pg_settings")) return { rows: [] };
     if (text.includes("to_regprocedure")) return purgeExecRow === undefined ? { rows: [{ app_rw: false, platform_rw: false }] } : { rows: [purgeExecRow] };
     if (text.includes("ops.retention_status")) return status === "error" ? new Error("boom") : { rows: status };

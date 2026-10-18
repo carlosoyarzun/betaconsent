@@ -565,7 +565,7 @@ test("TEST-CNS-704: tras revocar por enlace (C6/REVOKED), el enlace viejo da el 
 
 // F-PR6-25 (hallazgo F-PR6-52), F-PR6-48, DEC-BR-006 / REQ-CNS-033, RULE-CNS-026: un fallo interno de R3r + R4
 // (RevocationApplyUnavailableError) responde el 503 uniforme SIN acuse y el token NO se consume.
-test("TEST-CNS-1773: POST /recovery/revoke con fallo interno de R3r + R4 responde 503 GUARD_EVALUATOR_UNAVAILABLE sin acuse y el MISMO enlace sigue siendo utilizable (CONFIRMED al reintentar)", async () => {
+test("TEST-CNS-1788: POST /recovery/revoke con fallo interno de R3r + R4 responde 503 GUARD_EVALUATOR_UNAVAILABLE sin acuse y el MISMO enlace sigue siendo utilizable (CONFIRMED al reintentar)", async () => {
   const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-1766"), fixtureUuid("consent-1766"), "mgmt-token-1766");
   try {
     const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-1766");

@@ -161,7 +161,7 @@ pgTest("TEST-CNS-817 pg platform E2E: RH3 cosign+R4 con fallo inyectado en R4 (u
     const failure = await injectOutboxFailure(admin, { name: "f817", tenantId: w.tenantId, failures: 1_000, sqlstate: "XX000" });
     await assert.rejects(() => http.cases.cosign({ sid: w.op2.caseSession.sid, caseRef: w.caseRef }), /fallo inyectado/);
     assert.equal(await failure.attempts(), 1, "un error no transitorio no se reintenta");
-    const rolled = (await admin.query("SELECT status, recorded_by_ref, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    const rolled = (await admin.query("SELECT status, recorded_by_ref, cosigned_by_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
     assert.deepEqual(rolled, { status: "VERIFIED", recorded_by_ref: w.op1.principal, cosigned_by_ref: null }, "el paso 1 (anterior a la tx de la co-firma) se conserva; sin co-firma");
     assert.deepEqual(await events(), before, "R3, R4 y C6 revierten juntos");
     assert.equal(await outbox(), 0);
@@ -170,7 +170,7 @@ pgTest("TEST-CNS-817 pg platform E2E: RH3 cosign+R4 con fallo inyectado en R4 (u
     await failure.remove();
     const retried = await http.cases.cosign({ sid: w.op2.caseSession.sid, caseRef: w.caseRef });
     assert.equal(retried.ok, true, JSON.stringify(retried));
-    const row = (await admin.query("SELECT status, cosigned_by_ref FROM app.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
+    const row = (await admin.query("SELECT status, cosigned_by_ref FROM case_state.revocation WHERE tenant_id = $1 AND revocation_ref = $2", [w.tenantId, w.revocationRef])).rows[0];
     assert.deepEqual(row, { status: "APPLIED", cosigned_by_ref: w.op2.principal });
     const types = await events();
     for (const t of ["REVOCATION_CONFIRMED", "CONSENT_REVOKED", "RECEIPT_CREATED"]) assert.equal(types.filter((x) => x === t).length, 1, t);

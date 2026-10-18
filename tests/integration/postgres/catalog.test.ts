@@ -80,7 +80,9 @@ pgTest("TEST-CNS-743 pg: EXECUTE por defecto no llega a PUBLIC (consent_owner, t
     await migrator.query("SET LOCAL ROLE tenant_resolve_owner");
     await migrator.query("CREATE FUNCTION tenant_resolve.probe_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");
     // P2-7 (0008): outbox_claimer (dueno de app.outbox_claim) tambien revoca EXECUTE de PUBLIC por defecto.
+    // ADR-010 PR-7c (0082, F-PR7-01): el dueño del esquema app es app_schema_owner; consent_owner solo tiene USAGE, CREATE (sin GRANT OPTION).
     await migrator.query("SET LOCAL ROLE consent_owner");
+    await migrator.query("SET LOCAL ROLE app_schema_owner");
     await migrator.query("GRANT CREATE ON SCHEMA app TO outbox_claimer");
     await migrator.query("SET LOCAL ROLE outbox_claimer");
     await migrator.query("CREATE FUNCTION app.probe_claimer_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'");

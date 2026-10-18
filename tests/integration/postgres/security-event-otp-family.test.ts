@@ -257,8 +257,8 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
   )).rows;
   assert.ok(owners.length >= 4, "tabla, funcion, secuencia e indices");
   for (const o of owners) assert.equal(o.owner, "security_event_owner", o.what);
-  // El esquema ops NO se transfiere (R-21-1 / F-2, aceptado IT0b) y security_event_owner no conserva CREATE.
-  assert.equal((await admin.query<{ o: string }>("SELECT pg_get_userbyid(nspowner) AS o FROM pg_namespace WHERE nspname = 'ops'")).rows[0]?.o, "consent_owner");
+  // ADR-010 rev. 6 PR-7c (0082, R-21-1 / F-2 CERRADO): el esquema ops pasa a ops_schema_owner (consent_owner conserva USAGE, CREATE pero ya no puede DROP de objetos ajenos); security_event_owner no conserva CREATE.
+  assert.equal((await admin.query<{ o: string }>("SELECT pg_get_userbyid(nspowner) AS o FROM pg_namespace WHERE nspname = 'ops'")).rows[0]?.o, "ops_schema_owner");
   const schemaPrivs = (await admin.query<{ usage: boolean; create: boolean }>("SELECT has_schema_privilege('security_event_owner', 'ops', 'USAGE') AS usage, has_schema_privilege('security_event_owner', 'ops', 'CREATE') AS \"create\"")).rows[0];
   assert.deepEqual(schemaPrivs, { usage: true, create: false });
   // EXECUTE por defecto no llega a PUBLIC para lo que cree security_event_owner (ALTER DEFAULT PRIVILEGES de 0029).
@@ -290,15 +290,16 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
     await migrator.query("ROLLBACK");
   }
 
-  // R-21-1 / F-2 (P2, aceptado IT0b): consent_owner es dueno del ESQUEMA ops, asi que SI puede DROP de la tabla aunque no sea su dueno.
-  // Aserto positivo para que este test cambie cuando ADR-010 §4.5 cierre el residual.
+  // R-21-1 / F-2 CERRADO (ADR-010 rev. 6 PR-7c, 0082): consent_owner ya no es dueño del esquema ops (lo es ops_schema_owner), asi que NO puede DROP de la tabla ni del esquema.
   const dropper = await ctx.connectAs("consent_migrator");
   await dropper.query("BEGIN");
   try {
     await dropper.query("SET LOCAL ROLE consent_owner");
-    await dropper.query("SAVEPOINT d");
-    await assert.doesNotReject(() => dropper.query("DROP TABLE ops.security_event"), "R-21-1: el dueno del esquema puede DROP");
-    await dropper.query("ROLLBACK TO d");
+    for (const sql of ["DROP TABLE ops.security_event", "DROP SCHEMA ops CASCADE"]) {
+      await dropper.query("SAVEPOINT d");
+      await assert.rejects(() => dropper.query(sql), (e: unknown) => codeOf(e) === "42501", `R-21-1: ${sql}`);
+      await dropper.query("ROLLBACK TO d");
+    }
   } finally {
     await dropper.query("ROLLBACK");
   }

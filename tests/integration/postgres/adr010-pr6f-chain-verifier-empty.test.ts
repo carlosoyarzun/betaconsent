@@ -37,6 +37,11 @@ pgTest("TEST-CNS-1759 pg: tenants=0/events=0 = exit 1 (no verde falso); ALLOW_EM
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(allowed.stdout.trim(), "chain_verify_run ok=true tenants=0 events=0 broken=0 unchained=0");
 
+  // PR-7b: la corrida vacia permitida (solo LOCAL) deja una chain_run exit 0 con 0 hojas y la raiz del arbol vacio (SHA-256 de la cadena vacia), sin checkpoints.
+  const run = (await admin.query<{ exit_code: number; leaf_count: number; tenants: number; merkle_root: string }>("SELECT exit_code, leaf_count, tenants, merkle_root FROM integrity.chain_run")).rows;
+  assert.deepEqual(run.map((r) => [r.exit_code, r.leaf_count, r.tenants, r.merkle_root]), [[0, 0, 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]]);
+  assert.equal((await admin.query("SELECT 1 FROM integrity.chain_checkpoint")).rowCount, 0);
+
   for (const environment of ["DEV", "STAGING"]) {
     const r = runMain(ctx, { CNS_CHAIN_VERIFIER_ALLOW_EMPTY: "true", CNS_ENVIRONMENT: environment });
     assert.equal(r.status, 1, environment);

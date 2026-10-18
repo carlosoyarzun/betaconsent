@@ -5,7 +5,8 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Client } from "pg";
@@ -47,7 +48,7 @@ async function setCatalog(admin: Client, environment: "LOCAL" | "STAGING"): Prom
   for (const t of triggers) await admin.query(`ALTER TABLE ops.db_catalog ${t.tgenabled === "A" ? "ENABLE ALWAYS" : "ENABLE"} TRIGGER ${t.tgname}`);
 }
 
-pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta: USAGE solo en integrity y ops, sin CREATE) y es idempotente; 0073 re-ejecutada + 0074 deja el mismo estado", async (ctx) => {
+pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta: USAGE solo en integrity y ops, sin CREATE) y es idempotente (re-ejecutada deja el mismo estado)", async (ctx) => {
   const admin = await ctx.fixtureAdmin();
   const state = async (): Promise<string[]> =>
     (await admin.query<{ s: string }>(
@@ -58,9 +59,11 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
   assert.ok(before.includes("integrity:true:false") && before.includes("ops:true:false"));
   assert.equal((await admin.query("SELECT 1 FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a WHERE n.nspname = 'app' AND a.grantee = 'integrity_chain_verifier'::regrole")).rowCount, 0);
   const sql74 = readFileSync(join(MIGRATIONS_DIR, "0074_adr010_pr7a_chain_verifier_no_app_usage.sql"), "utf8");
-  const sql73 = readFileSync(join(MIGRATIONS_DIR, "0073_adr010_pr6f_chain_verifier_ledger_select.sql"), "utf8");
   const migrator = await ctx.connectAs("consent_migrator");
-  for (const sql of [sql74, sql73 + "\n" + sql74]) {
+  // PR-7c (0082): app es de app_schema_owner; para reproducir el orden real del deploy (0073 -> 0074 con app aun de consent_owner) el dueño se devuelve solo durante el replay.
+  // 0073 ya no se re-ejecuta: sus aserciones globales (1 sola policy del rol) eran exactas solo al migrar y dejan de valer tras 0076 (PR-7b, F-PR7B-06); 0074 es idempotente por si sola.
+  for (const sql of [sql74, sql74]) {
+    await admin.query("ALTER SCHEMA app OWNER TO consent_owner");
     await migrator.query("BEGIN");
     try {
       await migrator.query(sql);
@@ -68,6 +71,9 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
     } catch (e) {
       await migrator.query("ROLLBACK");
       throw e;
+    } finally {
+      await admin.query("ALTER SCHEMA app OWNER TO app_schema_owner");
+      await admin.query("GRANT USAGE, CREATE ON SCHEMA app TO consent_owner"); // ALTER OWNER fusiona/pierde las entradas ACL propias: se restaura la ACL del esquema
     }
     assert.deepEqual(await state(), before);
   }
@@ -86,7 +92,12 @@ pgTest("TEST-CNS-1763 pg: 0074 revoca USAGE de app al chain-verifier (ACL exacta
   assert.deepEqual(await state(), before);
 });
 
-const ENV_STAGING = (ctx: PgTestContext, role: PgRole): Record<string, string> => ({ CNS_ENVIRONMENT: "STAGING", CNS_DB_ROLE_MODE: "IT0B_SYNTHETIC", CNS_DATABASE_URL: ctx.urlFor(role) });
+// PR-7b: fuera de LOCAL el chain-verifier exige CNS_CHAIN_VERIFIER_STATE_DIR (copia local de cabezas, 0700); un directorio nuevo por llamada (siembra limpia).
+const ENV_STAGING = (ctx: PgTestContext, role: PgRole): Record<string, string> => {
+  const dir = mkdtempSync(join(tmpdir(), "cns-pr7a-"));
+  chmodSync(dir, 0o700);
+  return { CNS_ENVIRONMENT: "STAGING", CNS_DB_ROLE_MODE: "IT0B_SYNTHETIC", CNS_DATABASE_URL: ctx.urlFor(role), CNS_CHAIN_VERIFIER_STATE_DIR: dir };
+};
 
 pgTest("TEST-CNS-1764 pg: chain-verifier, reconciler y verifier arrancan con CNS_ENVIRONMENT=STAGING sin CNS_RETENTION_* (sin EXECUTE de retencion); el chain-verifier no tiene USAGE de app y su chequeo de arranque resuelve la vista del roster por catalogo", async (ctx) => {
   const admin = await ctx.fixtureAdmin();

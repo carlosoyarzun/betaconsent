@@ -106,3 +106,12 @@ DDL del ledger deba declararse y revisarse (`0026:18`).
 ## Roles por proceso (ADR-010 PR-6a, INV-DBR-02)
 
 Un proceso = un rol LOGIN = un pool (`src/infra/adapters/postgres/runtime-process.ts`): web=`app_rw`, platform=`platform_rw`, worker=`worker`, verifier=`integrity_verifier`. `0042` quita a `app_rw` el EXECUTE de R5–R7 (solo `worker`; R4 queda hasta la enmienda P6-2) y concede, de forma interina pendiente de ratificación, SELECT del worker sobre `app.revocation`/`integrity.audit_event` bajo RLS (F-PR6-20) y USAGE `app`/`ops` + SELECT `ops.db_catalog` al verifier (F-PR6-21).
+
+## PR-7c (ADR-010 rev. 6): el migrador deja de ser dueño de lo compartido (F-PR7-01, Q16; decisiones de Carlos 2026-10-16)
+
+- `0080` (cluster): roles NOLOGIN `app_schema_owner`, `ops_schema_owner`, `shared_fn_owner`, `revocation_recovery_reader` (`consent_owner` con SET sin herencia solo en IT0B_SYNTHETIC).
+- `0081` (Q16): `app.revocation` y `app.rights_case` pasan a `case_state.revocation` / `case_state.rights_case`, de `case_state_owner`. Las ~30 funciones que las nombran se recrean por catalogo (cuerpo vigente con el nombre nuevo) por cada dueño con `SET LOCAL ROLE` literal; una huella (dueño, SECURITY DEFINER, search_path, ACL, firma) prueba que nada mas cambio. USAGE de `case_state` para `integrity_reconciler` y `rights_case_lookup_owner`.
+- `0082`: `app.current_tenant_id()`, `app.is_reserved_email(text)` y `ops.catalog_environment()` pasan a `shared_fn_owner`; los esquemas `app` y `ops` pasan a `app_schema_owner` / `ops_schema_owner` (`consent_owner` conserva USAGE, CREATE: crea sus objetos pero no hace DROP de los ajenos; cierra R-21-1/FN-12 y FN-6).
+- `0083` (F-6D3-SEC-08): `case_state.list_confirmed_unapplied` pasa a `revocation_recovery_reader`, que tiene la unica policy cross-tenant (`status = 'CONFIRMED'`); la de `transition_owner` se elimina.
+- Residual F-PR7-01 (ABIERTO): `consent_owner` sigue siendo dueño de las demas tablas de `app`/`ops`. Lo DETECTA el inventario por catalogo con allowlist (`src/infra/adapters/postgres/consent-owner-inventory.ts`; corre en `startup-checks` y en TEST-CNS-1805); no lo previene. Hasta C-3 (a) (el migrador no es dueño de nada en REAL_DATA) `REAL_DATA_BLOCKERS` bloquea el modo REAL_DATA.
+- Regenerar la allowlist tras una migracion que toque triggers, policies, reglas o ACL de tablas de `consent_owner`: ejecutar la consulta `CONSENT_OWNER_INVENTORY_SQL` en una base migrada y revisar el diff (cambio de ruta CODEOWNERS).
