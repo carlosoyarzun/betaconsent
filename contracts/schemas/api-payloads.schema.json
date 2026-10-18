@@ -647,6 +647,43 @@
       ],
       "description": "Nunca incluye el enlace de gestión: el management_token se envía SOLO al canal ligado (C3; revocation.managementLink). Receipt con marca de agua IT0."
     },
+    "DecisionPageState": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "API-CNS-194: lo que renderDecisionPage interpola en GET /decision (ADR-001 F1 fase B). Sin consentTextHash, sin PII.",
+      "properties": {
+        "relationshipRefs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "servedVersion": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "consentVersion": { "$ref": "common.schema.json#/$defs/Version" },
+            "privacyNoticeVersion": { "$ref": "common.schema.json#/$defs/Version" },
+            "text": { "type": "string" }
+          },
+          "required": ["consentVersion", "privacyNoticeVersion", "text"]
+        },
+        "subjectLabel": {
+          "type": "string",
+          "pattern": "^Alumno de prueba [0-9]{1,4}$",
+          "description": "Etiqueta sintética de solo lectura (SUBJECT_LABEL_PATTERN); ausente si el directorio no la tiene."
+        }
+      },
+      "required": ["relationshipRefs", "servedVersion"],
+      "x-pending": ["LD-06 (LEGAL DECISION: texto de consentimiento real)"]
+    },
+    "ManagePageState": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "API-CNS-195: variante de GET /manage (ADR-001 F1 fase B). Solo la variante; sin datos del dominio.",
+      "properties": {
+        "variant": { "enum": ["entry", "status", "revoked"] }
+      },
+      "required": ["variant"]
+    },
     "SubjectMismatchAck": {
       "type": "object",
       "additionalProperties": false,

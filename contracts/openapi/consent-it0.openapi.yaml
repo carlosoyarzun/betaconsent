@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Consent App IT0 — API HTTP (borrador)
-  version: 0.1.0-draft
+  version: 0.1.1-draft
   x-api-id: API-CNS-100
   x-status: DRAFT
   x-it0-only: true
@@ -868,6 +868,58 @@ paths:
             application/json:
               schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/SubjectMismatchAck'}
         '403': {$ref: '#/components/responses/CsrfRejected'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  /decision/page-state:
+    get:
+      operationId: getDecisionPageState
+      x-api-id: API-CNS-194
+      tags: [bearer-decision]
+      summary: Datos de la página /decision para la SPA (relaciones permitidas, versión servida del texto y etiqueta del titular)
+      description: |
+        ADR-001 F1 (fase B). Entrega a la página React exactamente lo que `renderDecisionPage` interpola en el HTML de GET /decision: la lista de
+        `relationshipRefs` (la MISMA configuración que valida el servidor, GRD-CD-04), la versión servida del texto (sin `consentTextHash`: el SSR no
+        lo muestra) y, si el directorio sintético la tiene, la etiqueta de solo lectura del estudiante («Alumno de prueba N»; nunca PII ni RUT).
+        Mismas comprobaciones que GET /decision (sesión con verificationRef y decisionMakerRef, invitación VERIFIED y ligada al mismo DecisionMaker,
+        P-30) y mismo 404 uniforme (INV-CM-05). Solo lectura (INV-CM-08): no emite CONSENT_VERSION_VIEWED (eso sigue siendo POST /decision/steps).
+        `Cache-Control: no-store`. El texto de consentimiento real y el enunciado de autoridad siguen PENDING (LEGAL DECISION).
+      x-governed-by: ["ADR-001 rev. 8 F1 (decisión de Carlos 2026-10-18)", "UX-CNS-003", "INV-CM-08", "INV-CM-05", "GRD-CD-03", "GRD-CD-04"]
+      x-state-transition: none
+      x-route-class: ISSUANCE_DECISION
+      x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07, GRD-IV-10]
+      security: [{landingHandle: []}]
+      responses:
+        '200':
+          description: Datos de la página.
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/DecisionPageState'}
+        '404': {$ref: '#/components/responses/UniformNotFound'}
+  /manage/page-state:
+    get:
+      operationId: getManagePageState
+      x-api-id: API-CNS-195
+      tags: [bearer-rights]
+      summary: Variante de la página /manage para la SPA (entrada, estado o ya retirado)
+      description: |
+        ADR-001 F1 (fase B). Entrega a la página React la variante que GET /manage elige en el servidor: `entry` (sin manageDecisionMakerRef: 33:2),
+        `status` (post V3 MANAGE: 33:21) o `revoked` (la decisión de la sesión ya está REVOKED, C6/INV-5: 73:2). Solo la variante: sin finalidades, fechas,
+        colegio ni datos del dominio. Misma resolución de sesión que GET /manage (`resolveManageLandingSession`, «el último enlace abierto manda») y mismo
+        404 uniforme (INV-CM-05) con la limpieza de la cookie de sesión previa. Solo lectura (INV-CM-08). `Cache-Control: no-store`.
+      x-governed-by: ["ADR-001 rev. 8 F1 (decisión de Carlos 2026-10-18)", "UX-CNS-004", "INV-CM-08", "INV-CM-05", "GRD-CM-01", "SEC-CNS-014", "SEC-CNS-016"]
+      x-state-transition: none
+      x-route-class: RIGHTS
+      x-eligibility: "eligibility_to_revoke (GRD-CM-06): misma evaluación que GET /manage; nunca lee *.active"
+      security: [{landingHandle: []}]
+      responses:
+        '200':
+          description: Variante de la página.
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '../schemas/api-payloads.schema.json#/$defs/ManagePageState'}
         '404': {$ref: '#/components/responses/UniformNotFound'}
   # ---------------------------------------------------------------------------
   # revocation (R1, R2, R3, R8, RV0 portador, R1r/R2r/R3r/R10/R11, RH2/RH2v, RH3).
