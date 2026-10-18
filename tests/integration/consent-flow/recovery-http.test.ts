@@ -28,6 +28,7 @@ import type { ConsentFlowPorts } from "../../../src/server/entrypoints/http/cons
 import type { RevocationFlowPorts } from "../../../src/server/entrypoints/http/revocation-flow.handler.ts";
 import type { InMemoryTenantHandleAdapter } from "../../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
 import type { InMemoryRecoveryLinkChannelSink } from "../../../src/infra/adapters/in-memory-recovery-link-channel-sink.adapter.ts";
+import { RevocationApplyUnavailableError } from "../../../src/server/modules/revocation/apply-guard.ts";
 import type { RecoveryTokenRepositoryPort } from "../../../src/server/ports/recovery-token.port.ts";
 import { LECTORPRO_BETA_CONFIG } from "../../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "../../helpers/test-ref-keys.ts";
@@ -557,6 +558,43 @@ test("TEST-CNS-704: tras revocar por enlace (C6/REVOKED), el enlace viejo da el 
     const rv0 = await post(baseUrl, { path: "/manage/recovery-link", ...VALID_CSRF_ORIGIN, csrfHeader: "csrf-token-abcdefgh", csrfCookie: "csrf-token-abcdefgh", sessionCookie });
     assert.equal(rv0.status, 202);
     assert.equal(sink.sent.length, sentBefore);
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
+// F-PR6-25 (hallazgo F-PR6-52), F-PR6-48, DEC-BR-006 / REQ-CNS-033, RULE-CNS-026: un fallo interno de R3r + R4
+// (RevocationApplyUnavailableError) responde el 503 uniforme SIN acuse y el token NO se consume.
+test("TEST-CNS-1788: POST /recovery/revoke con fallo interno de R3r + R4 responde 503 GUARD_EVALUATOR_UNAVAILABLE sin acuse y el MISMO enlace sigue siendo utilizable (CONFIRMED al reintentar)", async () => {
+  const { revocationPorts, server, baseUrl } = await setUp(fixtureUuid("chain-1766"), fixtureUuid("consent-1766"), "mgmt-token-1766");
+  try {
+    const token = await issueRecoveryLink(baseUrl, revocationPorts, "mgmt-token-1766");
+    const { recoveryCookie } = await redeemRecoveryToken(baseUrl, token);
+    const { csrfToken } = await renderRecoveryConfirm(baseUrl, recoveryCookie);
+    const revoke = (): Promise<Response> => post(baseUrl, { path: "/recovery/revoke", ...VALID_CSRF_ORIGIN, csrfHeader: csrfToken, csrfCookie: csrfToken, recoveryCookie, body: { confirmTotalWithdrawal: true } });
+
+    const uow = revocationPorts.revocation.uow;
+    const original = uow.inTenant.bind(uow);
+    let failures = 1;
+    (uow as { inTenant: unknown }).inTenant = (...args: Parameters<typeof original>) => {
+      if (failures > 0) {
+        failures -= 1;
+        return Promise.reject(new RevocationApplyUnavailableError());
+      }
+      return original(...args);
+    };
+
+    const failed = await revoke();
+    assert.equal(failed.status, 503);
+    const failedBody = (await failed.json()) as Record<string, unknown>;
+    assert.equal(failedBody.code, "GUARD_EVALUATOR_UNAVAILABLE");
+    assert.equal(failedBody.revocationRef, undefined);
+    assert.equal(failedBody.state, undefined);
+
+    const retried = await revoke();
+    assert.equal(retried.status, 200);
+    const retriedBody = (await retried.json()) as { state: string };
+    assert.equal(retriedBody.state, "CONFIRMED");
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }

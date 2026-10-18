@@ -6,7 +6,8 @@
 // según decida el servidor): la respuesta decide qué bloque mostrar, nunca este script.
 // CONFIRMED -> comprobante (reemplaza el formulario y recibe el foco, mismo patrón que
 // manage.js/decision.js). IN_PROGRESS (R11) -> "en curso" (33:96). Cualquier 202/404 (ERR-RV-05
-// uniforme, o sesión inexistente) -> error uniforme (33:106).
+// uniforme, o sesión inexistente) -> error uniforme (33:106). 503 (fallo interno, token sin
+// consumir) -> aviso propio con el enlace aún válido (F-PR6-25).
 (function () {
   "use strict";
 
@@ -41,6 +42,8 @@
     var errorNetwork = document.getElementById("error-network");
     var errorUniform = document.getElementById("error-uniform");
     var retryBtn = document.getElementById("retry-btn");
+    var errorApplyFailed = document.getElementById("error-apply-failed");
+    var retryApplyBtn = document.getElementById("retry-apply-btn");
     if (!form || !confirmBtn) return;
 
     var busy = false;
@@ -48,6 +51,7 @@
     function hideStates() {
       if (errorNetwork) errorNetwork.hidden = true;
       if (errorUniform) errorUniform.hidden = true;
+      if (errorApplyFailed) errorApplyFailed.hidden = true;
     }
 
     function showNetworkError() {
@@ -58,6 +62,16 @@
     function showUniformError() {
       hideStates();
       if (errorUniform) errorUniform.hidden = false;
+    }
+
+    // F-PR6-25 (hallazgo F-PR6-52): 503 GUARD_EVALUATOR_UNAVAILABLE de R3r + R4. El token NO se
+    // consumió (F-PR6-48): el enlace sigue válido, así que NO se muestra el error uniforme.
+    function showApplyFailed() {
+      hideStates();
+      if (errorApplyFailed) {
+        errorApplyFailed.hidden = false;
+        errorApplyFailed.focus();
+      }
     }
 
     // Frame 33:54/33:87 (comprobante): la confirmación reemplaza el formulario y recibe el foco.
@@ -87,6 +101,10 @@
     function setBusy(isBusy) {
       confirmBtn.setAttribute("aria-disabled", isBusy ? "true" : "false");
       confirmBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
+      if (retryApplyBtn) {
+        retryApplyBtn.setAttribute("aria-disabled", isBusy ? "true" : "false");
+        retryApplyBtn.setAttribute("aria-busy", isBusy ? "true" : "false");
+      }
       if (isBusy) {
         confirmBtn.dataset.label = confirmBtn.textContent;
         confirmBtn.textContent = "Confirmando…";
@@ -106,6 +124,10 @@
           setBusy(false);
           if (res.status === 404 || res.status === 202) {
             showUniformError();
+            return null;
+          }
+          if (res.status === 503) {
+            showApplyFailed();
             return null;
           }
           return res.json().catch(function () {
@@ -130,6 +152,7 @@
     }
 
     confirmBtn.addEventListener("click", confirmRecovery);
+    if (retryApplyBtn) retryApplyBtn.addEventListener("click", confirmRecovery);
     if (retryBtn) retryBtn.addEventListener("click", confirmRecovery);
   });
 })();
