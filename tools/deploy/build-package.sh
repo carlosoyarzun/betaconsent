@@ -45,19 +45,20 @@ done
 copy_tracked db/migrations
 # Semillas SINTETICAS del perfil LOCAL (catalogo de colegio de prueba y principals PLATFORM sinteticos). Opcionales; migrate.ts --phase fixtures.
 copy_tracked db/fixtures/local
-# Lo unico que el servidor lee en runtime fuera de src/ y dist/: el CSS del design system (static-assets.ts) y nada de contracts/, specs/ ni docs/.
+# Lo unico que el servidor lee en runtime fuera de src/ y dist/: los JSON Schema de contracts/schemas (json-schema-lite.ts) y el CSS del design system (static-assets.ts); nada de specs/ ni docs/.
+copy_tracked contracts/schemas
 copy_tracked design-system/index.css design-system/css/tokens.css design-system/css/layouts.css design-system/css/components.css design-system/css/patterns.css
 copy_tracked infra/systemd infra/nginx
 # Herramientas de despliegue (menos este script: se corre en el repo, no en el servidor).
 git ls-files -z -- tools/deploy | while IFS= read -r -d '' f; do
-  case "$f" in tools/deploy/build-package.sh|tools/deploy/README-DEPLOY.md) continue ;; esac
+  case "$f" in tools/deploy/build-package.sh|tools/deploy/README-DEPLOY.md|tools/deploy/.env.example) continue ;; esac
   mkdir -p "$STAGE/$(dirname "$f")"; cp -p "$f" "$STAGE/$f"
 done
 cp -p tools/deploy/.env.example "$STAGE/.env.example"
 cp -p tools/deploy/README-DEPLOY.md "$STAGE/README-DEPLOY.md"
-# dist/ (build de Vite; sin el directorio oculto .vite/manifest.json)
+# dist/ (build de Vite; INCLUYE .vite/manifest.json: el servidor lo lee al arrancar en modo spa)
 mkdir -p "$STAGE/dist"
-(cd dist && find . -type f ! -path './.vite/*' -print0 | while IFS= read -r -d '' f; do mkdir -p "$STAGE/dist/$(dirname "$f")"; cp -p "$f" "$STAGE/dist/$f"; done)
+(cd dist && find . -type f -print0 | while IFS= read -r -d '' f; do mkdir -p "$STAGE/dist/$(dirname "$f")"; cp -p "$f" "$STAGE/dist/$f"; done)
 
 echo "== 4/6 VERSION y CHECKSUMS"
 COMMIT="$(git rev-parse --short=12 HEAD)"
@@ -82,7 +83,7 @@ rm -f "$ZIP"
 
 echo "== 6/6 verificacion del zip"
 LIST="$(unzip -Z1 "$ZIP")"
-for must in package.json package-lock.json VERSION CHECKSUMS.sha256 .env.example README-DEPLOY.md dist/index.html db/migrations/0000_roles.sql src/server/entrypoints/web/main.ts tools/deploy/install.sh tools/deploy/migrate.ts tools/deploy/verify.sh infra/systemd/consent-web.service infra/nginx/consent.lectorpro.cl.conf.example design-system/index.css; do
+for must in package.json package-lock.json VERSION CHECKSUMS.sha256 .env.example README-DEPLOY.md dist/index.html dist/.vite/manifest.json contracts/schemas/common.schema.json db/migrations/0000_roles.sql src/server/entrypoints/web/main.ts tools/deploy/install.sh tools/deploy/migrate.ts tools/deploy/verify.sh infra/systemd/consent-web.service infra/nginx/consent.lectorpro.cl.conf.example design-system/index.css; do
   echo "$LIST" | grep -qx "$must" || die "falta $must en el zip"
 done
 echo "$LIST" | grep -E '(^|/)(node_modules|tests|evidence|frontend|docs|\.git|\.claude)/|\.test\.ts$|(^|/)\.env($|\.)' | grep -v '^\.env\.example$' && die "el zip contiene rutas prohibidas (arriba)"
