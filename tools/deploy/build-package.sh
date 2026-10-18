@@ -69,7 +69,7 @@ DIRTY=""; [ -z "$(git status --porcelain --untracked-files=no)" ] || DIRTY="-dir
   echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "mode=synthetic (CNS_ENVIRONMENT=LOCAL, CNS_DB_ROLE_MODE=IT0B_SYNTHETIC, solo datos sinteticos)"
   echo "node_required=$(node -p "require('./package.json').engines.node")"
-  echo "ui_modes=spa,ssr"
+  echo "ui_mode=spa"
 } > "$STAGE/VERSION"
 chmod +x "$STAGE"/tools/deploy/*.sh
 # Bloqueos de contenido ANTES de firmar: nada de entornos reales, secretos, temporales ni dependencias.
