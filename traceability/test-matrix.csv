@@ -955,3 +955,31 @@ TEST-CNS-1894,integration,tests/integration/consent-flow/spa-http.test.ts,"ssr (
 TEST-CNS-1895,integration,tests/integration/consent-flow/spa-http.test.ts,"CNS_UI_MODE: default ssr, inválidos abortan y spa sin build falla al arrancar","ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1931,integration,tests/integration/consent-flow/dev-mgmt-seed.test.ts,"dev.ts: las refs sembradas del enlace de gestión son UUIDv4 sintéticas y distintas (F-E2E-01)","F-E2E-01;ADR-001 rev.8 F1",ACTIVE
 TEST-CNS-1932,integration,tests/integration/consent-flow/dev-mgmt-seed.test.ts,"dev.ts: el enlace de gestión sembrado permite POST /otp/submit con 200, sin LedgerPayloadViolationError (F-E2E-01)","F-E2E-01;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1933,unit,tests/unit/framework/frontend-apply-failed-copy.test.ts,"frontend: el copy ERR-RV-21/22 replicado es idéntico al del servidor (F-PR6-25)","F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1934,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend /manage/verify y /manage/revocation/verify: estructura, copy literal, ARIA y bloques ocultos como el SSR","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1935,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify (MANAGE/REVOCATION): POST /otp/submit con CSRF y navegación al siguiente paso según scope","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1936,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: aria-busy/aria-disabled durante la petición y sin doble envío","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1937,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: código rechazado -> mensaje de campo y aria-invalid","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1938,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: error sin código en el cuerpo no muestra estado","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1939,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: expirado -> solicitar nuevo código (POST /otp/request), limpia y enfoca el campo","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1940,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: 404 -> error uniforme","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1941,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: bloqueo RIGHTS (INV-OT-06) con foco, RV0/RC1 y sin nuevo código ni denegado","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1942,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: reenvío 202/409 con feedback aria-live","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1943,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: falla de red y Reintentar repite la última acción","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1944,unit,frontend/tests/pages/rights-verify.test.tsx,"frontend verify: estado uniform-error del servidor","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1945,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend /manage/revocation/confirm: estructura, copy, [LEGAL DECISION] visibles y R2 al cargar con CSRF","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1946,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: R2 al cargar solo avisa en fallo de red","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1947,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: R3 reemplaza el formulario por el comprobante con foco","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1948,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: aria-busy/aria-disabled y sin doble envío","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1949,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: 404 uniforme y red con Reintentar","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1950,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: 503 muestra ERR-RV-21 con foco (no acuse, no uniforme)","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1951,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: R8 cancelar con foco y 404 uniforme","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1952,unit,frontend/tests/pages/revocation-confirm.test.tsx,"frontend revocation-confirm: estado uniform-error sin R2","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1953,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend /recovery/confirm: estructura, copy y [LEGAL DECISION] visibles","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1954,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: un solo POST /recovery/revoke y comprobante CONFIRMED con foco","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1955,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: aria-busy, foco en botón principal e IN_PROGRESS","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1956,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: 202/404/cuerpo desconocido/error HTTP -> error uniforme","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1957,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: 503 muestra ERR-RV-22 con foco y reintento del mismo POST (token sin consumir)","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1958,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: foco al botón principal antes de ocultar el aviso (PR #110)","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1959,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: red con Reintentar y estado uniform-error del servidor","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1960,unit,frontend/tests/api/pages-c.test.ts,"frontend api/pages-c: ruta, método, cabeceras CSRF y cuerpo de cada POST","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
