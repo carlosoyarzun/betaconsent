@@ -57,3 +57,5 @@ __pycache__/
 e2e/report/
 e2e/test-results/
 e2e/.tmp/
+# Perfil de Chrome generado por herramientas de navegador cuando userDataDir llega undefined; nunca se versiona
+/undefined/
