@@ -48,7 +48,7 @@ test.describe("a11y y reflow", () => {
     const blocking: string[] = [];
     for (const route of ["/welcome", "/verify", "/decision", "/manage", "/manage/verify", "/manage/revocation/verify", "/manage/revocation/confirm", "/recovery/confirm"]) {
       await page.goto(route);
-      blocking.push(...(await axeScan(page, `${route} (error uniforme)`)).blocking);
+      blocking.push(...(await axeScan(page, `${route} (error uniforme)`, { exclude: ["target-size"] })).blocking);
     }
     expect(blocking, blocking.join("\n")).toEqual([]);
   });

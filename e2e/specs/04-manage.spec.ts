@@ -33,8 +33,7 @@ test.describe("manage", () => {
     await expect(page.getByText(/Paso \d de 3/)).toHaveCount(0);
   });
 
-  test("E2E-CNS-047 hallazgo F-E2E-01: el enlace de gestión sembrado por dev.ts permite verificar el OTP y llegar al estado (hoy POST /otp/submit responde 500 LedgerPayloadViolationError)", async ({ page, app }) => {
-    test.fail(true, "F-E2E-01 (P1, LOCAL): la siembra MGMT_* de dev.ts usa refs no-UUID y el ledger rechaza el evento en V3 de scope MANAGE");
+  test("E2E-CNS-047 (F-E2E-01, corregido): el enlace de gestión sembrado por dev.ts permite verificar el OTP y llegar al estado (hoy POST /otp/submit responde 500 LedgerPayloadViolationError)", async ({ page, app }) => {
     await toManageVerify(page, app.managementPath);
     await typeOtp(page, await app.readLatestOtp());
     await expect(page).toHaveURL(/\/manage$/, { timeout: 3000 });

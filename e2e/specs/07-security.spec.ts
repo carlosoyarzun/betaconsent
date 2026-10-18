@@ -64,8 +64,7 @@ test.describe("seguridad HTTP", () => {
     }
   });
 
-  test("E2E-CNS-076 hallazgo F-E2E-02: las páginas HTML deberían llevar X-Content-Type-Options: nosniff (como /staff y el roster)", async ({ request }) => {
-    test.fail(true, "F-E2E-02 (P2): writeHtmlSecurityHeaders no fija X-Content-Type-Options; staff-ui.handler.ts:109 y staff-roster.handler.ts:80 sí");
+  test("E2E-CNS-076 (F-E2E-02, corregido): las páginas HTML deberían llevar X-Content-Type-Options: nosniff (como /staff y el roster)", async ({ request }) => {
     for (const route of HTML_ROUTES) {
       expect((await request.get(route)).headers()["x-content-type-options"], route).toBe("nosniff");
     }
