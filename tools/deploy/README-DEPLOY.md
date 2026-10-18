@@ -25,7 +25,7 @@ No hay paso de build: Node ejecuta los `.ts` directamente y `dist/` (interfaz Re
 ## 4. install.sh
 ```
 sudo tools/deploy/install.sh --dry-run        # muestra el plan; no escribe nada
-sudo tools/deploy/install.sh                  # opciones: --origin https://consent.lectorpro.cl --ui-mode spa|ssr --db-name consent
+sudo tools/deploy/install.sh                  # opciones: --origin https://consent.lectorpro.cl --db-name consent
 ```
 Crea: un usuario de sistema por proceso (`consent-web`, `consent-worker`, ...), `/etc/consent/roles.env` (contraseñas de los 7 roles de Postgres y 5 secretos
 aleatorios), `/etc/consent/{web,worker,platform,reconciler,chain-verifier}.env` desde `.env.example`, las units/timers en `/etc/systemd/system` y los habilita
@@ -62,7 +62,7 @@ Siga los 4 pasos de certbot del encabezado del archivo (primero solo el bloque :
 sudo systemctl start consent-web consent-worker
 sudo systemctl start consent-reconciler.timer consent-chain-verifier.timer consent-breakglass-watch.timer
 ```
-`CNS_UI_MODE=spa` (por defecto) sirve `dist/`; `ssr` (HTML del servidor) es la alternativa: edite `/etc/consent/web.env` y `systemctl restart consent-web`.
+El web sirve la SPA desde `dist/` (único modo de UI; sin `dist/` el arranque falla, fail-closed).
 
 ## 9. verify.sh
 ```
@@ -85,5 +85,5 @@ Las alertas de los timers van a `logger` (syslog). No se registra PII.
 - Falta el **IdP real** (APR-IDP, parámetros PENDING): hoy el verifier usa un IdP sintético y `consent-platform`/`consent-verifier` no se habilitan.
 - Falta el **correo saliente**: OTP y enlaces salen por sinks en memoria (SMTP externo prohibido sin nueva decisión de Carlos).
 - Falta el perfil **IT0B/REAL**: STAGING/producción, egress proxy (P-45), SecretStore, PIA y enmienda de DEC-BR-014.
-- Falta terminar la **migración de la UI** a React (algunas páginas siguen en HTML de servidor; `CNS_UI_MODE=ssr` como alternativa).
+- La UI de titulares es solo React (SSR retirado, ADR-001 F1); la UI de staff y la consola dev siguen en HTML de servidor.
 - Faltan las **decisiones legales** (DEC-BR-003, copy legal, LEGAL DECISION pendientes) antes de cualquier dato personal real.

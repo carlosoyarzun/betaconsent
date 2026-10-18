@@ -30,5 +30,7 @@ test("TEST-CNS-2066: el código de la SPA no presume 'hija o hijo', no usa setIn
   const verify = readFileSync(join(SRC, "components/b/verify-screen.tsx"), "utf8");
   assert.match(verify, /\(P-01, valor pendiente de aprobación\)/);
   assert.match(verify, /\(P-06, valor pendiente de aprobación\)/);
-  assert.doesNotMatch(verify, /\d{2}:\d{2}|\d+ minutos|\d+ segundos/);
+  // Se ignoran los comentarios de línea: citan IDs de frame de Figma (p.ej. 33:11) que no son cuentas regresivas visibles.
+  const visible = verify.replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(visible, /\b\d{1,2}:\d{2}\b|\d+ minutos|\d+ segundos/);
 });

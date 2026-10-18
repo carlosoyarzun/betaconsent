@@ -5,7 +5,7 @@
 # Instala el paquete YA descomprimido en /opt/consent-app (npm ci --omit=dev --ignore-scripts hecho). Idempotente: se puede repetir; NO sobrescribe
 # secretos ni env existentes (salvo --regenerate-env). NO migra la base ni arranca servicios (eso lo hacen migrate.sh y systemctl, ver README-DEPLOY.md).
 #
-#   sudo tools/deploy/install.sh [--dry-run] [--origin URL] [--ui-mode spa|ssr] [--db-host H] [--db-port P] [--db-name N] [--regenerate-env]
+#   sudo tools/deploy/install.sh [--dry-run] [--origin URL] [--db-host H] [--db-port P] [--db-name N] [--regenerate-env]
 #   tools/deploy/install.sh --render-only DIR      (sin root ni cambios en el SO: solo escribe roles.env y los <proceso>.env en DIR; para pruebas)
 #
 # --dry-run: muestra lo que haria; nunca imprime secretos y no escribe nada.
@@ -18,7 +18,6 @@ PREFIX="${CNS_PREFIX:-$PREFIX_DEFAULT}"
 ETC_DIR="${CNS_ETC_DIR:-/etc/consent}"
 UNIT_DIR="${CNS_SYSTEMD_DIR:-/etc/systemd/system}"
 ORIGIN="https://consent.lectorpro.cl"
-UI_MODE="spa"
 DB_HOST="127.0.0.1"
 DB_PORT="5432"
 DB_NAME="consent"
@@ -42,7 +41,6 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --regenerate-env) REGEN=1 ;;
     --origin) ORIGIN="${2:?--origin necesita valor}"; shift ;;
-    --ui-mode) UI_MODE="${2:?--ui-mode necesita valor}"; shift ;;
     --db-host) DB_HOST="${2:?}"; shift ;;
     --db-port) DB_PORT="${2:?}"; shift ;;
     --db-name) DB_NAME="${2:?}"; shift ;;
@@ -53,7 +51,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-case "$UI_MODE" in spa|ssr) ;; *) die "--ui-mode debe ser spa o ssr" ;; esac
 case "$ORIGIN" in https://*) ;; *) die "--origin debe empezar por https:// (las cookies __Host-* son Secure)" ;; esac
 case "$ORIGIN" in */) die "--origin sin barra final" ;; esac
 case "$DB_NAME" in [a-z]*) ;; *) die "--db-name invalido" ;; esac
@@ -83,7 +80,7 @@ check_prereqs() {
   command -v openssl >/dev/null 2>&1 || { echo "install: ERROR: falta openssl." >&2; problems=1; }
   [ -d "$PREFIX/node_modules/pg" ] || { echo "install: ERROR: falta $PREFIX/node_modules/pg: ejecute 'npm ci --omit=dev --ignore-scripts' en $PREFIX." >&2; problems=1; }
   [ -f "$PREFIX/src/server/entrypoints/web/main.ts" ] || { echo "install: ERROR: $PREFIX no contiene src/ (paquete mal descomprimido)." >&2; problems=1; }
-  if [ "$UI_MODE" = spa ] && [ ! -f "$PREFIX/dist/index.html" ]; then echo "install: ERROR: --ui-mode spa requiere $PREFIX/dist/index.html." >&2; problems=1; fi
+  if [ ! -f "$PREFIX/dist/index.html" ]; then echo "install: ERROR: la SPA requiere $PREFIX/dist/index.html." >&2; problems=1; fi
   if [ -z "$RENDER_ONLY" ] && ! command -v systemctl >/dev/null 2>&1; then echo "install: ERROR: no hay systemd (systemctl)." >&2; problems=1; fi
   [ "$problems" = 0 ] || die "prerrequisitos incumplidos (arriba)."
 }
@@ -132,7 +129,7 @@ render_block() { # $1 = proceso -> stdout con marcadores sustituidos
       case "$line" in *"%%SECRET_${key}%%"*) val="$(role_value "CNS_GEN_SECRET_${key}")"; line="${line//"%%SECRET_${key}%%"/$val}" ;; esac
     done
     line="${line//"%%DB_HOST%%"/$DB_HOST}"; line="${line//"%%DB_PORT%%"/$DB_PORT}"; line="${line//"%%DB_NAME%%"/$DB_NAME}"
-    line="${line//"%%ORIGIN%%"/$ORIGIN}"; line="${line//"%%UI_MODE%%"/$UI_MODE}"
+    line="${line//"%%ORIGIN%%"/$ORIGIN}"
     printf '%s\n' "$line"
   done
 }
@@ -198,7 +195,7 @@ install_os() {
 }
 
 # ---------- Ejecucion ----------
-say "prefijo=$PREFIX etc=$ETC_DIR origen=$ORIGIN ui=$UI_MODE db=$DB_HOST:$DB_PORT/$DB_NAME"
+say "prefijo=$PREFIX etc=$ETC_DIR origen=$ORIGIN db=$DB_HOST:$DB_PORT/$DB_NAME"
 ensure_roles_env
 write_envs
 if [ -z "$RENDER_ONLY" ]; then install_os; fi

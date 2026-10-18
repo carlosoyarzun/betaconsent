@@ -87,7 +87,7 @@ fi
 
 echo "5. Paquete"
 [ -f "$ROOT/node_modules/pg/package.json" ] && ok "node_modules/pg presente" || bad "falta node_modules/pg (npm ci --omit=dev --ignore-scripts)"
-[ -f "$ROOT/dist/index.html" ] && ok "dist/index.html presente (CNS_UI_MODE=spa)" || warn "sin dist/index.html: solo sirve CNS_UI_MODE=ssr"
+[ -f "$ROOT/dist/index.html" ] && ok "dist/index.html presente (SPA)" || warn "sin dist/index.html: el web no arranca (la SPA es el unico modo de UI)"
 [ -f "$ROOT/VERSION" ] && ok "VERSION: $(tr '\n' ' ' < "$ROOT/VERSION")" || warn "sin VERSION"
 
 echo
