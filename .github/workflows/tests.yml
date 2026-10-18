@@ -3,7 +3,7 @@
 # ADR-002 (PostgreSQL); ADR-003 C14 (GitHub Actions: Actions fijadas por SHA, jobs de
 # PR sin secretos, CODEOWNERS).
 #
-# Cuatro jobs con nombres estables (unit, integration, contract,
+# Cinco jobs con nombres estables (unit, frontend, integration, contract,
 # dependency-allowlist) para que el Supervisor los agregue como checks requeridos.
 # Ninguno usa GitHub Secrets ni credenciales de deploy; el job "integration" genera sus
 # propias credenciales efímeras de PostgreSQL por corrida (no persisten, no son secretos
@@ -71,6 +71,38 @@ jobs:
           path: evidence/test-runs/unit-*.jsonl
           if-no-files-found: error
           retention-days: 30
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      # ADR-001 F1: typecheck estricto de frontend/ + build de la SPA a dist/ (nombres con hash).
+      - name: Build frontend
+        run: npm run build:frontend
+
+      # ADR-001 §3: el build no puede traer <style>, style="", on*= ni <script> inline.
+      - name: Guardrail dist sin inline (CSP)
+        run: node tools/guardrails/dist-csp-check.ts
+
+      - name: Frontend tests (Vitest + Testing Library + jsdom)
+        run: npm run test:frontend
+
+      # Los tests de integración HTTP de la SPA (tests/integration/consent-flow/spa-http.test.ts) generan su propio dist
+      # sintético en un directorio temporal: el job `integration` NO necesita construir dist/.
 
   integration:
     name: integration

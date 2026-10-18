@@ -13,13 +13,32 @@
     "test:contract": "node tools/testing/run-tests.ts contract tests/contract",
     "guardrail:ports-adapters": "node tools/guardrails/ports-adapters/check.ts",
     "guardrail:dependency-allowlist": "node tools/guardrails/dependency-allowlist-check.ts",
-    "ci": "npm run typecheck && npm run test && npm run guardrail:ports-adapters && npm run guardrail:dependency-allowlist && npm run test:unit && npm run test:integration && npm run test:contract"
+    "ci": "npm run typecheck && npm run test && npm run guardrail:ports-adapters && npm run guardrail:dependency-allowlist && npm run guardrail:frontend-boundary && npm run test:unit && npm run test:integration && npm run test:contract",
+    "typecheck:frontend": "tsc --noEmit -p frontend/tsconfig.json",
+    "build:frontend": "npm run typecheck:frontend && vite build --config frontend/vite.config.ts",
+    "test:frontend": "vitest run --config frontend/vite.config.ts",
+    "dev:frontend": "vite --config frontend/vite.config.ts",
+    "guardrail:frontend-boundary": "node tools/guardrails/frontend-boundary-check.ts",
+    "guardrail:dist-csp": "node tools/guardrails/dist-csp-check.ts"
   },
   "dependencies": {
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.64.0",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/node": "24.13.4",
-    "typescript": "6.0.3"
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "jsdom": "30.1.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
   }
 }

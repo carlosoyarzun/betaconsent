@@ -21,6 +21,10 @@
     "tools/guardrails/ports-adapters/**/*.ts",
     "tools/guardrails/dependency-allowlist-check.ts",
     "tools/guardrails/dependency-allowlist.ts",
+    "tools/guardrails/frontend-boundary.ts",
+    "tools/guardrails/frontend-boundary-check.ts",
+    "tools/guardrails/dist-csp.ts",
+    "tools/guardrails/dist-csp-check.ts",
     "tools/testing/**/*.ts",
     "tests/guardrails/ports-adapters/*.test.ts",
     "tests/unit/**/*.ts",
@@ -28,6 +32,8 @@
     "tests/contract/**/*.ts"
   ],
   "exclude": [
-    "tests/guardrails/ports-adapters/fixtures/**"
+    "tests/guardrails/ports-adapters/fixtures/**",
+    "frontend",
+    "dist"
   ]
 }
