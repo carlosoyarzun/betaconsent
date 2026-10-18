@@ -116,8 +116,12 @@
     function confirmRecovery() {
       if (busy) return;
       busy = true;
-      hideStates();
       setBusy(true);
+      // UX-CNS-015 F1/F2 (WCAG 2.4.3 / 4.1.3): "Volver a intentar" vive dentro del aviso que
+      // hideStates() oculta; el foco pasa antes al botón principal (visible, con aria-busy y la
+      // etiqueta "Confirmando…") para que no caiga a <body> y se anuncie el envío.
+      confirmBtn.focus();
+      hideStates();
       postJson("/recovery/revoke", { confirmTotalWithdrawal: true })
         .then(function (res) {
           busy = false;

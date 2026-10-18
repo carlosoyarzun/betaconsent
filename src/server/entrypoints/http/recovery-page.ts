@@ -13,14 +13,10 @@
 // alcance/irreversibilidad del retiro (handoff §8, protocolo l.423). Ninguno se redacta aquí
 // (CLAUDE.md, copy legal de producción).
 
-import { alertHead } from "./guest-layout.ts";
+import { alertHead, guestHead, guestHeader } from "./guest-layout.ts";
 import { HELP_MAILTO, RECOVERY_APPLY_FAILED_COPY as APPLY_FAILED } from "./revocation-apply-failed-copy.ts";
 
-const HEAD = `<meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Recuperar acceso · Consent App</title>
-  <link rel="stylesheet" href="/assets/design-system/index.css">
-  <link rel="stylesheet" href="/assets/app.css">`;
+const HEAD = guestHead("Recuperar acceso");
 
 /** GET /recovery/confirm con sesión RECOVERY vigente (33:87 recovery/confirmar). */
 export function renderRecoveryConfirmPage(): string {
@@ -29,7 +25,8 @@ export function renderRecoveryConfirmPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-revocation-page" aria-labelledby="recovery-h1">
     <h1 id="recovery-h1">Confirmar retiro</h1>
 
@@ -40,7 +37,7 @@ export function renderRecoveryConfirmPage(): string {
         <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar (supresión/plazos), protocolo l.522]</p>
         <p class="lp-revocation-legal-note">[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro (total, sin retiro parcial) e irreversibilidad desde esta pantalla (protocolo l.423)]</p>
       </section>
-      <button type="button" class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="confirm-recovery-btn" aria-disabled="false" aria-busy="false">Confirmar retiro total</button>
+      <button type="button" class="lp-btn lp-btn-danger lp-cta lp-revocation-cta lp-verify-tap-target" id="confirm-recovery-btn" aria-disabled="false" aria-busy="false">Confirmar retiro total</button>
       <p><a href="mailto:ayuda@example.invalid" class="lp-link">¿Necesitas ayuda? Escríbenos a ayuda@example.invalid</a></p>
     </div>
 
@@ -59,7 +56,7 @@ export function renderRecoveryConfirmPage(): string {
     <div role="alert" aria-live="polite" id="error-network" hidden>
       <p>No pudimos conectar.</p>
       <p>Revisa tu conexión e inténtalo nuevamente.</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-btn">Reintentar</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="retry-btn">Reintentar</button>
     </div>
 
     <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform" hidden>
@@ -71,7 +68,7 @@ export function renderRecoveryConfirmPage(): string {
       ${alertHead("error", APPLY_FAILED.title)}
       <p>${APPLY_FAILED.body}</p>
       <p id="apply-failed-code">${APPLY_FAILED.codeLabel}: ${APPLY_FAILED.code}</p>
-      <button type="button" class="lp-btn lp-btn-primary lp-verify-tap-target" id="retry-apply-btn">${APPLY_FAILED.primaryLabel}</button>
+      <button type="button" class="lp-btn lp-btn-primary lp-cta lp-verify-tap-target" id="retry-apply-btn">${APPLY_FAILED.primaryLabel}</button>
       <p><a href="${HELP_MAILTO}" class="lp-link" id="apply-failed-help">${APPLY_FAILED.helpLabel}</a></p>
     </div>
   </main>
@@ -91,7 +88,8 @@ export function renderRecoveryUniformErrorPage(): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-guest-body">
+  ${guestHeader()}
   <main class="lp-page-container lp-revocation-page" aria-labelledby="recovery-h1">
     <h1 id="recovery-h1">Confirmar retiro</h1>
     <div role="alert" aria-live="assertive" class="lp-alert-error" id="error-uniform">

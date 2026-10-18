@@ -160,3 +160,35 @@ test("TEST-CNS-1787: recovery.js 'Volver a intentar' tras el 503 reenvía /recov
   assert.equal(doc.getElementById("error-apply-failed")!.hidden, true);
   assert.equal(doc.getElementById("state-applied")!.hidden, false);
 });
+
+test("TEST-CNS-1870: recovery.js mueve el foco al botón principal visible (con aria-busy y 'Confirmando…') antes de ocultar el aviso al pulsar 'Volver a intentar' (UX-CNS-015 F1/F2, WCAG 2.4.3/4.1.3)", async () => {
+  let calls = 0;
+  const doc = boot("recovery.js", renderRecoveryConfirmPage(), () => {
+    calls += 1;
+    return { status: 503, body: UNAVAILABLE };
+  });
+  const confirm = doc.getElementById("confirm-recovery-btn")!;
+  confirm.click();
+  await settle();
+  assert.equal(doc.focused, "error-apply-failed"); // el aviso recibe el foco al aparecer
+  doc.getElementById("retry-apply-btn")!.click();
+  assert.equal(doc.getElementById("error-apply-failed")!.hidden, true);
+  assert.equal(doc.focused, "confirm-recovery-btn"); // no queda en un nodo oculto
+  assert.equal(confirm.hidden, false);
+  assert.equal(confirm.attrs["aria-busy"], "true");
+  assert.equal(confirm.attrs["aria-disabled"], "true");
+  assert.equal(confirm.textContent, "Confirmando…");
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(doc.focused, "error-apply-failed"); // si vuelve a fallar, el foco regresa al aviso
+});
+
+test("TEST-CNS-1871: recovery-page.ts usa las clases del DS de la pantalla A (lp-guest-body, cabecera de marca, lp-cta en todos los botones) (UX-CNS-015 F3)", () => {
+  const html = renderRecoveryConfirmPage();
+  assert.match(html, /<body class="lp-guest-body">/);
+  assert.match(html, /<header class="lp-guest-header">/);
+  const buttons = [...html.matchAll(/<button [^>]*>/g)].map((m) => m[0]);
+  assert.ok(buttons.length >= 3);
+  for (const b of buttons) assert.match(b, /\blp-cta\b/, b);
+  assert.match(renderRevocationConfirmPage(), /<body class="lp-guest-body">/);
+});
