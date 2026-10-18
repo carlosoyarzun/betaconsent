@@ -1,0 +1,35 @@
+# Registro de decisiones — IT0b (2026-10-18)
+
+Fuente: sesion de decisiones del 2026-10-18 (paquete de Carlos y delegacion de la tarde). Cero PII. No sustituye a Notion (DEC-BR/ADR): es el rastro operativo en el repo. Todo lo decidido "por delegacion" es revisable por Carlos y queda como PROPUESTA ratificable en la aceptacion de ADR-010 rev. 7.
+
+Delegacion (Carlos, 2026-10-18 tarde): "Puedes avanzar tomando las decisiones tu, sin preguntarme nada y terminar esta app?" Aceptada SOLO para decisiones tecnicas/arquitectura. NO delegables (gates escritos): LEGAL DECISION, copy legal, aceptacion/cierre de ADR y DEC-BR, merge a `main`, salidas nuevas a internet, REAL_DATA, borrados Jira/Notion/git.
+
+| Fecha | ID | Decision | Quien | Estado | Evidencia |
+|---|---|---|---|---|---|
+| 2026-10-18 | F-PR6-25 | Interino 1B SOLO IT0 sintetico; encargar diseno 2B e implementacion R9 (prioridad antes del cierre de IT0b si su ausencia afecta trazabilidad). #108 (mergeado 9545fa8) condicionado a verificacion a11y y a no introducir copy legal sin aprobacion | Carlos | VIGENTE | `registers/findings-register-IT0.md` (F-PR6-51/52, UX-CNS-015-a11y-*) |
+| 2026-10-18 | DP-2, DP-10, DP-11, DP-12, SEC-7D-11 | Aprobados segun recomendacion, con controles verificables | Carlos | APROBADO | ADR-010 rev. 7 PROPUESTA; filas SEC-7D-* del register |
+| 2026-10-18 | DP-6 | Aprobado como cadencia inicial sujeta a pruebas, monitoreo y alertas | Carlos | APROBADO | rev. 7 PROPUESTA; FND-3 |
+| 2026-10-18 | DP-3 (canal) | Canal privado, autenticado y cifrado host↔custodio, sin exposicion publica entrante innecesaria; diseno detallado de red, NTP y dead-man ANTES de autorizar conexiones (no autorizadas aun) | Carlos | APROBADO el principio; conexion NO autorizada | `DP-3-custodian-channel-design.md` rev. 2; SEC-DP3-* |
+| 2026-10-18 | A-Q1 | Segundo host con administracion y credenciales independientes = requisito REAL_DATA, demostrable antes de habilitar datos reales | Carlos | APROBADO | SEC-DP3-1, F-DP3-03 |
+| 2026-10-18 | ADR-010 rev. 7 | Redactar con SEC-6F-05 y FND-1…6; PROPUESTA hasta completar revision | Carlos | PROPUESTA (pendiente de aceptacion) | `ADR-010-rev7-enmienda.md`; SEC-R7-* |
+| 2026-10-18 | F-A10-27, F-PR6-48, F-PR6-50 | F-A10-27 diferido a 7e (register lo da RESUELTO por correccion de spec; 7e mergeado en #109); F-PR6-48 pendiente; detalle completo de F-PR6-50 antes de decidir | Carlos | VIGENTE (F-PR6-48/50 luego decididos, filas siguientes) | register |
+| 2026-10-18 | LEGAL | Consolidar preguntas sin duplicar (LG-9 = LD-C); un solo documento de consulta al abogado, separando bloqueadores REAL_DATA de copy | Carlos | VIGENTE | `consulta-legal-unica-2026-10-18` (a publicar en Notion) |
+| 2026-10-18 | PRs #106/#107/#108 | Verificar estado efectivo, CI y criterios: los tres MERGED por carlosoyarzun, CI SUCCESS, sin review formal registrada | Carlos (encargo) | HECHO | historial de PR |
+| 2026-10-18 | Higiene | Inventario de worktrees y ramas; NO borrar nada sin verificar; preservar trabajo no mergeado | Carlos | VIGENTE | inventario de higiene |
+| 2026-10-18 | Entregable | Matriz de cierre (ID, estado, responsable, evidencia, dependencia, gate IT0b/REAL_DATA/produccion). Prioridad: cerrar IT0b sintetico sin dependencias de produccion; REAL_DATA bloqueado hasta controles tecnicos + validacion legal | Carlos | VIGENTE | matriz de cierre 2026-10-18 |
+| 2026-10-18 (tarde) | DP-9 | (a) solo exit 0 en IT0b/STAGING (sin DDL por ceremonia ahora); (b) MERKLE_FORMAT v2 con status en la re-genesis previa a REAL_DATA (SEC-7D-11). Residual de (a) cubierto por dead-man + V2 | Supervisor por delegacion | PROPUESTA, ratificable en aceptacion de rev. 7 | F-R7-1 |
+| 2026-10-18 (tarde) | DP-3 DR-1 | V1: red privada + WireGuard iniciado por H2 + SFTP solo lectura | Supervisor por delegacion | PROPUESTA | DP-3 rev. 2 |
+| 2026-10-18 (tarde) | DP-3 DR-4 | W4 (snapshots + testigo externo de la cabeza de recibos) obligatorio antes de REAL_DATA; W2 en simulacion | Supervisor por delegacion | PROPUESTA | SEC-DP3-12 |
+| 2026-10-18 (tarde) | DP-3 DR-5 | Umbrales propuestos: dead-man 25 min REAL_DATA; LATE_RECEIPT STAGING 45 min | Supervisor por delegacion | PROPUESTA | SEC-DP3-9 |
+| 2026-10-18 (tarde) | DP-3 DR-2, DR-3, DR-6, DR-7 | DR-2 (NTS = ¿egress nuevo? P-45), DR-3 (canal push REAL_DATA), DR-6 (alojamiento/admin de H2), DR-7 (break-glass de H2) | Carlos | PENDIENTE — no delegado | F-DP3-01/02, SEC-DP3-1 |
+| 2026-10-18 (tarde) | DP-3 conexion | Ninguna conexion real autorizada; solo simulacion LOCAL/CI | Supervisor por delegacion (sobre limite de Carlos) | VIGENTE | DP-3 rev. 2 |
+| 2026-10-18 (tarde) | 2B/R9 D-1 | B: registrar y adjuntar a caso existente; C se consulta a santos mas adelante | Supervisor por delegacion | PROPUESTA | F-2B-01 |
+| 2026-10-18 (tarde) | 2B/R9 D-2 | Rol NOLOGIN nuevo `revocation_expiry_reader` (se anade a rev. 7 como PROPUESTA); R9 espera aceptacion de rev. 7 | Supervisor por delegacion | PROPUESTA | SEC-2B-06 |
+| 2026-10-18 (tarde) | 2B/R9 D-3 | Diferir la lista del operador | Supervisor por delegacion | PROPUESTA | SEC-2B-05 |
+| 2026-10-18 (tarde) | 2B/R9 D-4 | P-19 en tabla versionada por migracion, sin valor hasta LEGAL (d); el worker no arranca fuera de LOCAL/CI sin fila | Supervisor por delegacion | PROPUESTA | SEC-2B-07 |
+| 2026-10-18 (tarde) | 2B/R9 D-5 = F-PR6-48 | ACEPTADO como deuda P2 documentada | Supervisor por delegacion | ACEPTADO (revisable) | register F-PR6-48 |
+| 2026-10-18 (tarde) | F-PR6-50 | Excepcion aceptada acotada a la migracion 0069; TEST-CNS-741 no cambia | Supervisor por delegacion | ACEPTADO (revisable) | register F-PR6-50 |
+| 2026-10-18 (tarde) | a11y #108 | F1–F3 se corrigen en PR pequeno (UX-CNS-015). F5 (copy "autorizacion sigue vigente") NO se toca: LEGAL/copy = Carlos; queda en LQ Bloque B | Supervisor por delegacion (F5: gate de Carlos) | F1–F3 PENDIENTE de PR; F5 LEGAL DECISION abierta | UX-CNS-015-a11y-01…06 |
+| 2026-10-18 (tarde) | Consulta legal §8 Q1–Q6 | Q1 incluir DEC-BR-003 (LQ-01); Q2 C-5 se somete a validacion en su LQ; Q3 asumir piloto sin traslados internacionales y marcar la LQ como condicional; Q4 Bloque C en el mismo envio como anexo "produccion"; Q5 aceptar la clasificacion de Notion (prevalece); Q6 pagina nueva bajo 03 — Privacy & Legal enlazada desde el Legal Review Pack. El envio al abogado lo hace Carlos | Supervisor por delegacion (organizacion del documento; el envio y toda LEGAL DECISION son de Carlos) | PROPUESTA | documento de consulta legal unica |
+| 2026-10-18 (tarde) | Higiene | NO se borra nada (otra sesion viva puede usar worktrees agent-*/work-*); solo inventario. `stitch/` queda para Carlos | Supervisor por delegacion | VIGENTE | inventario de higiene |
+| 2026-10-18 (tarde) | Secuencia IT0b | (1) PR docs hallazgos+decisiones; (2) PR 2B; (3) PR fix a11y B; (4) tickets Jira; (5) rev. 7 ampliada (D-2, DP-9) lista para aceptacion de Carlos; (6) tras aceptacion: 7f (con tests F-R7-2), 7h, R9, simulacion DP-3 | Supervisor por delegacion | VIGENTE | este PR es el paso (1) |
