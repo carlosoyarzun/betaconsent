@@ -190,12 +190,19 @@ export const LOCAL_SEED_GRANTS: readonly string[] = [
   "GRANT EXECUTE ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) TO app_rw",
 ];
 
+/** Guarda de local-grants (F-PR-F-01): solo con catalogo LOCAL/SYNTHETIC (exactamente una fila). Fail-closed con mensaje claro. */
+export function assertLocalSyntheticCatalog(localSyntheticRows: string | undefined, totalRows: string | undefined): void {
+  if (localSyntheticRows !== "1" || totalRows !== "1") {
+    throw new Error("local-grants SE NIEGA: ops.db_catalog no es exactamente una fila LOCAL/SYNTHETIC. Esta fase solo vale en modo sintetico; no se conceden las siembras LOCAL (fail-closed).");
+  }
+}
+
 async function phaseLocalGrants(env: NodeJS.ProcessEnv): Promise<void> {
   const superuser = await connectSuperuser(env, appDatabaseName(env));
   try {
     const cat = await superuser.query<{ n: string }>("SELECT pg_catalog.count(*)::pg_catalog.text AS n FROM ops.db_catalog WHERE environment = 'LOCAL' AND data_class = 'SYNTHETIC'");
     const total = await superuser.query<{ n: string }>("SELECT pg_catalog.count(*)::pg_catalog.text AS n FROM ops.db_catalog");
-    if (cat.rows[0]?.n !== "1" || total.rows[0]?.n !== "1") throw new Error("ops.db_catalog no es exactamente una fila LOCAL/SYNTHETIC; no se conceden las siembras LOCAL (fail-closed).");
+    assertLocalSyntheticCatalog(cat.rows[0]?.n, total.rows[0]?.n);
     for (const sql of LOCAL_SEED_GRANTS) await superuser.query(sql);
     console.log("local-grants: EXECUTE de case_state.seed_local_revocation / seed_local_rights_case concedido a app_rw (solo LOCAL/SYNTHETIC; ver F-PR-F-01).");
   } finally {

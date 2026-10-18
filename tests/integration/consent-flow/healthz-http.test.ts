@@ -27,7 +27,7 @@ async function withServer(fn: (base: string) => Promise<void>): Promise<void> {
   }
 }
 
-test("TEST-CNS-1896: GET /healthz responde 200 JSON {status:ok} sin cookies, sin cache y sin datos", async () => {
+test("TEST-CNS-2062: GET /healthz responde 200 JSON {status:ok} sin cookies, sin cache y sin datos", async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/healthz`);
     assert.equal(res.status, 200);
@@ -37,7 +37,7 @@ test("TEST-CNS-1896: GET /healthz responde 200 JSON {status:ok} sin cookies, sin
   });
 });
 
-test("TEST-CNS-1896: /healthz solo admite GET (POST no responde 200)", async () => {
+test("TEST-CNS-2063: /healthz solo admite GET (POST no responde 200)", async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/healthz`, { method: "POST", headers: { origin: ORIGIN } });
     assert.notEqual(res.status, 200);
