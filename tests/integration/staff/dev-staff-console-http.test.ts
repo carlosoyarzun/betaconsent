@@ -240,7 +240,7 @@ test("TEST-CNS-1066: cuerpo > 8 KiB -> 413 y corte (solo LOCAL); fuera de LOCAL 
     const consolePage = await fetch(`${h.baseUrl}${BASE}`);
     const csp = consolePage.headers.get("content-security-policy") ?? "";
     assert.equal(consolePage.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
-    for (const d of ["default-src 'none'", "script-src 'self'", "style-src 'self'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), d);
+    for (const d of ["default-src 'none'", "script-src 'none'", "style-src 'self'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), d);
     // sigue vivo y funcional tras el corte
     assert.equal((await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie })).status, 200);
   } finally {

@@ -323,7 +323,7 @@ test("TEST-CNS-596: GET /recovery/confirm sin cookie de recuperación (sin canje
     const html = await res.text();
     assert.match(html, /error-uniform/);
     assert.match(html, /No pudimos continuar con este retiro\./);
-    assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin");
   } finally {

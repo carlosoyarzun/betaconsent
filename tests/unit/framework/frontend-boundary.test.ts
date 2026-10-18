@@ -45,4 +45,15 @@ describe("frontend-boundary", () => {
     assert.equal(checkFrontendBoundary([f("frontend/src/styles/index.css", `@import "../../../src/server/entrypoints/http/assets/verify.js";`)]).length, 1);
     assert.equal(checkFrontendBoundary([f("frontend/src/styles/otro.css", css)]).length, 2);
   });
+
+  it("TEST-CNS-1896: rechaza new URL(), import.meta.glob y url() de CSS hacia fuera de frontend/ (SEC-UI R6)", () => {
+    const v = checkFrontendBoundary([
+      f("frontend/src/a.ts", `const u = new URL("../../src/x.ts", import.meta.url);`),
+      f("frontend/src/b.ts", `const m = import.meta.glob("../../db/**/*.sql");`),
+      f("frontend/src/c.js", `import x from "../../src/y.ts";`),
+      f("frontend/src/styles/d.css", `.a { background: url("../../../src/secret.png"); }`),
+    ]);
+    assert.equal(v.length, 4);
+    assert.deepEqual(checkFrontendBoundary([f("frontend/src/ok.ts", `new URL("./a.png", import.meta.url); url(data:x)`), f("frontend/src/x.css", `.a{background:url(https://x/y.png);background:url(data:image/png;base64,AA)}`)]), []);
+  });
 });

@@ -983,3 +983,5 @@ TEST-CNS-1957,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend reco
 TEST-CNS-1958,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: foco al botón principal antes de ocultar el aviso (PR #110)","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
 TEST-CNS-1959,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend recovery-confirm: red con Reintentar y estado uniform-error del servidor","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
 TEST-CNS-1960,unit,frontend/tests/api/pages-c.test.ts,"frontend api/pages-c: ruta, método, cabeceras CSRF y cuerpo de cada POST","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
+TEST-CNS-1897,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: solo con catálogo LOCAL; dist con inline o symlink aborta el arranque","ADR-001 rev.8 F1;SEC-UI-R1;SEC-UI-R2;SEC-UI-R4",ACTIVE
+TEST-CNS-1896,unit,tests/unit/framework/frontend-boundary.test.ts,"frontend-boundary: rechaza new URL, import.meta.glob y url() de CSS hacia fuera de frontend/","ADR-001 rev.8 F1;SEC-UI-R6",ACTIVE

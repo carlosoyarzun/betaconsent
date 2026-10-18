@@ -2,12 +2,12 @@
 // CNS_UI_MODE=spa: las 8 rutas HTML del invitado devuelven dist/index.html conservando la lógica previa de cookie/sesión
 // (200 con sesión + cookie CSRF; 404 uniforme sin ella, INV-CM-05), con la CSP única; los assets con hash se sirven por
 // igualdad exacta (immutable); el resto sigue en 404 JSON. El dist es SINTÉTICO (directorio temporal), no depende del build.
-// TEST-CNS-1889..TEST-CNS-1895 (traceability/test-matrix.csv).
+// TEST-CNS-1889..TEST-CNS-1895 y 1897 (traceability/test-matrix.csv).
 
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
@@ -29,7 +29,7 @@ const LOCAL_ONLY_TEST_OTP_POLICY = { codeLength: 6, maxAttempts: 3, ttlMs: 60_00
 const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] };
 
 const ADR_001_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const JS_NAME = "index-Ab12Cd34.js";
 const CSS_NAME = "style-Ef56Gh78.css";
 const INDEX_HTML = `<!doctype html>
@@ -46,7 +46,8 @@ function makeSyntheticDist(): string {
   writeFileSync(join(dir, "index.html"), INDEX_HTML);
   writeFileSync(join(dir, "assets", JS_NAME), "console.log('synthetic');\n");
   writeFileSync(join(dir, "assets", CSS_NAME), ".lp-guest-body{margin:0}\n");
-  writeFileSync(join(dir, ".vite", "manifest.json"), "{}");
+  writeFileSync(join(dir, ".vite", "manifest.json"), JSON.stringify({ "index.html": { file: `assets/${JS_NAME}`, isEntry: true }, "style.css": { file: `assets/${CSS_NAME}` } }));
+  writeFileSync(join(dir, "assets", "huerfano-00000000.js"), "// no está en el manifiesto\n");
   return dir;
 }
 
@@ -64,6 +65,7 @@ function startServer(uiMode: "ssr" | "spa", spaDistDir?: string): Promise<Harnes
     staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
+    environment: "LOCAL",
     uiMode,
     ...(spaDistDir ? { spaDistDir } : {}),
   });
@@ -177,7 +179,7 @@ test("TEST-CNS-1892: spa — assets con hash: 200, MIME correcto, immutable; fue
     assert.equal(css.status, 200);
     assert.equal(css.headers.get("content-type"), "text/css; charset=utf-8");
     assert.equal(css.headers.get("cache-control"), "public, max-age=31536000, immutable");
-    for (const path of ["/assets/nope-12345678.js", "/assets/../index.html", "/assets/%2e%2e/index.html", "/assets/.vite/manifest.json", "/assets/", "/.vite/manifest.json", "/index.html"]) {
+    for (const path of ["/assets/nope-12345678.js", "/assets/huerfano-00000000.js", "/assets/../index.html", "/assets/%2e%2e/index.html", "/assets/.vite/manifest.json", "/assets/", "/.vite/manifest.json", "/index.html"]) {
       const res = await fetch(`${h.baseUrl}${path}`, { redirect: "manual" });
       assert.equal(res.status, 404, path);
       assert.match(res.headers.get("content-type") ?? "", /application\/json/, path);
@@ -230,7 +232,30 @@ test("TEST-CNS-1895: CNS_UI_MODE — default ssr, valores inválidos abortan y s
     // dist sin el marcador de estado de página: no es un build válido
     writeFileSync(join(empty, "index.html"), "<!doctype html><html></html>");
     await assert.rejects(async () => startServer("spa", empty), /cns-page-state/);
+    // sin manifiesto de Vite: no es un build válido
+    writeFileSync(join(empty, "index.html"), INDEX_HTML);
+    await assert.rejects(async () => startServer("spa", empty), /manifest/);
   } finally {
     rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test("TEST-CNS-1897: spa — solo con catálogo LOCAL (punto único de cambio SPA_ALLOWED_ENVIRONMENTS); dist con inline o symlink aborta el arranque (fail-closed)", async () => {
+  const dist = makeSyntheticDist();
+  try {
+    const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
+    const base = { guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, uiMode: "spa" as const, spaDistDir: dist };
+    assert.throws(() => createConsentFlowHttpServer(base), /LOCAL/); // sin environment
+    assert.throws(() => createConsentFlowHttpServer({ ...base, environment: "STAGING" }), /LOCAL/);
+    // R2: un <script> inline en index.html aborta el arranque
+    writeFileSync(join(dist, "index.html"), INDEX_HTML.replace("</body>", "<script>alert(1)</script></body>"));
+    assert.throws(() => createConsentFlowHttpServer({ ...base, environment: "LOCAL" }), /inline/);
+    // R1: un asset del manifiesto que es symlink aborta
+    writeFileSync(join(dist, "index.html"), INDEX_HTML);
+    rmSync(join(dist, "assets", JS_NAME));
+    symlinkSync("/etc/hosts", join(dist, "assets", JS_NAME));
+    assert.throws(() => createConsentFlowHttpServer({ ...base, environment: "LOCAL" }), /archivo regular/);
+  } finally {
+    rmSync(dist, { recursive: true, force: true });
   }
 });
