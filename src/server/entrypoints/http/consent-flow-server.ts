@@ -85,7 +85,7 @@ import {
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
 import { parseCookies } from "./cookies.ts";
-import { decodeSession } from "./consent-session.ts";
+import { decodeSession, type ConsentSessionPayload } from "./consent-session.ts";
 import { createApplyGuardConfig, createTenantAlertSink } from "../../../infra/adapters/postgres/apply-guard.adapter.ts";
 import { deriveStaffSessionKey } from "./staff-session.ts";
 import { createInMemoryStaffSessionStore } from "../../../infra/adapters/in-memory-staff-session-store.adapter.ts";
@@ -645,6 +645,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
     res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
     res.end(spa ? (status === 404 ? spa.indexUniformError : spa.indexReady) : renderSsr());
   };
+  /** ADR-001 F1 (fase B): respuesta JSON de `GET /decision/page-state` y `GET /manage/page-state`. Solo lectura, `no-store`
+   * (datos ligados a la sesión) y sin Referrer; el 404 reutiliza el cuerpo uniforme `{status:404}` (INV-CM-05). */
+  const sendPageStateJson = (res: ServerResponse, status: 200 | 404, body: unknown): void => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
   // P2-6: sin default aleatorio; fail-closed y sin volcar material de clave.
   const sessionSecret = options.sessionSecret;
   assertKeyMaterial(sessionSecret, "sessionSecret", "CNS_SESSION_SECRET");
@@ -714,6 +722,17 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffConsolePorts: StaffConsolePorts = options.staffNowMs ? { ...staffConsoleBase, nowMs: options.staffNowMs } : staffConsoleBase;
   // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion); validada arriba.
 
+  /** C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar. SEC-CNS-016: la lectura corre BAJO el
+   * tenant de la sesión (inTenant). Compartida por GET /manage (SSR) y GET /manage/page-state (SPA). */
+  const resolveManageVariant = async (session: ConsentSessionPayload): Promise<"entry" | "status" | "revoked"> => {
+    if (!session.manageDecisionMakerRef) return "entry";
+    const revokedDecisionRef = session.revokedDecisionRef;
+    const decisionRevoked =
+      revokedDecisionRef !== undefined &&
+      (await revocationPorts.revocation.uow.inTenant(session.tenantId, (tx) => tx.consentDecisionRepo.findByConsentId(session.tenantId, revokedDecisionRef)))?.state === "REVOKED";
+    return decisionRevoked ? "revoked" : "status";
+  };
+
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0] ?? "";
@@ -778,6 +797,26 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "GET" && path === "/decision/page-state") {
+      // ADR-001 F1 (fase B), API-CNS-194: los datos que el SSR interpola en GET /decision (relaciones permitidas, versión servida y
+      // etiqueta del titular) para la página React. MISMAS comprobaciones y MISMO 404 uniforme que GET /decision (INV-CM-05); solo
+      // lectura (INV-CM-08), no emite CONSENT_VERSION_VIEWED. Devuelve exactamente lo que renderDecisionPage() muestra: nunca el hash.
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      if (!session || !session.verificationRef || !session.decisionMakerRef || !(await isInvitationVerifiedForSession(ports, session))) {
+        sendPageStateJson(res, 404, { status: 404 });
+        return;
+      }
+      const served = getServedConsentVersion();
+      const subjectLabel = await resolveSubjectLabel(ports, session);
+      sendPageStateJson(res, 200, {
+        relationshipRefs: [...ports.decision.relationships.allowedRelationshipRefs],
+        servedVersion: { consentVersion: served.consentVersion, privacyNoticeVersion: served.privacyNoticeVersion, text: served.text },
+        ...(subjectLabel !== undefined ? { subjectLabel } : {}),
+      });
+      return;
+    }
+
     if (req.method === "GET" && path === "/decision") {
       // UX-CNS-003: GET /decision exige la sesión verificada (post-V3, session.decisionMakerRef);
       // sin ella, se sirve el estado de error uniforme de la propia pantalla (INV-CM-05), mismo
@@ -790,8 +829,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      // SPA: las opciones de relación, la versión servida y la etiqueta del titular salen del HTML en `ssr`; la página React
-      // las necesitará por un endpoint JSON (pendiente en su fase, ver frontend/src/pages/README.md). No se lee nada en `spa`.
+      // SPA: las opciones de relación, la versión servida y la etiqueta del titular salen del HTML en `ssr`; la página React las
+      // lee por GET /decision/page-state (API-CNS-194). No se lee nada aquí en `spa`.
       const decisionHtml = spa ? "" : renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion(), await resolveSubjectLabel(ports, session));
       sendPage(res, 200, () => decisionHtml);
       return;
@@ -832,6 +871,23 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "GET" && path === "/manage/page-state") {
+      // ADR-001 F1 (fase B), API-CNS-195: la variante de GET /manage (entrada / estado / ya retirado) para la página React. MISMA
+      // resolución de sesión (resolveManageLandingSession) y MISMO 404 uniforme (con la limpieza de cookie) que GET /manage; solo
+      // lectura. Devuelve solo la variante: el copy sigue en la página (sin PII ni datos del dominio).
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      const view = await resolveManageLandingSession(revocationPorts, sessionSecret, existingSession, manageEntryHandleKey, cookies, config.manageEntryHandleCookieName);
+      if (!view.session) {
+        if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
+        sendPageStateJson(res, 404, { status: 404 });
+        return;
+      }
+      if (view.sessionCookieToSet) res.setHeader("Set-Cookie", serializeSessionCookie(config, view.sessionCookieToSet));
+      sendPageStateJson(res, 200, { variant: await resolveManageVariant(view.session) });
+      return;
+    }
+
     if (req.method === "GET" && path === "/manage") {
       // UX-CNS-004 §1 (33:2 entrada / 33:21 estado / 59:3 error, SEC-CNS-014, FINDING P1): una
       // sola ruta, que resuelve en solo lectura. El handle MANAGE_ENTRY vigente (fijado por el
@@ -860,16 +916,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Set-Cookie", cookiesToSet);
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
       // SEC-CNS-016: la lectura de la decisión corre BAJO el tenant de la sesión (inTenant).
-      // SPA: la variante (entrada/estado/revocada) se resolverá por JSON en la fase de /manage; en `spa` no se lee.
+      // SPA: la variante (entrada/estado/revocada) la lee la página React por GET /manage/page-state (API-CNS-195); en `spa` no se lee aquí.
       let manageHtml = "";
       if (!spa) {
-        const revokedDecisionRef = view.session.revokedDecisionRef;
-        const decisionRevoked =
-          revokedDecisionRef !== undefined &&
-          (await revocationPorts.revocation.uow.inTenant(view.session.tenantId, (tx) =>
-            tx.consentDecisionRepo.findByConsentId(view.session!.tenantId, revokedDecisionRef),
-          ))?.state === "REVOKED";
-        manageHtml = !view.session.manageDecisionMakerRef ? renderManageEntryPage() : decisionRevoked ? renderManageRevokedPage() : renderManageStatusPage();
+        const variant = await resolveManageVariant(view.session);
+        manageHtml = variant === "entry" ? renderManageEntryPage() : variant === "revoked" ? renderManageRevokedPage() : renderManageStatusPage();
       }
       sendPage(res, 200, () => manageHtml);
       return;
