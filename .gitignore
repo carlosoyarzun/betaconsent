@@ -52,3 +52,8 @@ __pycache__/
 !tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/
 !tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/client-s3/
 !tests/guardrails/ports-adapters/fixtures/r02-relative-into-nodemodules/node_modules/@aws-sdk/client-s3/index.js
+
+# E2E Playwright (línea base UI): reportes y temporales locales
+e2e/report/
+e2e/test-results/
+e2e/.tmp/
