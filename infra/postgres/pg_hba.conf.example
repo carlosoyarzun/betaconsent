@@ -1,0 +1,9 @@
+# Gobierna: ADR-010 rev. 6 §4.5.3 (pg_hba para ddl_breakglass; Q-20 (c)), INV-DBR-09; PR-7d/7e. PLANTILLA (sin secretos); ARTEFACTO de IT0: no se instala en este repo. Host dedicado de LectorPro (ADR-003 rev. 7), sin proveedor cloud.
+#
+# ddl_breakglass SOLO por TCP desde el propio host (127.0.0.1/32) con scram-sha-256: sin peer ni cert (la contrasena de la ceremonia es un verificador SCRAM calculado en el cliente, db/ceremonies/open.sql) y sin reglas "trust".
+# El rol es NOLOGIN fuera de ceremonia y vence con VALID UNTIL (<= 60 min, P-46); estas reglas son defensa en profundidad, no el control (el control es NOLOGIN + la vigilancia breakglass-watch).
+# TYPE   DATABASE   USER             ADDRESS          METHOD
+host     consent    ddl_breakglass   127.0.0.1/32     scram-sha-256
+host     consent    ddl_breakglass   ::1/128          scram-sha-256
+# Cualquier otro origen para ddl_breakglass queda sin regla (rechazado): no agregar reglas por rango.
+# Los demas roles de runtime tienen sus propias reglas (infra de studio pendiente, datos de infraestructura PENDING).

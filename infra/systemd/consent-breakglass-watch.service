@@ -1,0 +1,50 @@
+# Gobierna: ADR-010 rev. 6 §4.5.3, F-PR7-03, T-8 (plan PR-7 v3) y C-9 (Carlos 2026-10-16: la vigilancia del break-glass es del chain-verifier, no del verifier; timer propio de 1 min). PR-7e. ARTEFACTO de IT0: no se instala ni ejecuta en este repo.
+# Modo `breakglass-watch` del chain-verifier: una corrida por activacion (Type=oneshot). Exit 0 sin hallazgos; 2 hallazgo (LOGIN o sesion de ddl_breakglass sin ceremonia vigente, o ceremonia vencida sin cerrar); 1 arranque o lectura
+# fallida. MISMO usuario de SO, rol de Postgres (integrity_chain_verifier) y env (/etc/consent/chain-verifier.env, root:root 0600) que consent-chain-verifier: sin credencial nueva, sin egress, sin K_sub. Log sin PII (codigos y referencia opaca).
+[Unit]
+Description=Consent App - Vigilancia de break-glass (modo breakglass-watch del chain-verifier; rol integrity_chain_verifier; sin egress)
+After=network.target postgresql.service
+Wants=postgresql.service
+# Un hallazgo (exit 2) o un fallo de arranque/lectura (exit 1) deja el servicio en "failed" y dispara la alerta LOCAL (journal, sin egress).
+OnFailure=consent-breakglass-watch-alert.service
+
+[Service]
+Type=oneshot
+User=consent-chain-verifier
+Group=consent-chain-verifier
+WorkingDirectory=/opt/consent-app
+EnvironmentFile=/etc/consent/chain-verifier.env
+ExecStart=/usr/bin/node /opt/consent-app/src/server/entrypoints/chain-verifier/main.ts breakglass-watch
+# Sin Restart: un hallazgo no se corrige reintentando; la siguiente corrida la dispara el timer (1 min).
+TimeoutStartSec=30s
+# Ningun SuccessExitStatus: todo exit != 0 es fallo y activa OnFailure=.
+
+# Aislamiento del proceso
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+RestrictRealtime=true
+RemoveIPC=true
+
+# Red: sin salidas a internet ni egress de ningun tipo; solo loopback (Postgres en el mismo host dedicado; si la base va en otro host, el IPAddressAllow se completa en la primera historia de infraestructura).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost

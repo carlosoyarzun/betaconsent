@@ -25,7 +25,8 @@ export const RUNTIME_PROCESS_ROLES = {
 
 /**
  * ADR-010 PR-7a (F-6F-01, SEC-6F-02; T-1): perfil de retencion por proceso. Solo web (app_rw) y worker (purga) usan y contrastan CNS_RETENTION_* con ops.retention_policy; el resto (platform, verifier,
- * reconciler, chain-verifier) declara NOT_APPLICABLE: no carga la configuracion, no llama a ops.retention_status() y el arranque asierta que su rol NO puede ejecutarla ni ops.purge_p34.
+ * reconciler, chain-verifier) declara NOT_APPLICABLE: no carga la configuracion, no llama a ops.retention_status() y el arranque asierta que su rol (ni ningun rol al que pueda hacer SET) NO puede ejecutarla ni ops.purge_p34.
+ * F-PR7a-03 (corregido en PR-7d): el criterio es "consume o purga retencion", no "escribe datos con retencion": `platform` SI escribe ops.security_event (via rights_operator) pero no consume ni purga la retencion.
  */
 export const RETENTION_PROFILE: Readonly<Record<keyof typeof RUNTIME_PROCESS_ROLES, RetentionProfile>> = {
   web: "REQUIRED",

@@ -1,0 +1,13 @@
+# Gobierna: ADR-010 rev. 6 §4.5.3, F-PR7-03, T-8 (plan PR-7 v3): la ventana de una ceremonia (P-46 <= 60 min) cabe entera entre dos corridas horarias del chain-verifier (D-3), asi que la vigilancia del break-glass tiene timer propio de 1 min.
+# PR-7e. ARTEFACTO de IT0: no se instala en este repo. Quien monitorea el journal del host (alerta humana) es una decision de infraestructura PENDING (IT0b).
+[Unit]
+Description=Consent App - Corrida periodica de la vigilancia de break-glass (1 min)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=consent-breakglass-watch.service
+
+[Install]
+WantedBy=timers.target

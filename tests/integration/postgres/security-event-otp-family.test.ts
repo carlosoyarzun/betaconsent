@@ -5,6 +5,7 @@
 // platform_rw sin DML) y TEST-CNS-1307 (duenos: security_event_owner dueno de la tabla y su funcion, ningun rol de runtime es miembro,
 // triggers ENABLE ALWAYS y FORCE RLS). Solo datos sinteticos. Estos tests NO se corrieron localmente (sin Docker/Postgres): los corre el CI.
 
+import { CLUSTER_PREFLIGHT_SQL } from "../../../src/infra/adapters/postgres/migrate.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -242,9 +243,10 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
   const members = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
     `SELECT m.rolname AS member, a.inherit_option, a.set_option
        FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
-      WHERE r.rolname = 'security_event_owner'`,
+      WHERE r.rolname = 'security_event_owner' ORDER BY 1`,
   )).rows;
-  assert.deepEqual(members, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
+  // PR-7d (0086): ddl_breakglass tambien asume security_event_owner (ceremonia de break-glass); nadie mas.
+  assert.deepEqual(members, [{ member: "consent_owner", inherit_option: false, set_option: true }, { member: "ddl_breakglass", inherit_option: false, set_option: true }]);
   for (const runtime of ["app_rw", "worker", "platform_rw"]) {
     assert.equal((await admin.query<{ m: boolean }>("SELECT pg_has_role($1, 'security_event_owner', 'MEMBER') AS m", [runtime])).rows[0]?.m, false, `${runtime} es miembro`);
   }
@@ -306,11 +308,20 @@ pgTest("TEST-CNS-1307 pg: security_event_owner es dueno de ops.security_event y 
 
   // 0028 es idempotente: una segunda corrida (superusuario, como el runner de alcance cluster) deja el mismo estado.
   const sql0028 = readFileSync(join(MIGRATIONS_DIR, "0028_security_event_owner_role.sql"), "utf8");
-  await ctx.withRoleCatalogLock(async () => { await admin.query(sql0028); }); // catalogo global de roles: serializado con el provisionado
-  const again = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
-    `SELECT m.rolname AS member, a.inherit_option, a.set_option FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member WHERE r.rolname = 'security_event_owner'`,
-  )).rows;
-  assert.deepEqual(again, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
+  // PR-7d: tras el preflight del runner (sin membresias de ddl_breakglass) y con ROLLBACK, dentro del lock de roles.
+  await ctx.withRoleCatalogLock(async () => {
+    await admin.query("BEGIN");
+    try {
+      await admin.query(CLUSTER_PREFLIGHT_SQL);
+      await admin.query(sql0028);
+      const again = (await admin.query<{ member: string; inherit_option: boolean; set_option: boolean }>(
+        `SELECT m.rolname AS member, a.inherit_option, a.set_option FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member WHERE r.rolname = 'security_event_owner'`,
+      )).rows;
+      assert.deepEqual(again, [{ member: "consent_owner", inherit_option: false, set_option: true }]);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
 
   // El arranque del runtime sigue pasando con el nuevo owner en la lista (startup-checks.ts).
   const startup = await runStartupChecks(await ctx.connectAs("app_rw"), { expectedEnvironment: "LOCAL", expectedRole: "app_rw" });

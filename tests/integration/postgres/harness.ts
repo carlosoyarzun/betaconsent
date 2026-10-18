@@ -21,8 +21,10 @@ import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { CONNECT_ROLES } from "../../../src/infra/adapters/postgres/database-level.ts";
 import type { Client } from "pg";
 import {
+  applyClusterPostScope,
   applyClusterScope,
   applyDatabaseScope,
   loadMigrations,
@@ -116,6 +118,31 @@ export async function revokeLocalSeedFromAppRw(ctx: PgTestContext): Promise<void
   await admin.query("REVOKE EXECUTE ON FUNCTION case_state.seed_local_rights_case(uuid, text, text, text, text, text, text) FROM app_rw");
 }
 
+/**
+ * ADR-010 rev. 6 PR-7d: aplica la fase `cluster-post` (0086) en el modo dado DENTRO de una transaccion de `admin` (superusuario conectado a la base del test), ejecuta `fn` y revierte (ROLLBACK): el catalogo global de roles
+ * y la base del test quedan intactos. Serializado con el provisionado (lock de roles). Sirve para verificar la aserción de membresia y el estado a nivel de base de REAL_DATA (que no es el modo del cluster compartido) sin tocarlo.
+ * Helper de tests.
+ */
+export async function withClusterPostApplied<T>(ctx: PgTestContext, admin: Client, mode: "IT0B_SYNTHETIC" | "REAL_DATA", fn: () => Promise<T>): Promise<T> {
+  const post = loadMigrations(MIGRATIONS_DIR).filter((m) => m.scope === "cluster-post");
+  return ctx.withRoleCatalogLock(async () => {
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SELECT set_config('cns.db_role_mode', $1, true)", [mode]);
+      for (const m of post) await admin.query(m.sql);
+      return await fn();
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
+}
+
+/**
+ * ADR-010 rev. 6 PR-7d (0085): el chain-verifier tiene USAGE de `breakglass` y SELECT por columnas de breakglass.ceremony (vigilancia, T-8). Las aserciones de 0074/0079 (ya mergeadas) fijan el alcance del rol ANTES de esa concesion;
+ * los tests que re-ejecutan esos archivos quitan la concesion dentro de su transaccion con ROLLBACK (o la devuelven al terminar). Helper de tests.
+ */
+export const BREAKGLASS_WATCH_REVOKE_SQL = "REVOKE SELECT ON breakglass.ceremony FROM integrity_chain_verifier; REVOKE USAGE ON SCHEMA breakglass FROM integrity_chain_verifier";
+
 let currentCtx: PgTestContext | undefined;
 
 /** Como `seedRaw` sobre la base del test en curso (para helpers de siembra que no reciben `ctx`). Solo tests. */
@@ -194,34 +221,74 @@ function quoteIdent(name: string): string {
   return `"${name}"`;
 }
 
+function urlOnDatabase(base: string, database: string): string {
+  const u = new URL(base);
+  u.pathname = `/${database}`;
+  return u.toString();
+}
+
 async function provisionTemplate(config: Config, admin: Client): Promise<string> {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   const template = `consent_tpl_${migrationSetDigest(migrations).slice(0, 16)}`;
+  const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);
+  const templateExists = exists.rows.length > 0;
 
-  await applyClusterScope(admin, migrations, { environment: "LOCAL" }); // la plantilla es LOCAL sintetica; sin CNS_DB_ROLE_MODE el modo cae a IT0B_SYNTHETIC
-  await setRolePasswords(admin, {
-    consent_migrator: config.migratorPassword,
-    app_rw: config.appPassword,
-    worker: config.appPassword,
-    platform_rw: config.appPassword,
-    integrity_verifier: config.appPassword, // ADR-010 PR-2 (0034)
-    integrity_reconciler: config.appPassword, // ADR-010 rev. 5 PR-6e (0056)
-    integrity_chain_verifier: config.appPassword, // ADR-010 rev. 6 PR-6f (0072)
+  // ADR-010 rev. 6 PR-7d (P1 de la revision del PR #109): el esquema breakglass y la fase cluster-post viven en la BASE DE LA APLICACION (aqui, la plantilla), no en la base de mantenimiento de `admin`. Los advisory locks son por
+  // base de datos: el lock de roles de la base de mantenimiento (el que toma ctx.withRoleCatalogLock y el ensayo de ceremonia) se toma aqui, ademas del propio del runner en la base de la plantilla.
+  // Con la plantilla ya construida no hay migraciones de base pendientes (el runner lo calcula con ops.schema_migration) y la fase cluster + la posterior van en UNA transaccion, asi que otros archivos de test que corren en
+  // paralelo nunca ven el SET re-otorgado por 0026. Al construir la plantilla (una vez por conjunto de migraciones, con los demas archivos esperando el lock del harness) la fase posterior se difiere hasta despues de las
+  // migraciones de base, que necesitan los SET de los owners.
+  await withClusterRoleLock(admin, async () => {
+    if (templateExists) {
+      const tpl = new pg.Client({ connectionString: urlOnDatabase(config.url, template) });
+      await tpl.connect();
+      try {
+        await applyClusterScope(tpl, migrations, { environment: "LOCAL" });
+      } finally {
+        await tpl.end();
+      }
+    } else {
+      // La base de mantenimiento no tiene ops.schema_migration: el runner difiere la fase posterior.
+      await applyClusterScope(admin, migrations, { environment: "LOCAL" });
+    }
+    await setRolePasswords(admin, {
+      consent_migrator: config.migratorPassword,
+      app_rw: config.appPassword,
+      worker: config.appPassword,
+      platform_rw: config.appPassword,
+      integrity_verifier: config.appPassword, // ADR-010 PR-2 (0034)
+      integrity_reconciler: config.appPassword, // ADR-010 rev. 5 PR-6e (0056)
+      integrity_chain_verifier: config.appPassword, // ADR-010 rev. 6 PR-6f (0072)
+    });
   });
 
-  const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [template]);
-  if (exists.rows.length > 0) return template;
+  if (templateExists) return template;
 
   const building = `${template}_b`;
-  await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(building)} WITH (FORCE)`);
-  await admin.query(`CREATE DATABASE ${quoteIdent(building)} OWNER consent_owner`);
-  const migrator = new pg.Client({ connectionString: urlWith(config.url, "consent_migrator", config.migratorPassword, building) });
-  await migrator.connect();
-  try {
-    await applyDatabaseScope(migrator, migrations, { environment: "LOCAL" });
-  } finally {
-    await migrator.end();
-  }
+  await withClusterRoleLock(admin, async () => {
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(building)} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${quoteIdent(building)} OWNER consent_owner`);
+      const migrator = new pg.Client({ connectionString: urlWith(config.url, "consent_migrator", config.migratorPassword, building) });
+      await migrator.connect();
+      try {
+        await applyDatabaseScope(migrator, migrations, { environment: "LOCAL" });
+      } finally {
+        await migrator.end();
+      }
+    } finally {
+      // La fase posterior corre siempre que la base exista (tambien si una migracion de base fallo): no deja el SET de integrity_owner re-otorgado.
+      if ((await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [building])).rows.length > 0) {
+        const post = new pg.Client({ connectionString: urlOnDatabase(config.url, building) });
+        await post.connect();
+        try {
+          await applyClusterPostScope(post, migrations, { environment: "LOCAL" });
+        } finally {
+          await post.end();
+        }
+      }
+    }
+  });
   await admin.query(`ALTER DATABASE ${quoteIdent(building)} RENAME TO ${quoteIdent(template)}`);
   return template;
 }
@@ -237,6 +304,12 @@ async function provision(config: Config): Promise<{ ctx: PgTestContext; teardown
     try {
       const template = await provisionTemplate(config, admin);
       await admin.query(`CREATE DATABASE ${quoteIdent(dbName)} TEMPLATE ${quoteIdent(template)} OWNER consent_owner`);
+      // F-PR7D-10: STAGING exige el estado a nivel de base en el arranque; las bases de test lo cumplen (lo que hace 0086 en la base de la aplicacion). Solo ACL/dueño de ESTA base (no toca el catalogo global de roles).
+      const q = quoteIdent(dbName);
+      await admin.query(`ALTER DATABASE ${q} OWNER TO db_owner_nologin`);
+      await admin.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${q} FROM PUBLIC`);
+      for (const r of CONNECT_ROLES) await admin.query(`GRANT CONNECT ON DATABASE ${q} TO ${quoteIdent(r)}`);
+      await admin.query(`GRANT CREATE ON DATABASE ${q} TO consent_owner`);
     } finally {
       await admin.query("SELECT pg_advisory_unlock($1)", [HARNESS_LOCK_KEY]);
     }

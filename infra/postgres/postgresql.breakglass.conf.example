@@ -1,0 +1,10 @@
+# Gobierna: ADR-010 rev. 6 §4.5.3 (auditoria de sesiones de ddl_breakglass, Q-20 (c)), F-PR7-07, C-5 (Carlos 2026-10-16, LEGAL DECISION: logs de ceremonia conservados como el ledger, minimizados y solo DDL); PR-7e.
+# PLANTILLA (sin secretos); ARTEFACTO de IT0: no se instala en este repo.
+#
+# Conexiones y desconexiones: parametros de ARRANQUE de sesion (no se pueden fijar con ALTER ROLE), asi que van en el postgresql.conf del host. Registran quien se conecta y desde donde (no el contenido de las sentencias).
+log_connections = on
+log_disconnections = on
+log_line_prefix = '%m [%p] %u@%d %h '
+# El detalle de las sentencias de la ceremonia NO va aqui: ALTER ROLE ddl_breakglass SET log_statement = 'ddl', log_parameter_max_length = 0 y log_parameter_max_length_on_error = 0 (0084, cada deploy), para que el log
+# de la sesion de break-glass solo lleve DDL y nunca valores (F-PR7-07). NO usar log_statement = 'all' a nivel de servidor para este rol.
+# Retencion y destino fuera del host del log de ceremonia: LEGAL DECISION C-5 (como el ledger; valor de P-34/LD-15 y canal pull del custodio, C-7, PENDIENTES); no bloquea IT0b sintetico, bloquea REAL_DATA.

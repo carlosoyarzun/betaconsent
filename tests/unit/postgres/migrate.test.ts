@@ -25,14 +25,17 @@ test("TEST-CNS-749 parseMigration valida nombre, alcance y calcula sha256", () =
   }
   assert.throws(() => parseMigration("0008_x.sql", "SELECT 1;\n"), /scope/);
   assert.throws(() => parseMigration("0008_x.sql", "-- scope: superuser\n"), /scope/);
+  assert.equal(parseMigration("0008_x.sql", "-- scope: cluster-post\nSELECT 1;\n").scope, "cluster-post");
 });
 
-test("TEST-CNS-749 las migraciones del repo: 0000, 0004, 0018, 0026, 0028, 0034, 0046, 0056, 0064, 0068, 0072, 0075 y 0080 son cluster, el resto database, versiones únicas y ordenadas", () => {
+test("TEST-CNS-749 las migraciones del repo: 0000, 0004, 0018, 0026, 0028, 0034, 0046, 0056, 0064, 0068, 0072, 0075, 0080 y 0084 son cluster, 0085 y 0086 cluster-post, el resto database, versiones únicas y ordenadas", () => {
   const migrations = loadMigrations(MIGRATIONS_DIR);
   assert.equal(migrations[0]?.version, "0000");
   assert.equal(migrations[0]?.scope, "cluster");
   // Solo 0000 (roles), 0004 (outbox_claimer), 0018 (roles del roster, API-CNS-116), 0026 (integrity_owner, X8) 0028 (security_event_owner, SEC-CNS-021) 0034 (roles de cluster de ADR-010 PR-2), 0046 (ledger_gen_owner y ledger_writer, ADR-010 rev. 5 PR-b), 0056 (integrity_reconciler, ADR-010 rev. 5 PR-6e) y 0072 (integrity_chain_verifier, ADR-010 rev. 6 PR-6f) son de alcance cluster; el resto, database.
-  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004", "0018", "0026", "0028", "0034", "0046", "0056", "0064", "0068", "0072", "0075", "0080"]);
+  assert.deepEqual(migrations.filter((m) => m.scope === "cluster").map((m) => m.version), ["0000", "0004", "0018", "0026", "0028", "0034", "0046", "0056", "0064", "0068", "0072", "0075", "0080", "0084"]);
+  // PR-7d: la fase posterior del superusuario (esquema breakglass 0085; revoke de integrity_owner, dueño de la base, REAL_DATA 0086) y corre despues de las migraciones de base.
+  assert.deepEqual(migrations.filter((m) => m.scope === "cluster-post").map((m) => m.version), ["0085", "0086"]);
   const versions = migrations.map((m) => m.version);
   assert.deepEqual(versions, [...versions].sort());
   assert.equal(new Set(versions).size, versions.length);
@@ -50,16 +53,16 @@ test("TEST-CNS-749 ninguna migración contiene contraseñas ni credenciales (cer
 test("TEST-CNS-749 setRolePasswords escapa la contraseña como literal y rechaza contraseñas cortas", async () => {
   const issued: string[] = [];
   const superuser = {
-    query: async (text: string) => {
+    query: async (text: string): Promise<never> => {
       issued.push(text);
-      return { rows: [], rowCount: 0 };
+      return (text.includes("pg_try_advisory_lock") ? { rows: [{ locked: true }], rowCount: 1 } : { rows: [], rowCount: 0 }) as never;
     },
     escapeLiteral: (v: string) => `'${v.replace(/'/g, "''")}'`,
   };
   await setRolePasswords(superuser, { app_rw: "pa'ss-word-1", consent_migrator: "otra-clave-9" });
   // Las mutaciones de pg_authid van dentro del lock de cluster (carrera "tuple concurrently updated").
   assert.deepEqual(issued, [
-    "SELECT pg_advisory_lock($1)",
+    "SELECT pg_try_advisory_lock($1) AS locked",
     "ALTER ROLE consent_migrator PASSWORD 'otra-clave-9'",
     "ALTER ROLE app_rw PASSWORD 'pa''ss-word-1'",
     "SELECT pg_advisory_unlock($1)",

@@ -141,7 +141,7 @@ pgTest("TEST-CNS-787 pg: ledger y outbox con FORCE RLS, policies por app.current
   // ADR-010 rev. 6 PR-6f (0073, D-1 (b)): lectura cross-tenant EXPLICITA del chain-verifier (NOBYPASSRLS), una sola policy, solo SELECT, solo TO integrity_chain_verifier, USING (true).
   const chainVerifierPolicies = all.filter((p) => p.roles.includes("integrity_chain_verifier"));
   // PR-7b (0076): ademas, sus policies de chain_run/chain_checkpoint (INSERT con WITH CHECK true; SELECT de checkpoints). Lista exacta.
-  assert.deepEqual(chainVerifierPolicies.map((p) => p.k).sort(), ["integrity.audit_event/audit_event_chain_verifier_select", "integrity.chain_checkpoint/chain_checkpoint_verifier_insert", "integrity.chain_checkpoint/chain_checkpoint_verifier_select", "integrity.chain_run/chain_run_verifier_insert"]);
+  assert.deepEqual(chainVerifierPolicies.map((p) => p.k).sort(), ["breakglass.ceremony/ceremony_watch_select", "integrity.audit_event/audit_event_chain_verifier_select", "integrity.chain_checkpoint/chain_checkpoint_verifier_insert", "integrity.chain_checkpoint/chain_checkpoint_verifier_select", "integrity.chain_run/chain_run_verifier_insert"]);
   for (const p of chainVerifierPolicies) assert.deepEqual([p.roles, p.qual, p.with_check], [["integrity_chain_verifier"], p.k.endsWith("_insert") ? null : "true", p.k.endsWith("_insert") ? "true" : null], p.k);
   // PR-7b (0076/0078, T-17): policies cross-tenant del firmante NOLOGIN (SELECT de chain_run/chain_checkpoint/anchor e INSERT de anchor). Lista exacta y cerrada.
   const signerPolicies = all.filter((p) => p.roles.includes("integrity_anchor_signer"));
@@ -427,9 +427,9 @@ pgTest("TEST-CNS-793 pg: outbox_claimer es NOLOGIN/NOBYPASSRLS, sin membresias, 
   )).rows[0]?.n;
   assert.equal(memberOf, 0, "outbox_claimer no es miembro de ningun rol");
   const members = (await admin.query<{ m: string; inherit: boolean; set: boolean }>(
-    "SELECT pg_get_userbyid(member) AS m, inherit_option AS inherit, set_option AS set FROM pg_auth_members WHERE roleid = 'outbox_claimer'::regrole",
+    "SELECT pg_get_userbyid(member) AS m, inherit_option AS inherit, set_option AS set FROM pg_auth_members WHERE roleid = 'outbox_claimer'::regrole ORDER BY 1",
   )).rows;
-  assert.deepEqual(members, [{ m: "consent_migrator", inherit: false, set: true }]);
+  assert.deepEqual(members, [{ m: "consent_migrator", inherit: false, set: true }, { m: "ddl_breakglass", inherit: false, set: true }]); // PR-7d: ddl_breakglass asume los owners (0086)
   // P2-5: consent_owner no hereda los privilegios de tenant_resolve_owner (solo SET).
   const tro = (await admin.query<{ inherit: boolean; set: boolean }>(
     "SELECT inherit_option AS inherit, set_option AS set FROM pg_auth_members WHERE roleid = 'tenant_resolve_owner'::regrole AND member = 'consent_owner'::regrole",

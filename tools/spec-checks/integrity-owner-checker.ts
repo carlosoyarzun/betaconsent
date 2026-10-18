@@ -44,8 +44,10 @@ export const INTEGRITY_OWNER_ALLOWLIST: Readonly<Record<string, readonly UsageKi
   "db/migrations/0076_adr010_pr7b_chain_checkpoint.sql": ["set-role"],
   "db/migrations/0077_adr010_pr7b_reconcile_run.sql": ["set-role"],
   "db/migrations/0078_adr010_pr7b_anchor.sql": ["set-role"],
-  // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): demuestra el SET ROLE explicito del migrador.
+  // Test de ataque residual P1 (TEST-CNS-915/ledger-chain): ahora demuestra que el migrador ya NO puede (42501) y ejercita el rol con un superusuario de prueba.
   "tests/integration/postgres/ledger-chain.test.ts": ["set-role"],
+  // TEST-CNS-1230 (PR-7d, C-1): prueba que consent_owner/consent_migrator reciben 42501 al SET ROLE integrity_owner.
+  "tests/integration/postgres/ledger-integrity-owner.test.ts": ["set-role"],
 };
 
 /** SEC-CNS-021 PR-1: caminos aprobados para security_event_owner. Mismas reglas que INTEGRITY_OWNER_ALLOWLIST. */
@@ -224,7 +226,7 @@ function checkUsageFor(
   const errors: string[] = [];
   const byPath = new Map(files.map((f) => [f.path, f]));
   for (const f of files) {
-    if (excluded.includes(f.path) || !SCANNED_EXT_RE.test(f.path)) continue;
+    if (excluded.includes(f.path) || !SCANNED_EXT_RE.test(f.path) || f.path.startsWith("db/ceremonies/")) continue; // PR-7d: las ceremonias son el unico lugar admitido (ver checkPostRevokeMigrations)
     const allowed = allowlist[f.path] ?? [];
     for (const u of findUsagesFor(rx, f.path, f.text)) {
       if (!allowed.includes(u.kind)) {
@@ -279,4 +281,47 @@ export function checkAdr010OwnerUsage(
 ): string[] {
   return roles.flatMap((role) =>
     checkUsageFor(regexesFor(role), "ADR-010 PR-2/PR-3; INV-DBR-03", files, allowlist ?? ADR010_OWNER_ALLOWLIST_BY_ROLE[role] ?? ADR010_OWNER_ALLOWLIST, excluded));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ADR-010 rev. 6 PR-7d (CA-142 alineado; F-A10-09; decision de Carlos del 2026-10-16, C-1): DESDE el revoke de integrity_owner (migracion 0086, fase cluster-post) ninguna migracion de db/migrations/ POSTERIOR puede asumir un rol
+// distinto de consent_owner ni concederse membresias de owners: toda DDL con otro owner va por ceremonia (db/ceremonies/, unico lugar admitido; los scripts de ceremonia no se escanean con las allowlists de arriba). Cubre las
+// variantes que los otros checkers no veian (F-A10-09): `SET role = x`, `SET ROLE TO x`, `SET SESSION AUTHORIZATION`, set_config('role'...), SQL dinamico (`format('SET ROLE %I')`, concatenacion), `CREATE ROLE ... IN ROLE`,
+// `ALTER GROUP ... ADD USER` y GRANT de cualquier owner (incluidos rights_operator y los de PR-7c/7d). Es una heuristica textual: la aserción de membresia del runner y de startup-checks es el control de fondo.
+
+/** Ultima migracion del revoke (0086): las posteriores quedan sujetas a la regla. */
+export const POST_REVOKE_LAST_VERSION = 86;
+export const CEREMONY_DIR = "db/ceremonies/";
+const GOVERNED_OWNER_NAMES: readonly string[] = [
+  "consent_owner", "tenant_resolve_owner", "staff_roster_owner", "integrity_owner", "security_event_owner", "outbox_claimer", "platform_schema_owner", "grant_owner", "membership_owner", "case_state_owner",
+  "transition_owner", "ledger_gen_owner", "ledger_writer", "rights_case_lookup_owner", "app_schema_owner", "ops_schema_owner", "shared_fn_owner", "revocation_recovery_reader", "rights_operator",
+  "db_owner_nologin", "breakglass_log_owner", "ddl_breakglass",
+];
+const POST_REVOKE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["SET ROLE hacia un rol distinto de consent_owner (o dinamico)", /\bSET\s+(?:LOCAL\s+|SESSION\s+)?ROLE\s+(?!consent_owner\b)(?!NONE\b)(?!TO\b)(?!=)\S/gi],
+  ["SET ROLE = / TO", /\bSET\s+(?:LOCAL\s+|SESSION\s+)?ROLE\s*(?:=|TO\b)/gi],
+  ["SET SESSION AUTHORIZATION", /\bSET\s+(?:LOCAL\s+|SESSION\s+)?SESSION\s+AUTHORIZATION\b|\bSET\s+SESSION\s+AUTHORIZATION\b/gi],
+  ["set_config('role', ...)", /\bset_config\s*\(\s*'role'/gi],
+  ["SQL dinamico con SET ROLE", /['"]\s*SET\s+(?:LOCAL\s+)?ROLE\b/gi],
+  ["CREATE ROLE ... IN ROLE", /\bCREATE\s+(?:ROLE|USER|GROUP)\b[^;]*\bIN\s+(?:ROLE|GROUP)\b/gi],
+  ["ALTER GROUP ... ADD USER", /\bALTER\s+GROUP\b[^;]*\bADD\s+USER\b/gi],
+];
+
+/** Errores (vacio = ok) de las migraciones POSTERIORES al revoke. `files` con rutas relativas a la raiz del repo. */
+export function checkPostRevokeMigrations(files: readonly SourceFile[], lastVersion: number = POST_REVOKE_LAST_VERSION): string[] {
+  const errors: string[] = [];
+  for (const f of files) {
+    const m = /^db\/migrations\/(\d{4})_[a-z0-9_]+\.sql$/.exec(f.path);
+    if (m === null || Number(m[1]) <= lastVersion) continue;
+    const t = stripComments(f.path, f.text);
+    const lineOf = (idx: number): number => t.slice(0, idx).split("\n").length;
+    for (const [what, re] of POST_REVOKE_PATTERNS) {
+      for (const hit of t.matchAll(re)) errors.push(`${f.path}:${lineOf(hit.index ?? 0)} posterior al revoke de integrity_owner (0086): ${what}; la DDL con otro owner va por ceremonia (db/ceremonies/, CA-142, F-A10-09)`);
+    }
+    for (const hit of t.matchAll(GRANT_RE)) {
+      const granted = (hit[1] ?? "").split(",").map((s) => s.trim().replace(/^["'`]|["'`]$/g, "").toLowerCase());
+      if (granted.some((g) => GOVERNED_OWNER_NAMES.includes(g))) errors.push(`${f.path}:${lineOf(hit.index ?? 0)} posterior al revoke (0086): GRANT de la membresia de un owner (CA-142)`);
+    }
+  }
+  return errors;
 }

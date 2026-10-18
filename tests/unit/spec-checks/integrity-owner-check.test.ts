@@ -9,6 +9,7 @@ import {
   ADR010_OWNER_ROLES,
   checkAdr010OwnerUsage,
   checkIntegrityOwnerUsage,
+  checkPostRevokeMigrations,
   findAdr010OwnerUsages,
   checkSecurityEventOwnerUsage,
   findSecurityEventOwnerUsages,
@@ -54,6 +55,7 @@ test("TEST-CNS-1235 integrity-owner-check: detecta SET [LOCAL|SESSION] ROLE inte
   // el mismo SET ROLE en un archivo de la allowlist pasa; en otro archivo (p.ej. una migracion nueva) falla
   const real = "db/migrations/0027_ledger_integrity_owner.sql";
   const base = [{ path: real, text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0030_ledger_drop_transitional_security_events.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0037_adr010_case_state_revocation.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0038_adr010_case_state_rights_case.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0039_adr010_ledger_allowlist_close_case_d6.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0041_adr010_ledger_allowlist_19_dedupe_estricto.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0042_adr010_worker_downstream_only.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0047_adr010_ledger_gen_enrollment_dmv.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0048_adr010_ledger_gen_invitation.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0049_adr010_ledger_gen_decision_seed_close_insert.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0057_adr010_pr6e_reconciler_ledger_select.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0073_adr010_pr6f_chain_verifier_ledger_select.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0076_adr010_pr7b_chain_checkpoint.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0077_adr010_pr7b_reconcile_run.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0078_adr010_pr7b_anchor.sql", text: "SET LOCAL ROLE integrity_owner;" }, { path: "db/migrations/0026_integrity_owner_role.sql", text: "GRANT integrity_owner TO consent_owner;" }, { path: "tests/integration/postgres/ledger-chain.test.ts", text: "SET ROLE integrity_owner" }];
+  base.push({ path: "tests/integration/postgres/ledger-integrity-owner.test.ts", text: "SET ROLE integrity_owner;" });
   assert.deepEqual(checkIntegrityOwnerUsage(base), []);
   assert.equal(checkIntegrityOwnerUsage([...base, { path: "db/migrations/0031_otra.sql", text: "SET LOCAL ROLE integrity_owner;" }]).filter((e) => e.includes("0031")).length, 1);
   // SEC-CNS-021 PR-2: SOLO 0030 se agrega a la allowlist; ADR-010 PR-5a agrega 0037 (GRANT/policies de transition_owner); cualquier otra migracion nueva (incluida una 0028-like) falla
@@ -201,4 +203,21 @@ test("TEST-CNS-1347 adr010-owner-check: ningun uso de SET ROLE de un owner nuevo
   // 0035 solo puede asumir sus tres owners: case_state_owner y transition_owner son de 0037 (PR-5a).
   const over = checkAdr010OwnerUsage([{ path: m0034, text: real }, { path: m0035, text: `${set35}\nSET LOCAL ROLE transition_owner;` }, { path: m0036, text: set35 }, { path: m0037, text: set37 }, { path: m0038, text: set37 }, { path: m0039, text: set37 }, { path: m0041, text: set37 }, { path: tpra, text: "SET LOCAL ROLE transition_owner;" }, { path: m0040, text: set40 }, { path: m0042, text: "SET LOCAL ROLE transition_owner;" }, { path: t5a, text: "SET LOCAL ROLE transition_owner;" }, { path: t5b, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: tprb, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb2, text: "SET LOCAL ROLE transition_owner;" }, { path: tprb3, text: "SET LOCAL ROLE transition_owner;\nSET LOCAL ROLE ledger_writer;" }, { path: fixPlatform, text: "SET LOCAL ROLE membership_owner;" }, ...pb]);
   assert.equal(over.filter((e) => e.includes("fuera de la allowlist") && e.includes("transition_owner")).length, 1);
+});
+
+test("TEST-CNS-1860 CA-142 alineado (PR-7d, F-A10-09): ninguna migracion posterior al revoke (0086) asume un owner ni se concede su membresia; detecta las variantes (SET role =, dinamico, IN ROLE, ALTER GROUP, GRANT) y admite consent_owner", () => {
+  const files: { path: string; text: string }[] = [];
+  collect(ROOT, files);
+  assert.ok(files.some((f) => f.path === "db/migrations/0086_adr010_pr7d_revoke_and_database_level.sql"));
+  assert.deepEqual(checkPostRevokeMigrations(files), [], "repo real");
+  const after = (text: string): string[] => checkPostRevokeMigrations([{ path: "db/migrations/0087_x.sql", text }]);
+  for (const bad of [
+    "SET LOCAL ROLE integrity_owner;", "set role grant_owner;", "SET SESSION ROLE rights_operator;", "SET role = 'ledger_writer';", "SET ROLE TO ddl_breakglass;", "SET SESSION AUTHORIZATION integrity_owner;",
+    "SELECT set_config('role', 'integrity_owner', true);", "EXECUTE format('SET ROLE %I', r);", "EXECUTE 'SET LOCAL ROLE ' || quote_ident(r);", "CREATE ROLE x IN ROLE integrity_owner;",
+    "ALTER GROUP integrity_owner ADD USER app_rw;", "GRANT integrity_owner TO app_rw;", "GRANT rights_operator, app_rw TO worker;", "GRANT breakglass_log_owner TO consent_owner;",
+  ]) assert.ok(after(bad).length >= 1, `no detecto: ${bad}`);
+  for (const ok of ["SET LOCAL ROLE consent_owner;", "SET ROLE NONE;", "-- SET ROLE integrity_owner;", "GRANT USAGE ON SCHEMA integrity TO integrity_owner;", "ALTER TABLE x OWNER TO integrity_owner;", "REVOKE integrity_owner FROM app_rw;"]) assert.deepEqual(after(ok), [], ok);
+  // Las migraciones hasta 0086 (y las ceremonias) no estan sujetas; 0087+ si.
+  assert.deepEqual(checkPostRevokeMigrations([{ path: "db/migrations/0086_x.sql", text: "SET LOCAL ROLE integrity_owner;" }]), []);
+  assert.deepEqual(checkPostRevokeMigrations([{ path: "db/ceremonies/open.sql", text: "SET ROLE integrity_owner;" }]), []);
 });

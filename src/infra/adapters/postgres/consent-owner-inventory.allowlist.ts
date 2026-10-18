@@ -1,4 +1,6 @@
-// Gobierna: ADR-010 rev. 6 PR-7c (F-PR7-01, C-3). Allowlist EXACTA del inventario de consent-owner-inventory.ts, generada del catalogo de una base migrada (0000-0083, con 0075-0079 de PR-7b; incluye funciones de los roles a los que consent_owner puede hacer SET ROLE, huellas md5 de cuerpos, policies, triggers, constraints y defaults) y revisada.
+// Gobierna: ADR-010 rev. 6 PR-7c (F-PR7-01, C-3) y PR-7d (F-PR7C-08: version mayor de Postgres; modo: IT0B vs REAL_DATA). Allowlist EXACTA del inventario de consent-owner-inventory.ts, generada del catalogo de una base migrada (0000-0083, con 0075-0079 de PR-7b; incluye funciones de los roles a los que consent_owner puede hacer SET ROLE, huellas md5 de cuerpos, policies, triggers, constraints y defaults) y revisada.
+// PR-7d (C-1): consent_owner ya no tiene SET sobre integrity_owner en NINGUN modo. Revision de seguridad del PR #109 (F-PR7D-11): las filas V2|fn de integrity_owner (8) y de breakglass_log_owner (1) se REPONEN como allowlist POR DUEÑO,
+// independiente del SET: el inventario las lee siempre (en ambos modos), de modo que un ALTER FUNCTION ... OWNER TO posterior a 0086 (que el checker CA-142 no ve) o un cuerpo alterado aparece como diferencia.
 // Cambiarla es un cambio de superficie del migrador: requiere revision de Carlos (CODEOWNERS: src/infra/adapters/postgres/). Orden: collation C.
 
 export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
@@ -189,6 +191,7 @@ export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
   "V2|default|ops.db_catalog|id|b326b5062b2f0e69046810717534cb09|",
   "V2|default|ops.db_catalog|provisioned_at|75230039beb12ce952f24927f2bfa2f2|",
   "V2|default|ops.schema_migration|applied_at|75230039beb12ce952f24927f2bfa2f2|",
+  "V2|fn|breakglass_log_owner|breakglass.ceremony_guard()|false|6319ed4840180a354bbac4b6e0eefbc9|{\"search_path=pg_catalog, pg_temp\"}|{breakglass_log_owner=X/breakglass_log_owner}",
   "V2|fn|grant_owner|platform.action_nonce_guard()|false|3547de8578188d3ec40dd8e4a35c9bd8|{\"search_path=pg_catalog, pg_temp\"}|{grant_owner=X/grant_owner}",
   "V2|fn|grant_owner|platform.approve_grant(p_case_ref text, p_request_ref uuid, p_valid_seconds integer, p_p51_max integer, p_p51_window_seconds integer)|true|ac1ab7ec7fbde7d40d4be447fbabf8ed|{\"search_path=pg_catalog, pg_temp\"}|{grant_owner=X/grant_owner,platform_rw=X/grant_owner}",
   "V2|fn|grant_owner|platform.authorization_check_guard()|false|ebbb676d4b1dca0f20bd1c65f39ff61c|{\"search_path=pg_catalog, pg_temp\"}|{grant_owner=X/grant_owner}",
@@ -377,3 +380,22 @@ export const CONSENT_OWNER_INVENTORY_ALLOWLIST: readonly string[] = [
   "V3|schema|app|app_schema_owner|app_rw:USAGE,app_schema_owner:CREATE,app_schema_owner:USAGE,consent_owner:CREATE,consent_owner:USAGE,grant_owner:USAGE,integrity_reconciler:USAGE,integrity_verifier:USAGE,ledger_writer:USAGE,outbox_claimer:USAGE,platform_rw:USAGE,rights_case_lookup_owner:USAGE,security_event_owner:USAGE,shared_fn_owner:USAGE,staff_roster_owner:USAGE,staff_roster_reader:USAGE,tenant_resolve_owner:USAGE,transition_owner:USAGE,worker:USAGE",
   "V3|schema|ops|ops_schema_owner|app_rw:USAGE,consent_owner:CREATE,consent_owner:USAGE,integrity_chain_verifier:USAGE,integrity_reconciler:USAGE,integrity_verifier:USAGE,ledger_writer:USAGE,ops_schema_owner:CREATE,ops_schema_owner:USAGE,platform_rw:USAGE,security_event_owner:USAGE,shared_fn_owner:USAGE,transition_owner:USAGE,worker:USAGE",
 ];
+
+/**
+ * ADR-010 rev. 6 PR-7d (F-PR7C-08): versiones MAYORES de PostgreSQL con las que esta allowlist se verifico. Los md5 de pg_get_constraintdef/pg_get_expr dependen del deparseo de la version: se genero con PostgreSQL 18 (local) y
+ * coincide en PostgreSQL 16 (service container del CI: integration verde de los PR #106 y #107 con la misma allowlist). startup-checks.ts y TEST-CNS-1805 fallan con un mensaje explicito (no con cientos de diferencias) si
+ * server_version_num es de otra version mayor: hay que verificar y declarar la nueva version aqui (cambio revisado, CODEOWNERS).
+ */
+export const CONSENT_OWNER_INVENTORY_VERIFIED_PG_MAJORS: readonly number[] = [16, 18];
+
+/** Duenos de funciones cuyas filas V2|fn forman parte del inventario en AMBOS modos, independientemente de que consent_owner pueda o no asumirlos (F-PR7D-11). */
+export const CONSENT_OWNER_INVENTORY_OWNER_INDEPENDENT_FN_OWNERS: readonly string[] = ["consent_owner", "integrity_owner", "breakglass_log_owner"];
+
+/**
+ * ADR-010 rev. 6 PR-7d (F-PR7-01, F-PR7C-06): la lista es POR MODO. La lista base es la de IT0B_SYNTHETIC (consent_owner conserva SET sobre 15 owners). En REAL_DATA consent_owner no tiene ninguna membresia SET
+ * (REVOKE explicito de 0086) y por tanto desaparecen las filas V2|fn|<owner>|... de los roles con SET; permanecen las de integrity_owner y breakglass_log_owner (por dueño, F-PR7D-11) y las de consent_owner (ninguna). Antes de cualquier cambio a REAL_DATA_BLOCKERS: F-PR7-01 sigue
+ * abierto porque el migrador aun es dueño de tablas de app/ops y de sus triggers, policies, constraints y defaults (filas V2 que SI permanecen en REAL_DATA).
+ */
+export const CONSENT_OWNER_INVENTORY_ALLOWLIST_REAL_DATA: readonly string[] = CONSENT_OWNER_INVENTORY_ALLOWLIST.filter(
+  (l) => !l.startsWith("V2|fn|") || CONSENT_OWNER_INVENTORY_OWNER_INDEPENDENT_FN_OWNERS.includes(l.split("|")[2] as string),
+);

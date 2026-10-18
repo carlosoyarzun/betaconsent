@@ -3,8 +3,14 @@
 // Una corrida por invocacion (la dispara el timer de systemd). Exit: 0 cadena integra en todos los tenants; 2 algun tenant roto o con filas sin eslabon (ver el log, sin PII);
 // 1 arranque, configuracion, precondicion (policy/FORCE RLS/privilegios), lectura, o ledger vacio (fail-closed; sin detalles ni secretos).
 
+import { mainBreakglassWatch } from "./breakglass-watch.ts";
 import { CHAIN_VERIFIER_EXIT, exitCodeFor, formatChainReport, startChainVerifierProcess } from "./chain-verify-process.ts";
 
+// PR-7e (ADR-010 rev. 6, F-PR7-03, T-8): `main.ts breakglass-watch` es el modo de vigilancia de break-glass (timer de 1 min, mismo rol, sin egress); sin argumento, la verificacion de cadena de siempre.
+if (process.argv[2] === "breakglass-watch") {
+  process.exitCode = await mainBreakglassWatch();
+  process.exit();
+}
 let code: number = CHAIN_VERIFIER_EXIT.ERROR;
 try {
   const proc = await startChainVerifierProcess();
