@@ -340,7 +340,7 @@ test("TEST-CNS-597: GET /recovery/confirm muestra visibles los dos marcadores [L
     const visible = stripHtmlComments(await confirmPage.text());
     assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: efecto sobre los datos ya recolectados al revocar \(supresión\/plazos\), protocolo l\.522\]/);
     assert.match(visible, /\[LEGAL DECISION — copy pendiente de aprobación de Carlos: alcance del retiro \(total, sin retiro parcial\) e irreversibilidad desde esta pantalla \(protocolo l\.423\)\]/);
-    assert.match(visible, /class="lp-btn lp-btn-danger lp-revocation-cta lp-verify-tap-target" id="confirm-recovery-btn"/);
+    assert.match(visible, /class="lp-btn lp-btn-danger lp-cta lp-revocation-cta lp-verify-tap-target" id="confirm-recovery-btn"/);
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   }
