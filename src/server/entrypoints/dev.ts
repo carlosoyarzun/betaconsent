@@ -28,7 +28,7 @@ import { loadInvitationIssuancePolicyConfig } from "../modules/invitation/invita
 import { loadManageHandlePolicyConfig } from "../modules/revocation/manage-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
 import { DEV_MGMT_SEED_REFS } from "./dev-mgmt-seed.ts";
-import { RH3_DEV_CASE_REF, seedRh3DevCase } from "./dev-rh3-seed.ts";
+import { MGMT_DEV_REFS, RH3_DEV_CASE_REF, seedMgmtDevDecision, seedRh3DevCase } from "./dev-rh3-seed.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
   LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY,
@@ -185,11 +185,12 @@ const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", I
 // invitación/OTP/decisión), para poder probar a mano gestión/retiro sin repetir todo el flujo
 // de arriba. CA116_MGMT_TOKEN es un literal fijo (LOCAL only, cero PII, D4 mismo criterio que
 // el resto de este archivo).
+// Con Postgres la base (derivacion del ledger, ADR-010 rev. 5) rechaza insertar una decision ya GRANTED y exige Refs UUIDv4: la siembra pasa por el camino del dominio (seedMgmtDevDecision, refs MGMT_DEV_REFS).
 const MGMT_CHAIN_REF = DEV_MGMT_SEED_REFS.chainRef; // UUIDv4 sintético (F-E2E-01)
 const MGMT_CONSENT_ID = DEV_MGMT_SEED_REFS.consentId;
 const MGMT_TOKEN = "dev-mgmt-token-001";
 // SEC-CNS-016: la escritura corre bajo el tenant (uow.inTenant), igual en memoria que en Postgres.
-await ports.decision.uow.inTenant(TENANT_ID, (tx) => tx.consentDecisionRepo.save({
+if (!pgStore) await ports.decision.uow.inTenant(TENANT_ID, (tx) => tx.consentDecisionRepo.save({
   consentId: MGMT_CONSENT_ID,
   tenantId: TENANT_ID,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
@@ -219,6 +220,15 @@ const revocationPorts: RevocationFlowPorts = pgBundle
   ? pgBundle.revocationPorts
   : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo, ports.managementHandleStore);
 if (pgStore) {
+  await seedMgmtDevDecision(revocationPorts, TENANT_ID, {
+    ...MGMT_DEV_REFS,
+    chainRef: DEV_MGMT_SEED_REFS.chainRef,
+    consentId: DEV_MGMT_SEED_REFS.consentId,
+    dmRef: DEV_MGMT_SEED_REFS.decisionMakerRef,
+    invitationRef: DEV_MGMT_SEED_REFS.invitationRef,
+    verificationRef: DEV_MGMT_SEED_REFS.verificationRef,
+    receiptRef: DEV_MGMT_SEED_REFS.receiptRef,
+  });
   // Siembra del handle por la función SECURITY DEFINER tenant_resolve.register_handle (idempotente; el
   // tenant sale de app.current_tenant_id(); nunca BYPASSRLS).
   await pgStore.uow.withTenantTx(TENANT_ID, (tx) =>

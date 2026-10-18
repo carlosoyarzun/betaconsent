@@ -985,6 +985,7 @@ TEST-CNS-1959,unit,frontend/tests/pages/recovery-confirm.test.tsx,"frontend reco
 TEST-CNS-1960,unit,frontend/tests/api/pages-c.test.ts,"frontend api/pages-c: ruta, método, cabeceras CSRF y cuerpo de cada POST","UX-CNS-004;F-PR6-25;ADR-001 rev.8 F1",ACTIVE
 TEST-CNS-1897,integration,tests/integration/consent-flow/spa-http.test.ts,"spa: solo con catálogo LOCAL; dist con inline o symlink aborta el arranque","ADR-001 rev.8 F1;SEC-UI-R1;SEC-UI-R2;SEC-UI-R4",ACTIVE
 TEST-CNS-1896,unit,tests/unit/framework/frontend-boundary.test.ts,"frontend-boundary: rechaza new URL, import.meta.glob y url() de CSS hacia fuera de frontend/","ADR-001 rev.8 F1;SEC-UI-R6",ACTIVE
+<<<<<<< HEAD
 TEST-CNS-1898,integration,tests/integration/consent-flow/page-state-http.test.ts,"GET /decision/page-state con sesión verificada -> 200 JSON no-store con relaciones, versión servida (sin hash) y nada más","API-CNS-194;API-CNS-195;ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1899,integration,tests/integration/consent-flow/page-state-http.test.ts,"GET /decision/page-state sin sesión, con basura o con sesión solo LANDING -> 404 uniforme idéntico al de GET /decision, no-store","API-CNS-194;API-CNS-195;ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
 TEST-CNS-1900,integration,tests/integration/consent-flow/page-state-http.test.ts,"GET /decision/page-state con invitación cancelada (I9) -> 404 uniforme (P-30), igual que GET /decision","API-CNS-194;API-CNS-195;ADR-001 rev.8 F1;ADR-001 §3",ACTIVE
@@ -1102,3 +1103,9 @@ TEST-CNS-2050,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-085: reflow a 390 px
 TEST-CNS-2051,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-086: foco visible: el control enfocado por teclado tiene indicador (outline/box-shadow) en las pantallas con botones (WCAG 2.4.7)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
 TEST-CNS-2052,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-087: cada pantalla tiene lang=es, un único h1 visible y una región main con nombre accesible (WCAG 3.1.1, 1.3.1, 2.4.1)","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
 TEST-CNS-2053,e2e,e2e/specs/08-a11y-reflow.spec.ts,"E2E-CNS-088: hallazgo F-E2E-04: objetivos táctiles >= 24 px (WCAG 2.5.8, regla axe target-size) en las 8 pantallas","ADR-001 F1;equivalencia SSR-SPA",ACTIVE
+=======
+TEST-CNS-2060,unit,tests/unit/deploy/migrate-local-grants-guard.test.ts,"deploy migrate: local-grants acepta solo una fila LOCAL/SYNTHETIC","PR-F deploy-package;F-PR-F-01",ACTIVE
+TEST-CNS-2061,unit,tests/unit/deploy/migrate-local-grants-guard.test.ts,"deploy migrate: local-grants se niega con mensaje claro si el catálogo no es LOCAL/SYNTHETIC","PR-F deploy-package;F-PR-F-01",ACTIVE
+TEST-CNS-2062,integration,tests/integration/consent-flow/healthz-http.test.ts,"web: GET /healthz responde 200 {status:ok} sin cookies, sin cache y sin datos","PR-F deploy-package",ACTIVE
+TEST-CNS-2063,integration,tests/integration/consent-flow/healthz-http.test.ts,"web: /healthz solo admite GET","PR-F deploy-package",ACTIVE
+>>>>>>> origin/feat/deploy-package

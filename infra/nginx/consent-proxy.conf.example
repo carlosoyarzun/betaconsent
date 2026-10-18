@@ -1,0 +1,14 @@
+# Gobierna: orden de Carlos 2026-10-18 (PR-F). Instalar como /etc/nginx/snippets/consent-proxy.conf (lo incluye consent.lectorpro.cl.conf).
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $remote_addr;      # se REEMPLAZA (no se encadena): el web no confia en esta cabecera, pero los logs si.
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host $host;
+proxy_connect_timeout 5s;
+proxy_send_timeout 30s;
+proxy_read_timeout 30s;
+proxy_redirect off;
+# No se almacena en cache ni se reescriben cabeceras de seguridad ni cookies de la aplicacion.
+proxy_buffering on;
