@@ -1,0 +1,12 @@
+/* Consola dev del colegio (dev-staff-console-page.ts, SOLO LOCAL). Antes era un <style> inline; ADR-001 §3 prohíbe el
+   inline (style-src 'self'). Mismas reglas, acotadas a body.lp-dev-console. Archivo aparte (no app.css) porque app.css
+   no admite colores literales (TEST-CNS-1104) y estos valores son los de la consola original. */
+.lp-dev-console main { max-width: 560px; margin: 0 auto; padding: 24px; }
+.lp-dev-console label { display: block; margin-top: 16px; font-weight: 600; }
+.lp-dev-console input[type=email],
+.lp-dev-console select { display: block; width: 100%; min-height: 44px; box-sizing: border-box; padding: 8px; }
+.lp-dev-console button { min-height: 44px; margin-top: 16px; padding: 0 16px; }
+.lp-dev-console :focus-visible { outline: 3px solid #1a56db; outline-offset: 2px; }
+.lp-dev-console .dev-banner { border: 2px dashed #b45309; padding: 8px; }
+.lp-dev-console .dev-error { border: 2px solid #b91c1c; padding: 8px; margin: 16px 0; }
+.lp-dev-console dl { word-break: break-all; }

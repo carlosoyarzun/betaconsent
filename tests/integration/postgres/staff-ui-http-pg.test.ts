@@ -242,7 +242,7 @@ pgTest("TEST-CNS-1124 pg http: GET /staff/students (HTML) -> 200, exactamente 1 
     assert.equal(normalize(completed.body), normalize(declined.body));
     assert.equal(Buffer.byteLength(normalize(completed.body)), Buffer.byteLength(normalize(declined.body)));
     assert.deepEqual(stableHeaders(completed.headers), stableHeaders(declined.headers));
-    assert.match(completed.headers.get("content-security-policy") ?? "", /script-src 'none'/);
+    assert.match(completed.headers.get("content-security-policy") ?? "", /script-src 'self'; style-src 'self'/);
     // R5: none solo con navigate+document; same-origin tambien; sin cabecera o cross-site no escribe fila
     assert.equal((await ask(s.adminC, s.tenantC, { "sec-fetch-site": "same-origin" })).status, 200);
     assert.equal(await accessLogCount(s.admin, s.tenantC), 2);

@@ -1,6 +1,6 @@
 // Gobierna: CA-125 + aprobación de Carlos 2026-10-01 (consola dev del colegio, SOLO LOCAL).
 // HTML server-rendered sin JS ni CDN. Reutiliza el CSS del design-system y de la app (mismo patrón
-// que welcome-page.ts) más un <style> mínimo inline. Todo valor dinámico pasa por escapeHtml.
+// que welcome-page.ts) más las clases `lp-dev-console*` de app.css (sin <style> inline, ADR-001 §3). Todo valor dinámico pasa por escapeHtml.
 
 import { escapeHtml } from "./welcome-page.ts";
 
@@ -24,16 +24,7 @@ const HEAD = `<meta charset="utf-8">
   <title>Consola de desarrollo del colegio · Consent App</title>
   <link rel="stylesheet" href="/assets/design-system/index.css">
   <link rel="stylesheet" href="/assets/app.css">
-  <style>
-    main { max-width: 560px; margin: 0 auto; padding: 24px; }
-    label { display: block; margin-top: 16px; font-weight: 600; }
-    input[type=email], select { display: block; width: 100%; min-height: 44px; box-sizing: border-box; padding: 8px; }
-    button { min-height: 44px; margin-top: 16px; padding: 0 16px; }
-    :focus-visible { outline: 3px solid #1a56db; outline-offset: 2px; }
-    .dev-banner { border: 2px dashed #b45309; padding: 8px; }
-    .dev-error { border: 2px solid #b91c1c; padding: 8px; margin: 16px 0; }
-    dl { word-break: break-all; }
-  </style>`;
+  <link rel="stylesheet" href="/assets/dev-console.css">`;
 
 function shell(body: string): string {
   return `<!doctype html>
@@ -41,7 +32,7 @@ function shell(body: string): string {
 <head>
   ${HEAD}
 </head>
-<body>
+<body class="lp-dev-console">
   <main aria-labelledby="dev-h1">
     <p class="dev-banner" role="note">Herramienta de desarrollo, solo local, con datos inventados. No es una pantalla de producto.</p>
     <h1 id="dev-h1">Consola de desarrollo del colegio</h1>

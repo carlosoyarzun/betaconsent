@@ -57,6 +57,7 @@ import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handl
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
 import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
 import type { StaffConsolePorts } from "./http/staff-console.handler.ts";
+import { parseUiMode, type UiMode } from "./http/spa-assets.ts";
 import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -265,7 +266,17 @@ if (pgBundle) {
   staffConsole = { ...memoryStaff, subjectDirectory };
 }
 
+// ADR-001 F1 (fase A): CNS_UI_MODE=ssr (default) | spa (sirve dist/index.html en las 8 rutas HTML del invitado).
+let uiMode: UiMode;
+try {
+  uiMode = parseUiMode(process.env.CNS_UI_MODE);
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(1);
+}
+
 const server = createConsentFlowHttpServer({
+  uiMode,
   config: { allowedOrigin },
   ports,
   revocationPorts,

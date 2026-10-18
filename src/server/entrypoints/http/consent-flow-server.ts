@@ -110,6 +110,8 @@ import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from ".
 import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
+import { HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
+import { DEFAULT_SPA_DIST_DIR, loadSpaBundle, type UiMode } from "./spa-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
 import { STAFF_LOGOUT_PATH } from "./staff-ui-pages.ts";
@@ -120,6 +122,11 @@ import { createPgStaffRosterReader } from "../../../infra/adapters/postgres/staf
 import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 
 interface ConsentFlowHttpServerBaseOptions {
+  /** ADR-001 F1 (fase A): `ssr` (default, HTML renderizado por las *-page.ts) | `spa` (las 8 rutas HTML del invitado
+   * devuelven `dist/index.html`; la lógica de cookie/sesión/404 uniforme de cada handler se conserva intacta). */
+  readonly uiMode?: UiMode;
+  /** Directorio del build de Vite (default: `<raíz>/dist`). Solo se lee con `uiMode: "spa"`. */
+  readonly spaDistDir?: string;
   /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave HMAC del chainRef. */
   readonly chainRefKey?: Buffer;
   /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave del decisionMakerRef (INV-CM-09). */
@@ -562,7 +569,7 @@ function contentTypeForStatus(status: number): string {
 function writeHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Content-Security-Policy", "default-src 'self'");
+  res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
 }
 
 /** GET /recovery/confirm (SEC-CNS-014): además de las cabeceras de writeHtmlSecurityHeaders,
@@ -572,7 +579,7 @@ function writeHtmlSecurityHeaders(res: ServerResponse): void {
 function writeRecoveryHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'");
+  res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
 }
 
@@ -627,6 +634,14 @@ export type ConsentFlowHttpServerOptions = ConsentFlowHttpServerBaseOptions &
 
 export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOptions): Server {
   const config = loadRightsCaseHttpConfig(options.config);
+  // ADR-001 F1: con `spa` el build se carga UNA vez al arrancar (falla si no existe: fail-closed).
+  const spa = options.uiMode === "spa" ? loadSpaBundle(options.spaDistDir ?? DEFAULT_SPA_DIST_DIR) : undefined;
+  /** Cuerpo de una de las 8 páginas HTML del invitado. `ssr`: el HTML de la *-page.ts (perezoso). `spa`: el mismo
+   * `index.html` en ambos casos; el 404 uniforme (INV-CM-05) lleva `cns-page-state=uniform-error` y el mismo status. */
+  const sendPage = (res: ServerResponse, status: 200 | 404, renderSsr: () => string): void => {
+    res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
+    res.end(spa ? (status === 404 ? spa.indexUniformError : spa.indexReady) : renderSsr());
+  };
   // P2-6: sin default aleatorio; fail-closed y sin volcar material de clave.
   const sessionSecret = options.sessionSecret;
   assertKeyMaterial(sessionSecret, "sessionSecret", "CNS_SESSION_SECRET");
@@ -730,8 +745,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       writeHtmlSecurityHeaders(res);
       if (!view.session) {
         if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderWelcomeUniformErrorPage());
+        sendPage(res, 404, () => renderWelcomeUniformErrorPage());
         return;
       }
       // Cookie CSRF del double-submit (csrf.ts): legible por welcome.js, distinta de la cookie
@@ -741,8 +755,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
       if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
       res.setHeader("Set-Cookie", cookiesToSet);
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderWelcomePage());
+      sendPage(res, 200, () => renderWelcomePage());
       return;
     }
 
@@ -754,13 +767,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.verificationRef) {
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderVerifyUniformErrorPage());
+        sendPage(res, 404, () => renderVerifyUniformErrorPage());
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderVerifyPage());
+      sendPage(res, 200, () => renderVerifyPage());
       return;
     }
 
@@ -772,13 +783,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.verificationRef || !session.decisionMakerRef || !(await isInvitationVerifiedForSession(ports, session))) {
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderDecisionUniformErrorPage());
+        sendPage(res, 404, () => renderDecisionUniformErrorPage());
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion(), await resolveSubjectLabel(ports, session)));
+      // SPA: las opciones de relación, la versión servida y la etiqueta del titular salen del HTML en `ssr`; la página React
+      // las necesitará por un endpoint JSON (pendiente en su fase, ver frontend/src/pages/README.md). No se lee nada en `spa`.
+      const decisionHtml = spa ? "" : renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion(), await resolveSubjectLabel(ports, session));
+      sendPage(res, 200, () => decisionHtml);
       return;
     }
 
@@ -837,29 +849,26 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       writeHtmlSecurityHeaders(res);
       if (!view.session) {
         if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderManageUniformErrorPage());
+        sendPage(res, 404, () => renderManageUniformErrorPage());
         return;
       }
       const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
       if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
       res.setHeader("Set-Cookie", cookiesToSet);
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
       // SEC-CNS-016: la lectura de la decisión corre BAJO el tenant de la sesión (inTenant).
-      const revokedDecisionRef = view.session.revokedDecisionRef;
-      const decisionRevoked =
-        revokedDecisionRef !== undefined &&
-        (await revocationPorts.revocation.uow.inTenant(view.session.tenantId, (tx) =>
-          tx.consentDecisionRepo.findByConsentId(view.session!.tenantId, revokedDecisionRef),
-        ))?.state === "REVOKED";
-      res.end(
-        !view.session.manageDecisionMakerRef
-          ? renderManageEntryPage()
-          : decisionRevoked
-            ? renderManageRevokedPage()
-            : renderManageStatusPage(),
-      );
+      // SPA: la variante (entrada/estado/revocada) se resolverá por JSON en la fase de /manage; en `spa` no se lee.
+      let manageHtml = "";
+      if (!spa) {
+        const revokedDecisionRef = view.session.revokedDecisionRef;
+        const decisionRevoked =
+          revokedDecisionRef !== undefined &&
+          (await revocationPorts.revocation.uow.inTenant(view.session.tenantId, (tx) =>
+            tx.consentDecisionRepo.findByConsentId(view.session!.tenantId, revokedDecisionRef),
+          ))?.state === "REVOKED";
+        manageHtml = !view.session.manageDecisionMakerRef ? renderManageEntryPage() : decisionRevoked ? renderManageRevokedPage() : renderManageStatusPage();
+      }
+      sendPage(res, 200, () => manageHtml);
       return;
     }
 
@@ -869,13 +878,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.manageVerificationRef) {
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderVerifyUniformErrorPage());
+        sendPage(res, 404, () => renderVerifyUniformErrorPage());
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderVerifyPage("MANAGE"));
+      sendPage(res, 200, () => renderVerifyPage("MANAGE"));
       return;
     }
 
@@ -885,13 +892,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.revocationVerificationRef) {
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderVerifyUniformErrorPage());
+        sendPage(res, 404, () => renderVerifyUniformErrorPage());
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderVerifyPage("REVOCATION"));
+      sendPage(res, 200, () => renderVerifyPage("REVOCATION"));
       return;
     }
 
@@ -901,13 +906,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.revocationOtpVerified || !session.revocationRef || !session.manageDecisionMakerRef) {
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderRevocationUniformErrorPage());
+        sendPage(res, 404, () => renderRevocationUniformErrorPage());
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderRevocationConfirmPage());
+      sendPage(res, 200, () => renderRevocationConfirmPage());
       return;
     }
 
@@ -923,16 +926,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       writeRecoveryHtmlSecurityHeaders(res);
       if (!view.eligible || !view.tokenHash) {
         await floorDelay(startedAt, RECOVERY_CONFIRM_UNIFORM_FLOOR_MS);
-        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderRecoveryUniformErrorPage());
+        sendPage(res, 404, () => renderRecoveryUniformErrorPage());
         return;
       }
       // P2 (fijación de cookie): el CSRF de esta página queda ligado al hash vigente ahora
       // mismo; POST /recovery/revoke lo recalcula contra la cookie __Host-cns-recovery ACTUAL
       // (recovery-handle.ts verifyRecoveryCsrfToken).
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateRecoveryCsrfToken(recoveryCsrfKey, view.tokenHash)));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderRecoveryConfirmPage());
+      sendPage(res, 200, () => renderRecoveryConfirmPage());
       return;
     }
 
@@ -947,6 +948,17 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         decodedPath = undefined;
       }
       const asset = decodedPath ? resolveStaticAsset(decodedPath) : null;
+      // ADR-001 F1: assets con hash del build de Vite (solo `spa`), igualdad exacta contra el mapa cargado al arrancar.
+      const spaAsset = !asset && spa && decodedPath ? spa.assets.get(decodedPath) : undefined;
+      if (spaAsset) {
+        res.writeHead(200, {
+          "content-type": spaAsset.contentType,
+          "cache-control": "public, max-age=31536000, immutable",
+          "x-content-type-options": "nosniff",
+        });
+        res.end(spaAsset.content);
+        return;
+      }
       if (!asset) {
         res.writeHead(404, { "content-type": "application/json" });
         res.end(JSON.stringify({ status: 404 }));
@@ -1083,7 +1095,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       }
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "same-origin"); // formularios sin JS: con no-referrer Chromium manda Origin: null
-      res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+      res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
       if (consoleResponse.setCookies && consoleResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...consoleResponse.setCookies]);
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
       res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });

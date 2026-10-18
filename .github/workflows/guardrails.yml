@@ -44,3 +44,7 @@ jobs:
         # Invoca check.ts directamente (no vía script de npm): el veredicto de este paso no
         # depende de lo que package.json defina en "scripts" (SEC-CNS-010 P1-08).
         run: node tools/guardrails/ports-adapters/check.ts .
+
+      - name: Guardrail de frontera de frontend/ (ADR-001 F1)
+        # frontend/ no importa de src/, db/ ni tools/ (solo `import type` de contracts/**).
+        run: node tools/guardrails/frontend-boundary-check.ts
