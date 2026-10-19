@@ -25,7 +25,7 @@ test.describe("a11y y reflow", () => {
     const blocking: string[] = [];
     const listed: string[] = [];
     await walkAllPages(page, app, async (name) => {
-      const r = await axeScan(page, name, { exclude: ["target-size"] });
+      const r = await axeScan(page, name);
       blocking.push(...r.blocking);
       listed.push(...r.listed);
     });
@@ -34,8 +34,7 @@ test.describe("a11y y reflow", () => {
     expect(blocking, `violaciones serious/critical:\n${blocking.join("\n")}`).toEqual([]);
   });
 
-  test("E2E-CNS-088 hallazgo F-E2E-04: objetivos táctiles >= 24 px (WCAG 2.5.8, regla axe target-size) en las 8 pantallas", async ({ page, app }) => {
-    test.fail(true, "F-E2E-04 (P2, axe serious): el enlace de ayuda mailto y un enlace en /verify|/manage/verify|/manage/revocation/verify no cumplen 24 px ni espaciado (WCAG 2.5.8)");
+  test("E2E-CNS-088 F-E2E-04 (corregido): objetivos táctiles >= 24 px (WCAG 2.5.8, regla axe target-size) en las 8 pantallas", async ({ page, app }) => {
     test.setTimeout(90_000);
     const found: string[] = [];
     await walkAllPages(page, app, async (name) => {
@@ -48,7 +47,7 @@ test.describe("a11y y reflow", () => {
     const blocking: string[] = [];
     for (const route of ["/welcome", "/verify", "/decision", "/manage", "/manage/verify", "/manage/revocation/verify", "/manage/revocation/confirm", "/recovery/confirm"]) {
       await page.goto(route);
-      blocking.push(...(await axeScan(page, `${route} (error uniforme)`, { exclude: ["target-size"] })).blocking);
+      blocking.push(...(await axeScan(page, `${route} (error uniforme)`)).blocking);
     }
     expect(blocking, blocking.join("\n")).toEqual([]);
   });

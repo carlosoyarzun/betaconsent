@@ -5,6 +5,7 @@
 // con environment=LOCAL; en cualquier otro valor (incluido "no declarado") la ruta no existe.
 // TEST-CNS-508 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -25,7 +26,7 @@ async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTIO
   close(): Promise<void>;
 }> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, environment });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, environment });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;

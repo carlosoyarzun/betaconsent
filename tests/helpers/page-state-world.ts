@@ -1,6 +1,6 @@
 // Gobierna: ADR-001 rev. 8 F1 (fase B), API-CNS-194/195 (GET /decision/page-state, GET /manage/page-state).
 // Mundo sintético compartido por tests/integration/consent-flow/page-state-http.test.ts y
-// tests/contract/http/page-state-contract.test.ts: servidor HTTP real en puerto efímero (ssr o spa) con puertos en
+// tests/contract/http/page-state-contract.test.ts: servidor HTTP real en puerto efímero (SPA) con puertos en
 // memoria, una invitación sintética enviada y una decisión GRANTED sembrada para /manage. Sin PII.
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -12,6 +12,7 @@ import { createInvitation, markInvitationReady, sendInvitation } from "../../src
 import { LECTORPRO_BETA_CONFIG } from "../../src/server/modules/consent-decision/lectorpro-beta.config.ts";
 import type { InMemoryOtpChannelSink } from "../../src/infra/adapters/in-memory-otp-channel-sink.adapter.ts";
 import type { InMemoryTenantHandleAdapter } from "../../src/infra/adapters/in-memory-tenant-handle.adapter.ts";
+import { SYNTHETIC_SPA_DIST_DIR } from "./synthetic-spa-dist.ts";
 import { fixtureUuid } from "../contract/uuid-fixture.ts";
 import { TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET, TEST_SESSION_SECRET, TEST_STAFF_ROSTER_CURSOR_KEY, TEST_GUEST_CHANNEL } from "./test-ref-keys.ts";
 
@@ -34,7 +35,7 @@ export interface World {
 }
 
 export interface WorldOptions {
-  readonly uiMode?: "ssr" | "spa";
+  /** Default: el dist sintético compartido (la SPA es el único modo; el web no arranca sin dist/). */
   readonly spaDistDir?: string;
 }
 
@@ -49,8 +50,7 @@ export async function startWorld(options: WorldOptions = {}): Promise<World> {
     ports,
     revocationPorts,
     environment: "LOCAL",
-    ...(options.uiMode ? { uiMode: options.uiMode } : {}),
-    ...(options.spaDistDir ? { spaDistDir: options.spaDistDir } : {}),
+    spaDistDir: options.spaDistDir ?? SYNTHETIC_SPA_DIST_DIR,
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {

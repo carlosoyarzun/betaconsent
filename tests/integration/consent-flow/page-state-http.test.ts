@@ -4,9 +4,6 @@
 // solo lectura (INV-CM-08), no-store y sin PII. TEST-CNS-1898..1900 (traceability/test-matrix.csv).
 
 import test from "node:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
 
 import { getServedConsentVersion } from "../../../src/server/entrypoints/http/served-consent-version.ts";
@@ -46,9 +43,9 @@ test("TEST-CNS-1898: GET /decision/page-state con sesión verificada -> 200 JSON
     assert.deepEqual(body.servedVersion, { consentVersion: served.consentVersion, privacyNoticeVersion: served.privacyNoticeVersion, text: served.text });
     assert.equal(JSON.stringify(body).includes(served.consentTextHash), false, "no expone consentTextHash");
     if ("subjectLabel" in body) assert.match(String(body.subjectLabel), /^Alumno de prueba [0-9]{1,4}$/);
-    // Equivalencia con el SSR: la misma versión servida aparece en GET /decision (ssr).
+    // GET /decision ya no interpola nada (SSR retirado): sirve el shell de la SPA y los datos viajan solo por page-state.
     const html = await (await get(world, "/decision", { [SESSION_COOKIE_NAME]: session })).text();
-    assert.ok(html.includes(served.text) && html.includes('<option value="SYNTHETIC_GUARDIAN">'));
+    assert.ok(html.includes('id="root"') && !html.includes(served.text) && !html.includes("SYNTHETIC_GUARDIAN"));
   });
 });
 
@@ -94,15 +91,17 @@ test("TEST-CNS-1901: GET /manage/page-state devuelve solo la variante: entry (si
     const statusRes = await get(world, "/manage/page-state", { [SESSION_COOKIE_NAME]: verified.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: verified.handleCookie });
     assert.equal(statusRes.status, 200);
     assert.deepEqual(await statusRes.json(), { variant: "status" });
-    assert.match(await (await get(world, "/manage", { [SESSION_COOKIE_NAME]: verified.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: verified.handleCookie })).text(), /start-revocation-btn/);
+    const manageHtml = await get(world, "/manage", { [SESSION_COOKIE_NAME]: verified.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: verified.handleCookie });
+    assert.equal(manageHtml.status, 200);
+    assert.match(await manageHtml.text(), /id="root"/); // shell de la SPA; la variante viaja solo por page-state
 
-    // Decisión REVOKED (C6, INV-5): con OTP MANAGE -> revoked; sin OTP MANAGE -> entry (igual que el SSR, TEST-CNS-706).
+    // Decisión REVOKED (C6, INV-5): con OTP MANAGE -> revoked; sin OTP MANAGE -> entry (igual que el SSR retirado, TEST-CNS-706).
     const seeded = await world.ports.decision.repo.findByConsentId(TENANT_ID, fixtureUuid("consent-ps1899"));
     assert.ok(seeded);
     await world.ports.decision.repo.save({ ...seeded, state: "REVOKED" });
     const revokedRes = await get(world, "/manage/page-state", { [SESSION_COOKIE_NAME]: verified.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: verified.handleCookie });
     assert.deepEqual(await revokedRes.json(), { variant: "revoked" });
-    assert.match(await (await get(world, "/manage", { [SESSION_COOKIE_NAME]: verified.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: verified.handleCookie })).text(), /id="manage-revoked"/);
+    assert.equal((await get(world, "/manage", { [SESSION_COOKIE_NAME]: verified.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: verified.handleCookie })).status, 200);
     const entryAgain = await get(world, "/manage/page-state", { [SESSION_COOKIE_NAME]: entry.session, [MANAGE_ENTRY_HANDLE_COOKIE_NAME]: entry.handleCookie });
     assert.deepEqual(await entryAgain.json(), { variant: "entry" });
   });
@@ -131,16 +130,8 @@ test("TEST-CNS-1902: GET /manage/page-state sin handle ni sesión, o con sesión
   });
 });
 
-test("TEST-CNS-1925: con CNS_UI_MODE=spa los page-state responden igual (JSON no-store, 404 uniforme) y la ruta HTML sigue sirviendo index.html", async () => {
-  const dist = mkdtempSync(join(tmpdir(), "cns-pagestate-dist-"));
-  mkdirSync(join(dist, "assets"));
-  mkdirSync(join(dist, ".vite"));
-  writeFileSync(join(dist, ".vite", "manifest.json"), JSON.stringify({ "index.html": { file: "assets/index-Ab12Cd34.js", isEntry: true }, "style.css": { file: "assets/style-Ef56Gh78.css" } }));
-  writeFileSync(join(dist, "index.html"), '<!doctype html>\n<html lang="es"><head><meta charset="utf-8"><meta name="cns-page-state" content="ready"><title>Consent App</title>\n<script type="module" crossorigin src="/assets/index-Ab12Cd34.js"></script><link rel="stylesheet" crossorigin href="/assets/style-Ef56Gh78.css"></head>\n<body class="lp-guest-body"><div id="root"></div></body></html>\n');
-  writeFileSync(join(dist, "assets", "index-Ab12Cd34.js"), "console.log('synthetic');\n");
-  writeFileSync(join(dist, "assets", "style-Ef56Gh78.css"), ".lp-guest-body{margin:0}\n");
-  const world = await startWorld({ uiMode: "spa", spaDistDir: dist });
-  try {
+test("TEST-CNS-1925: los page-state responden JSON no-store, el 404 es uniforme y la ruta HTML sirve el shell index.html de la SPA", async () => {
+  await withWorld(async (world) => {
     const session = await verifiedDecisionSession(world, "ps1925");
     const ok = await get(world, "/decision/page-state", { [SESSION_COOKIE_NAME]: session });
     assert.equal(ok.status, 200);
@@ -153,8 +144,5 @@ test("TEST-CNS-1925: con CNS_UI_MODE=spa los page-state responden igual (JSON no
     const none = await get(world, "/manage/page-state");
     assert.equal(none.status, 404);
     assert.equal(await none.text(), '{"status":404}');
-  } finally {
-    await world.close();
-    rmSync(dist, { recursive: true, force: true });
-  }
+  });
 });

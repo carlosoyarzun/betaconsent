@@ -5,6 +5,7 @@
 // 1150 dev-login solo LOCAL, mismo mecanismo, sin PII ni sid en almacen/logs; CA-140: 1180 CSRF antes del touch, 1181 roster por request,
 // 1182 rol sin permiso con sesion valida (GRD-SE-06/08, ERR-SE-03). Solo datos sinteticos.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { request as httpRequest, type Server } from "node:http";
@@ -85,7 +86,7 @@ async function start(opts: { environment?: "LOCAL" | "DEV"; subjectCount?: numbe
   }
   const directory = createInMemorySubjectDirectory("LOCAL", subjects.map((s) => ({ tenantId: TENANT_A, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })));
   const clock = { now: Date.now() };
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports,
     sessionSecret: SECRET,

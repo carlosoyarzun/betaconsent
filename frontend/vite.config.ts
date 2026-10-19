@@ -45,8 +45,8 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     cors: false, // sin CORS: ninguna otra página local puede leer lo proxeado (incluidos los sinks /__dev/*)
-    // Solo frontend/ y los dos CSS enlazados (design-system y el app.css del SSR, ver frontend-boundary.ts).
-    fs: { allow: [here, `${here}/../design-system`, `${here}/../src/server/entrypoints/http/assets/app.css`] },
+    // Solo frontend/ y el design system enlazado por CSS (ver frontend-boundary.ts).
+    fs: { allow: [here, `${here}/../design-system`] },
     proxy: {
       // API JSON, canjes 303 (/i /m /r) y sinks dev -> backend. El navegador envía Origin del dev server; se reescribe al
       // del backend para pasar GRD-CM-10 sin tocar CNS_ALLOWED_ORIGIN (ver frontend/README.md, limitaciones).

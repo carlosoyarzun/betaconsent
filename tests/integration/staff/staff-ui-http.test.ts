@@ -6,6 +6,7 @@
 // 1118 (cero PII en logs), 1119 (paginacion con cursor), 1120 (lista vacia), 1121 (CSP y cabeceras en todas las respuestas HTML),
 // 1122 (rutas JSON existentes intactas). Solo datos sinteticos, cero PII.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -96,7 +97,7 @@ async function start(opts: StartOptions = {}): Promise<Harness> {
   }
   const directory = createInMemorySubjectDirectory("LOCAL", students.map((s) => ({ tenantId: TENANT_A, subjectRef: s.subjectRef, label: s.label, participationRef: s.participationRef })));
   const sessionSecret = SESSION_SECRET;
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports,
     sessionSecret,

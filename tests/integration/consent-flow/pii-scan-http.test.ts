@@ -5,6 +5,7 @@
 // email (incluidos sinteticos), OTP, token en claro, valor de cookie __Host-*, secreto de entorno o hash dm:.
 // TEST-CNS-952 (recorrido) y TEST-CNS-954 (el escaner no es vacuo: detecta fugas plantadas).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -63,7 +64,7 @@ test("TEST-CNS-952 PII scan e2e (memoria): /i -> OTP -> decision, /m -> retiro, 
     productRef: LECTORPRO_BETA_CONFIG.productRef,
     status: "ACTIVE",
   });
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: SCAN_ORIGIN },
     ports,
     revocationPorts,

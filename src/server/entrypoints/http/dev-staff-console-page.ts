@@ -2,7 +2,7 @@
 // HTML server-rendered sin JS ni CDN. Reutiliza el CSS del design-system y de la app (mismo patrón
 // que welcome-page.ts) más las clases `lp-dev-console*` de app.css (sin <style> inline, ADR-001 §3). Todo valor dinámico pasa por escapeHtml.
 
-import { escapeHtml } from "./welcome-page.ts";
+import { escapeHtml } from "./html-escape.ts";
 
 export interface DevStaffConsoleFormView {
   readonly kind: "form";

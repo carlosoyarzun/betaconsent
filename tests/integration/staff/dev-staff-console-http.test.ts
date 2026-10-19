@@ -2,6 +2,7 @@
 // GET /__dev/staff-console). Reutiliza los handlers /staff/* (EN0 -> I1 -> I2 -> I3). Datos
 // sintéticos, cero PII. TEST-CNS-1060..TEST-CNS-1064 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -53,7 +54,7 @@ function startServer(environment: "LOCAL" | "DEV"): Promise<Harness> {
       status: "ACTIVE",
     });
   }
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN },
     ports,
     sessionSecret: randomBytes(32),

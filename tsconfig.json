@@ -26,6 +26,7 @@
     "tools/guardrails/dist-csp.ts",
     "tools/guardrails/dist-csp-check.ts",
     "tools/testing/**/*.ts",
+    "tools/deploy/**/*.ts",
     "tests/guardrails/ports-adapters/*.test.ts",
     "tests/unit/**/*.ts",
     "tests/integration/**/*.ts",

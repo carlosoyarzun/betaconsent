@@ -10,6 +10,7 @@
 // propio de tests/contract/http/schema-lite.ts (sin dependencias nuevas).
 // TEST-CNS-512..TEST-CNS-524 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -60,7 +61,7 @@ interface ConsentFlowHarness {
 
 function startConsentFlowServer(): Promise<ConsentFlowHarness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -675,7 +676,7 @@ test("TEST-CNS-603: GET /r/{token} responde 303 con Location que valida contra e
     chainRef: fixtureUuid("chain-603"),
     revokedDecisionRef: fixtureUuid("consent-603"),
   });
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   const baseUrl = await new Promise<string>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;

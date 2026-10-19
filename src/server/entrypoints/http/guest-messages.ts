@@ -11,7 +11,7 @@
 // Todo texto legal es marcador [LEGAL DECISION]; el copy no legal es [UX — borrador].
 
 import type { GuestMessage } from "../../ports/guest-message-channel.port.ts";
-import { escapeHtml } from "./guest-layout.ts";
+import { escapeHtml } from "./html-escape.ts";
 import { purposeTitle } from "./guest-purposes.ts";
 
 /** Valores resueltos de tokens del DS (tokens.css, tema claro): --lp-action-primary, --lp-text-*,

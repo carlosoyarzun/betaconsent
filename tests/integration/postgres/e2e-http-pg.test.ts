@@ -5,6 +5,7 @@
 // decision; /m -> verificacion -> retiro -> recibo; recuperacion /r; RH3 confirmacion + co-firma. El estado
 // final se verifica en la base. SYNTHETIC DATA ONLY. Requiere Postgres real (harness.ts).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { deriveChainRefKey } from "../../../src/server/modules/consent-decision/chain-ref.ts";
 import { deriveDecisionMakerRefKey } from "../../../src/server/modules/consent-decision/decision-maker-ref.ts";
 import assert from "node:assert/strict";
@@ -86,7 +87,7 @@ async function boot(ctx: PgTestContext, guestChannel: { send(message: never): Pr
     decisionMakerRefKey: deriveDecisionMakerRefKey(Buffer.alloc(32, 8)),
     invitationIssuancePolicy: loadInvitationIssuancePolicyConfig(LOCAL_ONLY_DEV_INVITATION_ISSUANCE_POLICY),
   });
-  const server = createConsentFlowHttpServer({ guestMessageChannel: guestChannel as typeof TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: guestChannel as typeof TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN },
     ports: bundle.ports,
     revocationPorts: bundle.revocationPorts,

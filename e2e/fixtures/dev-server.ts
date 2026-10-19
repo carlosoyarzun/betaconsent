@@ -35,7 +35,6 @@ export async function startDevServer(extraEnv: Record<string, string> = {}): Pro
       PATH: process.env.PATH ?? "",
       CNS_ENVIRONMENT: "LOCAL",
       PORT: String(port),
-      ...(process.env.CNS_UI_MODE ? { CNS_UI_MODE: process.env.CNS_UI_MODE } : {}),
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],

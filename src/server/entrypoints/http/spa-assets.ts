@@ -15,25 +15,6 @@ import { checkDist } from "./dist-validation.ts";
 const PROJECT_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 export const DEFAULT_SPA_DIST_DIR = `${PROJECT_ROOT}dist`;
 
-export type UiMode = "ssr" | "spa";
-
-/** SEC-UI R4 — ÚNICO PUNTO DE CAMBIO: mientras 7 de las 8 pantallas sean esqueletos, `spa` solo se acepta con catálogo LOCAL.
- * Retirar esta restricción (y su test TEST-CNS-1897) al terminar la migración de las 8 pantallas y verificar equivalencia. */
-export const SPA_ALLOWED_ENVIRONMENTS: readonly string[] = ["LOCAL"];
-
-export function assertSpaAllowed(environment: string | undefined): void {
-  if (environment === undefined || !SPA_ALLOWED_ENVIRONMENTS.includes(environment)) {
-    throw new Error("CNS_UI_MODE=spa solo se acepta con catálogo LOCAL mientras falten pantallas por migrar (ADR-001 F1).");
-  }
-}
-
-/** `CNS_UI_MODE`: ausente o vacío = `ssr` (default). Cualquier otro valor inválido aborta (fail-closed). */
-export function parseUiMode(raw: string | undefined): UiMode {
-  if (raw === undefined || raw === "" || raw === "ssr") return "ssr";
-  if (raw === "spa") return "spa";
-  throw new Error(`CNS_UI_MODE inválido (valores: ssr|spa).`);
-}
-
 const PAGE_STATE_READY = '<meta name="cns-page-state" content="ready">';
 const PAGE_STATE_UNIFORM_ERROR = '<meta name="cns-page-state" content="uniform-error">';
 
@@ -78,7 +59,7 @@ function manifestFiles(distDir: string): Set<string> {
 export function loadSpaBundle(distDir: string = DEFAULT_SPA_DIST_DIR): SpaBundle {
   const indexPath = join(distDir, "index.html");
   if (!existsSync(indexPath)) {
-    throw new Error("CNS_UI_MODE=spa requiere el build del frontend (dist/index.html): ejecutar `npm run build:frontend`.");
+    throw new Error("La SPA requiere el build del frontend (dist/index.html): ejecutar `npm run build:frontend`.");
   }
   const indexReady = readFileSync(indexPath, "utf8");
   if (!indexReady.includes(PAGE_STATE_READY)) {

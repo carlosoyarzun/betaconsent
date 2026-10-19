@@ -5,8 +5,10 @@
 // (API-CNS-101, P-12) -> POST /invitation/open -> V1 -> V3.
 // TEST-CNS-504..TEST-CNS-506 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -42,7 +44,7 @@ interface Harness {
 
 function startServer(): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -318,81 +320,27 @@ test("TEST-CNS-506: /decision/submit con >=1 finalidad requerida en DECLINE -> D
 // Fixes de revisión en navegador (Carlos, dev.ts LOCAL): TEST-CNS-567..570.
 // ---------------------------------------------------------------------------
 
-test("TEST-CNS-567: GET /decision sirve el texto de consentimiento y la versión YA resueltos, sin esperar ningún POST /decision/steps (GRD-CD-03 servido; INV-CM-08 un GET nunca transiciona)", async () => {
+test("TEST-CNS-567: GET /decision y GET /decision/page-state sirven la versión del texto YA resuelta, sin esperar ningún POST /decision/steps (GRD-CD-03 servido; INV-CM-08 un GET nunca transiciona)", async () => {
   const harness = await startServer();
   try {
     const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-567"), fixtureUuid("subject-567"));
-    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
+    const cookie = { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` };
+    const res = await fetch(`${harness.baseUrl}/decision`, { headers: cookie });
     assert.equal(res.status, 200);
-    const html = await res.text();
-    // Nunca el placeholder "cargando…": el HTML servido por GET /decision ya trae la versión.
-    assert.doesNotMatch(html, /cargando/);
-    assert.match(html, /Versión vigente del texto: v1/);
-    assert.match(html, /\[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos\]/);
+    assert.match(await res.text(), /<meta name="cns-page-state" content="ready">/); // shell de la SPA (el HTML ya no interpola datos)
+    // La versión viaja por page-state (API-CNS-194): nunca el placeholder "cargando…" ni un hash.
+    const state = (await (await fetch(`${harness.baseUrl}/decision/page-state`, { headers: cookie })).json()) as { servedVersion: { consentVersion: string; text: string } };
+    assert.equal(state.servedVersion.consentVersion, "v1");
+    assert.match(state.servedVersion.text, /\[LEGAL DECISION — texto de consentimiento pendiente de aprobación de Carlos\]/);
+    // INV-CM-08: ningún GET transiciona — la invitación sigue VERIFIED (no pasa a COMPLETED/DECLINED por mirar la página).
+    assert.equal((await harness.ports.invitation.invitationRepo.findByRef(TENANT_ID, fixtureUuid("inv-567")))?.state, "VERIFIED");
   } finally {
     await harness.close();
   }
 });
 
-test("TEST-CNS-568: la sección Finalidades incluye el marcador visible [LEGAL DECISION] de los frames 24:2/24:64 (no solo en un comentario HTML)", async () => {
-  const harness = await startServer();
-  try {
-    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-568"), fixtureUuid("subject-568"));
-    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
-    const html = await res.text();
-    assert.match(
-      html,
-      /<p class="lp-legal-note">\[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos\]<\/p>/,
-    );
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-569: app.css da un área táctil >=48px a la casilla de autoridad (#authority-declared): caja visual de 24px dentro de una fila-label de 48px (D-05, Carlos 2026-10-14)", async () => {
-  const harness = await startServer();
-  try {
-    const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
-    assert.match(css, /\.lp-decision-checkbox-row\s*\{[^}]*min-height:\s*48px/s);
-    assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/s);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-570: decision.js oculta #decision-form y mueve el foco al encabezado de confirmación en GRANTED y DECLINED (frames 27:49/27:58: la confirmación reemplaza el formulario)", async () => {
-  const harness = await startServer();
-  try {
-    const js = await (await fetch(`${harness.baseUrl}/assets/decision.js`)).text();
-    assert.match(js, /function showGranted\(receiptRef\) \{\s*hideStates\(\);\s*if \(decisionForm\) decisionForm\.hidden = true;/);
-    assert.match(js, /function showDeclined\(receiptRef\) \{\s*hideStates\(\);\s*if \(decisionForm\) decisionForm\.hidden = true;/);
-    assert.match(js, /getElementById\("granted-heading"\)/);
-    assert.match(js, /getElementById\("declined-heading"\)/);
-    assert.match(js, /heading\.focus\(\)/);
-  } finally {
-    await harness.close();
-  }
-});
-
-// Quita cualquier comentario HTML (`<!-- ... -->`) antes de buscar un marcador: si el marcador
-// solo existe DENTRO de un comentario, esta función lo hace desaparecer y el assert.match falla
-// (fix Carlos, revisión en navegador con dev.ts: los marcadores [LEGAL DECISION] no pueden
-// quedar invisibles para el usuario dentro de un comentario HTML).
-function stripHtmlComments(html: string): string {
-  return html.replace(/<!--[\s\S]*?-->/g, "");
-}
-
-test("TEST-CNS-584: los marcadores [LEGAL DECISION] de /decision (finalidad, enum de relación, enunciado de autoridad) son texto visible, nunca solo un comentario HTML", async () => {
-  const harness = await startServer();
-  try {
-    const verifiedSession = await bringToVerifiedSession(harness, fixtureUuid("inv-584"), fixtureUuid("subject-584"));
-    const res = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${verifiedSession}` } });
-    const html = await res.text();
-    const visible = stripHtmlComments(html);
-    assert.match(visible, /\[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos\]/);
-    assert.match(visible, /\[LEGAL DECISION — enum de relación pendiente de DEC-BR-003 \/ EXT-A \/ LD-01; opción \(b\) de Carlos: lista de valores por configuración\]/);
-    assert.match(visible, /\[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 \/ EXT-A \/ LD-01\]/);
-  } finally {
-    await harness.close();
-  }
+test("TEST-CNS-569: frontend/src/styles/app.css da un área táctil >=48px a la casilla de autoridad (#authority-declared): caja visual de 24px dentro de una fila-label de 48px (D-05, Carlos 2026-10-14)", () => {
+  const css = readFileSync(new URL("../../../frontend/src/styles/app.css", import.meta.url), "utf8"); // el CSS del invitado vive en frontend/ (SSR retirado)
+  assert.match(css, /\.lp-decision-checkbox-row\s*\{[^}]*min-height:\s*48px/s);
+  assert.match(css, /\.lp-decision-checkbox-row \.lp-decision-checkbox\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/s);
 });

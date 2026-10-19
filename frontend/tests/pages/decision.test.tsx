@@ -106,6 +106,17 @@ describe("/decision (equivale a decision-page.ts + decision.js)", () => {
     expect(order.at(-2)).toBe("submit-btn");
   });
 
+  it("TEST-CNS-2065: los marcadores [LEGAL DECISION] de /decision (finalidades, enum de relación, enunciado de autoridad, texto servido) son texto visible, nunca solo un comentario (sustituye TEST-CNS-568/584 del SSR)", async () => {
+    const { container } = await renderReady();
+    const text = container.textContent ?? "";
+    expect(text).toContain("[LEGAL DECISION — las descripciones de cada finalidad son borrador UX; texto legal definitivo pendiente de aprobación de Carlos]");
+    expect(text).toContain("[LEGAL DECISION — enum de relación pendiente de DEC-BR-003 / EXT-A / LD-01; opción (b) de Carlos: lista de valores por configuración]");
+    expect(text).toContain("[LEGAL DECISION — enunciado de autoridad pendiente de DEC-BR-003 / EXT-A / LD-01]");
+    expect(text).toContain(SERVED.text);
+    const perPurpose = "[LEGAL DECISION — descripción de finalidad, borrador UX grounded en el protocolo; texto legal definitivo pendiente de aprobación de Carlos]";
+    expect(text.split(perPurpose).length - 1).toBe(PURPOSE_IDS.length);
+  });
+
   it("TEST-CNS-1913: 'Enviar decisión' con campos pendientes (aria-disabled) muestra el resumen con enlaces y errores inline, enfoca el resumen y no envía nada", async () => {
     const { calls, container } = await renderReady();
     await userEvent.click(screen.getByRole("button", { name: "Enviar decisión" }));
