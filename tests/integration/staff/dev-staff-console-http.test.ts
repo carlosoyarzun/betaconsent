@@ -237,7 +237,9 @@ test("TEST-CNS-1066: cuerpo > 8 KiB -> 413 y corte (solo LOCAL); fuera de LOCAL 
     const big = await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "a".repeat(20000) }, { cookie }).catch(() => null);
     if (big) assert.equal(big.status, 413); // el servidor puede cortar la conexión antes de que el cliente lea la respuesta
     assert.equal(h.staff.invitationLinkSink.sent.length, 0);
-    const csp = (await fetch(`${h.baseUrl}${BASE}`)).headers.get("content-security-policy") ?? "";
+    const consolePage = await fetch(`${h.baseUrl}${BASE}`);
+    const csp = consolePage.headers.get("content-security-policy") ?? "";
+    assert.equal(consolePage.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     for (const d of ["default-src 'none'", "script-src 'none'", "style-src 'self'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"]) assert.ok(csp.includes(d), d);
     // sigue vivo y funcional tras el corte
     assert.equal((await form(h, `${BASE}/invite`, { csrf_token: csrf, student: S1, guardian_email: "apoderado1@example.invalid" }, { cookie })).status, 200);

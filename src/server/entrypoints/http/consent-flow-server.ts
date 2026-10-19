@@ -110,7 +110,7 @@ import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from ".
 import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
-import { HTML_CONTENT_SECURITY_POLICY, STAFF_HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
+import { HTML_CONTENT_SECURITY_POLICY, HTML_X_CONTENT_TYPE_OPTIONS, STAFF_HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
 import { assertSpaAllowed, DEFAULT_SPA_DIST_DIR, loadSpaBundle, type UiMode } from "./spa-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
@@ -570,6 +570,7 @@ function writeHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
+  res.setHeader("X-Content-Type-Options", HTML_X_CONTENT_TYPE_OPTIONS);
 }
 
 /** GET /recovery/confirm (SEC-CNS-014): además de las cabeceras de writeHtmlSecurityHeaders,
@@ -580,6 +581,7 @@ function writeRecoveryHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
+  res.setHeader("X-Content-Type-Options", HTML_X_CONTENT_TYPE_OPTIONS);
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
 }
 
@@ -1148,6 +1150,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "same-origin"); // formularios sin JS: con no-referrer Chromium manda Origin: null
       res.setHeader("Content-Security-Policy", STAFF_HTML_CONTENT_SECURITY_POLICY);
+      res.setHeader("X-Content-Type-Options", HTML_X_CONTENT_TYPE_OPTIONS);
       if (consoleResponse.setCookies && consoleResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...consoleResponse.setCookies]);
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
       res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });
