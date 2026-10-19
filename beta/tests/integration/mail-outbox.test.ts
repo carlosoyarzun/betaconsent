@@ -9,7 +9,8 @@ import type { Client } from "pg";
 
 import { migrate } from "../../src/db/migrate.ts";
 import { MemoryMailer } from "../../src/mail/memory-mailer.ts";
-import { enqueueEmail, MAX_ATTEMPTS, runOutboxTick, type MailLogger, type OutboxDeps } from "../../src/mail/outbox-worker.ts";
+import { enqueueEmail, MAX_ATTEMPTS, runOutboxTick, SUPPRESSED_STATUS, type MailLogger, type OutboxDeps } from "../../src/mail/outbox-worker.ts";
+import { hashInvitationToken } from "../../src/domain/crypto.ts";
 import { sendOtpNow } from "../../src/mail/otp.ts";
 import { readDataClass, type RecipientPolicy } from "../../src/mail/recipient-policy.ts";
 import { SmtpMailer } from "../../src/mail/smtp-mailer.ts";
@@ -64,7 +65,7 @@ async function seed(email: string, kind: "INVITATION" | "DECISION_RECEIPT" = "IN
   // consent_app ya no inserta en app.invitation (0003): la invitación nace por import_invitation().
   const imp = await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Valentina', $2, 'batch-mail')", [`stu-${n}-${randomBytes(3).toString("hex")}`, email]);
   const ref = imp.rows[0]!.invitation_ref;
-  const payload = kind === "INVITATION" ? { linkPath: `/i/tok${n}` } : RECEIPT_PAYLOAD;
+  const payload = kind === "INVITATION" ? { consentVersion: "v1-borrador" } : RECEIPT_PAYLOAD; // el outbox NO guarda el token: lo genera el worker al enviar
   assert.equal(await enqueueEmail(app, { kind, invitationRef: ref, dedupeKey: `${kind}:${ref}`, payload }), true);
   return (await app.query<{ email_id: string }>("SELECT email_id FROM app.email_outbox WHERE invitation_ref = $1", [ref])).rows[0]!.email_id;
 }
@@ -89,7 +90,9 @@ test("allowlist: destinatario fuera -> SUPPRESSED (FAILED + motivo), dentro -> S
   assert.equal(a.status, "SENT");
   assert.match(a.provider_message_id ?? "", /^<memory-/);
   const b = await row(outside);
-  assert.equal(b.status, "FAILED"); // TODO H1-03: 'SUPPRESSED' cuando el CHECK lo admita (SUPPRESSED_STATUS)
+  assert.equal(b.status, "SUPPRESSED");
+  assert.equal(SUPPRESSED_STATUS, "SUPPRESSED");
+  assert.equal((await app.query("SELECT 1 FROM app.invitation WHERE invitation_ref = (SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1) AND state = 'READY'", [outside])).rows.length, 1, "una invitación suprimida no arma token");
   assert.equal(b.last_error_code, "SUPPRESSED_ALLOWLIST");
 });
 
@@ -170,6 +173,47 @@ test("muerte entre envío y marca SENT: queda SENDING y, vencido el lease, se re
   await runOutboxTick(deps(mailer));
   assert.equal(mailer.sent.length, 2, "reenvío esperado tras vencer el lease");
   assert.equal((await row(id)).status, "SENT");
+});
+
+test("camino completo con MemoryMailer: import -> encolar -> worker -> invitación SENT con enlace cuyo token coincide con el hash de la fila", async () => {
+  const mailer = new MemoryMailer();
+  const id = await seed("madre@pruebas.example.invalid");
+  const ref = (await app.query<{ invitation_ref: string }>("SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!.invitation_ref;
+  // Antes de enviar no hay token en ninguna parte (ni outbox ni invitación).
+  const pre = (await owner.query<{ state: string; token_hash: string | null }>("SELECT state, token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!;
+  assert.deepEqual([pre.state, pre.token_hash], ["READY", null]);
+  assert.ok(!JSON.stringify((await owner.query("SELECT payload FROM app.email_outbox WHERE email_id = $1", [id])).rows).includes("/i/"));
+
+  const r = await runOutboxTick(deps(mailer, { batchSize: 100 }));
+  assert.ok(r.sent >= 1);
+  const mail = mailer.sent.find((m) => m.to === "madre@pruebas.example.invalid")!;
+  assert.equal(mail.template, "invitation");
+  const token = /\/i\/([A-Za-z0-9_-]{43})/.exec(mail.text)?.[1];
+  assert.ok(token, "el correo trae el enlace /i/<token>");
+  const post = (await owner.query<{ state: string; token_hash: string; token_expires_at: Date; consent_version: string }>("SELECT state, token_hash, token_expires_at, consent_version FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!;
+  assert.equal(post.state, "SENT");
+  assert.equal(post.token_hash, hashInvitationToken(token!));
+  assert.equal(post.consent_version, "v1-borrador");
+  const days = (post.token_expires_at.getTime() - Date.now()) / 86_400_000;
+  assert.ok(days > 6.9 && days <= 7, `P-10: 7 días (fue ${days})`);
+  assert.equal((await row(id)).status, "SENT");
+  // El token abre la invitación (open_invitation recibe el hash) y no queda en el outbox ni en los logs.
+  assert.equal((await app.query("SELECT * FROM app.open_invitation($1)", [hashInvitationToken(token!)])).rows.length, 1);
+  assert.ok(!JSON.stringify((await owner.query("SELECT * FROM app.email_outbox WHERE email_id = $1", [id])).rows).includes(token!));
+  assert.ok(!logs.join("\n").includes(token!));
+});
+
+test("invitación ya no armable (cancelada) -> la fila queda FAILED con INVITATION_NOT_ARMABLE y no se envía nada", async () => {
+  const mailer = new MemoryMailer();
+  const id = await seed("madre@pruebas.example.invalid");
+  const ref = (await app.query<{ invitation_ref: string }>("SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!.invitation_ref;
+  await owner.query("UPDATE app.invitation SET state = 'CANCELLED' WHERE invitation_ref = $1", [ref]);
+  const r = await runOutboxTick(deps(mailer, { batchSize: 100 }));
+  assert.ok(r.failed >= 1);
+  const f = await row(id);
+  assert.deepEqual([f.status, f.last_error_code], ["FAILED", "INVITATION_NOT_ARMABLE"]);
+  assert.equal(mailer.sent.filter((m) => m.to === "madre@pruebas.example.invalid").length, 0);
+  assert.equal((await owner.query("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]?.token_hash, null);
 });
 
 test("OTP: no queda en la BD (ninguna tabla) ni en los logs", async () => {

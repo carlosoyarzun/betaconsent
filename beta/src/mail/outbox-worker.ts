@@ -8,16 +8,26 @@
 // GARANTÍA AL-MENOS-UNA-VEZ: si el proceso muere entre el envío y la marca SENT, la fila queda en SENDING; al vencer el lease
 // (LEASE_SECONDS) se reclama y SE REENVÍA. Ese reenvío duplicado se acepta explícitamente (mejor un duplicado que un correo perdido).
 //
-// SUPPRESSED: el CHECK email_outbox_status_enum (0002) no admite 'SUPPRESSED'. Mientras H1-03 no lo agregue, un correo suprimido por la
-// allowlist queda status='FAILED' con last_error_code='SUPPRESSED_ALLOWLIST'. Para migrar basta cambiar SUPPRESSED_STATUS.
+// SUPPRESSED: el correo suprimido por la allowlist queda status='SUPPRESSED' con last_error_code='SUPPRESSED_ALLOWLIST' (el CHECK de 0002 lo admite).
+//
+// INVITACIÓN (SEC-CNS-024): el outbox NO guarda el token. La fila INVITATION solo lleva {consentVersion}; al reclamarla el worker (1) comprueba la allowlist,
+// (2) genera el token en TS (generateInvitationToken: aleatorio, a la base solo va su hash), (3) llama app.arm_invitation_token(ref, hash, expiresAt, consentVersion)
+// y (4) envía el enlace /i/<token>. Cada reintento rota el token (el anterior queda muerto). Si la invitación ya no es armable (INVITATION_NOT_ARMABLE: cancelada,
+// abierta o decidida) la fila pasa a FAILED con ese motivo y NO se envía nada. Residual conocido: si el proceso muere entre el envío y la marca SENT, el reenvío
+// rota el token y el enlace del primer correo queda muerto (duplicado aceptado, ver arriba).
 
+import { generateInvitationToken } from "../domain/crypto.ts";
+import { DomainError } from "../domain/errors.ts";
+import { mapPgError } from "../db/map-error.ts";
 import type { Mailer, SendRequest } from "./mailer.port.ts";
 import { isRecipientAllowed, SUPPRESSED_REASON, type Queryable, type RecipientPolicy } from "./recipient-policy.ts";
 import type { PurposeChoice, ReceiptParams } from "./templates/index.ts";
 
 export const MAX_ATTEMPTS = 3;
 export const LEASE_SECONDS = 300;
-export const SUPPRESSED_STATUS: "FAILED" | "SUPPRESSED" = "FAILED";
+export const SUPPRESSED_STATUS = "SUPPRESSED";
+/** P-10: vigencia del token de invitación = 7 días. */
+export const INVITATION_TOKEN_TTL_MS = 7 * 24 * 60 * 60_000;
 /** Espera tras el intento 1 y 2 (ms). */
 export const DEFAULT_BACKOFF_MS: readonly number[] = [30_000, 120_000];
 
@@ -33,6 +43,10 @@ export interface OutboxDeps {
   readonly logger: MailLogger;
   readonly backoffMs?: readonly number[];
   readonly batchSize?: number;
+  /** Reloj (ms) para el vencimiento del token; inyectable en tests. Default Date.now. */
+  readonly now?: () => number;
+  /** Vigencia del token de invitación. Default P-10 = 7 días. */
+  readonly invitationTokenTtlMs?: number;
 }
 
 interface Claimed {
@@ -47,7 +61,7 @@ export interface EnqueueInput {
   readonly kind: "INVITATION" | "DECISION_RECEIPT" | "REVOCATION_RECEIPT" | "RECOVERY_LINK";
   readonly invitationRef: string;
   readonly dedupeKey: string;
-  /** Solo parámetros de plantilla: nunca correo, OTP ni RUT. */
+  /** Solo parámetros de plantilla: nunca correo, OTP, token ni RUT. INVITATION: {consentVersion}. */
   readonly payload: Record<string, unknown>;
 }
 
@@ -96,7 +110,7 @@ function buildRequest(row: Claimed, to: string, firstName: string): SendRequest 
   const p = row.payload;
   switch (row.kind) {
     case "INVITATION":
-      return { to, template: "invitation", params: { studentFirstName: firstName, linkPath: str(p.linkPath, "linkPath", 200) } };
+      throw new Unsendable("NO_TEMPLATE"); // se arma en prepareInvitation (necesita el token)
     case "RECOVERY_LINK":
       return { to, template: "management_link", params: { studentFirstName: firstName, linkPath: str(p.linkPath, "linkPath", 200) } };
     case "DECISION_RECEIPT":
@@ -106,6 +120,21 @@ function buildRequest(row: Claimed, to: string, firstName: string): SendRequest 
     default:
       throw new Unsendable("NO_TEMPLATE");
   }
+}
+
+/** Genera el token, lo arma en la base (solo el hash) y devuelve el correo con el enlace. El token nunca se loguea ni se persiste en claro. */
+async function prepareInvitation(deps: OutboxDeps, row: Claimed, to: string, firstName: string): Promise<SendRequest> {
+  const consentVersion = str(row.payload.consentVersion, "consentVersion", 64);
+  const { token, tokenHash } = generateInvitationToken();
+  const expiresAt = new Date((deps.now ?? Date.now)() + (deps.invitationTokenTtlMs ?? INVITATION_TOKEN_TTL_MS));
+  try {
+    await deps.db.query("SELECT app.arm_invitation_token($1, $2, $3, $4)", [row.invitation_ref, tokenHash, expiresAt, consentVersion]);
+  } catch (e) {
+    const mapped = mapPgError(e);
+    if (mapped instanceof DomainError && (mapped.code === "INVITATION_NOT_ARMABLE" || mapped.code === "INVITATION_NOT_FOUND")) throw new Unsendable(mapped.code);
+    throw e;
+  }
+  return { to, template: "invitation", params: { studentFirstName: firstName, linkPath: `/i/${token}` } };
 }
 
 function errorCode(e: unknown): string {
@@ -158,7 +187,7 @@ async function processOne(deps: OutboxDeps, row: Claimed): Promise<"sent" | "ret
       deps.logger.info("outbox: suprimido por allowlist", fields);
       return "suppressed";
     }
-    const request = buildRequest(row, rec.guardian_email, rec.student_first_name);
+    const request = row.kind === "INVITATION" ? await prepareInvitation(deps, row, rec.guardian_email, rec.student_first_name) : buildRequest(row, rec.guardian_email, rec.student_first_name);
     const result = await deps.mailer.send(request);
     try {
       await finish(deps, row.email_id, "SENT", null, result.providerMessageId ?? null);
