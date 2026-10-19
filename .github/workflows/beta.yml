@@ -106,7 +106,8 @@ jobs:
         env:
           MAILPIT_SMTP_URL: smtp://localhost:1025
           MAILPIT_API_URL: http://localhost:8025
-          # Superusuario del service container: crea roles y bases desechables (bootstrap-roles.sql).
+          # Superusuario del service container: crea los 4 roles (owner, migrator, app, mailer) y bases desechables (bootstrap-roles.sql; el harness genera las
+          # contraseñas efímeras de cada rol y arma CNS_DATABASE_URL / CNS_MAILER_DATABASE_URL por base: no se exportan aquí).
           TEST_DATABASE_URL: postgresql://beta_ci_super:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/postgres
         run: npm run test:integration
 
