@@ -96,3 +96,36 @@ jobs:
           # Superusuario del service container: crea roles y bases desechables (bootstrap-roles.sql).
           TEST_DATABASE_URL: postgresql://beta_ci_super:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/postgres
         run: npm run test:integration
+
+  beta-frontend:
+    name: beta-frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: beta
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (frozen lockfile, sin scripts de ciclo de vida)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck frontend
+        run: npm run typecheck:frontend
+
+      - name: Vitest (jsdom)
+        run: npm run test:frontend
+
+      - name: Vite build (manifest + assets con hash)
+        run: npm run build:frontend
+
+      - name: Comprobar dist (manifest, sin script/estilos inline)
+        run: npm run check:dist
