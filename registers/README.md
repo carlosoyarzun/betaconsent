@@ -9,3 +9,5 @@ Estado: `risk-register-IT0.md` (2026-09-25) registra los riesgos residuales R-01
 IT0 cerró como EXIT-LOCAL (Carlos, 2026-10-06/07; solo datos sintéticos).
 
 `findings-register-IT0.md` (2026-10-06) registra los FINDINGs F-X8-01…F-X8-16 de la retrospectiva X8 (desvíos de ADR-001 aceptados para IT0, DEFER de ADR-002/006, contradicciones del registro de riesgos y pendientes de CI/CODEOWNERS).
+
+`decisions-log-IT0b.md` (2026-10-18) registra las decisiones del 2026-10-18 (paquete de Carlos y decisiones del Supervisor por delegacion, distinguidas por columna). El `findings-register-IT0.md` incorpora ademas SEC-7D-*, F-R7-*/SEC-R7-*, FND-1…6, F-DP3-*/SEC-DP3-*, F-2B-*/SEC-2B-* y UX-CNS-015-a11y-*.
