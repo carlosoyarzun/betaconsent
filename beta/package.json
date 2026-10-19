@@ -13,6 +13,7 @@
     "ci": "npm run typecheck && npm run test:unit && npm run test:integration"
   },
   "dependencies": {
+    "nodemailer": "10.1.7",
     "pg": "8.23.0"
   },
   "devDependencies": {

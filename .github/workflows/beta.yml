@@ -74,6 +74,12 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10
+      # Servidor SMTP de pruebas (H1-06): captura los correos del test de integración; verificación por su API. Sin salida a internet.
+      mailpit:
+        image: axllent/mailpit:v1.29@sha256:757f22b56c1da03570afdb3d259effe5091018008a81bbedc8158cee7e16fdbc
+        ports:
+          - 1025:1025
+          - 8025:8025
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,8 +97,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Esperar a Mailpit
+        run: |
+          for i in $(seq 1 30); do curl -fsS http://localhost:8025/api/v1/info >/dev/null && exit 0; sleep 1; done
+          echo "Mailpit no respondió" >&2; exit 1
+
       - name: Integration tests (PostgreSQL 16, UTF8, solo sintético)
         env:
+          MAILPIT_SMTP_URL: smtp://localhost:1025
+          MAILPIT_API_URL: http://localhost:8025
           # Superusuario del service container: crea roles y bases desechables (bootstrap-roles.sql).
           TEST_DATABASE_URL: postgresql://beta_ci_super:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/postgres
         run: npm run test:integration

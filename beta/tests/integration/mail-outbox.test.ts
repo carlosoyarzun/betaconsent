@@ -1,0 +1,218 @@
+// Gobierna: plan v2 H1-06. Outbox en proceso contra Postgres real con el rol consent_app (valida los grants existentes),
+// allowlist sintética, reintentos, concurrencia y OTP sin rastro. La parte Mailpit corre solo si MAILPIT_SMTP_URL y MAILPIT_API_URL
+// están definidas (CI: servicio axllent/mailpit del job beta-integration; local: docker run -p 1025:1025 -p 8025:8025 axllent/mailpit).
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+
+import type { Client } from "pg";
+
+import { migrate } from "../../src/db/migrate.ts";
+import { MemoryMailer } from "../../src/mail/memory-mailer.ts";
+import { enqueueEmail, MAX_ATTEMPTS, runOutboxTick, type MailLogger, type OutboxDeps } from "../../src/mail/outbox-worker.ts";
+import { sendOtpNow } from "../../src/mail/otp.ts";
+import { readDataClass, type RecipientPolicy } from "../../src/mail/recipient-policy.ts";
+import { SmtpMailer } from "../../src/mail/smtp-mailer.ts";
+import { connect, connectAsOwner, createTestDb, MIGRATIONS_DIR, type TestDb } from "./pg-harness.ts";
+
+let db: TestDb;
+let app: Client;
+let app2: Client;
+let owner: Client;
+let sup: Client;
+let seq = 0;
+
+const POLICY: RecipientPolicy = { dataClass: "SYNTHETIC", allowlist: ["@pruebas.example.invalid", "qa@example.invalid"] };
+const logs: string[] = [];
+const logger: MailLogger = {
+  info: (m, f) => void logs.push(`${m} ${JSON.stringify(f ?? {})}`),
+  warn: (m, f) => void logs.push(`${m} ${JSON.stringify(f ?? {})}`),
+};
+const RECEIPT_PAYLOAD = {
+  decision: "GRANTED",
+  consentVersion: "v1-borrador",
+  decidedAt: "2026-10-19T15:00:00Z",
+  receiptRef: "rcpt-1",
+  purposes: [{ purpose: "STUDY_PARTICIPATION", choice: "GRANT" }],
+};
+
+before(async () => {
+  db = await createTestDb();
+  const m = await connect(db.migratorUrl);
+  try {
+    await migrate(m, MIGRATIONS_DIR);
+  } finally {
+    await m.end();
+  }
+  app = await connect(db.appUrl);
+  app2 = await connect(db.appUrl);
+  owner = await connectAsOwner(db);
+  sup = await connect(db.superDbUrl);
+});
+after(async () => {
+  for (const c of [app, app2, owner, sup]) await c.end();
+  await db.drop();
+});
+
+function deps(mailer: MemoryMailer, over: Partial<OutboxDeps> = {}): OutboxDeps {
+  return { db: app, mailer, policy: POLICY, logger, backoffMs: [0, 0], ...over };
+}
+
+/** Crea invitación (READY) vía los grants de consent_app y encola un correo. Devuelve email_id. */
+async function seed(email: string, kind: "INVITATION" | "DECISION_RECEIPT" = "INVITATION"): Promise<string> {
+  const n = ++seq;
+  const ref = `inv-${n}`;
+  await app.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ($1, $2, 'Valentina', $3)", [ref, `stu-${n}`, email]);
+  const payload = kind === "INVITATION" ? { linkPath: `/i/tok${n}` } : RECEIPT_PAYLOAD;
+  assert.equal(await enqueueEmail(app, { kind, invitationRef: ref, dedupeKey: `${kind}:${ref}`, payload }), true);
+  return (await app.query<{ email_id: string }>("SELECT email_id FROM app.email_outbox WHERE invitation_ref = $1", [ref])).rows[0]!.email_id;
+}
+
+async function row(id: string): Promise<{ status: string; attempts: number; last_error_code: string | null; provider_message_id: string | null }> {
+  return (await app.query<{ status: string; attempts: number; last_error_code: string | null; provider_message_id: string | null }>(
+    "SELECT status, attempts, last_error_code, provider_message_id FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!;
+}
+
+test("data_class se lee de ops.db_catalog con el rol consent_app", async () => {
+  assert.equal(await readDataClass(app), "SYNTHETIC");
+});
+
+test("allowlist: destinatario fuera -> SUPPRESSED (FAILED + motivo), dentro -> SENT", async () => {
+  const mailer = new MemoryMailer();
+  const inside = await seed("madre@pruebas.example.invalid");
+  const outside = await seed("alguien@real.example.invalid");
+  const r = await runOutboxTick(deps(mailer));
+  assert.deepEqual(r, { sent: 1, retry: 0, failed: 0, suppressed: 1 });
+  assert.deepEqual(mailer.sent.map((m) => m.to), ["madre@pruebas.example.invalid"]);
+  const a = await row(inside);
+  assert.equal(a.status, "SENT");
+  assert.match(a.provider_message_id ?? "", /^<memory-/);
+  const b = await row(outside);
+  assert.equal(b.status, "FAILED"); // TODO H1-03: 'SUPPRESSED' cuando el CHECK lo admita (SUPPRESSED_STATUS)
+  assert.equal(b.last_error_code, "SUPPRESSED_ALLOWLIST");
+});
+
+test("REAL ignora la allowlist", async () => {
+  const mailer = new MemoryMailer();
+  const id = await seed("cualquiera@real.example.invalid");
+  await runOutboxTick(deps(mailer, { policy: { dataClass: "REAL", allowlist: [] } }));
+  assert.equal((await row(id)).status, "SENT");
+});
+
+test("recibo de decisión se renderiza con los datos del payload y de la invitación", async () => {
+  const mailer = new MemoryMailer();
+  await seed("qa@example.invalid", "DECISION_RECEIPT");
+  await runOutboxTick(deps(mailer));
+  assert.equal(mailer.sent[0]?.template, "receipt_granted");
+  assert.ok(mailer.sent[0]?.text.includes("Valentina"));
+});
+
+test("3 fallos -> FAILED, sin envíos, y no vuelve a reclamarse", async () => {
+  const mailer = new MemoryMailer();
+  mailer.failWith = Object.assign(new Error("boom: destinatario madre@pruebas.example.invalid"), { code: "ECONNECTION" });
+  const id = await seed("qa@example.invalid");
+  const r1 = await runOutboxTick(deps(mailer));
+  assert.equal(r1.retry, 1);
+  assert.deepEqual([(await row(id)).status, (await row(id)).attempts], ["PENDING", 1]);
+  await runOutboxTick(deps(mailer));
+  const r3 = await runOutboxTick(deps(mailer));
+  assert.equal(r3.failed, 1);
+  const f = await row(id);
+  assert.deepEqual([f.status, f.attempts, f.last_error_code], ["FAILED", MAX_ATTEMPTS, "ECONNECTION"]);
+  const r4 = await runOutboxTick(deps(mailer));
+  assert.deepEqual(r4, { sent: 0, retry: 0, failed: 0, suppressed: 0 });
+  assert.equal(mailer.sent.length, 0);
+  assert.ok(!logs.join("\n").includes("madre@pruebas"), "el log no debe contener correos");
+});
+
+test("fallo transitorio y luego éxito: un solo envío", async () => {
+  const mailer = new MemoryMailer();
+  mailer.failWith = new Error("down");
+  const id = await seed("qa@example.invalid");
+  await runOutboxTick(deps(mailer));
+  mailer.failWith = undefined;
+  await runOutboxTick(deps(mailer));
+  assert.equal((await row(id)).status, "SENT");
+  assert.equal(mailer.sent.length, 1);
+});
+
+test("dos workers concurrentes (SKIP LOCKED): cada correo se envía una sola vez", async () => {
+  const mailer = new MemoryMailer();
+  const ids: string[] = [];
+  for (let i = 0; i < 12; i++) ids.push(await seed("qa@example.invalid"));
+  await Promise.all([runOutboxTick(deps(mailer, { batchSize: 4 })), runOutboxTick(deps(mailer, { db: app2, batchSize: 4 })), runOutboxTick(deps(mailer, { batchSize: 4 })).catch(() => undefined)]);
+  await runOutboxTick(deps(mailer, { batchSize: 20 }));
+  await runOutboxTick(deps(mailer, { db: app2, batchSize: 20 }));
+  assert.equal(mailer.sent.length, 12);
+  assert.equal(new Set(mailer.sent.map((m) => m.text)).size, 12);
+  for (const id of ids) assert.equal((await row(id)).status, "SENT");
+});
+
+test("encolado idempotente por dedupe_key", async () => {
+  const id = await seed("qa@example.invalid");
+  const ref = (await app.query<{ invitation_ref: string }>("SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!.invitation_ref;
+  assert.equal(await enqueueEmail(app, { kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION:${ref}`, payload: { linkPath: "/i/otro" } }), false);
+});
+
+test("muerte entre envío y marca SENT: queda SENDING y, vencido el lease, se reenvía (duplicado aceptado y documentado)", async () => {
+  const mailer = new MemoryMailer();
+  await runOutboxTick(deps(new MemoryMailer())); // drena filas PENDING de tests anteriores
+  const id = await seed("qa@example.invalid");
+  // La BD "se cae" justo al marcar SENT.
+  const flaky = { query: (async (sql: string, v?: readonly unknown[]) => (sql.includes("'SENDING'") && sql.includes("WHERE email_id") ? Promise.reject(new Error("db caída")) : app.query(sql, v as unknown[]))) as never };
+  await runOutboxTick(deps(mailer, { db: flaky }));
+  assert.equal(mailer.sent.length, 1);
+  assert.equal((await row(id)).status, "SENDING");
+  await runOutboxTick(deps(mailer)); // lease vigente: no se reclama
+  assert.equal(mailer.sent.length, 1);
+  await owner.query("UPDATE app.email_outbox SET next_attempt_at = now() - interval '1 second' WHERE email_id = $1", [id]);
+  await runOutboxTick(deps(mailer));
+  assert.equal(mailer.sent.length, 2, "reenvío esperado tras vencer el lease");
+  assert.equal((await row(id)).status, "SENT");
+});
+
+test("OTP: no queda en la BD (ninguna tabla) ni en los logs", async () => {
+  const CODE = "861204";
+  const mailer = new MemoryMailer();
+  await sendOtpNow(mailer, "qa@example.invalid", CODE);
+  assert.equal(mailer.sent.length, 1);
+  const tables = (await sup.query<{ s: string; t: string }>("SELECT table_schema AS s, table_name AS t FROM information_schema.tables WHERE table_schema IN ('app', 'ops', 'integrity', 'ledger_gen') AND table_type = 'BASE TABLE'")).rows;
+  for (const { s, t } of tables) {
+    const hit = await sup.query(`SELECT 1 FROM ${sup.escapeIdentifier(s)}.${sup.escapeIdentifier(t)} x WHERE x::text LIKE $1 LIMIT 1`, [`%${CODE}%`]);
+    assert.equal(hit.rows.length, 0, `${s}.${t} contiene el OTP`);
+  }
+  assert.ok(!logs.join("\n").includes(CODE));
+});
+
+// ---- Mailpit (opcional local, obligatorio en CI) ------------------------------------------------------------------------------------
+const MAILPIT_SMTP = process.env.MAILPIT_SMTP_URL;
+const MAILPIT_API = process.env.MAILPIT_API_URL;
+
+test("Mailpit: llegan invitación, OTP y recibo (vía SmtpMailer)", { skip: MAILPIT_SMTP && MAILPIT_API ? false : "MAILPIT_SMTP_URL/MAILPIT_API_URL no definidas: Mailpit no disponible en local; lo corre CI (servicio axllent/mailpit)" }, async () => {
+  const api = MAILPIT_API!;
+  await fetch(`${api}/api/v1/messages`, { method: "DELETE" });
+  const smtp = new SmtpMailer({ smtpUrl: MAILPIT_SMTP!, from: "no-reply@consent.example.invalid", publicOrigin: "https://consent.example.invalid", allowPlaintextLoopback: true });
+  try {
+    const CODE = "246810";
+    const outboxMailer = new MemoryMailer(); // no se usa: el worker usa el SmtpMailer real
+    void outboxMailer;
+    const rcpt = await seed("qa@example.invalid", "DECISION_RECEIPT");
+    const inv = await seed("qa@example.invalid", "INVITATION");
+    await runOutboxTick({ db: app, mailer: smtp, policy: POLICY, logger, backoffMs: [0, 0] });
+    assert.equal((await row(rcpt)).status, "SENT");
+    assert.equal((await row(inv)).status, "SENT");
+    await sendOtpNow(smtp, "qa@example.invalid", CODE);
+
+    const list = (await (await fetch(`${api}/api/v1/messages`)).json()) as { messages: { ID: string; Subject: string; To: { Address: string }[] }[] };
+    const subjects = list.messages.map((m) => m.Subject);
+    assert.equal(list.messages.length, 3, `mensajes: ${subjects.join(" | ")}`);
+    assert.ok(subjects.some((s) => s.includes("Invitación")));
+    assert.ok(subjects.some((s) => s.includes("código de verificación")));
+    assert.ok(subjects.some((s) => s.includes("Comprobante de tu decisión")));
+    assert.ok(list.messages.every((m) => m.To[0]?.Address === "qa@example.invalid"));
+    const otpMsg = list.messages.find((m) => m.Subject.includes("código"))!;
+    const full = (await (await fetch(`${api}/api/v1/message/${otpMsg.ID}`)).json()) as { Text: string; HTML: string };
+    assert.ok(full.Text.includes(CODE) && full.HTML.includes(CODE));
+  } finally {
+    smtp.close();
+  }
+});
