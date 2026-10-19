@@ -1,6 +1,7 @@
 // Gobierna: plan v2 H1-06 + SEC-CNS-024-V1. Outbox en proceso sobre app.email_outbox. `deps.db` DEBE ser el pool de consent_mailer (no el de la app): el worker usa
 // SELECT/UPDATE(status, attempts, next_attempt_at, provider_message_id, last_error_code) del outbox, SELECT(invitation_ref, student_first_name, guardian_email) de
-// app.invitation y EXECUTE de arm_invitation_token. El encolado (enqueueEmail, INSERT) lo hace consent_app con su propio pool.
+// app.invitation y EXECUTE de arm_invitation_token e issue_manage_link. consent_app NO inserta en el outbox (0004): record_decision/revoke_decision encolan los recibos y el enlace de
+// gestión (payload completo, sin token), enqueue_invitation_email la primera invitación y request_invitation_resend (consent_mailer) el reenvío de operador con motivo.
 // El destinatario NO está en la tabla: se resuelve al enviar desde app.invitation.
 //
 // Ciclo de vida: PENDING -> (claim) SENDING -> SENT | PENDING con backoff (fallo transitorio) | FAILED (3 intentos, o suprimido/no enviable).
@@ -52,8 +53,6 @@ export interface OutboxDeps {
   readonly now?: () => number;
   /** Vigencia del token de invitación. Default P-10 = 7 días. */
   readonly invitationTokenTtlMs?: number;
-  /** H1-05: ruta `/m/<token>` del enlace de gestión de una decisión (token sin estado firmado por el proceso web). Sin ella, RECOVERY_LINK con consentId no es enviable. */
-  readonly manageLinkPath?: (consentId: string) => string;
 }
 
 interface Claimed {
@@ -64,21 +63,18 @@ interface Claimed {
   payload: Record<string, unknown>;
 }
 
-export interface EnqueueInput {
-  readonly kind: "INVITATION" | "DECISION_RECEIPT" | "REVOCATION_RECEIPT" | "RECOVERY_LINK";
-  readonly invitationRef: string;
-  readonly dedupeKey: string;
-  /** Solo parámetros de plantilla: nunca correo, OTP, token ni RUT. INVITATION: {consentVersion}. */
-  readonly payload: Record<string, unknown>;
+/**
+ * Encola la PRIMERA invitación (CLI "send", H1-09) con el rol consent_app: app.enqueue_invitation_email valida la invitación (READY|SENT) y la versión; una fila por invitación.
+ * consent_app ya no inserta en app.email_outbox (0004): recibos y enlace de gestión los encolan record_decision/revoke_decision. Devuelve true si insertó.
+ */
+export async function enqueueInvitationEmail(db: Queryable, invitationRef: string, consentVersion: string): Promise<boolean> {
+  const r = await db.query<{ enqueue_invitation_email: boolean }>("SELECT app.enqueue_invitation_email($1, $2)", [invitationRef, consentVersion]);
+  return r.rows[0]?.enqueue_invitation_email === true;
 }
 
-/** Encola de forma idempotente por dedupe_key. Devuelve true si insertó. */
-export async function enqueueEmail(db: Queryable, input: EnqueueInput): Promise<boolean> {
-  const r = await db.query(
-    "INSERT INTO app.email_outbox (kind, invitation_ref, dedupe_key, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (tenant_id, dedupe_key) DO NOTHING RETURNING email_id",
-    [input.kind, input.invitationRef, input.dedupeKey, JSON.stringify(input.payload)],
-  );
-  return r.rows.length === 1;
+/** Reenvío de OPERADOR (CLI, H1-09) con el pool del MAILER y un motivo (^[A-Z][A-Z0-9_]{2,39}$) que quedará en el ledger al rotar el token. */
+export async function requestInvitationResend(mailerDb: Queryable, invitationRef: string, reason: string): Promise<void> {
+  await mailerDb.query("SELECT app.request_invitation_resend($1, $2)", [invitationRef, reason]);
 }
 
 class Unsendable extends Error {
@@ -145,6 +141,20 @@ async function prepareInvitation(deps: OutboxDeps, row: Claimed, to: string, fir
     throw e;
   }
   return { to, template: "invitation", params: { studentFirstName: firstName, linkPath: `/i/${token}` } };
+}
+
+/** Emite el enlace de gestión con estado (issue_manage_link, solo consent_mailer): invalida los anteriores vigentes de la decisión. El token solo vive en este string: ni outbox ni logs. */
+async function issueManageLinkPath(deps: OutboxDeps, consentId: string): Promise<string> {
+  try {
+    const r = await deps.db.query<{ token: string }>("SELECT app.issue_manage_link($1) AS token", [consentId]);
+    const token = r.rows[0]?.token;
+    if (typeof token !== "string" || token === "") throw new Unsendable("NO_MANAGE_LINK");
+    return `/m/${token}`;
+  } catch (e) {
+    const mapped = mapPgError(e);
+    if (mapped instanceof DomainError && (mapped.code === "DECISION_NOT_GRANTED" || mapped.code === "DECISION_NOT_FOUND")) throw new Unsendable(mapped.code); // p. ej. revocada antes del envío
+    throw e;
+  }
 }
 
 /**
@@ -224,9 +234,8 @@ async function processOne(deps: OutboxDeps, row: Claimed): Promise<"sent" | "ret
       return "suppressed";
     }
     if (row.kind === "DECISION_RECEIPT" || row.kind === "REVOCATION_RECEIPT") row.payload = await enrichReceiptPayload(deps, row);
-    if (row.kind === "RECOVERY_LINK" && typeof row.payload.consentId === "string" && row.payload.linkPath === undefined) {
-      if (deps.manageLinkPath === undefined) throw new Unsendable("NO_LINK_BUILDER");
-      row.payload = { ...row.payload, linkPath: deps.manageLinkPath(row.payload.consentId) };
+    if (row.kind === "RECOVERY_LINK" && typeof row.payload.consentId === "string") {
+      row.payload = { ...row.payload, linkPath: await issueManageLinkPath(deps, row.payload.consentId) };
     }
     const request = row.kind === "INVITATION" ? await prepareInvitation(deps, row, rec.guardian_email, rec.student_first_name) : buildRequest(row, rec.guardian_email, rec.student_first_name);
     const result = await deps.mailer.send(request);

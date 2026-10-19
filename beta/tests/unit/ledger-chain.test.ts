@@ -84,10 +84,13 @@ test("TEST-CNS-912 verifyChainRows: cadena íntegra y primer eslabón roto por c
   assert.equal(report.ok === false && report.brokenAt.reason, "EVENT_TYPE_NOT_ALLOWED");
 });
 
-test("la lista blanca TS es idéntica al CHECK audit_event_event_type_allowlist de 0001", () => {
+test("la lista blanca TS es idéntica al CHECK audit_event_event_type_allowlist vigente (0001, ampliado por 0004)", () => {
   assert.equal(new Set(LEDGER_EVENT_TYPES).size, LEDGER_EVENT_TYPES.length);
-  const sql = readFileSync(join(HERE, "..", "..", "db", "migrations", "0001_catalog_school_ledger.sql"), "utf8");
-  const block = /audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\s*\)/.exec(sql)?.[1] ?? "";
+  // La definición vigente es la ÚLTIMA ADD CONSTRAINT en orden de migración (0001, luego 0004 que la reemplaza).
+  const dir = join(HERE, "..", "..", "db", "migrations");
+  const sql = ["0001_catalog_school_ledger.sql", "0004_manage_link.sql"].map((n) => readFileSync(join(dir, n), "utf8")).join("\n");
+  const blocks = [...sql.matchAll(/audit_event_event_type_allowlist CHECK \(event_type IN \(([\s\S]*?)\)\s*\)/g)];
+  const block = blocks[blocks.length - 1]?.[1] ?? "";
   const inSql = [...block.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1] as string);
   assert.ok(inSql.length > 0);
   assert.deepEqual([...inSql].sort(), [...LEDGER_EVENT_TYPES].sort());

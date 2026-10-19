@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createCodecs, hashLinkToken, signManageToken, verifyManageToken } from "../../../src/server/handles.ts";
+import { createCodecs, hashLinkToken } from "../../../src/server/handles.ts";
 import { createJsonLogger, normalizeRoute } from "../../../src/server/log.ts";
 
 test("normalizeRoute oculta tokens, assets y rutas desconocidas", () => {
@@ -31,15 +31,4 @@ test("codecs: firma inválida, otra clave y vencimiento => null", () => {
   assert.equal(c.invitation.decode(c.invitation.encode({ h: hashLinkToken("t"), exp: now - 1 })), null);
   // las claves por uso son independientes: un handle de invitación no vale como sesión
   assert.equal(c.session.decode(h), null);
-});
-
-test("token de gestión: válido, manipulado y vencido", () => {
-  const s = Buffer.alloc(48, 9);
-  const now = Math.floor(Date.now() / 1000);
-  const t = signManageToken(s, "con-123e4567-e89b", now + 60);
-  assert.equal(verifyManageToken(s, t), "con-123e4567-e89b");
-  assert.equal(verifyManageToken(s, t + "x"), null);
-  assert.equal(verifyManageToken(Buffer.alloc(48, 8), t), null);
-  assert.equal(verifyManageToken(s, signManageToken(s, "con-123e4567-e89b", now - 1)), null);
-  assert.equal(verifyManageToken(s, "basura"), null);
 });

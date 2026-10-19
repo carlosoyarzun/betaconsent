@@ -8,10 +8,9 @@
 // adaptadores en memoria y con PostgreSQL real.
 //
 // DESVIACIONES / DECISIONES PENDIENTES (reportadas):
-//  - D-1 Enlace de gestión /m/{token}: la base NO tiene tabla ni función de tokens de gestión (0002/0003). Se usa un token SIN ESTADO firmado (HMAC, HKDF de CNS_SESSION_SECRET) que
-//    lleva el consentId y un vencimiento (30 días, BORRADOR). No se puede rotar ni invalidar individualmente (solo cambiando CNS_SESSION_SECRET) y no consume nada. El token solo da
-//    derecho a PEDIR un OTP al correo ligado: la autoridad sigue siendo el OTP. Requiere decisión de arquitectura (ADR) antes de datos reales.
-//  - D-2 /decision/subject-mismatch: no existe función SQL de cancelación (I9) => 501 sin efecto.
+//  - D-1 (CERRADA en 0004) Enlace de gestión /m/{token}: secreto CON ESTADO en app.manage_link (hash sha256, 7 días, rotable/invalidable, MANAGE_LINK_ISSUED en el ledger). El GET /m/ sigue
+//    siendo un 303 uniforme sin leer la base (F-RB-02); el canje contra open_manage_link ocurre en /manage y /manage/page-state y no consume. La autoridad sigue siendo el OTP.
+//  - D-2 (CERRADA en 0004) /decision/subject-mismatch: cancel_invitation (OPENED|VERIFIED -> CANCELLED, reasonCode SUBJECT_MISMATCH_REPORTED). Desviación: no se liga con el decisionMakerRef (GRD-IV-10).
 //  - D-3 Estados REQUESTED/VERIFIED de la revocación viven SOLO en la sesión firmada (la base registra la revocación ya APPLIED en revoke_decision): los ack de /manage/revocation y
 //    /verify no llevan revocationRef (no existe todavía); el de /confirm sí.
 //  - D-4 Los pasos de /decision/steps viven en la sesión (no hay tabla de pasos): son coherencia de UX, no evidencia.
@@ -32,7 +31,7 @@ import type { RecipientPolicy } from "../mail/recipient-policy.ts";
 import type { Ports } from "../ports/index.ts";
 import { parseCookies } from "./cookies.ts";
 import {
-  boundToken, createCodecs, handlePrefix, hashLinkToken, HANDLE_TTL_SECONDS, MANAGE_TOKEN_TTL_SECONDS, SESSION_TTL_SECONDS, verifyManageToken,
+  createCodecs, handlePrefix, hashLinkToken, HANDLE_TTL_SECONDS, SESSION_TTL_SECONDS,
 } from "./handles.ts";
 import type { Session } from "./handles.ts";
 import {
@@ -46,10 +45,6 @@ import type { SpaBundle } from "./spa-assets.ts";
 
 export const MAX_BODY_BYTES = 16 * 1024;
 
-export interface OutboxEnqueuer {
-  enqueue(input: { kind: "RECOVERY_LINK"; invitationRef: string; dedupeKey: string; payload: Record<string, unknown> }): Promise<void>;
-}
-
 export interface AppDeps {
   readonly config: Pick<Config, "publicOrigin" | "sessionSecret" | "environment">;
   readonly ports: Ports;
@@ -59,7 +54,6 @@ export interface AppDeps {
   readonly readGuardianEmail: (invitationRef: string) => Promise<string | null>;
   readonly mailer: Mailer;
   readonly policy: RecipientPolicy;
-  readonly outbox: OutboxEnqueuer;
   readonly spa: SpaBundle;
   readonly logger: Logger;
   /** SELECT 1 contra la base (GET /healthz). */
@@ -145,10 +139,10 @@ export function createApp(deps: AppDeps): App {
   const sessionCookie = (s: Omit<Session, "exp">): string =>
     serializeHttpOnlyCookie(SESSION_COOKIE, codecs.session.encode({ ...s, exp: nowSeconds() + SESSION_TTL_SECONDS }), SESSION_TTL_SECONDS);
 
-  /** consentId del handle de gestión (verifica la firma del token), o null. */
-  function manageConsentId(ctx: Ctx): string | null {
+  /** Enlace de gestión del handle, resuelto contra la base (open_manage_link: vigente, no invalidado, decisión GRANTED o REVOKED), o null. No consume. */
+  async function manageLink(ctx: Ctx): Promise<{ consentId: string; invitationRef: string; state: "GRANTED" | "REVOKED" } | null> {
     const h = codecs.manage.decode(ctx.cookies[MANAGE_HANDLE_COOKIE]);
-    return h ? verifyManageToken(config.sessionSecret, h.t) : null;
+    return h ? ports.revocations.openManageLink(h.t) : null;
   }
 
   // ---------------------------------------------------------------- páginas (shell SPA)
@@ -165,10 +159,7 @@ export function createApp(deps: AppDeps): App {
         return s?.vok === true && s.inv !== undefined && (await decisionContext(s)) !== null;
       }
       case "/manage": {
-        const con = manageConsentId(ctx);
-        if (!con) return false;
-        const ms = await ports.revocations.getManageState(con);
-        return ms !== null && ms.state !== "DECLINED";
+        return (await manageLink(ctx)) !== null;
       }
       case "/manage/verify": {
         const s = sessionFor(ctx, "M");
@@ -223,7 +214,7 @@ export function createApp(deps: AppDeps): App {
         return { status: 303, location: "/welcome", cookies: [serializeHttpOnlyCookie(INVITATION_HANDLE_COOKIE, handle, HANDLE_TTL_SECONDS), serializeClearCookie(SESSION_COOKIE)] };
       }
       if (kind === "m") {
-        const handle = codecs.manage.encode({ t: boundToken(token), exp: nowSeconds() + HANDLE_TTL_SECONDS });
+        const handle = codecs.manage.encode({ t: hashLinkToken(token), exp: nowSeconds() + HANDLE_TTL_SECONDS });
         return { status: 303, location: "/manage", cookies: [serializeHttpOnlyCookie(MANAGE_HANDLE_COOKIE, handle, HANDLE_TTL_SECONDS), serializeClearCookie(SESSION_COOKIE)] };
       }
       return { status: 404, html: deps.spa.indexUniformError }; // /r/: recuperación es H2-01
@@ -242,11 +233,10 @@ export function createApp(deps: AppDeps): App {
     }
 
     if (pathname === "/manage/page-state") {
-      const con = manageConsentId(ctx);
+      const link = await manageLink(ctx);
       const hp = currentHandlePrefix(ctx, "M");
-      if (!con || hp === null) return uniform404();
-      const ms = await ports.revocations.getManageState(con);
-      if (!ms || ms.state === "DECLINED") return uniform404();
+      if (!link || hp === null) return uniform404();
+      const con = link.consentId;
       const existing = sessionFor(ctx, "M");
       const cookies: string[] = [];
       let s = existing;
@@ -254,7 +244,7 @@ export function createApp(deps: AppDeps): App {
         s = { k: "M", hp, exp: 0, con };
         cookies.push(sessionCookie({ k: "M", hp, con }));
       }
-      const variant = ms.state === "REVOKED" ? "revoked" : s.vok === true && s.sc === "MANAGE" ? "status" : "entry";
+      const variant = link.state === "REVOKED" ? "revoked" : s.vok === true && s.sc === "MANAGE" ? "status" : "entry";
       return { status: 200, body: { variant }, cookies };
     }
 
@@ -357,8 +347,15 @@ export function createApp(deps: AppDeps): App {
         return decisionSubmit(body, ctx);
       case "/decision/subject-mismatch": {
         const s = sessionFor(ctx, "D");
-        if (!s?.vok) return uniform404();
-        return problem(501, "TRANSITION_DISABLED_IN_CONTEXT"); // D-2: sin función SQL de cancelación (I9)
+        if (!s?.vok || !s.inv) return uniform404();
+        try {
+          await ports.invitations.cancel({ invitationRef: s.inv, reasonCode: "SUBJECT_MISMATCH_REPORTED" });
+        } catch (e) {
+          if (isDomainError(e)) return uniform404(); // INVITATION_NOT_FOUND | INVITATION_NOT_CANCELLABLE
+          throw e;
+        }
+        // Tras cancelar la sesión se descarta (el enlace de invitación deja de resolver: open_invitation exige estado vivo).
+        return { status: 200, body: { result: "INVITATION_CANCELLED" }, cookies: [serializeClearCookie(SESSION_COOKIE)] };
       }
 
       case "/manage/revocation":
@@ -460,14 +457,7 @@ export function createApp(deps: AppDeps): App {
       if (isDomainError(e)) return mapDecisionError(e.code);
       throw e;
     }
-    if (rec.state === "GRANTED" && !rec.deduped) {
-      // Enlace de gestión por correo (outbox, sin token en la tabla: lo arma el worker). Un fallo aquí no revierte la decisión (queda registrado).
-      try {
-        await deps.outbox.enqueue({ kind: "RECOVERY_LINK", invitationRef: s.inv, dedupeKey: `mgmt-link:${rec.consentId}`, payload: { consentId: rec.consentId, purpose: "MANAGE" } });
-      } catch {
-        logger.warn("outbox: no se encoló el enlace de gestión", { code: "ENQUEUE_FAILED" });
-      }
-    }
+    // El recibo y el enlace de gestión se encolan DENTRO de record_decision (misma tx, 0004): si el proceso muere después, las filas ya existen.
     return { status: 200, body: { consentId: rec.consentId, state: rec.state, receiptRef: receiptRefFor(rec.consentId) } };
   }
 
@@ -502,7 +492,7 @@ export function createApp(deps: AppDeps): App {
 
   async function manageRequestRevocation(ctx: Ctx): Promise<Reply> {
     const s = sessionFor(ctx, "M");
-    if (!s) return uniform404();
+    if (!s || (await manageLink(ctx)) === null) return uniform404(); // un enlace rotado/vencido no sigue abriendo la revocación con una sesión vieja
     const ms = await manageState(s);
     if (!ms || ms.state === "DECLINED") return uniform404();
     if (ms.state === "REVOKED") return problem(409, "INVALID_TRANSITION");
@@ -515,6 +505,7 @@ export function createApp(deps: AppDeps): App {
   async function manageConfirm(ctx: Ctx): Promise<Reply> {
     const s = sessionFor(ctx, "M");
     if (!s?.rq || !s.vok || s.sc !== "REVOCATION" || !s.con || !s.ver) return uniform404();
+    if ((await manageLink(ctx)) === null) return uniform404();
     try {
       // Clave de idempotencia derivada de la sesión (consentId + OTP verificado): doble confirm => misma revocación.
       const r = await ports.revocations.revoke({ consentId: s.con, verificationRef: s.ver, idempotencyKey: `rev:${s.con}:${s.ver}` });
@@ -640,4 +631,3 @@ export function createApp(deps: AppDeps): App {
   };
 }
 
-export { MANAGE_TOKEN_TTL_SECONDS };

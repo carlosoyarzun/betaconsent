@@ -70,16 +70,13 @@ export function hashLinkToken(token: string): string {
   return createHash("sha256").update(token.length > TOKEN_MAX_INPUT_LENGTH ? token.slice(0, TOKEN_MAX_INPUT_LENGTH) : token).digest("hex");
 }
 
-// --- Handle de gestión (GET /m/{token}): el token firmado viaja dentro de la cookie HttpOnly firmada ---
+// --- Handle de gestión (GET /m/{token}): el HASH del token viaja en la cookie HttpOnly firmada; el estado del enlace vive en la base (open_manage_link) ---
 export interface ManageHandle {
+  /** sha256 hex del token de gestión (nunca el token). */
   readonly t: string;
   readonly exp: number;
 }
-export const isManageHandle = (x: unknown): x is ManageHandle => isRecord(x) && typeof x.t === "string" && x.t.length <= TOKEN_MAX_INPUT_LENGTH && Number.isInteger(x.exp);
-
-export function boundToken(token: string): string {
-  return token.length > TOKEN_MAX_INPUT_LENGTH ? token.slice(0, TOKEN_MAX_INPUT_LENGTH) : token;
-}
+export const isManageHandle = (x: unknown): x is ManageHandle => isRecord(x) && typeof x.t === "string" && /^[0-9a-f]{64}$/.test(x.t) && Number.isInteger(x.exp);
 
 // --- Sesión del apoderado ---
 export type OtpScopeInSession = "DECISION" | "MANAGE" | "REVOCATION";
@@ -123,27 +120,4 @@ export function createCodecs(sessionSecret: Buffer): Codecs {
     manage: createCodec(sessionSecret, "consent-beta/handle/manage/v1", isManageHandle),
     session: createCodec(sessionSecret, "consent-beta/session/v1", isSession),
   };
-}
-
-// --- Token de gestión sin estado (ver DESVIACIÓN en app.ts): m1.<consentId>.<exp>.<mac> ---
-export const MANAGE_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
-const CONSENT_ID = /^con-[A-Za-z0-9-]{1,60}$/;
-
-export function signManageToken(sessionSecret: Buffer, consentId: string, expiresAtEpochSeconds: number): string {
-  if (!CONSENT_ID.test(consentId)) throw new Error("consentId inválido");
-  const key = deriveKey(sessionSecret, "consent-beta/manage-token/v1");
-  const body = `m1.${consentId}.${expiresAtEpochSeconds}`;
-  return `${body}.${mac(key, body)}`;
-}
-
-/** consentId del token si la firma y el vencimiento valen; null en cualquier otro caso. */
-export function verifyManageToken(sessionSecret: Buffer, token: string): string | null {
-  const parts = token.split(".");
-  if (parts.length !== 4 || parts[0] !== "m1") return null;
-  const [, consentId, expRaw, tag] = parts as [string, string, string, string];
-  const key = deriveKey(sessionSecret, "consent-beta/manage-token/v1");
-  if (!eq(tag, mac(key, `m1.${consentId}.${expRaw}`))) return null;
-  const exp = Number(expRaw);
-  if (!CONSENT_ID.test(consentId) || !Number.isInteger(exp) || exp <= Math.floor(Date.now() / 1000)) return null;
-  return consentId;
 }

@@ -94,3 +94,14 @@ test("falta de variables obligatorias aborta con código 1 sin imprimir valores"
   assert.equal(code, 1);
   assert.match(err, /CNS_SESSION_SECRET/);
 });
+
+test("SEC-CNS-024-V1: con los pools cruzados (app<->mailer) o con un solo rol el proceso ABORTA antes de escuchar", async () => {
+  const port = await freePort();
+  const crossed = run(db.mailerUrl, port, db.appUrl); // app apunta al rol mailer y mailer al rol app
+  assert.equal(await crossed.exited, 1);
+  assert.match(crossed.errors(), /ARRANQUE ABORTADO/);
+  assert.ok(!crossed.output().includes("servidor escuchando"));
+  const mailerAsMigrator = run(db.appUrl, await freePort(), db.migratorUrl);
+  assert.equal(await mailerAsMigrator.exited, 1);
+  assert.ok(!mailerAsMigrator.output().includes("servidor escuchando"));
+});

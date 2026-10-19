@@ -21,9 +21,29 @@ y luego `CNS_MIGRATOR_DATABASE_URL=postgresql://consent_migrator:...@host/consen
 - `consent_owner` (NOLOGIN): dueño de la base y de todos los objetos y funciones SECURITY DEFINER.
 - `consent_migrator` (LOGIN, NOINHERIT): hace `SET ROLE consent_owner` en cada migración; no hereda privilegios.
 - `consent_app` (LOGIN, pool HTTP de 10 conexiones, `CNS_DATABASE_URL`): atiende las peticiones. EXECUTE de `import_invitation`, `open_invitation`, `verify_otp`, `record_decision`,
-  `revoke_decision`, `authorization_status`. SELECT por columnas **sin** `token_hash`, `code_hash` ni `decision_maker_ref`; sin UPDATE del outbox. **No puede emitir secretos.**
-- `consent_mailer` (LOGIN, NOBYPASSRLS, sin DDL, sin membresías; pool de 2 conexiones, `CNS_MAILER_DATABASE_URL`): ÚNICO con EXECUTE de `issue_otp` y `arm_invitation_token`; lee
-  `invitation(invitation_ref, student_first_name, guardian_email)` y el outbox (SELECT + UPDATE de las marcas). Nada de `verify_otp`/`record_decision`/`revoke_decision`, ni `token_hash`/`code_hash`.
+  `revoke_decision`, `authorization_status`, y (0004) `open_manage_link`, `cancel_invitation`, `enqueue_invitation_email`. SELECT por columnas **sin** `token_hash`, `code_hash` ni `decision_maker_ref`;
+  **sin INSERT ni UPDATE del outbox** (0004; antes podía insertar y forzar rotaciones/reenvíos con `payload.reissueReason`) y sin acceso a `app.manage_link`. **No puede emitir secretos.**
+- `consent_mailer` (LOGIN, NOBYPASSRLS, sin DDL, sin membresías; pool de 2 conexiones, `CNS_MAILER_DATABASE_URL`): ÚNICO con EXECUTE de `issue_otp`, `arm_invitation_token` y (0004) `issue_manage_link`
+  y `request_invitation_resend` (reenvío de operador con motivo); lee `invitation(invitation_ref, student_first_name, guardian_email)` y el outbox (SELECT + UPDATE de las marcas). Nada de
+  `verify_otp`/`record_decision`/`revoke_decision`/`open_manage_link`/`cancel_invitation`, ni `token_hash`/`code_hash`, ni `consent_decision`.
+
+## Arranque (`src/server/main.ts`, un proceso, dos pools)
+`createPools({appUrl, mailerUrl})` -> `assertEnvironment` + `assertPoolRoles` (aborta antes de escuchar si algún pool no conecta con su rol) -> `createPgPorts(new PgUnitOfWork(app), {mailerUow: new PgUnitOfWork(mailer)})`
+-> `startOutboxWorker({db: pools.mailer})`. OTP: `issue` por el puerto (pool mailer) -> `readGuardianEmail(pools.mailer, invitationRef)` -> `sendOtpNow`. Para OTP de gestión/revocación el handler obtiene el
+`invitationRef` de la decisión; el seudónimo del canal (`deriveDecisionMakerRef`) se calcula en el servidor y se pasa a `verify` (consent_app no lee `decision_maker_ref`).
+
+## Enlace de gestión con estado (0004)
+`/m/<token>` ya no es un token firmado sin estado: es un secreto en `app.manage_link` (solo `sha256`, 7 días P-10, `UNIQUE(token_hash)`, RLS). `record_decision` (GRANTED) encola en la MISMA transacción una fila
+`RECOVERY_LINK` sin token; el worker (pool mailer) llama `issue_manage_link(consent_id)` (devuelve el token una vez; invalida los anteriores vigentes; ledger `MANAGE_LINK_ISSUED` sin token) y envía `/m/<token>`.
+`GET /m/<token>` es un 303 uniforme sin leer la base (F-RB-02); `/manage` y `/manage/page-state` canjean contra `open_manage_link(hash)` (no consume). `revoke_decision` marca `consumed_at`; el enlace consumido
+solo sigue resolviendo para mostrar "ya revocado". Reemitir invalida el enlace anterior (también para una sesión ya abierta: se revalida al pedir/confirmar la revocación).
+`POST /decision/subject-mismatch` -> `cancel_invitation(ref, 'SUBJECT_MISMATCH_REPORTED')` (OPENED|VERIFIED -> CANCELLED, `INVITATION_CANCELLED` con `reasonCode`, sin texto libre; libera la invitación viva del estudiante).
+Desviación: no se liga con el `decisionMakerRef` de la sesión (GRD-IV-10 del contrato) porque consent_app no lo lee; la sesión HTTP sí exige OTP verificado.
+
+## Outbox sin escritura de la app (0004, P2 de la verificación PR #121)
+Recibos y enlace de gestión se encolan dentro de `record_decision`/`revoke_decision` (payload completo: versión, fecha, finalidades, `receiptRef`; consent_mailer no lee `consent_decision`);
+la primera invitación con `enqueue_invitation_email(ref, version)` (consent_app, una fila por invitación, sin motivo); el reenvío de operador con `request_invitation_resend(ref, motivo)` (pool mailer, H1-09).
+El worker solo rota un token de invitación vigente por `OUTBOX_RETRY` o por un motivo escrito por esas funciones: ya no hay ruta SQL de consent_app que lo fuerce.
 
 Por qué dos roles de runtime en el mismo proceso Node (SEC-CNS-024-V1, P0): `issue_otp` devuelve el código en claro; si lo ejecutara el mismo rol que ejecuta `verify_otp` y `record_decision`, una SOLA
 sentencia SQL inyectada en el pool de la app (`issue_otp -> verify_otp -> record_decision`) fabricaría un GRANTED (o un REVOKED) sin acceso al correo del apoderado. Con la separación, una SQLi en el
@@ -42,7 +62,7 @@ SMTP sin TLS solo a loopback y solo con `CNS_ENVIRONMENT=LOCAL`) y `MemoryMailer
 el resto no se envía (`email_outbox` queda `SUPPRESSED` + `last_error_code='SUPPRESSED_ALLOWLIST'`). Con REAL la allowlist se ignora.
 Outbox en proceso (`startOutboxWorker`, `setInterval`): claim con `FOR UPDATE SKIP LOCKED`, 3 intentos con backoff 30 s / 120 s y luego `FAILED`; SENT solo tras la respuesta del proveedor.
 Garantía al-menos-una-vez: si el proceso muere entre el envío y la marca SENT, la fila queda `SENDING` y se reenvía al vencer el lease (5 min); ese duplicado se acepta.
-La invitación NO guarda el token en el outbox: al reclamar la fila el worker genera el token, llama a `arm_invitation_token(hash)` y envía `/i/<token>` (si ya no es armable, la fila queda `FAILED` con `INVITATION_NOT_ARMABLE`).
+La invitación NO guarda el token en el outbox (ni el enlace de gestión): al reclamar la fila el worker genera el token, llama a `arm_invitation_token(hash)` y envía `/i/<token>` (si ya no es armable, la fila queda `FAILED` con `INVITATION_NOT_ARMABLE`).
 El OTP lo genera `issue_otp` en la base con el pool del mailer (se devuelve en claro una sola vez) y va por `sendOtpNow`; el destinatario se lee con `readGuardianEmail` sobre ese mismo pool. El worker del outbox (`deps.db`) usa el pool del mailer (síncrono, sin outbox, sin persistencia ni log). Todo el copy de `src/mail/templates/` es BORRADOR (copy legal = LEGAL DECISION de Carlos).
 Test con Mailpit: `docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit` y `MAILPIT_SMTP_URL=smtp://localhost:1025 MAILPIT_API_URL=http://localhost:8025 npm run test:integration` (sin esas variables se salta).
 

@@ -24,7 +24,6 @@ before(async () => {
     readGuardianEmail: async () => "a@pruebas.example.invalid",
     mailer,
     policy: { dataClass: "SYNTHETIC", allowlist: ["@pruebas.example.invalid"] },
-    outbox: { enqueue: async () => undefined },
     spa: loadSpaBundle(makeFixtureDist()),
     logger: createJsonLogger(() => undefined),
     checkHealth: async () => undefined,

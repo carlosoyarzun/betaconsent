@@ -63,6 +63,14 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
         inv.tokenHash = input.tokenHash;
         inv.tokenExpiresAt = input.expiresAt.getTime();
       },
+      async cancel(input) {
+        if (input.reasonCode !== "SUBJECT_MISMATCH_REPORTED") throw new DomainError("INVALID_REASON_CODE");
+        const inv = s.invitations.get(input.invitationRef);
+        if (!inv) throw new DomainError("INVITATION_NOT_FOUND");
+        if (inv.state === "CANCELLED") return;
+        if (inv.state !== "OPENED" && inv.state !== "VERIFIED") throw new DomainError("INVITATION_NOT_CANCELLABLE");
+        inv.state = "CANCELLED";
+      },
       async openByTokenHash(tokenHash) {
         const inv = [...s.invitations.values()].find(
           (i) => i.tokenHash === tokenHash && !i.tokenConsumed && (i.tokenExpiresAt ?? 0) > s.now() && ["SENT", "OPENED", "VERIFIED"].includes(i.state),
@@ -163,6 +171,9 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
         s.revocations.push({ ref, consentId: input.consentId, idemKey: input.idempotencyKey });
         dec.state = "REVOKED";
         return { revocationRef: ref, deduped: false };
+      },
+      async openManageLink() {
+        return null; // los enlaces de gestión los emite consent_mailer (issue_manage_link): el adaptador en memoria no los modela
       },
       async getManageState(consentId) {
         const d = s.decisions.get(consentId);

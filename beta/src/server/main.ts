@@ -9,10 +9,9 @@ import { assertPoolRoles, createPools } from "../db/pool.ts";
 import { PgUnitOfWork } from "../db/unit-of-work.ts";
 import { readGuardianEmail } from "../mail/otp.ts";
 import { createSmtpMailer } from "../mail/smtp-mailer.ts";
-import { enqueueEmail, startOutboxWorker } from "../mail/outbox-worker.ts";
+import { startOutboxWorker } from "../mail/outbox-worker.ts";
 import { readDataClass } from "../mail/recipient-policy.ts";
 import { createApp } from "./app.ts";
-import { MANAGE_TOKEN_TTL_SECONDS, signManageToken } from "./handles.ts";
 import { startHttpServer } from "./http-server.ts";
 import { createJsonLogger } from "./log.ts";
 import { createPgRecipientLookup } from "./recipients.ts";
@@ -30,8 +29,7 @@ async function main(): Promise<void> {
 
     const mailer = createSmtpMailer(config);
     const policy = { dataClass, allowlist: config.mailAllowlist };
-    const manageLinkPath = (consentId: string): string => `/m/${signManageToken(config.sessionSecret, consentId, Math.floor(Date.now() / 1000) + MANAGE_TOKEN_TTL_SECONDS)}`;
-    const stopWorker = startOutboxWorker({ db: pools.mailer, mailer, policy, logger, manageLinkPath });
+    const stopWorker = startOutboxWorker({ db: pools.mailer, mailer, policy, logger });
     const spa = process.env.CNS_SPA_DIST_DIR ? loadSpaBundle(process.env.CNS_SPA_DIST_DIR) : loadSpaBundle(); // CNS_SPA_DIST_DIR: solo para pruebas
     const app = createApp({
       config,
@@ -40,7 +38,6 @@ async function main(): Promise<void> {
       readGuardianEmail: (invitationRef) => readGuardianEmail(pools.mailer, invitationRef),
       mailer,
       policy,
-      outbox: { enqueue: async (i) => void (await enqueueEmail(pool, i)) },
       spa,
       logger,
       checkHealth: async () => void (await pool.query("SELECT 1")),

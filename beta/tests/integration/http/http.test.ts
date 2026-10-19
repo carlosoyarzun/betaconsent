@@ -14,10 +14,9 @@ import type { RuntimePools } from "../../../src/db/pool.ts";
 import { readGuardianEmail } from "../../../src/mail/otp.ts";
 import { PgUnitOfWork } from "../../../src/db/unit-of-work.ts";
 import { MemoryMailer } from "../../../src/mail/memory-mailer.ts";
-import { enqueueEmail, runOutboxTick } from "../../../src/mail/outbox-worker.ts";
+import { runOutboxTick } from "../../../src/mail/outbox-worker.ts";
 import type { RecipientPolicy } from "../../../src/mail/recipient-policy.ts";
 import { createApp } from "../../../src/server/app.ts";
-import { MANAGE_TOKEN_TTL_SECONDS, signManageToken } from "../../../src/server/handles.ts";
 import { createJsonLogger } from "../../../src/server/log.ts";
 import { createPgRecipientLookup } from "../../../src/server/recipients.ts";
 import { loadSpaBundle } from "../../../src/server/spa-assets.ts";
@@ -60,7 +59,6 @@ before(async () => {
     readGuardianEmail: (ref) => readGuardianEmail(pools.mailer, ref),
     mailer,
     policy: POLICY,
-    outbox: { enqueue: async (i) => void (await enqueueEmail(pool, i)) },
     spa: loadSpaBundle(makeFixtureDist()),
     logger: createJsonLogger((l) => void logLines.push(l)),
     checkHealth: async () => {
@@ -113,7 +111,14 @@ async function decide(b: Browser, choice: "GRANT" | "DECLINE"): Promise<{ consen
 }
 
 async function tick(): Promise<void> {
-  await runOutboxTick({ db: pools.mailer, mailer, policy: POLICY, logger: { info() {}, warn() {} }, backoffMs: [0, 0], manageLinkPath: (c) => `/m/${signManageToken(SECRET, c, Math.floor(Date.now() / 1000) + MANAGE_TOKEN_TTL_SECONDS)}` });
+  await runOutboxTick({ db: pools.mailer, mailer, policy: POLICY, logger: { info() {}, warn() {} }, backoffMs: [0, 0] });
+}
+
+/** Ruta /m/<token> del último correo de enlace de gestión (el token solo existe en el correo). */
+function lastManagePath(): string {
+  const link = mailer.sent.filter((m) => m.template === "management_link").pop();
+  assert.ok(link, "hay un correo con el enlace de gestión");
+  return /\/m\/[A-Za-z0-9_-]+/.exec(link.text)![0];
 }
 
 test("CSP exacta, cabeceras y cookie CSRF __Host- en el shell; assets por manifest", async () => {
@@ -139,7 +144,7 @@ test("CSP exacta, cabeceras y cookie CSRF __Host- en el shell; assets por manife
 });
 
 test("POST sin CSRF o con Origin ajeno => 403 sin efecto; 404 uniforme con meta uniform-error", async () => {
-  const { token } = await invite();
+  const { token, invitationRef } = await invite();
   const b = new Browser(base);
   await b.get(`/i/${token}`);
   await b.get("/welcome");
@@ -149,7 +154,7 @@ test("POST sin CSRF o con Origin ajeno => 403 sin efecto; 404 uniforme con meta 
   assert.equal((await b.post("/invitation/open", {}, { origin: "https://evil.example" })).status, 403);
   assert.equal((await b.post("/invitation/open", {}, { origin: null })).status, 403);
   // sin efecto: la invitación sigue SENT
-  const st = await pool.query("SELECT state FROM app.invitation WHERE token_hash IS NOT NULL ORDER BY created_at DESC LIMIT 1");
+  const st = await pool.query("SELECT state FROM app.invitation WHERE invitation_ref = $1", [invitationRef]);
   assert.equal(st.rows[0]!.state, "SENT");
 
   const fresh = new Browser(base);
@@ -234,8 +239,7 @@ test("revocación completa por /m: OTP REVOCATION -> confirm -> NOT_AUTHORIZED; 
   await toVerified(a, token);
   const dec = await decide(a, "GRANT");
   await tick();
-  const link = mailer.sent.filter((m) => m.template === "management_link").pop()!;
-  const path = /\/m\/([A-Za-z0-9._~-]+)/.exec(link.text)![0];
+  const path = lastManagePath();
 
   const b = new Browser(base);
   const hop = await b.get(path);
@@ -270,9 +274,11 @@ test("withdraw antes de confirmar cancela la solicitud; /manage/recovery-link y 
   const { token, studentRef } = await invite();
   const a = new Browser(base);
   await toVerified(a, token);
-  const dec = await decide(a, "GRANT");
+  await decide(a, "GRANT");
+  await tick();
+  const path = lastManagePath();
   const b = new Browser(base);
-  await b.get(`/m/${signManageToken(SECRET, dec.consentId, Math.floor(Date.now() / 1000) + 600)}`);
+  await b.get(path);
   await b.get("/manage");
   await b.get("/manage/page-state");
   await b.post("/manage/revocation");
@@ -285,7 +291,7 @@ test("withdraw antes de confirmar cancela la solicitud; /manage/recovery-link y 
   assert.equal((await b.post("/recovery/revoke", { confirmTotalWithdrawal: true })).status, 404);
   // token de gestión manipulado => uniforme
   const bad = new Browser(base);
-  await bad.get(`/m/${signManageToken(SECRET, dec.consentId, Math.floor(Date.now() / 1000) + 600)}x`);
+  await bad.get(`${path}x`);
   assert.equal((await bad.get("/manage")).status, 404);
 });
 
@@ -329,4 +335,88 @@ test("cuerpo > 16 KB => 413; JSON inválido => 400; método no soportado => 405"
   assert.equal(bad.status, 400);
   const put = await fetch(base + "/welcome", { method: "PUT" });
   assert.equal(put.status, 405);
+});
+
+test("enlace de gestión con estado: el correo lleva /m/<token> real; ni outbox ni logs ni ledger guardan el token; tras REVOKED el mismo enlace muestra 'revoked'", async () => {
+  const { token, studentRef } = await invite();
+  const a = new Browser(base);
+  await toVerified(a, token);
+  const dec = await decide(a, "GRANT");
+  await tick();
+  const path = lastManagePath();
+  const mToken = path.slice("/m/".length);
+  assert.match(mToken, /^[A-Za-z0-9_-]{43}$/);
+  const outbox = await pool.query("SELECT payload::text AS p, last_error_code FROM app.email_outbox WHERE payload->>'consentId' = $1", [dec.consentId]);
+  assert.ok(outbox.rows.length >= 2);
+  assert.ok(!outbox.rows.some((r) => String(r.p).includes(mToken)), "el token no está en el outbox");
+  assert.ok(!logLines.join("\n").includes(mToken), "el token no está en los logs");
+  const ledger = await pool.query("SELECT event_type, payload::text AS p FROM integrity.audit_event WHERE aggregate_id = $1", [dec.consentId]);
+  assert.ok(ledger.rows.some((r) => r.event_type === "MANAGE_LINK_ISSUED"));
+  assert.ok(!ledger.rows.some((r) => String(r.p).includes(mToken)));
+
+  const b = new Browser(base);
+  await b.get(path);
+  assert.equal((await b.get("/manage")).status, 200);
+  await b.get("/manage/page-state");
+  await b.post("/manage/revocation");
+  await b.post("/otp/request");
+  await b.post("/otp/submit", { code: lastOtp(mailer) });
+  assert.equal((await b.post("/manage/revocation/confirm")).status, 200);
+  assert.equal((await ports.authorization.byStudentRef(studentRef)).status, "NOT_AUTHORIZED");
+  // el mismo enlace (consumido por la revocación) abre para mostrar el estado
+  const again = new Browser(base);
+  await again.get(path);
+  assert.equal((await again.get("/manage")).status, 200);
+  assert.deepEqual((await again.get("/manage/page-state")).json, { variant: "revoked" });
+  assert.equal((await again.post("/manage/revocation")).status, 409);
+});
+
+test("reemitir el enlace de gestión invalida el anterior (también para una sesión ya abierta)", async () => {
+  const { token } = await invite();
+  const a = new Browser(base);
+  await toVerified(a, token);
+  const dec = await decide(a, "GRANT");
+  await tick();
+  const oldPath = lastManagePath();
+  const old = new Browser(base);
+  await old.get(oldPath);
+  assert.equal((await old.get("/manage")).status, 200);
+  await old.get("/manage/page-state");
+  // reemisión (pool mailer, como haría el worker al reintentar o un operador)
+  const t2 = (await pools.mailer.query<{ t: string }>("SELECT app.issue_manage_link($1) AS t", [dec.consentId])).rows[0]!.t;
+  assert.equal((await old.post("/manage/revocation")).status, 404, "la sesión abierta con el enlace viejo ya no puede pedir la revocación");
+  const stale = new Browser(base);
+  assert.equal((await stale.get(oldPath)).status, 303);
+  assert.equal((await stale.get("/manage")).status, 404);
+  assert.deepEqual((await stale.get("/manage/page-state")).json, { status: 404 });
+  const fresh = new Browser(base);
+  await fresh.get(`/m/${t2}`);
+  assert.equal((await fresh.get("/manage")).status, 200);
+  assert.deepEqual((await fresh.get("/manage/page-state")).json, { variant: "entry" });
+});
+
+test("subject-mismatch: antes del OTP 404 sin efecto; verificado => CANCELLED con reasonCode, el enlace deja de resolver y la invitación viva se libera", async () => {
+  const early = await invite();
+  const e = new Browser(base);
+  await e.get(`/i/${early.token}`);
+  await e.get("/welcome");
+  await e.post("/invitation/open");
+  assert.equal((await e.post("/decision/subject-mismatch")).status, 404);
+  assert.equal((await pool.query("SELECT state FROM app.invitation WHERE invitation_ref = $1", [early.invitationRef])).rows[0]!.state, "OPENED");
+
+  const { token, invitationRef } = await invite();
+  const b = new Browser(base);
+  await toVerified(b, token);
+  const r = await b.post("/decision/subject-mismatch");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { result: "INVITATION_CANCELLED" });
+  assert.equal((await pool.query("SELECT state FROM app.invitation WHERE invitation_ref = $1", [invitationRef])).rows[0]!.state, "CANCELLED");
+  const ev = await pool.query("SELECT payload FROM integrity.audit_event WHERE aggregate_id = $1 AND event_type = 'INVITATION_CANCELLED'", [invitationRef]);
+  assert.deepEqual(ev.rows.map((x) => x.payload), [{ invitationRef, reasonCode: "SUBJECT_MISMATCH_REPORTED" }]);
+  assert.equal((await b.post("/decision/submit", { purposes: PURPOSES.map((purpose) => ({ purpose, choice: "GRANT" })) })).status, 404, "la sesión se descartó");
+  const again = new Browser(base);
+  await again.get(`/i/${token}`);
+  await again.get("/welcome");
+  assert.equal((await again.post("/invitation/open")).status, 404, "el enlace de invitación ya no resuelve");
+  assert.equal((await pool.query("SELECT 1 FROM app.consent_decision WHERE invitation_ref = $1", [invitationRef])).rows.length, 0);
 });

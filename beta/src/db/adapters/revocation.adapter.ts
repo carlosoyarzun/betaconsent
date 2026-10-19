@@ -17,6 +17,15 @@ export function createPgRevocationRepo(uow: UnitOfWork): RevocationRepo {
         }),
       ),
 
+    openManageLink: (tokenHashHex) =>
+      translating(() =>
+        uow.withTransaction(async (tx) => {
+          const r = await tx.query<{ consent_id: string; invitation_ref: string; state: "GRANTED" | "REVOKED" }>("SELECT * FROM app.open_manage_link($1)", [Buffer.from(tokenHashHex, "hex")]);
+          const row = r.rows[0];
+          return row ? { consentId: row.consent_id, invitationRef: row.invitation_ref, state: row.state } : null;
+        }),
+      ),
+
     getManageState: (consentId) =>
       translating(() =>
         uow.withTransaction(async (tx) => {

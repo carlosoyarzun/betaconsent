@@ -15,4 +15,9 @@ export interface RevocationRepo {
   revoke(input: { readonly consentId: ConsentId; readonly verificationRef: VerificationRef; readonly idempotencyKey: string }): Promise<{ readonly revocationRef: RevocationRef; readonly deduped: boolean }>;
   /** Estado para la página de gestión, por handle = consentId. null = no existe. */
   getManageState(consentId: ConsentId): Promise<ManageState | null>;
+  /**
+   * Resuelve el enlace de gestión por el HASH sha256 (hex) del token (open_manage_link de 0004). No consume. null = inválido, invalidado, vencido o decisión DECLINED.
+   * state GRANTED = se puede gestionar; REVOKED = la UI muestra "ya revocado".
+   */
+  openManageLink(tokenHashHex: string): Promise<{ readonly consentId: ConsentId; readonly invitationRef: string; readonly state: "GRANTED" | "REVOKED" } | null>;
 }

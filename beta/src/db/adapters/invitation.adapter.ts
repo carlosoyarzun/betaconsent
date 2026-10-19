@@ -30,6 +30,13 @@ export function createPgInvitationRepo(uow: UnitOfWork, mailerUow: UnitOfWork): 
         }),
       ),
 
+    cancel: (input) =>
+      translating(() =>
+        uow.withTransaction(async (tx) => {
+          await tx.query("SELECT app.cancel_invitation($1, $2)", [input.invitationRef, input.reasonCode]);
+        }),
+      ),
+
     openByTokenHash: (tokenHash) =>
       translating(() =>
         uow.withTransaction(async (tx) => {
