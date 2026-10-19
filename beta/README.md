@@ -83,3 +83,22 @@ CLI por SSH (`npm run admin -- <comando> [--json]`, o `node src/cli/main.ts`). E
 
 CSV UTF-8, cabecera exacta `student_ref,student_first_name,guardian_email` (ver `examples/invitations.example.csv`):
 `student_ref` opaco `[A-Za-z0-9_-]{8,64}` (no RUT), nombre de pila 1-40 caracteres (sin apellidos), correo válido (se guarda en minúsculas); `--batch` con la misma forma que `student_ref`. Máx. 10.000 filas.
+
+## Criterios de aceptación H1 (E2E)
+
+Gobierna: DEC "Reconstrucción mínima" (2026-10-19) y plan v2 H1-11. `tests/e2e/acceptance.test.ts` (`npm run test:e2e`; job `beta-e2e`) arranca el proceso real `src/server/main.ts`, la CLI real `src/cli/main.ts` y un buzón SMTP: Mailpit si `MAILPIT_SMTP_URL` y `MAILPIT_API_URL` están definidas (CI); si no, un receptor SMTP mínimo del propio test (el proceso real envía igualmente con `SmtpMailer`). Los tests dependen unos de otros y corren en orden. Solo datos sintéticos.
+
+| Criterio de la DEC | Test (`acceptance.test.ts`) |
+|---|---|
+| Importar invitación (N nuevas; reimport 0) | `paso 1` |
+| Correo real al apoderado; el token no queda en outbox, logs ni ledger | `paso 2` |
+| Verificar apoderado (escáner x2, open, OTP del correo) | `paso 3` |
+| Registrar autorización con la versión/hash servidos; recibo; `status` = AUTHORIZED | `paso 4` |
+| Consultar desde LectorPro (HMAC, replay de nonce -> 401 -> false) | `paso 5` |
+| Revocar con el enlace de gestión del correo y OTP; recibo; `confirm` repetido y x10 en paralelo = una revocación | `paso 6` |
+| LectorPro ya no permite lecturas nuevas (primera consulta tras el commit) | `paso 6b` |
+| Servidor apagado => fail-closed | `paso 7` |
+| Evidencias auditables y restauración (`verify-ledger`, `pg_dump`/`pg_restore`, copia alterada => exit 1) | `paso 8` |
+| Consistencia ante duplicados y concurrencia (20 `submit` paralelos = 1 decisión y 1 evento) | `extra: 20 POST /decision/submit` |
+| Segundo apoderado DECLINED => no se puede leer | `extra: segundo apoderado DECLINED` |
+| Subject-mismatch cancela la invitación | `extra: subject-mismatch` |
