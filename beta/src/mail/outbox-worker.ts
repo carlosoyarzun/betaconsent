@@ -22,7 +22,10 @@ import { DomainError } from "../domain/errors.ts";
 import { mapPgError } from "../db/map-error.ts";
 import type { Mailer, SendRequest } from "./mailer.port.ts";
 import { isRecipientAllowed, SUPPRESSED_REASON, type Queryable, type RecipientPolicy } from "./recipient-policy.ts";
+import { receiptRefFor } from "../domain/receipt.ts";
 import type { PurposeChoice, ReceiptParams } from "./templates/index.ts";
+
+const ALL_PURPOSES = ["STUDY_PARTICIPATION", "AUDIO_RECORDING", "AUTOMATED_ANALYSIS", "HUMAN_REVIEW"] as const;
 
 export const MAX_ATTEMPTS = 3;
 export const LEASE_SECONDS = 300;
@@ -49,6 +52,8 @@ export interface OutboxDeps {
   readonly now?: () => number;
   /** Vigencia del token de invitación. Default P-10 = 7 días. */
   readonly invitationTokenTtlMs?: number;
+  /** H1-05: ruta `/m/<token>` del enlace de gestión de una decisión (token sin estado firmado por el proceso web). Sin ella, RECOVERY_LINK con consentId no es enviable. */
+  readonly manageLinkPath?: (consentId: string) => string;
 }
 
 interface Claimed {
@@ -116,7 +121,7 @@ function buildRequest(row: Claimed, to: string, firstName: string): SendRequest 
     case "RECOVERY_LINK":
       return { to, template: "management_link", params: { studentFirstName: firstName, linkPath: str(p.linkPath, "linkPath", 200) } };
     case "DECISION_RECEIPT":
-      return { to, template: p.decision === "DECLINED" ? "receipt_declined" : "receipt_granted", params: receiptParams(p, firstName) };
+      return { to, template: (p.decision ?? p.outcome) === "DECLINED" ? "receipt_declined" : "receipt_granted", params: receiptParams(p, firstName) };
     case "REVOCATION_RECEIPT":
       return { to, template: "receipt_revoked", params: receiptParams(p, firstName) };
     default:
@@ -140,6 +145,32 @@ async function prepareInvitation(deps: OutboxDeps, row: Claimed, to: string, fir
     throw e;
   }
   return { to, template: "invitation", params: { studentFirstName: firstName, linkPath: `/i/${token}` } };
+}
+
+/**
+ * Las funciones SQL de 0003 encolan el recibo con payload mínimo ({consentId, outcome} / {consentId, revocationRef}); la plantilla necesita versión, fecha,
+ * finalidades y referencia. Si faltan, se completan desde app.consent_decision (SELECT concedido). Un payload ya completo se respeta tal cual.
+ */
+async function enrichReceiptPayload(deps: OutboxDeps, row: Claimed): Promise<Record<string, unknown>> {
+  const p = row.payload;
+  if (typeof p.receiptRef === "string") return p;
+  const consentId = str(p.consentId, "consentId", 80);
+  const r = await deps.db.query<{ purposes: unknown; consent_version: string; decided_at: Date; revoked_at: Date | null; state: string }>(
+    "SELECT purposes, consent_version, decided_at, revoked_at, state FROM app.consent_decision WHERE consent_id = $1",
+    [consentId],
+  );
+  const d = r.rows[0];
+  if (d === undefined) throw new Unsendable("NO_DECISION");
+  const granted = Array.isArray(d.purposes) ? (d.purposes as unknown[]).filter((x): x is string => typeof x === "string") : [];
+  const when = row.kind === "REVOCATION_RECEIPT" ? (d.revoked_at ?? d.decided_at) : d.decided_at;
+  return {
+    ...p,
+    decision: row.kind === "REVOCATION_RECEIPT" ? "REVOKED" : (p.outcome ?? d.state),
+    consentVersion: d.consent_version,
+    decidedAt: new Date(when).toISOString(),
+    receiptRef: row.kind === "REVOCATION_RECEIPT" && typeof p.revocationRef === "string" ? p.revocationRef : receiptRefFor(consentId),
+    purposes: ALL_PURPOSES.map((purpose) => ({ purpose, choice: granted.includes(purpose) ? "GRANT" : "DECLINE" })),
+  };
 }
 
 function errorCode(e: unknown): string {
@@ -191,6 +222,11 @@ async function processOne(deps: OutboxDeps, row: Claimed): Promise<"sent" | "ret
       await finish(deps, row.email_id, SUPPRESSED_STATUS, SUPPRESSED_REASON, null);
       deps.logger.info("outbox: suprimido por allowlist", fields);
       return "suppressed";
+    }
+    if (row.kind === "DECISION_RECEIPT" || row.kind === "REVOCATION_RECEIPT") row.payload = await enrichReceiptPayload(deps, row);
+    if (row.kind === "RECOVERY_LINK" && typeof row.payload.consentId === "string" && row.payload.linkPath === undefined) {
+      if (deps.manageLinkPath === undefined) throw new Unsendable("NO_LINK_BUILDER");
+      row.payload = { ...row.payload, linkPath: deps.manageLinkPath(row.payload.consentId) };
     }
     const request = row.kind === "INVITATION" ? await prepareInvitation(deps, row, rec.guardian_email, rec.student_first_name) : buildRequest(row, rec.guardian_email, rec.student_first_name);
     const result = await deps.mailer.send(request);
