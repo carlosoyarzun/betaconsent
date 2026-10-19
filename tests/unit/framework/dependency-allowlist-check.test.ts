@@ -17,7 +17,7 @@ import {
 } from "../../../tools/guardrails/dependency-allowlist.ts";
 
 const VALID_ALLOWLIST: Allowlist = {
-  entries: [{ name: "left-pad", version: "1.2.3", owner: "carlosoyarzun" }],
+  entries: [{ name: "left-pad", version: "1.2.3", owner: "carlosoyarzun", status: "approved" }],
 };
 
 function baseLockfile(deps: Record<string, string>): Lockfile {
@@ -78,26 +78,34 @@ test("TEST-CNS-905 dependency-allowlist: overrides presente falla explícitament
 });
 
 test("TEST-CNS-905 dependency-allowlist entryValidation: versión con rango (no exacta) falla", () => {
-  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "^1.2.3", owner: "carlosoyarzun" }] });
+  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "^1.2.3", owner: "carlosoyarzun", status: "approved" }] });
   assert.ok(violations.some((v) => v.includes("no es una versión exacta")));
 });
 
 test("TEST-CNS-905 dependency-allowlist entryValidation: owner vacío falla", () => {
-  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "1.2.3", owner: "" }] });
+  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "1.2.3", owner: "", status: "approved" }] });
   assert.ok(violations.some((v) => v.includes('no tiene "owner"')));
 });
 
 test("TEST-CNS-905 dependency-allowlist entryValidation: owner ausente falla", () => {
-  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "1.2.3" }] });
+  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "1.2.3", status: "approved" }] });
   assert.ok(violations.some((v) => v.includes('no tiene "owner"')));
 });
 
 test("TEST-CNS-905 dependency-allowlist entryValidation: owner que es un agente IA falla", () => {
-  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "1.2.3", owner: "lampone-dev" }] });
+  const violations = validateAllowlistEntries({ entries: [{ name: "left-pad", version: "1.2.3", owner: "lampone-dev", status: "approved" }] });
   assert.ok(violations.some((v) => v.includes("es un agente IA")));
 });
 
 test("TEST-CNS-905 dependency-allowlist entryValidation: owner humano válido no produce violaciones", () => {
   const violations = validateAllowlistEntries(VALID_ALLOWLIST);
   assert.deepEqual(violations, []);
+});
+
+test("TEST-CNS-905 dependency-allowlist entryValidation (SEC-UI-2): status proposed o ausente falla (solo approved habilita)", () => {
+  for (const status of ["proposed", undefined, "PENDING"]) {
+    const entry = { name: "left-pad", version: "1.2.3", owner: "carlosoyarzun", ...(status ? { status } : {}) };
+    const violations = validateAllowlistEntries({ entries: [entry] });
+    assert.ok(violations.some((v) => v.includes("solo \"approved\"")), String(status));
+  }
 });

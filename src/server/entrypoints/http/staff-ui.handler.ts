@@ -33,6 +33,7 @@ import type { HttpResult } from "./consent-flow.handler.ts";
 import { serializeCsrfCookie } from "./csrf.ts";
 import { evaluateStaffRoster, secFetchAllowed } from "./staff-roster.handler.ts";
 import { isSecurityEventWriteError, reportSecurityEventWriteFailure } from "./security-event-failure.ts";
+import { STAFF_HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
 import { decodeStaffSession, hashStaffSid, revokeStaffSessionCookie, staffCsrfMatchesSession, staffCsrfTokenFor } from "./staff-session.ts";
 import {
   authenticateStaffSession,
@@ -109,8 +110,7 @@ export const STAFF_UI_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
   "X-Content-Type-Options": "nosniff",
   "Cross-Origin-Resource-Policy": "same-origin",
   "Vary": "Cookie",
-  "Content-Security-Policy":
-    "default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "Content-Security-Policy": STAFF_HTML_CONTENT_SECURITY_POLICY,
 };
 
 const FLASH_COOKIE_NAME = "__Host-cns-staff-flash";
