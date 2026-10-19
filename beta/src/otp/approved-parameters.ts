@@ -14,5 +14,8 @@ export const APPROVED_P04_OTP_BUDGET_WINDOW_MS = 24 * 60 * 60_000;
 export const APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS = 60_000;
 export const APPROVED_P06_OTP_MAX_SENDS_PER_HOUR = 3;
 export const APPROVED_P06_OTP_SEND_WINDOW_MS = 60 * 60_000;
-/** SUPUESTO de beta (no aprobado): ventana tras verificar el OTP para registrar la decisión o la revocación = 30 min. */
-export const BETA_VERIFIED_SESSION_WINDOW_MS = 30 * 60_000;
+/** P-07 (aprobado, scope DECISION): el 3.er challenge LOCKED de una misma invitación la agota (OTP_EXHAUSTED al reemitir). */
+export const APPROVED_P07_OTP_DECISION_MAX_LOCKED_CHALLENGES = 3;
+/** SUPUESTO de beta (no aprobado por Carlos): ventana tras verificar el OTP para registrar la decisión o la revocación = 10 min. Decisión técnica del Supervisor
+ * (2026-10-19, SEC-CNS-024), alineada con P-02 y con el TTL del handle; sustituye los 30 min anteriores. */
+export const BETA_VERIFIED_SESSION_WINDOW_MS = 10 * 60_000;

@@ -2,20 +2,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { computeOtpHmac, deriveDecisionMakerRef, generateInvitationToken, generateOtpCode, hashInvitationToken } from "../../src/domain/crypto.ts";
+import { deriveDecisionMakerRef, generateInvitationToken, generateOtpCode, hashInvitationToken } from "../../src/domain/crypto.ts";
 import { DomainError } from "../../src/domain/errors.ts";
 import { mapPgError } from "../../src/db/map-error.ts";
 import { PgUnitOfWork } from "../../src/db/unit-of-work.ts";
 
 const secret = Buffer.alloc(32, 7);
 
-test("el código OTP son 6 dígitos y el HMAC es hex de 64 ligado a scope, padre y código", () => {
+test("el código OTP de prueba son 6 dígitos y crypto.ts ya no expone HMAC de OTP (F-SB-01)", async () => {
   assert.match(generateOtpCode(), /^\d{6}$/);
-  const h = computeOtpHmac(secret, "inv-1", "DECISION", "123456");
-  assert.match(h, /^[0-9a-f]{64}$/);
-  assert.notEqual(h, computeOtpHmac(secret, "inv-2", "DECISION", "123456"));
-  assert.notEqual(h, computeOtpHmac(secret, "inv-1", "MANAGE", "123456"));
-  assert.notEqual(h, computeOtpHmac(Buffer.alloc(32, 8), "inv-1", "DECISION", "123456"));
+  const mod = (await import("../../src/domain/crypto.ts")) as Record<string, unknown>;
+  assert.equal("computeOtpHmac" in mod, false);
 });
 
 test("el token de invitación es aleatorio y su hash es sha256 hex", () => {

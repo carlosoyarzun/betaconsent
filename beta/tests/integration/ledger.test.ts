@@ -79,22 +79,22 @@ test("UPDATE/DELETE/TRUNCATE del ledger fallan como consent_app Y como consent_o
   assert.match((await failure(app, "INSERT INTO integrity.audit_event (aggregate_type, aggregate_id, sequence, event_type, actor_type, payload, chain_seq, payload_hash, previous_event_hash, event_hash) VALUES ('X','y',1,'INVITATION_CREATED','HUMAN','{}',99,$1,$1,$1)", [HASH("a")])) ?? "", /permission denied/);
 });
 
-test("consent_app no puede escribir otp_challenge ni consent_decision ni leer code_hmac", async () => {
+test("consent_app no puede escribir otp_challenge ni consent_decision ni leer code_hash", async () => {
   assert.match((await failure(app, "UPDATE app.consent_decision SET state = 'REVOKED'")) ?? "", /permission denied/);
   assert.match((await failure(app, "INSERT INTO app.consent_decision (consent_id) VALUES ('x')")) ?? "", /permission denied/);
   assert.match((await failure(app, "UPDATE app.otp_challenge SET state = 'VERIFIED'")) ?? "", /permission denied/);
-  assert.match((await failure(app, "UPDATE app.otp_challenge SET code_hmac = $1", [HASH("b")])) ?? "", /permission denied/);
-  assert.match((await failure(app, "SELECT code_hmac FROM app.otp_challenge")) ?? "", /permission denied/);
+  assert.match((await failure(app, "UPDATE app.otp_challenge SET code_hash = $1", [HASH("b")])) ?? "", /permission denied/);
+  assert.match((await failure(app, "SELECT code_hash FROM app.otp_challenge")) ?? "", /permission denied/);
   assert.match((await failure(app, "UPDATE app.invitation SET state = 'CANCELLED'")) ?? "", /permission denied/);
   assert.equal(await failure(app, "SELECT state, attempts FROM app.otp_challenge"), null);
 });
 
 test("los índices parciales rechazan 2 invitaciones vivas por student_ref (y permiten otra tras cancelar)", async () => {
-  await owner.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-a', 'stu-dup', 'Ana', 'a@example.test')");
-  const err = await failure(owner, "INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup', 'Ana', 'a@example.test')");
+  await owner.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-a', 'stu-dup-01', 'Ana', 'a@example.test')");
+  const err = await failure(owner, "INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup-01', 'Ana', 'a@example.test')");
   assert.match(err ?? "", /invitation_single_live_per_student_uq/);
   await owner.query("UPDATE app.invitation SET state = 'CANCELLED' WHERE invitation_ref = 'inv-a'");
-  await owner.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup', 'Ana', 'a@example.test')");
+  await owner.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup-01', 'Ana', 'a@example.test')");
 });
 
 test("formas inválidas: correo sin minúsculas/forma, nombre vacío", async () => {
@@ -111,15 +111,15 @@ test("flujo completo: cada INSERT/transición emite exactamente 1 evento encaden
     return (await eventCount()) - before;
   };
   const future = "now() + interval '1 hour'";
-  assert.equal(await emits("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email, import_batch_ref) VALUES ('inv-1', 'stu-1', 'Ana', 'g@example.test', 'batch-1')"), 1);
+  assert.equal(await emits("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email, import_batch_ref) VALUES ('inv-1', 'student-1', 'Ana', 'g@example.test', 'batch-001')"), 1);
   assert.equal(await emits(`UPDATE app.invitation SET state = 'SENT', token_hash = $1, token_expires_at = ${future}, consent_version = 'v-test' WHERE invitation_ref = 'inv-1'`, [HASH("1")]), 1);
   assert.equal(await emits(`UPDATE app.invitation SET token_hash = $1, token_expires_at = ${future} WHERE invitation_ref = 'inv-1'`, [HASH("2")]), 1); // rotación
   assert.equal(await emits("UPDATE app.invitation SET state = 'OPENED' WHERE invitation_ref = 'inv-1'"), 1);
-  assert.equal(await emits(`INSERT INTO app.otp_challenge (verification_ref, scope, parent_ref, code_hmac, expires_at) VALUES ('ver-1', 'DECISION', 'inv-1', $1, ${future})`, [HASH("c")]), 0);
-  assert.equal(await emits("UPDATE app.otp_challenge SET attempts = 1, state = 'VERIFIED', consumed_at = now(), decision_maker_ref = 'dm-1' WHERE verification_ref = 'ver-1'"), 1);
+  assert.equal(await emits(`INSERT INTO app.otp_challenge (verification_ref, scope, parent_ref, code_hash, expires_at) VALUES ('ver-1', 'DECISION', 'inv-1', $1, ${future})`, [HASH("c")]), 0);
+  assert.equal(await emits("UPDATE app.otp_challenge SET attempts = 1, state = 'VERIFIED', consumed_at = now(), decision_maker_ref = 'dm-0000001' WHERE verification_ref = 'ver-1'"), 1);
   assert.equal(await emits("UPDATE app.invitation SET state = 'VERIFIED' WHERE invitation_ref = 'inv-1'"), 1);
   const insertDecision = `INSERT INTO app.consent_decision (consent_id, invitation_ref, student_ref, decision_maker_ref, verification_ref, state, purposes, consent_version, consent_text_sha256, idempotency_key_hash)
-     VALUES ('con-1', 'inv-1', 'stu-1', 'dm-1', 'ver-1', 'GRANTED', '[{"purpose":"LECTURA","choice":"GRANT"}]'::jsonb, 'v-test', $1, $2)`;
+     VALUES ('con-1', 'inv-1', 'student-1', 'dm-0000001', 'ver-1', 'GRANTED', '[{"purpose":"LECTURA","choice":"GRANT"}]'::jsonb, 'v-test', $1, $2)`;
   assert.equal(await emits(insertDecision, [HASH("d"), HASH("e")]), 1);
   // Un segundo INSERT por la misma invitación (o con la misma clave) lo rechaza la base.
   assert.match((await failure(owner, insertDecision.replace("'con-1'", "'con-2'"), [HASH("d"), HASH("f")])) ?? "", /consent_decision_one_per_invitation/);
@@ -149,7 +149,7 @@ test("las transiciones inválidas las rechaza el guard (42501)", async () => {
   assert.match((await failure(owner, "UPDATE app.consent_decision SET state = 'REVOKED', revoked_at = now() WHERE consent_id = 'con-1'")) ?? "", /derivacion del ledger/); // sin revocación PENDING
   // INSERT de decisión sin invitación VERIFIED (inv-b está READY) -> rechazado.
   assert.match((await failure(owner, `INSERT INTO app.consent_decision (consent_id, invitation_ref, student_ref, decision_maker_ref, verification_ref, state, purposes, consent_version, consent_text_sha256, idempotency_key_hash)
-     VALUES ('con-9', 'inv-b', 'stu-dup', 'dm-1', 'ver-1', 'GRANTED', '[]'::jsonb, 'v', $1, $2)`, [HASH("d"), HASH("9")])) ?? "", /derivacion del ledger/);
+     VALUES ('con-9', 'inv-b', 'stu-dup-01', 'dm-0000001', 'ver-1', 'GRANTED', '[]'::jsonb, 'v', $1, $2)`, [HASH("d"), HASH("9")])) ?? "", /derivacion del ledger/);
 });
 
 test("vectores dorados TS<->SQL: canonical_json y hash del payload coinciden", async () => {

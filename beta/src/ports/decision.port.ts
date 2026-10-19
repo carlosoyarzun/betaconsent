@@ -10,7 +10,8 @@ export interface RecordDecisionInput {
   readonly consentTextHash: string;
   /** 8–200 caracteres; la base guarda solo su hash. */
   readonly idempotencyKey: string;
-  readonly purposes?: readonly unknown[];
+  /** Códigos de la lista cerrada (STUDY_PARTICIPATION, AUDIO_RECORDING, AUTOMATED_ANALYSIS, HUMAN_REVIEW), sin duplicados; otro valor => INVALID_PURPOSES. */
+  readonly purposes?: readonly string[];
 }
 
 export interface DecisionPageState {

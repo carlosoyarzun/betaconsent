@@ -5,13 +5,12 @@ import { createPgAuthorizationQuery } from "./authorization.adapter.ts";
 import { createPgDecisionRepo } from "./decision.adapter.ts";
 import { createPgInvitationRepo } from "./invitation.adapter.ts";
 import { createPgOtpRepo } from "./otp.adapter.ts";
-import type { PgOtpRepoOptions } from "./otp.adapter.ts";
 import { createPgRevocationRepo } from "./revocation.adapter.ts";
 
-export function createPgPorts(uow: UnitOfWork, otp: PgOtpRepoOptions): Ports {
+export function createPgPorts(uow: UnitOfWork): Ports {
   return {
     invitations: createPgInvitationRepo(uow),
-    otp: createPgOtpRepo(uow, otp),
+    otp: createPgOtpRepo(uow),
     decisions: createPgDecisionRepo(uow),
     revocations: createPgRevocationRepo(uow),
     authorization: createPgAuthorizationQuery(uow),

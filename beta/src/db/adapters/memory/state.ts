@@ -1,5 +1,5 @@
 // Gobierna: plan v2 H1-04. Estado compartido de los adaptadores en memoria (para tests unitarios de H1-05). Replica la SEMÁNTICA de las funciones de
-// 0003 (idempotencia, 1 OTP vivo, LOCKED a los 5 fallos, presupuesto, ventana de 30 min); la base sigue siendo la fuente de verdad: el test de
+// 0003 (idempotencia, 1 OTP vivo, LOCKED a los 5 fallos, presupuesto, ventana de 10 min); la base sigue siendo la fuente de verdad: el test de
 // contrato corre la misma suite contra ambos adaptadores. No es para producción.
 import { DomainError } from "../../../domain/errors.ts";
 import type { DecisionState, InvitationState, OtpScope, OtpState } from "../../../domain/types.ts";
@@ -8,6 +8,7 @@ import {
   APPROVED_P04_OTP_BUDGET_MAX_FAILURES,
   APPROVED_P04_OTP_BUDGET_WINDOW_MS,
   APPROVED_P06_OTP_MAX_SENDS_PER_HOUR,
+  APPROVED_P07_OTP_DECISION_MAX_LOCKED_CHALLENGES,
   APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS,
   APPROVED_P06_OTP_SEND_WINDOW_MS,
   BETA_VERIFIED_SESSION_WINDOW_MS,
@@ -26,7 +27,8 @@ export interface OtpRow {
   ref: string;
   scope: OtpScope;
   parentRef: string;
-  hmac: string;
+  /** sha256(ref:código) hex, igual que code_hash; en memoria el código no se guarda. */
+  codeHash: string;
   attempts: number;
   state: OtpState;
   expiresAt: number;
@@ -83,11 +85,16 @@ export class MemoryState {
   /** Espejo de issue_otp: el padre debe ser elegible, respeta presupuesto y límites de envío; expira el OTP vivo anterior. */
   checkIssue(parentRef: string, scope: OtpScope): void {
     if (scope === "DECISION") {
-      if (this.invitations.get(parentRef)?.state !== "OPENED") throw new DomainError("PARENT_NOT_ELIGIBLE");
+      const inv = this.invitations.get(parentRef);
+      // F-SB-04: OPENED o VERIFIED (la verificación pudo vencer sin decisión) y token sin consumir.
+      if (!inv || (inv.state !== "OPENED" && inv.state !== "VERIFIED") || inv.tokenConsumed) throw new DomainError("PARENT_NOT_ELIGIBLE");
     } else if (this.decisions.get(parentRef)?.state !== "GRANTED") {
       throw new DomainError("PARENT_NOT_ELIGIBLE");
     }
     if (this.budgetFailures(parentRef) >= APPROVED_P04_OTP_BUDGET_MAX_FAILURES) throw new DomainError("OTP_BUDGET_EXHAUSTED");
+    if (scope === "DECISION" && [...this.otps.values()].filter((o) => o.parentRef === parentRef && o.scope === "DECISION" && o.state === "LOCKED").length >= APPROVED_P07_OTP_DECISION_MAX_LOCKED_CHALLENGES) {
+      throw new DomainError("OTP_EXHAUSTED"); // P-07
+    }
     const mine = [...this.otps.values()].filter((o) => o.parentRef === parentRef && o.scope === scope);
     const last = Math.max(0, ...mine.map((o) => o.createdAt));
     if (mine.length > 0 && last > this.now() - APPROVED_P06_OTP_MIN_RESEND_INTERVAL_MS) throw new DomainError("OTP_RESEND_TOO_SOON");

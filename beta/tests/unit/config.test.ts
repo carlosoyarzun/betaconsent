@@ -11,7 +11,6 @@ const GOOD: Record<string, string> = {
   CNS_ENVIRONMENT: "LOCAL",
   CNS_DATABASE_URL: "postgresql://consent_app:x@127.0.0.1:5432/consent",
   CNS_SESSION_SECRET: S1,
-  CNS_OTP_SECRET: S2,
   CNS_PUBLIC_ORIGIN: "http://localhost:8080",
   CNS_SMTP_URL: "smtp://127.0.0.1:1025",
   CNS_SMTP_FROM: "consent@example.test",
@@ -37,9 +36,9 @@ test("loadConfig aborta nombrando cada variable faltante", () => {
   }
 });
 
-test("loadConfig rechaza entorno inválido, secretos iguales o cortos, origen no exacto y más de 2 claves", () => {
+test("loadConfig rechaza entorno inválido, secretos cortos, origen no exacto y más de 2 claves", () => {
   assert.throws(() => loadConfig({ ...GOOD, CNS_ENVIRONMENT: "STAGING" }), /LOCAL o REAL/);
-  assert.throws(() => loadConfig({ ...GOOD, CNS_OTP_SECRET: S1 }), /distintos/);
+  assert.equal("otpSecret" in loadConfig(GOOD), false); // CNS_OTP_SECRET ya no existe (F-SB-01)
   assert.throws(() => loadConfig({ ...GOOD, CNS_SESSION_SECRET: "corto" }), /base64/);
   assert.throws(() => loadConfig({ ...GOOD, CNS_PUBLIC_ORIGIN: "http://localhost:8080/" }), /origen exacto/);
   assert.throws(() => loadConfig({ ...GOOD, CNS_ENVIRONMENT: "REAL" }), /https en REAL/);

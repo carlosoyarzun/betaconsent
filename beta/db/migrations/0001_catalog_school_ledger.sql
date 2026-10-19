@@ -14,6 +14,11 @@ CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION consent_owner;
 CREATE SCHEMA IF NOT EXISTS integrity AUTHORIZATION consent_owner;
 CREATE SCHEMA IF NOT EXISTS ops AUTHORIZATION consent_owner;
 CREATE SCHEMA IF NOT EXISTS ledger_gen AUTHORIZATION consent_owner;
+-- pgcrypto (gen_random_bytes: CSPRNG del código OTP, F-SB-01) en un esquema SIN USAGE para consent_app: solo lo llaman las funciones SECURITY DEFINER.
+-- Es una extensión "trusted" (PG13+): la crea el dueño de la base sin ser superusuario (sus funciones quedan del superusuario de arranque, EXECUTE a PUBLIC;
+-- lo que las aísla de consent_app es que el esquema ext no le concede USAGE).
+CREATE SCHEMA IF NOT EXISTS ext AUTHORIZATION consent_owner;
+CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA ext;
 
 -- Ninguna función nueva es ejecutable por PUBLIC; el EXECUTE se concede una por una.
 ALTER DEFAULT PRIVILEGES FOR ROLE consent_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
@@ -99,14 +104,13 @@ CREATE TABLE integrity.audit_event (
   cosigned_by_ref      text,
   payload              jsonb       NOT NULL CONSTRAINT audit_event_payload_object CHECK (pg_catalog.jsonb_typeof(payload) = 'object'),
   idempotency_key_hash text        CONSTRAINT audit_event_idem_hash_shape CHECK (idempotency_key_hash ~ '^[0-9a-f]{64}$'),
-  occurred_at          timestamptz NOT NULL DEFAULT pg_catalog.now() CONSTRAINT audit_event_occurred_at_is_now CHECK (occurred_at = pg_catalog.now()),
+  occurred_at          timestamptz NOT NULL DEFAULT pg_catalog.now(),
   environment          text        NOT NULL DEFAULT ops.catalog_environment() CONSTRAINT audit_event_environment_enum CHECK (environment IN ('LOCAL', 'REAL')),
   data_class           text        NOT NULL DEFAULT ops.catalog_data_class() CONSTRAINT audit_event_data_class_enum CHECK (data_class IN ('SYNTHETIC', 'REAL')),
   chain_seq            bigint      NOT NULL CONSTRAINT audit_event_chain_seq_positive CHECK (chain_seq >= 1),
   payload_hash         text        NOT NULL CONSTRAINT audit_event_payload_hash_shape CHECK (payload_hash ~ '^[0-9a-f]{64}$'),
   previous_event_hash  text        NOT NULL CONSTRAINT audit_event_previous_hash_shape CHECK (previous_event_hash ~ '^[0-9a-f]{64}$'),
   event_hash           text        NOT NULL CONSTRAINT audit_event_event_hash_shape CHECK (event_hash ~ '^[0-9a-f]{64}$'),
-  CONSTRAINT audit_event_environment_is_catalog CHECK (environment = ops.catalog_environment()),
   CONSTRAINT audit_event_sequence_unique UNIQUE (tenant_id, aggregate_id, sequence),
   CONSTRAINT audit_event_idempotency_unique UNIQUE (tenant_id, aggregate_id, idempotency_key_hash),
   CONSTRAINT audit_event_chain_seq_unique UNIQUE (tenant_id, chain_seq),
@@ -120,6 +124,11 @@ CREATE TABLE integrity.audit_event (
     'REVOCATION_REQUESTED', 'REVOCATION_VERIFIED', 'REVOCATION_CONFIRMED', 'REVOCATION_APPLIED', 'REVOCATION_HELD'
   ))
 );
+
+-- F-SB-06: los CHECK que dependen de now() o del catálogo van NOT VALID (como 0013:87 del repo anterior): siguen controlando cada INSERT, pero
+-- pg_restore no los reevalúa al cargar filas históricas (si no, un backup del ledger no se podría restaurar).
+ALTER TABLE integrity.audit_event ADD CONSTRAINT audit_event_occurred_at_is_now CHECK (occurred_at = pg_catalog.now()) NOT VALID;
+ALTER TABLE integrity.audit_event ADD CONSTRAINT audit_event_environment_is_catalog CHECK (environment = ops.catalog_environment()) NOT VALID;
 
 CREATE FUNCTION integrity.audit_event_immutable() RETURNS trigger
   LANGUAGE plpgsql

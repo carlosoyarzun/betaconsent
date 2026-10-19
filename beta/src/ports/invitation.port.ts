@@ -16,7 +16,7 @@ export interface OpenedInvitation {
 }
 
 export interface InvitationRepo {
-  /** Idempotente: reimportar al mismo estudiante con invitación viva devuelve la existente (created = false). */
+  /** Idempotente en CUALQUIER estado (F-SB-03): si el estudiante ya tiene invitación (viva, decidida o revocada) devuelve la existente (created = false), sin cambiar el correo. */
   import(input: ImportInvitationInput): Promise<{ readonly invitationRef: InvitationRef; readonly created: boolean }>;
   /** READY>SENT o rotación SENT>SENT. Recibe el HASH del token (nunca el token). Lanza TOKEN_EXPIRY_IN_PAST / INVITATION_NOT_ARMABLE / INVITATION_NOT_FOUND. */
   armToken(input: { readonly invitationRef: InvitationRef; readonly tokenHash: string; readonly expiresAt: Date; readonly consentVersion: string }): Promise<void>;

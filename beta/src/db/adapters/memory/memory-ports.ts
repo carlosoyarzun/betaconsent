@@ -1,16 +1,20 @@
 // Gobierna: plan v2 H1-04. Adaptadores en memoria de los cinco puertos sobre un MemoryState compartido (misma semántica que las funciones de 0003).
-import { computeOtpHmac, generateOtpCode } from "../../../domain/crypto.ts";
+import { createHash } from "node:crypto";
+
+import { generateOtpCode } from "../../../domain/crypto.ts";
 import { DomainError } from "../../../domain/errors.ts";
 import { APPROVED_P02_OTP_TTL_MS } from "../../../otp/approved-parameters.ts";
 import type { Ports } from "../../../ports/index.ts";
-import { LIVE_INVITATION_STATES, MemoryState } from "./state.ts";
+import { MemoryState } from "./state.ts";
 
 export interface MemoryPortsOptions {
-  readonly otpSecret: Buffer;
   /** Reloj en ms (inyectable para avanzar el tiempo en tests). Default Date.now. */
   readonly now?: () => number;
   readonly generateCode?: () => string;
 }
+
+const sha256 = (t: string): string => createHash("sha256").update(t, "utf8").digest("hex");
+const PURPOSE_CODES = ["STUDY_PARTICIPATION", "AUDIO_RECORDING", "AUTOMATED_ANALYSIS", "HUMAN_REVIEW"];
 
 const validKey = (k: string): boolean => k.length >= 8 && k.length <= 200;
 
@@ -19,14 +23,13 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
   const generateCode = options.generateCode ?? generateOtpCode;
 
   const issue: Ports["otp"]["issue"] = async (input) => {
-    const ttlMs = input.ttlMs ?? APPROVED_P02_OTP_TTL_MS;
-    if (!Number.isInteger(ttlMs) || ttlMs <= 0 || ttlMs > APPROVED_P02_OTP_TTL_MS) throw new RangeError("ttlMs fuera de (0, 10 min].");
+    const ttlMs = APPROVED_P02_OTP_TTL_MS; // fijo, como en la base
     s.checkIssue(input.parentRef, input.scope);
     const code = generateCode();
     const ref = s.newRef("ver");
     const expiresAt = s.now() + ttlMs;
     s.otps.set(ref, {
-      ref, scope: input.scope, parentRef: input.parentRef, hmac: computeOtpHmac(options.otpSecret, input.parentRef, input.scope, code),
+      ref, scope: input.scope, parentRef: input.parentRef, codeHash: sha256(`${ref}:${code}`),
       attempts: 0, state: "CODE_SENT", expiresAt, createdAt: s.now(), consumedAt: null, decisionMakerRef: null,
     });
     return { verificationRef: ref, code, expiresAt: new Date(expiresAt) };
@@ -35,8 +38,9 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
   return {
     invitations: {
       async import(input) {
-        const live = [...s.invitations.values()].find((i) => i.studentRef === input.studentRef && LIVE_INVITATION_STATES.includes(i.state));
-        if (live) return { invitationRef: live.ref, created: false };
+        // F-SB-03: idempotente en cualquier estado (viva, decidida o revocada).
+        const existing = [...s.invitations.values()].find((i) => i.studentRef === input.studentRef);
+        if (existing) return { invitationRef: existing.ref, created: false };
         const ref = s.newRef("inv");
         s.invitations.set(ref, { ref, studentRef: input.studentRef, state: "READY", tokenHash: null, tokenExpiresAt: null, tokenConsumed: false, consentVersion: null });
         return { invitationRef: ref, created: true };
@@ -75,8 +79,8 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
           return { outcome: "EXPIRED", attemptsLeft: 0 };
         }
         if (s.budgetFailures(ch.parentRef) >= 10) return { outcome: "BUDGET_EXHAUSTED", attemptsLeft: 0 };
-        if (computeOtpHmac(options.otpSecret, ch.parentRef, ch.scope, input.code) === ch.hmac) {
-          if (input.decisionMakerRef.length < 1 || input.decisionMakerRef.length > 100) throw new DomainError("INVALID_DECISION_MAKER_REF");
+        if (/^\d{6}$/.test(input.code) && sha256(`${ch.ref}:${input.code}`) === ch.codeHash) {
+          if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.decisionMakerRef)) throw new DomainError("INVALID_DECISION_MAKER_REF");
           ch.attempts += 1;
           ch.state = "VERIFIED";
           ch.consumedAt = s.now();
@@ -99,6 +103,11 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
       async record(input) {
         if (input.outcome !== "GRANTED" && input.outcome !== "DECLINED") throw new DomainError("INVALID_OUTCOME");
         if (!validKey(input.idempotencyKey)) throw new DomainError("INVALID_IDEMPOTENCY_KEY");
+        const purposes = input.purposes ?? [];
+        if (!Array.isArray(purposes) || purposes.length > 4 || new Set(purposes).size !== purposes.length || purposes.some((p) => typeof p !== "string" || !PURPOSE_CODES.includes(p))) {
+          throw new DomainError("INVALID_PURPOSES");
+        }
+        if (!/^[A-Za-z0-9_.-]{1,64}$/.test(input.consentVersion)) throw new DomainError("INVALID_CONSENT_VERSION");
         const inv = s.invitations.get(input.invitationRef);
         if (!inv) throw new DomainError("INVITATION_NOT_FOUND");
         const existing = [...s.decisions.values()].find((d) => d.invitationRef === input.invitationRef);

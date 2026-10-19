@@ -17,7 +17,9 @@ CREATE TABLE app.invitation (
   tenant_id            uuid        NOT NULL DEFAULT app.current_tenant_id() REFERENCES app.school (tenant_id),
   invitation_ref       text        NOT NULL CONSTRAINT invitation_ref_len CHECK (pg_catalog.length(invitation_ref) BETWEEN 1 AND 100),
   -- Ref opaca acordada con LectorPro (SUPUESTO del plan); nunca RUT.
-  student_ref          text        NOT NULL CONSTRAINT invitation_student_ref_len CHECK (pg_catalog.length(student_ref) BETWEEN 1 AND 100),
+  student_ref          text        NOT NULL CONSTRAINT invitation_student_ref_len CHECK (pg_catalog.length(student_ref) BETWEEN 1 AND 100)
+                         -- F-SB-05: forma de ref opaca (entra al ledger inmutable); un RUT sin puntos también cumple el patrón, por eso se excluye aparte.
+                         CONSTRAINT invitation_student_ref_shape CHECK (student_ref ~ '^[A-Za-z0-9_-]{8,64}$' AND student_ref !~ '^[0-9]{7,8}-?[0-9kK]$'),
   student_first_name   text        NOT NULL CONSTRAINT invitation_first_name_len CHECK (pg_catalog.length(student_first_name) BETWEEN 1 AND 60),
   guardian_email       text        NOT NULL CONSTRAINT invitation_email_shape CHECK (
                          guardian_email = pg_catalog.lower(guardian_email) AND pg_catalog.length(guardian_email) <= 254
@@ -27,8 +29,10 @@ CREATE TABLE app.invitation (
   token_hash           char(64)    CONSTRAINT invitation_token_hash_shape CHECK (token_hash ~ '^[0-9a-f]{64}$'),
   token_expires_at     timestamptz,
   token_consumed_at    timestamptz,
-  consent_version      text        CONSTRAINT invitation_consent_version_len CHECK (pg_catalog.length(consent_version) BETWEEN 1 AND 100),
-  import_batch_ref     text        CONSTRAINT invitation_batch_ref_len CHECK (pg_catalog.length(import_batch_ref) BETWEEN 1 AND 100),
+  consent_version      text        CONSTRAINT invitation_consent_version_len CHECK (pg_catalog.length(consent_version) BETWEEN 1 AND 100)
+                         CONSTRAINT invitation_consent_version_shape CHECK (consent_version ~ '^[A-Za-z0-9_.-]{1,64}$'),
+  import_batch_ref     text        CONSTRAINT invitation_batch_ref_len CHECK (pg_catalog.length(import_batch_ref) BETWEEN 1 AND 100)
+                         CONSTRAINT invitation_batch_ref_shape CHECK (import_batch_ref ~ '^[A-Za-z0-9_-]{8,64}$'),
   reissue_of_ref       text        CONSTRAINT invitation_reissue_len CHECK (pg_catalog.length(reissue_of_ref) BETWEEN 1 AND 100),
   created_at           timestamptz NOT NULL DEFAULT pg_catalog.now(),
   CONSTRAINT invitation_pkey PRIMARY KEY (tenant_id, invitation_ref),
@@ -46,13 +50,16 @@ CREATE TABLE app.otp_challenge (
   scope              text        NOT NULL CONSTRAINT otp_scope_enum CHECK (scope IN ('DECISION', 'REVOCATION', 'MANAGE')),
   -- DECISION: invitation_ref; REVOCATION/MANAGE: ref opaca de la decisión. Nunca un correo.
   parent_ref         text        NOT NULL CONSTRAINT otp_parent_len CHECK (pg_catalog.length(parent_ref) BETWEEN 1 AND 255),
-  -- HMAC-SHA256 hex del código; el código en claro nunca persiste. Lo compara verify_otp dentro de la BD (H1-03).
-  code_hmac          char(64)    NOT NULL CONSTRAINT otp_code_hmac_shape CHECK (code_hmac ~ '^[0-9a-f]{64}$'),
+  -- sha256(verification_ref || ':' || código) en hex. Lo genera issue_otp y lo compara verify_otp DENTRO de la base (F-SB-01); consent_app no lo lee ni lo
+  -- aporta. El código en claro nunca persiste (solo se devuelve una vez a issue_otp). Ojo: la ref no es secreta, así que el hash de 6 dígitos es
+  -- reversible por fuerza bruta desde un backup mientras el OTP está vivo (<= 10 min); después el OTP ya no sirve.
+  code_hash          char(64)    NOT NULL CONSTRAINT otp_code_hash_shape CHECK (code_hash ~ '^[0-9a-f]{64}$'),
   attempts           integer     NOT NULL DEFAULT 0 CONSTRAINT otp_attempts_nonneg CHECK (attempts >= 0),
   state              text        NOT NULL DEFAULT 'CODE_SENT' CONSTRAINT otp_state_enum CHECK (state IN ('CODE_SENT', 'VERIFIED', 'EXPIRED', 'LOCKED')),
   expires_at         timestamptz NOT NULL,
   consumed_at        timestamptz,
-  decision_maker_ref text        CONSTRAINT otp_dm_ref_len CHECK (pg_catalog.length(decision_maker_ref) BETWEEN 1 AND 100),
+  decision_maker_ref text        CONSTRAINT otp_dm_ref_len CHECK (pg_catalog.length(decision_maker_ref) BETWEEN 1 AND 100)
+                         CONSTRAINT otp_dm_ref_shape CHECK (decision_maker_ref ~ '^[A-Za-z0-9_-]{8,100}$'),
   send_count         integer     NOT NULL DEFAULT 1 CONSTRAINT otp_send_count_pos CHECK (send_count >= 1),
   send_window_start  timestamptz NOT NULL DEFAULT pg_catalog.now(),
   last_sent_at       timestamptz NOT NULL DEFAULT pg_catalog.now(),
@@ -81,12 +88,15 @@ CREATE TABLE app.consent_decision (
   tenant_id             uuid        NOT NULL DEFAULT app.current_tenant_id() REFERENCES app.school (tenant_id),
   consent_id            text        NOT NULL CONSTRAINT consent_decision_id_len CHECK (pg_catalog.length(consent_id) BETWEEN 1 AND 100),
   invitation_ref        text        NOT NULL,
-  student_ref           text        NOT NULL CONSTRAINT consent_decision_student_len CHECK (pg_catalog.length(student_ref) BETWEEN 1 AND 100),
-  decision_maker_ref    text        NOT NULL CONSTRAINT consent_decision_dm_len CHECK (pg_catalog.length(decision_maker_ref) BETWEEN 1 AND 100),
+  student_ref           text        NOT NULL CONSTRAINT consent_decision_student_len CHECK (pg_catalog.length(student_ref) BETWEEN 1 AND 100)
+                          CONSTRAINT consent_decision_student_shape CHECK (student_ref ~ '^[A-Za-z0-9_-]{8,64}$'),
+  decision_maker_ref    text        NOT NULL CONSTRAINT consent_decision_dm_len CHECK (pg_catalog.length(decision_maker_ref) BETWEEN 1 AND 100)
+                          CONSTRAINT consent_decision_dm_shape CHECK (decision_maker_ref ~ '^[A-Za-z0-9_-]{8,100}$'),
   verification_ref      text        NOT NULL,
   state                 text        NOT NULL CONSTRAINT consent_decision_state_enum CHECK (state IN ('GRANTED', 'DECLINED', 'REVOKED')),
   purposes              jsonb       NOT NULL CONSTRAINT consent_decision_purposes_array CHECK (pg_catalog.jsonb_typeof(purposes) = 'array'),
-  consent_version       text        NOT NULL CONSTRAINT consent_decision_version_len CHECK (pg_catalog.length(consent_version) BETWEEN 1 AND 100),
+  consent_version       text        NOT NULL CONSTRAINT consent_decision_version_len CHECK (pg_catalog.length(consent_version) BETWEEN 1 AND 100)
+                          CONSTRAINT consent_decision_version_shape CHECK (consent_version ~ '^[A-Za-z0-9_.-]{1,64}$'),
   consent_text_sha256   char(64)    NOT NULL CONSTRAINT consent_decision_text_hash_shape CHECK (consent_text_sha256 ~ '^[0-9a-f]{64}$'),
   idempotency_key_hash  char(64)    NOT NULL CONSTRAINT consent_decision_idem_shape CHECK (idempotency_key_hash ~ '^[0-9a-f]{64}$'),
   decided_at            timestamptz NOT NULL DEFAULT pg_catalog.now(),
@@ -130,12 +140,12 @@ CREATE TABLE app.email_outbox (
   -- El destinatario se resuelve al enviar desde la invitación: el correo no se copia aquí.
   invitation_ref      text        NOT NULL,
   dedupe_key          text        NOT NULL CONSTRAINT email_outbox_dedupe_len CHECK (pg_catalog.length(dedupe_key) BETWEEN 1 AND 200),
-  status              text        NOT NULL DEFAULT 'PENDING' CONSTRAINT email_outbox_status_enum CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED')),
+  status              text        NOT NULL DEFAULT 'PENDING' CONSTRAINT email_outbox_status_enum CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'SUPPRESSED')),
   attempts            integer     NOT NULL DEFAULT 0 CONSTRAINT email_outbox_attempts_nonneg CHECK (attempts >= 0),
   next_attempt_at     timestamptz NOT NULL DEFAULT pg_catalog.now(),
   provider_message_id text        CONSTRAINT email_outbox_msgid_len CHECK (pg_catalog.length(provider_message_id) BETWEEN 1 AND 255),
   last_error_code     text        CONSTRAINT email_outbox_error_len CHECK (pg_catalog.length(last_error_code) BETWEEN 1 AND 60),
-  -- Sin token ni OTP ni correo: solo refs y parámetros de plantilla.
+  -- Sin token ni OTP ni correo: solo refs y parámetros de plantilla. El token de invitación lo genera el worker al enviar (arm_invitation_token).
   payload             jsonb       NOT NULL DEFAULT '{}'::jsonb CONSTRAINT email_outbox_payload_object CHECK (pg_catalog.jsonb_typeof(payload) = 'object'),
   created_at          timestamptz NOT NULL DEFAULT pg_catalog.now(),
   CONSTRAINT email_outbox_pkey PRIMARY KEY (tenant_id, email_id),
@@ -308,7 +318,7 @@ BEGIN
   IF v_pair IN ('CODE_SENT>VERIFIED', 'CODE_SENT>LOCKED') THEN
     IF NEW.attempts <> OLD.attempts + 1 THEN RAISE EXCEPTION '%', v_deny USING ERRCODE = '42501'; END IF;
   ELSIF v_pair = 'CODE_SENT>CODE_SENT' THEN
-    IF NEW.code_hmac IS DISTINCT FROM OLD.code_hmac THEN
+    IF NEW.code_hash IS DISTINCT FROM OLD.code_hash THEN
       -- Reenvío: no reinicia ni suma intentos; cuenta un envío.
       IF NEW.attempts <> OLD.attempts OR NEW.send_count <> OLD.send_count + 1 THEN RAISE EXCEPTION '%', v_deny USING ERRCODE = '42501'; END IF;
     ELSE
@@ -322,7 +332,7 @@ BEGIN
     IF NEW.attempts <> OLD.attempts THEN RAISE EXCEPTION '%', v_deny USING ERRCODE = '42501'; END IF;
   END IF;
   IF v_pair = 'CODE_SENT>VERIFIED' THEN
-    IF pg_catalog.now() >= OLD.expires_at OR NEW.code_hmac <> OLD.code_hmac OR NEW.send_count <> OLD.send_count THEN
+    IF pg_catalog.now() >= OLD.expires_at OR NEW.code_hash <> OLD.code_hash OR NEW.send_count <> OLD.send_count THEN
       RAISE EXCEPTION '%', v_deny USING ERRCODE = '42501';
     END IF;
   END IF;
@@ -423,10 +433,10 @@ ALTER TABLE app.consent_decision ENABLE ALWAYS TRIGGER consent_decision_ledger_e
 GRANT SELECT ON app.invitation TO consent_app;
 GRANT INSERT (invitation_ref, student_ref, student_first_name, guardian_email, import_batch_ref, reissue_of_ref) ON app.invitation TO consent_app; -- TODO H1-03: pasa a import_invitation()
 
--- Sin SELECT de code_hmac: el código jamás sale de la BD; lo compara verify_otp.
+-- Sin SELECT de code_hash: el verificador jamás sale de la BD; lo calcula issue_otp y lo compara verify_otp.
 GRANT SELECT (tenant_id, verification_ref, scope, parent_ref, attempts, state, expires_at, consumed_at, decision_maker_ref, send_count, send_window_start, last_sent_at, created_at)
   ON app.otp_challenge TO consent_app;
--- Sin INSERT ni UPDATE sobre otp_challenge (state, code_hmac, attempts): TODO H1-03 issue_otp() / verify_otp().
+-- Sin INSERT ni UPDATE sobre otp_challenge (state, code_hash, attempts): TODO H1-03 issue_otp() / verify_otp().
 
 -- Sin INSERT ni UPDATE sobre consent_decision ni revocation: TODO H1-03 record_decision() / request_revocation() / confirm_revocation() / apply_revocation().
 GRANT SELECT ON app.consent_decision, app.revocation TO consent_app;
@@ -461,8 +471,8 @@ BEGIN
   END LOOP;
   IF pg_catalog.has_table_privilege('consent_app', 'app.consent_decision', 'UPDATE') OR pg_catalog.has_table_privilege('consent_app', 'app.consent_decision', 'INSERT')
      OR pg_catalog.has_any_column_privilege('consent_app', 'app.otp_challenge', 'UPDATE')
-     OR pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'code_hmac', 'SELECT') THEN
-    RAISE EXCEPTION 'consent_app no puede escribir otp_challenge/consent_decision ni leer code_hmac';
+     OR pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'code_hash', 'SELECT') THEN
+    RAISE EXCEPTION 'consent_app no puede escribir otp_challenge/consent_decision ni leer code_hash';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger tg JOIN pg_catalog.pg_class c ON c.oid = tg.tgrelid
               WHERE c.oid IN ('integrity.audit_event'::regclass, 'app.invitation'::regclass, 'app.otp_challenge'::regclass, 'app.consent_decision'::regclass, 'ops.db_catalog'::regclass)

@@ -22,15 +22,22 @@ y luego `CNS_MIGRATOR_DATABASE_URL=postgresql://consent_migrator:...@host/consen
 sobre el ledger ni sobre OTP/decisión; las transiciones serán funciones SECURITY DEFINER, H1-03).
 
 ## Variables (`loadConfig`, todas obligatorias; si falta una el proceso aborta)
-`CNS_ENVIRONMENT` (LOCAL|REAL; debe coincidir con `ops.db_catalog`), `CNS_DATABASE_URL`, `CNS_SESSION_SECRET`, `CNS_OTP_SECRET`
-(base64 >= 32 bytes, distintos), `CNS_PUBLIC_ORIGIN`, `CNS_SMTP_URL`, `CNS_SMTP_FROM`, `CNS_MAIL_ALLOWLIST` (correos o @dominios),
+`CNS_ENVIRONMENT` (LOCAL|REAL; debe coincidir con `ops.db_catalog`), `CNS_DATABASE_URL`, `CNS_SESSION_SECRET`
+(base64 >= 32 bytes), `CNS_PUBLIC_ORIGIN`, `CNS_SMTP_URL`, `CNS_SMTP_FROM`, `CNS_MAIL_ALLOWLIST` (correos o @dominios),
 `CNS_API_KEYS` (`keyId:secretoBase64[,keyId2:...]`), `PORT`, `BIND`. Migraciones: `CNS_MIGRATOR_DATABASE_URL`. Tests: `TEST_DATABASE_URL`.
 
 ## Correo (H1-06)
 Puerto `Mailer` (`src/mail/mailer.port.ts`) con `SmtpMailer` (nodemailer; TLS obligatorio: `smtps://`/465 => `secure`, otro puerto => `requireTLS`; nunca `rejectUnauthorized:false`;
 SMTP sin TLS solo a loopback y solo con `CNS_ENVIRONMENT=LOCAL`) y `MemoryMailer` (tests). Con `ops.db_catalog.data_class = SYNTHETIC` solo se envía a `CNS_MAIL_ALLOWLIST`;
-el resto no se envía (`email_outbox` queda `FAILED` + `last_error_code='SUPPRESSED_ALLOWLIST'` hasta que H1-03 admita el estado `SUPPRESSED`). Con REAL la allowlist se ignora.
+el resto no se envía (`email_outbox` queda `SUPPRESSED` + `last_error_code='SUPPRESSED_ALLOWLIST'`). Con REAL la allowlist se ignora.
 Outbox en proceso (`startOutboxWorker`, `setInterval`): claim con `FOR UPDATE SKIP LOCKED`, 3 intentos con backoff 30 s / 120 s y luego `FAILED`; SENT solo tras la respuesta del proveedor.
 Garantía al-menos-una-vez: si el proceso muere entre el envío y la marca SENT, la fila queda `SENDING` y se reenvía al vencer el lease (5 min); ese duplicado se acepta.
-El OTP va por `sendOtpNow` (síncrono, sin outbox, sin persistencia ni log). Todo el copy de `src/mail/templates/` es BORRADOR (copy legal = LEGAL DECISION de Carlos).
+La invitación NO guarda el token en el outbox: al reclamar la fila el worker genera el token, llama a `arm_invitation_token(hash)` y envía `/i/<token>` (si ya no es armable, la fila queda `FAILED` con `INVITATION_NOT_ARMABLE`).
+El OTP lo genera `issue_otp` en la base (se devuelve en claro una sola vez) y va por `sendOtpNow` (síncrono, sin outbox, sin persistencia ni log). Todo el copy de `src/mail/templates/` es BORRADOR (copy legal = LEGAL DECISION de Carlos).
 Test con Mailpit: `docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit` y `MAILPIT_SMTP_URL=smtp://localhost:1025 MAILPIT_API_URL=http://localhost:8025 npm run test:integration` (sin esas variables se salta).
+
+## Seguridad del esquema (SEC-CNS-024, PROPUESTO)
+El código OTP se genera (pgcrypto) y se verifica DENTRO de la base; no existe `CNS_OTP_SECRET` ni HMAC en Node. Mitiga RES-OTP-WEB-PRB; residual F-RB-03 aceptado por Carlos (proceso único):
+el código viaja al proceso web para ir al correo. `verify_otp` corre siempre en su propia transacción (`OtpRepo.verify` no admite unidad de trabajo externa). Ventana verificación -> decisión: 10 min.
+Arranque: `assertEnvironment` (entorno vs catálogo) y `assertRuntimeRole` (rechaza superusuario, BYPASSRLS, `session_user != current_user`, membresías). `pg_dump -Fc` + `pg_restore` restaura el ledger (CHECK con `now()` van NOT VALID).
+Requiere la extensión `pgcrypto` (incluida en postgres:16; la crea el dueño en el esquema `ext`, sin USAGE para `consent_app`).

@@ -15,6 +15,8 @@ export interface ContractEnv {
   now(): number;
   /** Deja pasar `ms`: avanza el reloj falso (memoria) o duerme (PG). */
   advance(ms: number): Promise<void>;
+  /** Vence el OTP indicado (la base fija P-02 = 10 min, sin parámetro del llamador). */
+  expireOtp(verificationRef: string): Promise<void>;
 }
 
 const uniq = (): string => randomBytes(5).toString("hex");
@@ -29,7 +31,7 @@ const wrong = (code: string): string => (code === "000000" ? "111111" : "000000"
 export function runPortsContract(label: string, makeEnv: () => Promise<ContractEnv>): void {
   async function openedInvitation(env: ContractEnv): Promise<{ inv: string; student: string; tokenHash: string }> {
     const student = `stu-${uniq()}`;
-    const { invitationRef } = await env.ports.invitations.import({ studentRef: student, studentFirstName: "Ana", guardianEmail: `g-${uniq()}@example.test`, batchRef: "batch-1" });
+    const { invitationRef } = await env.ports.invitations.import({ studentRef: student, studentFirstName: "Ana", guardianEmail: `g-${uniq()}@example.test`, batchRef: "batch-001" });
     const { tokenHash } = generateInvitationToken();
     await env.ports.invitations.armToken({ invitationRef, tokenHash, expiresAt: new Date(env.now() + 9 * 60_000), consentVersion: "v-test" });
     const opened = await env.ports.invitations.openByTokenHash(tokenHash);
@@ -46,7 +48,7 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
   test(`[${label}] import idempotente, arm y open (open no consume; token desconocido = null)`, async () => {
     const env = await makeEnv();
     const student = `stu-${uniq()}`;
-    const input = { studentRef: student, studentFirstName: "Ana", guardianEmail: "g@example.test", batchRef: "b" };
+    const input = { studentRef: student, studentFirstName: "Ana", guardianEmail: "g@example.test", batchRef: "batch-001" };
     const a = await env.ports.invitations.import(input);
     const b = await env.ports.invitations.import(input);
     assert.equal(a.created, true);
@@ -63,7 +65,7 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
     // Abierta ya no se puede rearmar (solo READY/SENT).
     await rejectsWith(env.ports.invitations.armToken({ invitationRef: a.invitationRef, tokenHash: generateInvitationToken().tokenHash, expiresAt: new Date(env.now() + 60_000), consentVersion: "v" }), "INVITATION_NOT_ARMABLE");
     // Rotación en SENT: el token anterior queda muerto.
-    const b2 = await env.ports.invitations.import({ studentRef: `stu-${uniq()}`, studentFirstName: "Ana", guardianEmail: "g2@example.test", batchRef: "b" });
+    const b2 = await env.ports.invitations.import({ studentRef: `stu-${uniq()}`, studentFirstName: "Ana", guardianEmail: "g2@example.test", batchRef: "batch-001" });
     const t1 = generateInvitationToken().tokenHash;
     const t2 = generateInvitationToken().tokenHash;
     for (const h of [t1, t2]) await env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: h, expiresAt: new Date(env.now() + 60_000), consentVersion: "v-test" });
@@ -97,9 +99,10 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
   test(`[${label}] OTP vencido -> EXPIRED; reenvío antes de 60 s -> OTP_RESEND_TOO_SOON; reenvío tras 60 s expira el anterior`, async () => {
     const env = await makeEnv();
     const { inv } = await openedInvitation(env);
-    const first = await env.ports.otp.issue({ parentRef: inv, scope: "DECISION", ttlMs: 1000 });
+    const first = await env.ports.otp.issue({ parentRef: inv, scope: "DECISION" });
+    assert.ok(Math.abs(first.expiresAt.getTime() - env.now() - 10 * 60_000) < 5_000, "P-02: 10 min fijados por la base");
     await rejectsWith(env.ports.otp.resend({ parentRef: inv, scope: "DECISION" }), "OTP_RESEND_TOO_SOON");
-    await env.advance(1300);
+    await env.expireOtp(first.verificationRef);
     assert.equal((await env.ports.otp.verify({ verificationRef: first.verificationRef, code: first.code, decisionMakerRef: DM })).outcome, "EXPIRED");
     assert.equal((await env.ports.otp.verify({ verificationRef: first.verificationRef, code: first.code, decisionMakerRef: DM })).outcome, "NOT_ACTIVE");
     // Un OTP vivo por padre: un envío nuevo (>= 60 s después) deja el anterior inservible. Solo se comprueba en memoria con reloj falso (en PG tardaría 60 s).
@@ -165,5 +168,36 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
     assert.equal((await env.ports.revocations.getManageState(d.consentId))?.state, "REVOKED");
     assert.equal(await env.ports.revocations.getManageState("con-no-existe"), null);
     await rejectsWith(env.ports.revocations.revoke({ consentId: "con-no-existe", verificationRef: rotp.verificationRef, idempotencyKey: "rev-key-0003" }), "DECISION_NOT_FOUND");
+  });
+
+  test(`[${label}] F-SB-03: reimportar tras decidir no crea otra invitación ni cambia el correo`, async () => {
+    const env = await makeEnv();
+    const { inv, student, ver } = await verifiedDecision(env);
+    await env.ports.decisions.record({ invitationRef: inv, verificationRef: ver, outcome: "GRANTED", consentVersion: "v-test", consentTextHash: TEXT_HASH, idempotencyKey: "idem-reimp-01" });
+    const again = await env.ports.invitations.import({ studentRef: student, studentFirstName: "Ana", guardianEmail: "otro@example.test", batchRef: "batch-002" });
+    assert.deepEqual(again, { invitationRef: inv, created: false });
+  });
+
+  test(`[${label}] F-SB-05: purposes solo admite códigos de la lista cerrada`, async () => {
+    const env = await makeEnv();
+    const { inv, ver } = await verifiedDecision(env);
+    const base = { invitationRef: inv, verificationRef: ver, outcome: "GRANTED" as const, consentVersion: "v-test", consentTextHash: TEXT_HASH };
+    await rejectsWith(env.ports.decisions.record({ ...base, idempotencyKey: "idem-purp-001", purposes: [1 as unknown as string] }), "INVALID_PURPOSES");
+    await rejectsWith(env.ports.decisions.record({ ...base, idempotencyKey: "idem-purp-002", purposes: ["OTRO_FIN"] }), "INVALID_PURPOSES");
+    await rejectsWith(env.ports.decisions.record({ ...base, idempotencyKey: "idem-purp-003", purposes: ["AUDIO_RECORDING", "AUDIO_RECORDING"] }), "INVALID_PURPOSES");
+    const d = await env.ports.decisions.record({ ...base, idempotencyKey: "idem-purp-004", purposes: ["STUDY_PARTICIPATION", "AUDIO_RECORDING"] });
+    assert.equal(d.state, "GRANTED");
+  });
+
+  test(`[${label}] F-SB-04: con la verificación vencida se puede reemitir el OTP de decisión (solo con reloj falso)`, async () => {
+    const env = await makeEnv();
+    if (env.advance.name !== "advanceFake") return; // en PG el paso del tiempo se cubre en tests/integration/functions.test.ts
+    const { inv, ver } = await verifiedDecision(env);
+    await env.advance(10 * 60_000 + 1000);
+    const base = { invitationRef: inv, outcome: "GRANTED" as const, consentVersion: "v-test", consentTextHash: TEXT_HASH };
+    await rejectsWith(env.ports.decisions.record({ ...base, verificationRef: ver, idempotencyKey: "idem-win-0001" }), "VERIFICATION_REQUIRED");
+    const o = await env.ports.otp.issue({ parentRef: inv, scope: "DECISION" });
+    assert.equal((await env.ports.otp.verify({ verificationRef: o.verificationRef, code: o.code, decisionMakerRef: DM })).outcome, "VERIFIED");
+    assert.equal((await env.ports.decisions.record({ ...base, verificationRef: o.verificationRef, idempotencyKey: "idem-win-0001" })).state, "GRANTED");
   });
 }

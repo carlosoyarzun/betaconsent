@@ -3,7 +3,10 @@
 -- parámetros OTP de src/server/modules/common/approved-parameters.ts:39-72@9345b78 (espejo en beta/src/otp/approved-parameters.ts).
 --
 -- Funciones SECURITY DEFINER (dueño consent_owner, search_path fijo, EXECUTE solo para consent_app). Son la ÚNICA vía de escritura de consent_app sobre
--- invitation, otp_challenge, otp_budget, consent_decision y revocation: la verificación del OTP y la decisión viven en la base (cierra RES-OTP-WEB-PRB).
+-- invitation, otp_challenge, otp_budget, consent_decision y revocation: la verificación del OTP y la decisión viven en la base (mitiga RES-OTP-WEB-PRB; residual F-RB-03 aceptado por Carlos (proceso único)):
+-- issue_otp GENERA el código (CSPRNG) y lo devuelve en claro una sola vez al llamador, que debe enviarlo por correo; verify_otp recibe el intento y lo compara dentro.
+-- consent_app no aporta ningún verificador ni lee code_hash, así que sin el código entregado ninguna secuencia de llamadas produce VERIFIED (SEC-CNS-024 F-SB-01).
+-- Residual (F-RB-03): el código sale hacia el proceso web para ir al correo; una RCE en ese proceso lo vería.
 -- Las fallas "esperables" de verify_otp NO lanzan excepción (revertiría el conteo de intentos): devuelven un código. Las demás lanzan SQLSTATE P0001 con
 -- un mensaje estable (ALREADY_DECIDED, VERIFICATION_REQUIRED, ...).
 -- Los eventos los emiten los triggers de 0002 (INVITATION_*, OTP verificado/LOCKED, CONSENT_GRANTED|DECLINED) y revoke_decision (CONSENT_REVOKED).
@@ -17,16 +20,25 @@ AS $fn$
 #variable_conflict use_column
 DECLARE
   v_ref text := 'inv-' || pg_catalog.gen_random_uuid()::text;
+  v_existing text;
 BEGIN
+  -- F-SB-03: idempotente en CUALQUIER estado (viva, decidida o revocada): si el estudiante ya tiene invitación se devuelve la existente y no se crea otra
+  -- ni se cambia el correo. Una invitación nueva o un cambio de contacto para el mismo estudiante solo por una vía propia (H2), nunca por reimportación.
+  SELECT i.invitation_ref INTO v_existing FROM app.invitation i
+   WHERE i.tenant_id = app.current_tenant_id() AND i.student_ref = p_student_ref ORDER BY i.created_at LIMIT 1;
+  IF FOUND THEN
+    RETURN QUERY SELECT v_existing, false;
+    RETURN;
+  END IF;
   INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email, import_batch_ref)
   VALUES (v_ref, p_student_ref, p_first_name, p_email, p_batch_ref)
   ON CONFLICT (tenant_id, student_ref) WHERE state IN ('READY', 'SENT', 'OPENED', 'VERIFIED') DO NOTHING;
   IF FOUND THEN
     RETURN QUERY SELECT v_ref, true;
   ELSE
-    -- Reimport idempotente: devuelve la invitación viva existente.
+    -- Carrera con otra importación del mismo estudiante: gana la que insertó primero.
     RETURN QUERY SELECT i.invitation_ref, false FROM app.invitation i
-      WHERE i.tenant_id = app.current_tenant_id() AND i.student_ref = p_student_ref AND i.state IN ('READY', 'SENT', 'OPENED', 'VERIFIED');
+      WHERE i.tenant_id = app.current_tenant_id() AND i.student_ref = p_student_ref ORDER BY i.created_at LIMIT 1;
   END IF;
 END
 $fn$;
@@ -80,11 +92,12 @@ BEGIN
 END
 $fn$;
 
--- 2. issue_otp: un OTP vivo por (padre, scope). Padre DECISION = invitación OPENED; REVOCATION|MANAGE = decisión GRANTED. Un nuevo envío expira el anterior
--- (P-06: >= 60 s entre envíos, <= 3 por hora, contados sobre los challenges del padre) y respeta el presupuesto P-04 (10 fallos / 24 h).
--- p_expires_at lo fija el llamador, acotado a (now, now + 10 min] (P-02).
-CREATE FUNCTION app.issue_otp(p_parent_ref text, p_code_hmac text, p_expires_at timestamptz, p_scope text DEFAULT 'DECISION')
-  RETURNS text
+-- 2. issue_otp: un OTP vivo por (padre, scope). Padre DECISION = invitación OPENED o VERIFIED sin decisión (F-SB-04: si la verificación venció hay que poder
+-- reemitir); REVOCATION|MANAGE = decisión GRANTED. Un nuevo envío expira el anterior (P-06: >= 60 s entre envíos, <= 3 por hora) y respeta P-04 (10 fallos / 24 h)
+-- y P-07 (3 challenges LOCKED agotan la invitación). El código (6 dígitos, CSPRNG de pgcrypto) y el vencimiento (now() + P-02) los fija la base; el llamador no
+-- aporta ningún verificador. Devuelve el código EN CLARO una sola vez (para el correo); en la tabla solo queda sha256(verification_ref || ':' || código).
+CREATE FUNCTION app.issue_otp(p_parent_ref text, p_scope text DEFAULT 'DECISION')
+  RETURNS TABLE (o_verification_ref text, o_code text, o_expires_at timestamptz)
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
@@ -94,17 +107,21 @@ DECLARE
   c_budget_max constant integer := 10;                          -- P-04
   c_min_resend constant interval := interval '60 seconds';      -- P-06
   c_max_sends constant integer := 3;                            -- P-06
+  c_max_locked constant integer := 3;                           -- P-07
   v_tenant uuid := app.current_tenant_id();
   v_ref text := 'ver-' || pg_catalog.gen_random_uuid()::text;
   v_budget_key text := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_parent_ref, 'UTF8')), 'hex');
   v_failures integer;
   v_last timestamptz;
   v_sends integer;
+  v_locked integer;
+  v_expires timestamptz := pg_catalog.now() + c_ttl;
+  v_code text;
+  v_n bigint;
 BEGIN
   IF p_scope NOT IN ('DECISION', 'REVOCATION', 'MANAGE') THEN RAISE EXCEPTION 'INVALID_SCOPE'; END IF;
-  IF p_expires_at <= pg_catalog.now() OR p_expires_at > pg_catalog.now() + c_ttl + interval '5 seconds' THEN RAISE EXCEPTION 'INVALID_EXPIRY'; END IF;
   IF p_scope = 'DECISION' THEN
-    PERFORM 1 FROM app.invitation i WHERE i.tenant_id = v_tenant AND i.invitation_ref = p_parent_ref AND i.state = 'OPENED' FOR UPDATE;
+    PERFORM 1 FROM app.invitation i WHERE i.tenant_id = v_tenant AND i.invitation_ref = p_parent_ref AND i.state IN ('OPENED', 'VERIFIED') AND i.token_consumed_at IS NULL FOR UPDATE;
     IF NOT FOUND THEN RAISE EXCEPTION 'PARENT_NOT_ELIGIBLE'; END IF;
   ELSE
     PERFORM 1 FROM app.consent_decision d WHERE d.tenant_id = v_tenant AND d.consent_id = p_parent_ref AND d.state = 'GRANTED' FOR UPDATE;
@@ -115,23 +132,38 @@ BEGIN
    WHERE b.tenant_id = v_tenant AND b.key_kind = 'INVITATION' AND b.key_hmac = v_budget_key AND b.expires_at > pg_catalog.now();
   IF COALESCE(v_failures, 0) >= c_budget_max THEN RAISE EXCEPTION 'OTP_BUDGET_EXHAUSTED'; END IF;
 
+  IF p_scope = 'DECISION' THEN
+    SELECT pg_catalog.count(*) INTO v_locked FROM app.otp_challenge o
+     WHERE o.tenant_id = v_tenant AND o.parent_ref = p_parent_ref AND o.scope = 'DECISION' AND o.state = 'LOCKED';
+    IF v_locked >= c_max_locked THEN RAISE EXCEPTION 'OTP_EXHAUSTED'; END IF;
+  END IF;
+
   SELECT pg_catalog.max(o.created_at), pg_catalog.count(*) FILTER (WHERE o.created_at > pg_catalog.now() - interval '1 hour') INTO v_last, v_sends
     FROM app.otp_challenge o WHERE o.tenant_id = v_tenant AND o.parent_ref = p_parent_ref AND o.scope = p_scope;
   IF v_last IS NOT NULL AND v_last > pg_catalog.now() - c_min_resend THEN RAISE EXCEPTION 'OTP_RESEND_TOO_SOON'; END IF;
   IF v_sends >= c_max_sends THEN RAISE EXCEPTION 'OTP_SEND_LIMIT'; END IF;
 
+  -- 6 dígitos sin sesgo de módulo: se descartan los uint32 >= 4_294_000_000 (el mayor múltiplo de 10^6 que cabe en 2^32).
+  LOOP
+    v_n := ('x' || pg_catalog.encode(ext.gen_random_bytes(4), 'hex'))::bit(32)::bigint;
+    EXIT WHEN v_n < 4294000000;
+  END LOOP;
+  v_code := pg_catalog.lpad((v_n % 1000000)::text, 6, '0');
+
   UPDATE app.otp_challenge SET state = 'EXPIRED'
    WHERE tenant_id = v_tenant AND parent_ref = p_parent_ref AND scope = p_scope AND state = 'CODE_SENT';
-  INSERT INTO app.otp_challenge (verification_ref, scope, parent_ref, code_hmac, expires_at)
-  VALUES (v_ref, p_scope, p_parent_ref, p_code_hmac, p_expires_at);
-  RETURN v_ref;
+  INSERT INTO app.otp_challenge (verification_ref, scope, parent_ref, code_hash, expires_at)
+  VALUES (v_ref, p_scope, p_parent_ref, pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_ref || ':' || v_code, 'UTF8')), 'hex'), v_expires);
+  RETURN QUERY SELECT v_ref, v_code, v_expires;
 END
 $fn$;
 
--- 3. verify_otp: compara DENTRO de la base (bytea del HMAC), con FOR UPDATE del challenge: dos llamadas concurrentes con el código correcto dan 1 solo VERIFIED.
--- Devuelve (outcome, verification_ref, attempts_left). outcome: VERIFIED | WRONG_CODE | LOCKED | EXPIRED | NOT_ACTIVE | BUDGET_EXHAUSTED.
+-- 3. verify_otp: hashea el intento DENTRO de la base y compara, con FOR UPDATE del challenge: dos llamadas concurrentes con el código correcto dan 1 solo VERIFIED.
+-- Devuelve (outcome, verification_ref, attempts_left). outcome: VERIFIED | WRONG_CODE | LOCKED | EXPIRED | NOT_ACTIVE | BUDGET_EXHAUSTED. Un intento con forma distinta de
+-- ^[0-9]{6}$ cuenta como fallo (no se puede probar nada sin gastar intentos). IMPORTANTE (SEC-CNS-024): el llamador debe ejecutar verify_otp en su PROPIA transacción y
+-- confirmarla también con WRONG_CODE/LOCKED; si un rollback posterior devolviera el conteo habría fuerza bruta ilimitada.
 -- p_decision_maker_ref (seudónimo HKDF del canal verificado) lo calcula el servidor y queda en el OTP y luego en la decisión.
-CREATE FUNCTION app.verify_otp(p_verification_ref text, p_code_hmac_attempt text, p_decision_maker_ref text)
+CREATE FUNCTION app.verify_otp(p_verification_ref text, p_code_attempt text, p_decision_maker_ref text)
   RETURNS TABLE (outcome text, verification_ref text, attempts_left integer)
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
@@ -145,8 +177,8 @@ DECLARE
   v_ch app.otp_challenge%ROWTYPE;
   v_budget_key text;
   v_failures integer;
+  v_match boolean;
 BEGIN
-  IF p_code_hmac_attempt !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'INVALID_CODE_HMAC'; END IF;
   SELECT * INTO v_ch FROM app.otp_challenge o WHERE o.tenant_id = v_tenant AND o.verification_ref = p_verification_ref FOR UPDATE;
   IF NOT FOUND THEN RETURN QUERY SELECT 'NOT_ACTIVE'::text, NULL::text, 0; RETURN; END IF;
   IF v_ch.state <> 'CODE_SENT' THEN RETURN QUERY SELECT 'NOT_ACTIVE'::text, NULL::text, 0; RETURN; END IF;
@@ -160,9 +192,10 @@ BEGIN
    WHERE b.tenant_id = v_tenant AND b.key_kind = 'INVITATION' AND b.key_hmac = v_budget_key AND b.expires_at > pg_catalog.now();
   IF COALESCE(v_failures, 0) >= c_budget_max THEN RETURN QUERY SELECT 'BUDGET_EXHAUSTED'::text, NULL::text, 0; RETURN; END IF;
 
-  -- Igualdad sobre bytea de 32 bytes (HMAC-SHA256): no depende de la longitud ni del texto hex.
-  IF pg_catalog.decode(p_code_hmac_attempt, 'hex') = pg_catalog.decode(v_ch.code_hmac, 'hex') THEN
-    IF p_decision_maker_ref IS NULL OR pg_catalog.length(p_decision_maker_ref) NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'INVALID_DECISION_MAKER_REF'; END IF;
+  v_match := p_code_attempt IS NOT NULL AND p_code_attempt ~ '^[0-9]{6}$'
+    AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_verification_ref || ':' || p_code_attempt, 'UTF8')), 'hex') = v_ch.code_hash;
+  IF v_match THEN
+    IF p_decision_maker_ref IS NULL OR p_decision_maker_ref !~ '^[A-Za-z0-9_-]{8,100}$' THEN RAISE EXCEPTION 'INVALID_DECISION_MAKER_REF'; END IF;
     UPDATE app.otp_challenge SET attempts = v_ch.attempts + 1, state = 'VERIFIED', consumed_at = pg_catalog.now(), decision_maker_ref = p_decision_maker_ref
      WHERE tenant_id = v_tenant AND verification_ref = p_verification_ref; -- emite DECISION_MAKER_CHANNEL_VERIFIED
     IF v_ch.scope = 'DECISION' THEN
@@ -188,7 +221,7 @@ BEGIN
 END
 $fn$;
 
--- 4. record_decision: exige OTP DECISION VERIFIED (de esta invitación, dentro de la ventana de sesión de 30 min, SUPUESTO de beta), inserta la decisión
+-- 4. record_decision: exige OTP DECISION VERIFIED (de esta invitación, dentro de la ventana de 10 min tras verificar: decisión técnica del Supervisor alineada con P-02 y el TTL del handle, pendiente de Carlos), inserta la decisión
 -- (1 por invitación), marca token_consumed_at y cierra la invitación, y encola el recibo en la misma tx. Idempotente por clave: misma clave => misma decisión sin
 -- evento nuevo (deduped = true); otra clave sobre una invitación ya decidida => ALREADY_DECIDED. El FOR UPDATE de la invitación serializa los reintentos paralelos.
 CREATE FUNCTION app.record_decision(p_invitation_ref text, p_verification_ref text, p_outcome text, p_consent_version text, p_consent_text_hash text,
@@ -199,7 +232,7 @@ CREATE FUNCTION app.record_decision(p_invitation_ref text, p_verification_ref te
 AS $fn$
 #variable_conflict use_column
 DECLARE
-  c_window constant interval := interval '30 minutes';
+  c_window constant interval := interval '10 minutes';
   v_tenant uuid := app.current_tenant_id();
   v_idem text;
   v_inv app.invitation%ROWTYPE;
@@ -208,6 +241,14 @@ DECLARE
   v_id text := 'con-' || pg_catalog.gen_random_uuid()::text;
 BEGIN
   IF p_outcome NOT IN ('GRANTED', 'DECLINED') THEN RAISE EXCEPTION 'INVALID_OUTCOME'; END IF;
+  -- F-SB-05: purposes entra al ledger inmutable. Solo un arreglo (sin duplicados) de códigos de la lista cerrada de beta/src/mail/guest-purposes.ts; cualquier otro tipo se rechaza.
+  IF p_purposes IS NULL OR pg_catalog.jsonb_typeof(p_purposes) <> 'array' OR pg_catalog.jsonb_array_length(p_purposes) > 4
+     OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(p_purposes) e
+                 WHERE pg_catalog.jsonb_typeof(e) <> 'string' OR (e #>> '{}') NOT IN ('STUDY_PARTICIPATION', 'AUDIO_RECORDING', 'AUTOMATED_ANALYSIS', 'HUMAN_REVIEW'))
+     OR (SELECT pg_catalog.count(DISTINCT e) FROM pg_catalog.jsonb_array_elements(p_purposes) e) <> pg_catalog.jsonb_array_length(p_purposes) THEN
+    RAISE EXCEPTION 'INVALID_PURPOSES';
+  END IF;
+  IF p_consent_version IS NULL OR p_consent_version !~ '^[A-Za-z0-9_.-]{1,64}$' THEN RAISE EXCEPTION 'INVALID_CONSENT_VERSION'; END IF;
   IF p_idempotency_key IS NULL OR pg_catalog.length(p_idempotency_key) NOT BETWEEN 8 AND 200 THEN RAISE EXCEPTION 'INVALID_IDEMPOTENCY_KEY'; END IF;
   v_idem := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_idempotency_key, 'UTF8')), 'hex');
 
@@ -245,7 +286,7 @@ CREATE FUNCTION app.revoke_decision(p_consent_id text, p_verification_ref text, 
 AS $fn$
 #variable_conflict use_column
 DECLARE
-  c_window constant interval := interval '30 minutes';
+  c_window constant interval := interval '10 minutes';
   v_tenant uuid := app.current_tenant_id();
   v_idem text;
   v_dec app.consent_decision%ROWTYPE;
@@ -299,15 +340,15 @@ AS $fn$
 $fn$;
 
 REVOKE ALL ON FUNCTION app.import_invitation(text, text, text, text), app.arm_invitation_token(text, text, timestamptz, text), app.open_invitation(text),
-  app.issue_otp(text, text, timestamptz, text), app.verify_otp(text, text, text),
+  app.issue_otp(text, text), app.verify_otp(text, text, text),
   app.record_decision(text, text, text, text, text, text, jsonb), app.revoke_decision(text, text, text), app.authorization_status(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.import_invitation(text, text, text, text), app.arm_invitation_token(text, text, timestamptz, text), app.open_invitation(text),
-  app.issue_otp(text, text, timestamptz, text), app.verify_otp(text, text, text),
+  app.issue_otp(text, text), app.verify_otp(text, text, text),
   app.record_decision(text, text, text, text, text, text, jsonb), app.revoke_decision(text, text, text), app.authorization_status(text) TO consent_app;
 
 -- Retiro de los grants directos marcados TODO H1-03 ---------------------------------------------------------------------------------------------------------
 REVOKE INSERT ON app.invitation FROM consent_app;
--- consent_app queda con SELECT en invitation, otp_challenge (sin code_hmac), consent_decision y revocation; ningún INSERT/UPDATE/DELETE en ellas ni en otp_budget.
+-- consent_app queda con SELECT en invitation, otp_challenge (sin code_hash), consent_decision y revocation; ningún INSERT/UPDATE/DELETE en ellas ni en otp_budget.
 -- Se CONSERVAN, porque ninguna función de H1-03 los cubre: email_outbox (SELECT, INSERT acotado, UPDATE acotado de status/attempts/next_attempt_at/provider_message_id/
 -- last_error_code: el outbox en proceso y su reintento son de H1-06; ahí pasa a claim_emails()/mark_email_*()), api_nonce (INSERT para la verificación de replay, H1-08)
 -- y api_access_log (INSERT append-only, H1-08).
@@ -342,12 +383,17 @@ BEGIN
     IF v IS DISTINCT FROM r.expected THEN RAISE EXCEPTION 'tabla de verdad: % % % = % (esperado %)', r.rol, r.obj, r.priv, v, r.expected; END IF;
   END LOOP;
 
-  -- Columnas sensibles (otp_challenge se lee por columnas, sin code_hmac).
+  -- Columnas sensibles (otp_challenge se lee por columnas, sin code_hash).
   IF NOT pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'state', 'SELECT') THEN RAISE EXCEPTION 'tabla de verdad: consent_app debe leer otp_challenge.state'; END IF;
-  IF pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'code_hmac', 'SELECT') OR pg_catalog.has_any_column_privilege('consent_app', 'app.otp_challenge', 'UPDATE')
+  IF pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'code_hash', 'SELECT') OR pg_catalog.has_any_column_privilege('consent_app', 'app.otp_challenge', 'UPDATE')
      OR pg_catalog.has_any_column_privilege('consent_app', 'app.consent_decision', 'UPDATE') OR pg_catalog.has_any_column_privilege('consent_app', 'app.invitation', 'INSERT')
      OR pg_catalog.has_any_column_privilege('consent_app', 'app.invitation', 'UPDATE') THEN
     RAISE EXCEPTION 'tabla de verdad: privilegios de columna indebidos para consent_app';
+  END IF;
+
+  -- pgcrypto vive en el esquema ext: consent_app no lo ve (solo lo llaman las funciones SECURITY DEFINER del dueño).
+  IF pg_catalog.has_schema_privilege('consent_app', 'ext', 'USAGE') OR pg_catalog.has_schema_privilege('consent_app', 'ext', 'CREATE') THEN
+    RAISE EXCEPTION 'tabla de verdad: consent_app no debe alcanzar el esquema ext (pgcrypto)';
   END IF;
 
   -- EXECUTE: solo consent_app (y el dueño); nadie por PUBLIC; ledger_gen.* no es ejecutable por consent_app.
@@ -360,7 +406,7 @@ BEGIN
   END LOOP;
   FOR r IN SELECT * FROM (VALUES
     ('app.import_invitation(text,text,text,text)', true), ('app.arm_invitation_token(text,text,timestamptz,text)', true), ('app.open_invitation(text)', true),
-    ('app.issue_otp(text,text,timestamptz,text)', true), ('app.verify_otp(text,text,text)', true),
+    ('app.issue_otp(text,text)', true), ('app.verify_otp(text,text,text)', true),
     ('app.record_decision(text,text,text,text,text,text,jsonb)', true), ('app.revoke_decision(text,text,text)', true), ('app.authorization_status(text)', true),
     ('ledger_gen.ledger_append(text,text,text,text,text,jsonb,text)', false), ('ledger_gen.canonical_json(jsonb)', false), ('ledger_gen.emit_invitation()', false)
   ) AS t(fn, expected) LOOP

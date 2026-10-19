@@ -17,7 +17,6 @@ export interface Config {
   readonly environment: Environment;
   readonly databaseUrl: string;
   readonly sessionSecret: Buffer;
-  readonly otpSecret: Buffer;
   readonly publicOrigin: string;
   readonly smtpUrl: string;
   readonly smtpFrom: string;
@@ -36,7 +35,6 @@ export const REQUIRED_VARIABLES = [
   "CNS_ENVIRONMENT",
   "CNS_DATABASE_URL",
   "CNS_SESSION_SECRET",
-  "CNS_OTP_SECRET",
   "CNS_PUBLIC_ORIGIN",
   "CNS_SMTP_URL",
   "CNS_SMTP_FROM",
@@ -77,8 +75,6 @@ export function loadConfig(env: Env = process.env): Config {
   if (!/^postgres(ql)?:\/\//.test(databaseUrl)) throw new ConfigError("CNS_DATABASE_URL debe empezar por postgresql://. Abortando (fail-closed).");
 
   const sessionSecret = decodeSecret(required(env, "CNS_SESSION_SECRET"), "CNS_SESSION_SECRET");
-  const otpSecret = decodeSecret(required(env, "CNS_OTP_SECRET"), "CNS_OTP_SECRET");
-  if (sessionSecret.equals(otpSecret)) throw new ConfigError("CNS_SESSION_SECRET y CNS_OTP_SECRET deben ser distintos (una clave por propósito). Abortando (fail-closed).");
 
   const publicOrigin = required(env, "CNS_PUBLIC_ORIGIN");
   let origin: URL;
@@ -121,5 +117,5 @@ export function loadConfig(env: Env = process.env): Config {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("PORT debe ser un entero entre 1 y 65535. Abortando (fail-closed).");
   const bind = required(env, "BIND");
 
-  return { environment, databaseUrl, sessionSecret, otpSecret, publicOrigin, smtpUrl, smtpFrom, mailAllowlist, apiKeys, port, bind };
+  return { environment, databaseUrl, sessionSecret, publicOrigin, smtpUrl, smtpFrom, mailAllowlist, apiKeys, port, bind };
 }
