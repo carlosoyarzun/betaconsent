@@ -6,8 +6,10 @@
 // un placeholder mínimo (Carlos 2026-09-27), igual patrón que lo fue /verify.
 // TEST-CNS-553..TEST-CNS-56x (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -42,7 +44,7 @@ interface Harness {
 
 function startServer(): Promise<Harness> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -136,7 +138,7 @@ async function bringToOtpRequested(
   return { session, sink: harness.ports.otp.channel as InMemoryOtpChannelSink };
 }
 
-test("TEST-CNS-553: GET /verify con sesión válida (OTP ya solicitado) responde 200, HTML con un h1, lang=es y las cabeceras de seguridad", async () => {
+test("TEST-CNS-553: GET /verify con sesión válida (OTP ya solicitado) responde 200 con el shell de la SPA y las cabeceras de seguridad", async () => {
   const harness = await startServer();
   try {
     const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-553"), fixtureUuid("subject-553"));
@@ -146,81 +148,27 @@ test("TEST-CNS-553: GET /verify con sesión válida (OTP ya solicitado) responde
     assert.equal(res.headers.get("cache-control"), "no-store");
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff"); // F-E2E-02
     const html = await res.text();
     assert.match(html, /<html lang="es">/);
-    assert.match(html, /<h1[^>]*>Verifica el código<\/h1>/);
-    assert.match(html, /<script src="\/assets\/verify\.js" defer><\/script>/);
+    assert.match(html, /<div id="root"><\/div>/); // el contenido lo pinta la SPA (TEST-CNS-1906 / E2E-CNS-010)
+    assert.match(html, /<meta name="cns-page-state" content="ready">/);
     assert.doesNotMatch(html, /<script>/);
+    assert.ok(parseAllSetCookies(res)[CSRF_COOKIE_NAME], "fija la cookie CSRF del double-submit");
   } finally {
     await harness.close();
   }
 });
 
-test("TEST-CNS-554: GET /verify contiene el copy exacto del handoff, incluidos los placeholders [N] y [tiempo pendiente de aprobación] (P-01/P-02 sin valor aprobado)", async () => {
-  const harness = await startServer();
-  try {
-    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-554"), fixtureUuid("subject-554"));
-    const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    assert.match(html, /Enviamos un código a la vía de contacto registrada para continuar\. No lo compartas con nadie\./);
-    assert.match(html, /Código de verificación/);
-    assert.match(html, /Ingresa el código de \[N\] caracteres que enviamos \(P-01, valor pendiente de aprobación\)\./);
-    assert.match(html, /El código deja de funcionar después de \[tiempo pendiente de aprobación\] \(P-02\)\./);
-    assert.match(html, /El código ingresado no es correcto\. Revísalo e inténtalo nuevamente\./);
-    assert.match(html, /¿No recibiste el código\?/);
-    assert.match(html, />Reenviar código<\/button>/);
-    assert.match(html, /Puedes solicitarlo un número limitado de veces \(P-06, valor pendiente de aprobación\)\./);
-    assert.match(html, />Verificar<\/button>/);
-    assert.match(html, /Este código ya no es válido\./);
-    assert.match(html, /Puede haber expirado o haberse usado antes\. Solicita uno nuevo para continuar\./);
-    assert.match(html, /Bloqueamos este código por varios intentos incorrectos\./);
-    assert.match(html, /Por seguridad, no podemos usarlo de nuevo\. Solicita un código nuevo para continuar\./);
-    assert.match(html, />Solicitar nuevo código<\/button>/);
-    assert.match(html, /No pudimos conectar\./);
-    assert.match(html, /Revisa tu conexión e inténtalo nuevamente\./);
-    assert.match(html, /No pudimos continuar con esta verificación\./);
-    assert.match(html, /¿Necesitas ayuda\? Escríbenos a ayuda@example\.invalid/);
-    // P-03 (intentos máximos) nunca aparece en el copy (V2, "sin revelar intentos restantes").
-    assert.doesNotMatch(html, /intentos restantes/);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-555: el campo de código tiene label visible, inputmode numeric y autocomplete one-time-code, asociado por aria-describedby al helper y al error", async () => {
-  const harness = await startServer();
-  try {
-    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-555"), fixtureUuid("subject-555"));
-    const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    assert.match(html, /<label class="lp-label" for="code-input">Código de verificación<\/label>/);
-    assert.match(html, /id="code-input"/);
-    assert.match(html, /inputmode="numeric"/);
-    assert.match(html, /autocomplete="one-time-code"/);
-    assert.match(html, /aria-describedby="code-help code-error"/);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-556: GET /decision sin sesión verificada muestra el estado de error uniforme de la propia pantalla (UX-CNS-003), no un 404 JSON crudo", async () => {
+test("TEST-CNS-556: GET /decision sin sesión verificada responde 404 con el shell uniform-error de la SPA (UX-CNS-003), no un 404 JSON crudo", async () => {
   const harness = await startServer();
   try {
     const res = await fetch(`${harness.baseUrl}/decision`);
     assert.equal(res.status, 404);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
-    assert.match(html, /<h1[^>]*>Revisa y decide<\/h1>/);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-557: /assets/verify.js responde 200 con content-type javascript y usa x-csrf-token (double-submit)", async () => {
-  const harness = await startServer();
-  try {
-    const js = await fetch(`${harness.baseUrl}/assets/verify.js`);
-    assert.equal(js.status, 200);
-    assert.match(js.headers.get("content-type") ?? "", /javascript/);
-    assert.match(await js.text(), /x-csrf-token/);
+    assert.match(html, /<meta name="cns-page-state" content="uniform-error">/); // E2E-CNS-032 / TEST-CNS-1997
+    assert.doesNotMatch(html, /"status":404/);
   } finally {
     await harness.close();
   }
@@ -255,8 +203,7 @@ test("TEST-CNS-558: flujo completo GET /i/{token} -> /welcome -> open -> request
 
     const decision = await fetch(`${harness.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionVerified}` } });
     assert.equal(decision.status, 200);
-    const html = await decision.text();
-    assert.match(html, /<h1[^>]*>Revisa y decide<\/h1>/);
+    assert.match(await decision.text(), /<meta name="cns-page-state" content="ready">/); // shell de la SPA (E2E-CNS-012 / TEST-CNS-1977)
   } finally {
     await harness.close();
   }
@@ -302,45 +249,9 @@ test("TEST-CNS-560: reenviar el código (POST /otp/resend) desde /verify reempla
   }
 });
 
-test("TEST-CNS-561: app.css fija min-height 48px (tap target, D-05 Carlos 2026-10-14) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", async () => {
-  const harness = await startServer();
-  try {
-    const css = await (await fetch(`${harness.baseUrl}/assets/app.css`)).text();
-    assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*48px/);
-    assert.match(css, /\.lp-verify-cta[^{]*\{[^}]*min-height:\s*48px/);
-    assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*52px/);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-562: GET /verify aplica la clase de tap target (44px) a 'Reenviar código', ambos 'Solicitar nuevo código' y 'Reintentar', e incluye la región aria-live #resend-feedback", async () => {
-  const harness = await startServer();
-  try {
-    const { session } = await bringToOtpRequested(harness, fixtureUuid("inv-562"), fixtureUuid("subject-562"));
-    const html = await (await fetch(`${harness.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    for (const id of ["resend-btn", "request-new-code-btn-expired", "request-new-code-btn-locked", "retry-btn"]) {
-      const re = new RegExp(`class="[^"]*lp-verify-tap-target[^"]*"[^>]*id="${id}"`);
-      assert.match(html, re, `${id} debe tener lp-verify-tap-target`);
-    }
-    assert.match(html, /aria-live="polite"[^>]*id="resend-feedback"/);
-  } finally {
-    await harness.close();
-  }
-});
-
-test("TEST-CNS-563: verify.js limpia el error previo y anuncia feedback neutro en 202, y un mensaje de límite en 409 (sin cifra), en POST /otp/resend", async () => {
-  const harness = await startServer();
-  try {
-    const js = await (await fetch(`${harness.baseUrl}/assets/verify.js`)).text();
-    assert.match(js, /showResendFeedback\("Te enviamos un nuevo código\.", "ok"\)/);
-    assert.match(js, /showResendFeedback\("Alcanzaste el límite de reenvíos disponible por ahora\.", "limit"\)/);
-    // showResendFeedback llama hideStates() primero: limpia code-error/aria-invalid antes de
-    // mostrar el mensaje nuevo (fix: la UI ya no dejaba visible "El código ingresado no es
-    // correcto…" tras un reenvío exitoso).
-    assert.match(js, /function showResendFeedback\(message, kind\) \{\s*hideStates\(\);/);
-    assert.doesNotMatch(js, /\d+\s*(reenvíos|intentos)/i); // P-06 sin valor aprobado: sin cifra
-  } finally {
-    await harness.close();
-  }
+test("TEST-CNS-561: frontend/src/styles/app.css fija min-height 48px (tap target, D-05 Carlos 2026-10-14) para .lp-verify-tap-target, .lp-verify-cta y .lp-verify-code-input (fix Carlos, probado en navegador)", () => {
+  const css = readFileSync(new URL("../../../frontend/src/styles/app.css", import.meta.url), "utf8"); // el CSS del invitado vive en frontend/ (SSR retirado)
+  assert.match(css, /\.lp-verify-tap-target\s*\{[^}]*min-height:\s*48px/);
+  assert.match(css, /\.lp-verify-cta[^{]*\{[^}]*min-height:\s*48px/);
+  assert.match(css, /\.lp-verify-code-input\s*\{[^}]*min-height:\s*52px/);
 });

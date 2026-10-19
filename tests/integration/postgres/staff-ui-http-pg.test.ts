@@ -6,6 +6,7 @@
 // 1151 (CA-138: sesion STAFF con registro en app.staff_session: logout revoca en la BD, sid de otro tenant no existe, sin sid en claro ni PII).
 // Requiere Postgres real (harness.ts). Solo datos sinteticos, cero PII.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import { randomBytes } from "node:crypto";
@@ -86,7 +87,7 @@ async function boot(ctx: PgTestContext, roster: readonly StaffPrincipal[], direc
     subjectDirectory: createInMemorySubjectDirectory("LOCAL", directory),
   });
   const sessionSecret = randomBytes(32);
-  const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports: bundle.ports,
     revocationPorts: bundle.revocationPorts,

@@ -6,8 +6,10 @@
 // (nada preseleccionado), sin descarga del comprobante. Datos sintéticos, example.invalid.
 // TEST-CNS-1401..TEST-CNS-1407, 1412..1416 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -70,7 +72,7 @@ function startServer(subjectRef: string, channelOverride?: { send(m: unknown): P
       recordDeliveryFailure: (kind) => void failures.push(kind),
     },
   };
-  const server: Server = createConsentFlowHttpServer({
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR,
     sessionSecret: TEST_SESSION_SECRET,
     staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
@@ -171,47 +173,18 @@ async function completeSteps(h: Harness, sessionCookie: string): Promise<string>
   return cookie;
 }
 
-test("TEST-CNS-1401: GET /decision no preselecciona nada (chips, casilla ni select), muestra Paso 2 de 3 y la etiqueta sintética del estudiante (D-02) y los botones Acepto/No acepto tienen el mismo tratamiento", async () => {
+test("TEST-CNS-1401: la etiqueta sintética del estudiante (D-02) sale solo por GET /decision/page-state (sin PII ni RUT) y los chips Acepto/No acepto no tienen variante verde/roja en el CSS del invitado", async () => {
   const subjectRef = fixtureUuid("subject-1401");
   const h = await startServer(subjectRef);
   try {
     const { session } = await bringToVerified(h, fixtureUuid("inv-1401"), subjectRef);
-    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    assert.doesNotMatch(html, /aria-checked="true"/);
-    assert.doesNotMatch(html, /<input[^>]*\bchecked\b/);
-    assert.match(html, /<option value="" selected disabled>/);
-    assert.doesNotMatch(html, /<option[^>]*value="SYNTHETIC_GUARDIAN"[^>]*selected/);
-    assert.match(html, /Paso 2 de 3 · Revisa y decide/);
-    assert.match(html, /Alumno de prueba 3 · Colegio Ejemplo/);
-    assert.equal((html.match(/data-choice="GRANT"/g) ?? []).length, 4);
-    assert.equal((html.match(/data-choice="DECLINE"/g) ?? []).length, 4);
-    // Mismo componente y mismas clases para ambas opciones (sin variante verde/roja).
-    const grant = html.match(/<button[^>]*data-choice="GRANT"[^>]*>/)?.[0] ?? "";
-    const decline = html.match(/<button[^>]*data-choice="DECLINE"[^>]*>/)?.[0] ?? "";
-    assert.equal(grant.match(/class="[^"]*"/)?.[0], decline.match(/class="[^"]*"/)?.[0]);
-    const css = await (await fetch(`${h.baseUrl}/assets/app.css`)).text();
-    assert.doesNotMatch(css, /lp-decision-chip\[aria-checked="true"\]\[data-choice="(GRANT|DECLINE)"\]\s*,?\s*\{/);
+    const raw = await (await fetch(`${h.baseUrl}/decision/page-state`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
+    assert.equal((JSON.parse(raw) as { subjectLabel?: string }).subjectLabel, "Alumno de prueba 3"); // D-02
     // Sin PII del estudiante ni RUT.
-    assert.doesNotMatch(html, /RUT|\d{1,2}\.\d{3}\.\d{3}-[\dkK]/);
-  } finally {
-    await h.close();
-  }
-});
-
-test("TEST-CNS-1451: la casilla de autoridad de /decision tiene como nombre accesible el texto de la declaracion (label for/id y aria-labelledby al mismo texto), no 'on' (UX-CNS-003, accesibilidad)", async () => {
-  const subjectRef = fixtureUuid("subject-1451");
-  const h = await startServer(subjectRef);
-  try {
-    const { session } = await bringToVerified(h, fixtureUuid("inv-1451"), subjectRef);
-    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    const input = html.match(/<input[^>]*id="authority-declared"[^>]*>/)?.[0] ?? "";
-    assert.match(input, /type="checkbox"/);
-    assert.doesNotMatch(input, /\bvalue=/, "sin value: el arbol de accesibilidad no debe caer en 'on'");
-    assert.match(input, /aria-labelledby="authority-declared-label"/);
-    assert.match(html, /<label[^>]*for="authority-declared"/);
-    const label = html.match(/<span id="authority-declared-label">([^<]*)<\/span>/)?.[1] ?? "";
-    assert.match(label, /Declaro que tengo la autoridad/);
-    assert.equal((html.match(/id="authority-declared-label"/g) ?? []).length, 1);
+    assert.doesNotMatch(raw, /RUT|\d{1,2}\.\d{3}\.\d{3}-[\dkK]/);
+    // La estructura (nada preseleccionado, Paso 2 de 3, mismo tratamiento de botones) la cubre frontend/tests/pages/decision.test.tsx (TEST-CNS-1912).
+    const css = readFileSync(new URL("../../../frontend/src/styles/app.css", import.meta.url), "utf8");
+    assert.doesNotMatch(css, /lp-decision-chip\[aria-checked="true"\]\[data-choice="(GRANT|DECLINE)"\]\s*,?\s*\{/);
   } finally {
     await h.close();
   }
@@ -236,7 +209,7 @@ test("TEST-CNS-1402: las páginas del invitado (welcome, verify, decision, manag
         assert.match(m[1] as string, /^\/assets\//, `recurso no local: ${m[1]}`);
       }
     }
-    const css = await (await fetch(`${h.baseUrl}/assets/app.css`)).text();
+    const css = readFileSync(new URL("../../../frontend/src/styles/app.css", import.meta.url), "utf8"); // CSS del invitado: vive en frontend/ (SSR retirado)
     assert.doesNotMatch(css, /@import\s+(url\()?["']?https?:/i);
     assert.doesNotMatch(css, /url\(\s*["']?https?:/i);
     const ds = await (await fetch(`${h.baseUrl}/assets/design-system/index.css`)).text();
@@ -246,14 +219,12 @@ test("TEST-CNS-1402: las páginas del invitado (welcome, verify, decision, manag
   }
 });
 
-test("TEST-CNS-1403: decisión GRANTED deja dos mensajes aparte en el sink: comprobante SIN enlace y mensaje con el enlace de gestión; el enlace nunca sale en la respuesta HTTP ni en las pantallas (D-03)", async () => {
+test("TEST-CNS-1403: decisión GRANTED deja dos mensajes aparte en el sink: comprobante SIN enlace y mensaje con el enlace de gestión; el enlace nunca sale en la respuesta HTTP ni en el shell de la página (D-03)", async () => {
   const subjectRef = fixtureUuid("subject-1403");
   const h = await startServer(subjectRef);
   try {
     const { session } = await bringToVerified(h, fixtureUuid("inv-1403"), subjectRef);
     const afterSteps = await completeSteps(h, session);
-    const decisionHtml = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
-    assert.match(decisionHtml, /id="state-granted"/);
     const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: GRANT_ALL } });
     assert.equal(res.status, 200);
     const raw = await res.text();
@@ -286,11 +257,9 @@ test("TEST-CNS-1403: decisión GRANTED deja dos mensajes aparte en el sink: comp
     const manage = await fetch(`${h.baseUrl}/manage`, { headers: { cookie: `${MANAGE_HANDLE_COOKIE_NAME}=${mHandle}` } });
     assert.equal(manage.status, 200);
 
-    // La página /decision tras registrar no vuelca ni el token ni la ruta de gestión.
+    // El shell de /decision no vuelca ni el token ni la ruta de gestión (el copy de la pantalla lo cubre frontend/tests/pages/decision.test.tsx).
+    const decisionHtml = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
     assert.doesNotMatch(decisionHtml, /\/m\/[A-Za-z0-9_-]{20,}/);
-    assert.doesNotMatch(decisionHtml, /Descargar|\.pdf|download|Copiar código/i);
-    const decisionJs = await (await fetch(`${h.baseUrl}/assets/decision.js`)).text();
-    assert.doesNotMatch(decisionJs, /\/m\//);
 
     // Comprobante visible por /__dev/message-sink solo en LOCAL (este harness lo es).
     const dev = await (await fetch(`${h.baseUrl}/__dev/message-sink`)).json();
@@ -301,13 +270,12 @@ test("TEST-CNS-1403: decisión GRANTED deja dos mensajes aparte en el sink: comp
   }
 });
 
-test("TEST-CNS-1404: decisión DECLINED emite solo el comprobante (sin mensaje ni handle de gestión, consent-decision.spec C5, D-07) y las pantallas de rechazo no prometen enlace de gestión", async () => {
+test("TEST-CNS-1404: decisión DECLINED emite solo el comprobante (sin mensaje ni handle de gestión, consent-decision.spec C5, D-07) (el copy de la pantalla lo cubren TEST-CNS-1915 y E2E-CNS-028)", async () => {
   const subjectRef = fixtureUuid("subject-1404");
   const h = await startServer(subjectRef);
   try {
     const { session } = await bringToVerified(h, fixtureUuid("inv-1404"), subjectRef);
     const afterSteps = await completeSteps(h, session);
-    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${afterSteps}` } })).text();
     const res = await post(h.baseUrl, { path: "/decision/submit", ...VALID_CSRF, sessionCookie: afterSteps, body: { purposes: DECLINE_ONE } });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { state: string };
@@ -317,13 +285,7 @@ test("TEST-CNS-1404: decisión DECLINED emite solo el comprobante (sin mensaje n
     assert.doesNotMatch(h.sink.sent[0]?.html ?? "", /href=|\/m\//i);
     assert.match(h.sink.sent[0]?.html ?? "", /✕ No acepto/);
 
-    const declined = html.match(/id="state-declined"[\s\S]*?id="state-mismatch"/)?.[0] ?? "";
-    assert.ok(declined.length > 0);
-    assert.doesNotMatch(declined, /enlace para gestionar|gestionarla o retirarla/);
-    assert.match(declined, /Te enviaremos el comprobante de tu decisión/);
-    const granted = html.match(/id="state-granted"[\s\S]*?id="state-declined"/)?.[0] ?? "";
-    assert.match(granted, /Te enviaremos aparte el enlace para gestionarla o retirarla/);
-    assert.match(granted, /Marca de agua IT0 · comprobante de prueba/);
+    // Que la pantalla de rechazo no prometa enlace de gestión lo cubre frontend/tests/pages/decision.test.tsx (TEST-CNS-1915) y E2E-CNS-028.
   } finally {
     await h.close();
   }
@@ -363,44 +325,7 @@ test("TEST-CNS-1405: POST /decision/subject-mismatch cancela la invitación (I9 
     assert.equal(again.status, 200);
     assert.equal(h.sink.sent.length, 0);
 
-    // El cableado de la UI: decision.js llama a la ruta solo desde el botón explícito.
-    const js = await (await fetch(`${h.baseUrl}/assets/decision.js`)).text();
-    assert.match(js, /postJson\("\/decision\/subject-mismatch"\)/);
-  } finally {
-    await h.close();
-  }
-});
-
-test("TEST-CNS-1406: la pantalla incompleta ofrece resumen de errores con enlaces, errores inline por campo, aviso de rechazo y estado 'no es mi estudiante' (UX-CNS-003 106:189/295/568/706), sin temporizadores ni valores P-01/P-02/P-06", async () => {
-  const subjectRef = fixtureUuid("subject-1406");
-  const h = await startServer(subjectRef);
-  try {
-    const { session } = await bringToVerified(h, fixtureUuid("inv-1406"), subjectRef);
-    const html = await (await fetch(`${h.baseUrl}/decision`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    assert.match(html, /id="error-validation"[^>]*tabindex="-1"/);
-    assert.match(html, /id="error-validation-list"/);
-    for (const id of ["err-subject", "err-relationship", "err-authority", "err-STUDY_PARTICIPATION", "err-HUMAN_REVIEW"]) assert.match(html, new RegExp(`id="${id}"`));
-    assert.match(html, /Elegiste no aceptar al menos una finalidad\./);
-    assert.match(html, /Informar que no es mi estudiante/);
-    assert.match(html, /Registramos tu aviso/);
-    assert.match(html, /Cancelamos esta invitación\./);
-    assert.match(html, /Nunca lo mostramos aquí\./);
-    // P2-6: el copy de finalidades obligatorias lleva marcador [LEGAL DECISION] y ninguna pantalla presume "hija o hijo".
-    assert.match(html, /\[LEGAL DECISION — carácter obligatorio de las 4 finalidades/);
-    assert.doesNotMatch(html, /hija o hijo/);
-    assert.doesNotMatch(await (await fetch(`${h.baseUrl}/assets/decision.js`)).text(), /hija o hijo/);
-    // Todo copy legal conserva su marcador.
-    assert.match(html, /\[LEGAL DECISION — enunciado de autoridad/);
-    assert.match(html, /\[LEGAL DECISION — efecto de no aceptar una finalidad/);
-    // Sin cifras de P-01/P-02/P-06 ni cuentas regresivas.
-    const verify = await (await fetch(`${h.baseUrl}/verify`, { headers: { cookie: `${SESSION_COOKIE_NAME}=${session}` } })).text();
-    assert.match(verify, /\(P-01, valor pendiente de aprobación\)/);
-    assert.match(verify, /\(P-06, valor pendiente de aprobación\)/);
-    assert.doesNotMatch(verify, /\d{2}:\d{2}|\d+ minutos|\d+ segundos/);
-    assert.match(verify, /Paso 1 de 3 · Verificación/);
-    const js = await (await fetch(`${h.baseUrl}/assets/decision.js`)).text();
-    assert.match(js, /function showIncompleteSummary\(\)/);
-    assert.doesNotMatch(js, /setInterval/);
+    // El cableado de la UI (la ruta se llama solo desde el botón explícito) lo cubre TEST-CNS-1916 (frontend).
   } finally {
     await h.close();
   }
@@ -409,7 +334,7 @@ test("TEST-CNS-1406: la pantalla incompleta ofrece resumen de errores con enlace
 test("TEST-CNS-1407: GET /__dev/message-sink existe solo en LOCAL (404 fuera de LOCAL, GRD-CM-13)", async () => {
   const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   for (const [environment, expected] of [["LOCAL", 200], ["DEV", 404], [undefined, 404]] as const) {
-    const server: Server = createConsentFlowHttpServer({
+    const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR,
       sessionSecret: TEST_SESSION_SECRET,
       staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
       config: { allowedOrigin: ALLOWED_ORIGIN },
@@ -692,10 +617,10 @@ test("TEST-CNS-1448: rollback con inyeccion de fallo (en memoria): si el registr
 test("TEST-CNS-1414: con store Postgres o entorno distinto de LOCAL el servidor exige guestMessageChannel explícito y nunca cae al sink en memoria (P2-1, fail-closed)", () => {
   const base = createDefaultConsentFlowPorts(OTP_POLICY, REL, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const common = { sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports: base };
-  assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "STAGING" }), /guestMessageChannel/);
-  assert.throws(() => createConsentFlowHttpServer({ ...common, environment: "LOCAL", storeMode: "postgres" }), /guestMessageChannel/);
+  assert.throws(() => createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, ...common, environment: "STAGING" }), /guestMessageChannel/);
+  assert.throws(() => createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, ...common, environment: "LOCAL", storeMode: "postgres" }), /guestMessageChannel/);
   // LOCAL en memoria conserva el sink por defecto.
-  createConsentFlowHttpServer({ ...common, environment: "LOCAL" }).close();
+  createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, ...common, environment: "LOCAL" }).close();
 });
 
 test("TEST-CNS-1415: una cookie vieja no opera sobre una invitación que ya no está VERIFIED: tras cancelar (I9) o tras COMPLETED, /decision, /decision/steps y /decision/submit dan 404 uniforme (P2-2, P-30)", async () => {

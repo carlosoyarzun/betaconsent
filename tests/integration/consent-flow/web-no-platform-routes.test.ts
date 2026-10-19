@@ -3,6 +3,7 @@
 // TEST-CNS-1700: el servidor web (modo memoria, LOCAL) responde 404 uniforme a TODA ruta /platform/* (POST y GET, con y sin cookie/Origin/CSRF, las seis de caso, login, logout y step-up) sin tocar estado ni fijar
 // cookies, y /__dev/staff-login con un principal CASE/PLATFORM tampoco abre sesion (404, sin Set-Cookie).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
@@ -19,7 +20,7 @@ const PROPOSAL = fixtureUuid("proposal-1700");
 test("TEST-CNS-1700: web responde 404 a toda ruta /platform/* (acciones de caso, sesiones, login, logout, step-up) y no abre sesion CASE/PLATFORM por dev-login; sin Set-Cookie", async () => {
   const ports = createDefaultConsentFlowPorts({ codeLength: 6, maxAttempts: 3, ttlMs: 60_000 }, { allowedRelationshipRefs: ["SYNTHETIC_GUARDIAN"] }, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const staffIdentity = createInMemoryStaffIdentityAdapter(LOCAL_ONLY_DEV_STAFF_ROSTER);
-  const server = createConsentFlowHttpServer({
+  const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR,
     guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ORIGIN }, ports, environment: "LOCAL", staffIdentity,
   });
   const base = await new Promise<string>((resolve) => server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));

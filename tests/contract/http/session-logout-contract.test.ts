@@ -2,6 +2,7 @@
 // contracts/schemas/api-payloads.schema.json (EmptyCommand) y common.schema.json (Problem), specs/session.spec.yaml GRD-SE-09.
 // Levanta el servidor HTTP real y valida la RESPUESTA (estado, cuerpo, cabeceras, cookies) contra el esquema declarado en el contrato.
 // Solo datos sinteticos.
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -41,7 +42,7 @@ async function start(): Promise<{ baseUrl: string; staffSessions: ReturnType<typ
   ]);
   const staffSessions = createInMemoryStaffSessionStore();
   const staffConsole = { sessions: staffSessions } as unknown as NonNullable<NonNullable<Parameters<typeof createConsentFlowHttpServer>[0]>["staffConsole"]>;
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ORIGIN }, ports, revocationPorts, sessionSecret: SECRET, environment: "LOCAL", staffIdentity, staffConsole,
   });
   const baseUrl = await new Promise<string>((r) => server.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));

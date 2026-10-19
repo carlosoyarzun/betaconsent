@@ -27,7 +27,8 @@ import { loadInvitationHandlePolicyConfig } from "../modules/invitation/invitati
 import { loadInvitationIssuancePolicyConfig } from "../modules/invitation/invitation-issuance-policy.config.ts";
 import { loadManageHandlePolicyConfig } from "../modules/revocation/manage-handle-policy.config.ts";
 import { createInvitation, markInvitationReady, sendInvitation } from "../modules/invitation/invitation.ts";
-import { RH3_DEV_CASE_REF, seedRh3DevCase } from "./dev-rh3-seed.ts";
+import { DEV_MGMT_SEED_REFS } from "./dev-mgmt-seed.ts";
+import { MGMT_DEV_REFS, RH3_DEV_CASE_REF, seedMgmtDevDecision, seedRh3DevCase } from "./dev-rh3-seed.ts";
 import { LECTORPRO_BETA_CONFIG } from "../modules/consent-decision/lectorpro-beta.config.ts";
 import {
   LOCAL_ONLY_DEV_IDEMPOTENCY_POLICY,
@@ -57,7 +58,6 @@ import { registerTenantHandle } from "../../infra/adapters/postgres/tenant-handl
 import { loadIdempotencyPolicyConfig } from "../modules/common/idempotency-policy.config.ts";
 import { assertDistinctServerSecrets, loadOtpSecret, loadSessionSecret } from "./http/server-secrets.config.ts";
 import type { StaffConsolePorts } from "./http/staff-console.handler.ts";
-import { parseUiMode, type UiMode } from "./http/spa-assets.ts";
 import type { ConsentFlowPorts } from "./http/consent-flow.handler.ts";
 import type { RevocationFlowPorts } from "./http/revocation-flow.handler.ts";
 import { createInMemoryStaffIdentityAdapter } from "../../infra/adapters/in-memory-staff-identity.adapter.ts";
@@ -184,25 +184,26 @@ const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", I
 // invitación/OTP/decisión), para poder probar a mano gestión/retiro sin repetir todo el flujo
 // de arriba. CA116_MGMT_TOKEN es un literal fijo (LOCAL only, cero PII, D4 mismo criterio que
 // el resto de este archivo).
-const MGMT_CHAIN_REF = "chain-dev-mgmt";
-const MGMT_CONSENT_ID = "consent-dev-mgmt-001";
+// Con Postgres la base (derivacion del ledger, ADR-010 rev. 5) rechaza insertar una decision ya GRANTED y exige Refs UUIDv4: la siembra pasa por el camino del dominio (seedMgmtDevDecision, refs MGMT_DEV_REFS).
+const MGMT_CHAIN_REF = DEV_MGMT_SEED_REFS.chainRef; // UUIDv4 sintético (F-E2E-01)
+const MGMT_CONSENT_ID = DEV_MGMT_SEED_REFS.consentId;
 const MGMT_TOKEN = "dev-mgmt-token-001";
 // SEC-CNS-016: la escritura corre bajo el tenant (uow.inTenant), igual en memoria que en Postgres.
-await ports.decision.uow.inTenant(TENANT_ID, (tx) => tx.consentDecisionRepo.save({
+if (!pgStore) await ports.decision.uow.inTenant(TENANT_ID, (tx) => tx.consentDecisionRepo.save({
   consentId: MGMT_CONSENT_ID,
   tenantId: TENANT_ID,
   contextRef: LECTORPRO_BETA_CONFIG.contextRef,
   productRef: LECTORPRO_BETA_CONFIG.productRef,
   subjectRef: "a4c7e9b2-1f3d-4e60-8a52-9d0b7c3e1f46", // Ref opaca UUIDv4: viaja en el sobre de consent.revoked (CA-127), nunca email/PII
-  decisionMakerRef: "dm:dev-mgmt",
-  invitationRef: "inv-dev-mgmt-seed",
-  verificationRef: "ver-dev-mgmt-seed",
+  decisionMakerRef: DEV_MGMT_SEED_REFS.decisionMakerRef,
+  invitationRef: DEV_MGMT_SEED_REFS.invitationRef,
+  verificationRef: DEV_MGMT_SEED_REFS.verificationRef,
   chainRef: MGMT_CHAIN_REF,
   state: "GRANTED",
   purposes: LECTORPRO_BETA_CONFIG.requiredPurposes.map((purpose) => ({ purpose, choice: "GRANT" as const })),
   priorStepsComplete: true,
   stepsRecorded: ["CONTEXT_INFORMATION_VIEWED", "CONSENT_VERSION_VIEWED", "DECISION_MAKER_AUTHORITY_DECLARED", "SUBJECT_CONFIRMED"],
-  receiptRef: "receipt-dev-mgmt-001",
+  receiptRef: DEV_MGMT_SEED_REFS.receiptRef,
 }));
 // P-15 (recovery-token-policy.config.ts): mismo patrón D4 que otpPolicy, LOCAL-only, PENDING
 // de valor aprobado en SEC-CNS-006 (CA-116 PR 2, UX-CNS-004 recovery).
@@ -218,6 +219,15 @@ const revocationPorts: RevocationFlowPorts = pgBundle
   ? pgBundle.revocationPorts
   : createDefaultRevocationFlowPorts(recoveryTokenPolicy, ports.decision.ledger, ports.decision.repo, ports.managementHandleStore);
 if (pgStore) {
+  await seedMgmtDevDecision(revocationPorts, TENANT_ID, {
+    ...MGMT_DEV_REFS,
+    chainRef: DEV_MGMT_SEED_REFS.chainRef,
+    consentId: DEV_MGMT_SEED_REFS.consentId,
+    dmRef: DEV_MGMT_SEED_REFS.decisionMakerRef,
+    invitationRef: DEV_MGMT_SEED_REFS.invitationRef,
+    verificationRef: DEV_MGMT_SEED_REFS.verificationRef,
+    receiptRef: DEV_MGMT_SEED_REFS.receiptRef,
+  });
   // Siembra del handle por la función SECURITY DEFINER tenant_resolve.register_handle (idempotente; el
   // tenant sale de app.current_tenant_id(); nunca BYPASSRLS).
   await pgStore.uow.withTenantTx(TENANT_ID, (tx) =>
@@ -266,17 +276,7 @@ if (pgBundle) {
   staffConsole = { ...memoryStaff, subjectDirectory };
 }
 
-// ADR-001 F1 (fase A): CNS_UI_MODE=ssr (default) | spa (sirve dist/index.html en las 8 rutas HTML del invitado).
-let uiMode: UiMode;
-try {
-  uiMode = parseUiMode(process.env.CNS_UI_MODE);
-} catch (error) {
-  console.error((error as Error).message);
-  process.exit(1);
-}
-
 const server = createConsentFlowHttpServer({
-  uiMode,
   config: { allowedOrigin },
   ports,
   revocationPorts,

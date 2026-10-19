@@ -1,4 +1,6 @@
-/* CSS propio de la app (no del design system: design-system/ no se edita desde esta tarea).
+/* COPIA PARA LA CONSOLA DE STAFF (SSR, fuera del retiro de ADR-001 F1). El flujo del invitado (SPA) usa frontend/src/styles/app.css;
+   las reglas lp-guest-*/lp-verify-* se conservan aquí solo porque staff reutiliza lp-link y lp-verify-tap-target.
+   CSS propio de la app (no del design system: design-system/ no se edita desde esta tarea).
    Flujo del invitado v2 (UX-CNS-001/002/003/004; handoff de diseño Stitch->DS, D-01: estructura de
    pantallas Stitch con clases lp-* y tokens --lp-* del DS; nada de CDN, fuentes ni imágenes remotas).
    D-05 (Carlos, 2026-10-14): objetivo táctil mínimo 48px en CTAs, chips, filas de casilla y campo de

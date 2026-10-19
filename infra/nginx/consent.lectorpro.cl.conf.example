@@ -1,0 +1,80 @@
+# Gobierna: orden de Carlos 2026-10-18 (PR-F, paquete de instalacion manual, modo sintetico), ADR-003 rev. 7 (host propio de LectorPro, TLS en nginx).
+# Plantilla (sin secretos). Instalar como /etc/nginx/sites-available/consent.lectorpro.cl.conf (Debian/Ubuntu) y enlazar en sites-enabled/.
+#
+# Arquitectura: navegador --https--> nginx (TLS, HSTS, limites) --http, 127.0.0.1:3000--> consent-web (Node). El web SIEMPRE escucha solo en 127.0.0.1
+# (src/server/entrypoints/dev.ts: server.listen(port, "127.0.0.1")), asi que no es alcanzable sin pasar por nginx. La unidad consent-web.service
+# tiene IPAddressDeny=any + IPAddressAllow=localhost: esa excepcion cubre al nginx local (mismo host); no hace falta abrir nada mas.
+#
+# El web NO confia en X-Forwarded-*: valida el header Origin contra CNS_ALLOWED_ORIGIN y usa cookies __Host-* (Secure, Path=/, sin Domain).
+# Por eso: (1) /etc/consent/web.env debe tener CNS_ALLOWED_ORIGIN=https://consent.lectorpro.cl (sin barra final) y (2) el sitio debe servirse SOLO por https.
+# El proceso `platform` (/platform/*) exige "ningun proxy delante" (infra/README.md): NO se publica aqui; /platform/ responde 404 en nginx.
+#
+# Certificado (certbot, Let's Encrypt), en este orden:
+#   1. mkdir -p /var/www/certbot
+#   2. Deje activo SOLO el bloque "server :80" (comente el bloque ":443"); nginx -t && systemctl reload nginx
+#   3. apt install certbot && certbot certonly --webroot -w /var/www/certbot -d consent.lectorpro.cl --deploy-hook "systemctl reload nginx"
+#   4. Descomente el bloque ":443"; nginx -t && systemctl reload nginx.   (la renovacion automatica la instala el paquete certbot: systemctl status certbot.timer)
+# DNS: el registro A/AAAA de consent.lectorpro.cl debe apuntar a este servidor ANTES del paso 3. Lo hace Carlos; este paquete no toca DNS.
+
+limit_req_zone $binary_remote_addr zone=consent_req:10m rate=20r/s;
+limit_conn_zone $binary_remote_addr zone=consent_conn:10m;
+
+upstream consent_web {
+    server 127.0.0.1:3000;   # PORT de /etc/consent/web.env (default 3000)
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name consent.lectorpro.cl;
+
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;   # nginx >= 1.25.1 avisa 'deprecated': cambie a `listen 443 ssl;` + `http2 on;`. Asi funciona tambien en Debian 12 / Ubuntu 22.04-24.04.
+    listen [::]:443 ssl http2;
+    server_name consent.lectorpro.cl;
+
+    ssl_certificate     /etc/letsencrypt/live/consent.lectorpro.cl/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/consent.lectorpro.cl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:consent_tls:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # HSTS (sin includeSubDomains/preload: el dominio padre lectorpro.cl tiene otros sitios).
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    # La CSP, X-Content-Type-Options, Referrer-Policy, etc. las fija la aplicacion (no se duplican aqui).
+
+    # Limites: cuerpos chicos (los POST son JSON de unos pocos cientos de bytes), pocas conexiones y tasa por IP.
+    client_max_body_size 64k;
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    send_timeout 30s;
+    keepalive_timeout 30s;
+    limit_req zone=consent_req burst=40 nodelay;
+    limit_conn consent_conn 30;
+    limit_req_status 429;
+
+    # El proceso `platform` no se publica (supuesto de despliegue: sin proxy delante).
+    location /platform/ { return 404; }
+
+    # Sinks y consolas de desarrollo del modo sintetico (/__dev/otp-sink, /__dev/staff-login, ...): exponen el OTP y abren una sesion STAFF sin IdP.
+    # Solo se permiten desde el propio servidor. Para usarlos desde su navegador: (a) tunel `ssh -L 3000:127.0.0.1:3000 usuario@servidor` y abra
+    # http://127.0.0.1:3000/..., o (b) agregue aqui `allow <SU.IP.PUBLICA>;` (siguen siendo datos sinteticos, pero no deje el sitio abierto a todo internet).
+    location /__dev/ {
+        allow 127.0.0.1;
+        # allow 203.0.113.10;   # <- ejemplo: reemplace por su IP o borre la linea
+        deny all;
+        proxy_pass http://consent_web;
+        include /etc/nginx/snippets/consent-proxy.conf;
+    }
+
+    location / {
+        proxy_pass http://consent_web;
+        include /etc/nginx/snippets/consent-proxy.conf;
+    }
+}

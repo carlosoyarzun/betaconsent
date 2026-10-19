@@ -39,11 +39,11 @@ describe("frontend-boundary", () => {
     assert.equal(checkFrontendBoundary([f("frontend/src/a.ts", `import { Api } from "../../contracts/types/api.ts";`)]).length, 1);
   });
 
-  it("TEST-CNS-1884: las excepciones de CSS son exactas por archivo y destino", () => {
-    const css = `@import "../../../design-system/index.css";\n@import "../../../src/server/entrypoints/http/assets/app.css";`;
+  it("TEST-CNS-1884: la única excepción de CSS es el design system, exacta por archivo y destino (app.css ya vive en frontend/)", () => {
+    const css = `@import "../../../design-system/index.css";\n@import "./app.css";`;
     assert.deepEqual(checkFrontendBoundary([f("frontend/src/styles/index.css", css)]), []);
-    assert.equal(checkFrontendBoundary([f("frontend/src/styles/index.css", `@import "../../../src/server/entrypoints/http/assets/verify.js";`)]).length, 1);
-    assert.equal(checkFrontendBoundary([f("frontend/src/styles/otro.css", css)]).length, 2);
+    assert.equal(checkFrontendBoundary([f("frontend/src/styles/index.css", `@import "../../../src/server/entrypoints/http/assets/app.css";`)]).length, 1);
+    assert.equal(checkFrontendBoundary([f("frontend/src/styles/otro.css", `@import "../../../design-system/index.css";`)]).length, 1);
   });
 
   it("TEST-CNS-1896: rechaza new URL(), import.meta.glob y url() de CSS hacia fuera de frontend/ (SEC-UI R6)", () => {

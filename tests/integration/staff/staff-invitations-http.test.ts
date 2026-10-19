@@ -8,6 +8,7 @@
 // APR-IDP no se resuelven aquí. Refs UUIDv4 (fixtureUuid) y recipientes sintéticos; cero PII.
 // TEST-CNS-714..TEST-CNS-725 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -81,7 +82,7 @@ function startServer(opts: { environment?: "LOCAL" | "DEV"; withPolicy?: boolean
   staff.catalog.seedSubject(TENANT_B, SUBJECT_B);
   staff.catalog.seedParticipation(TENANT_B, { participationRef: PARTICIPATION_B, contextRef: CONTEXT, productRef: "LECTORPRO", status: "ACTIVE" });
   const sessionSecret = randomBytes(32);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
     config: { allowedOrigin: ALLOWED_ORIGIN },
     ports,
     sessionSecret,

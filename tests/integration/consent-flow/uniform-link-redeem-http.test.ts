@@ -8,8 +8,10 @@
 // TEST-CNS-600/601/605 (PR #23).
 // TEST-CNS-610..619 (traceability/test-matrix.csv).
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -55,7 +57,7 @@ interface Harness {
 function startHarness(): Promise<Harness> {
   const ports: ConsentFlowPorts = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
   const revocationPorts = createDefaultRevocationFlowPorts({ ttlMs: 60_000 }, ports.decision.ledger, ports.decision.repo);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, revocationPorts });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;
@@ -271,7 +273,7 @@ test("TEST-CNS-615: GET /manage responde 404 byte-idéntico (59:3) para un handl
       const manage = await fetch(`${harness.baseUrl}/manage`, { headers: { cookie: `${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${handleCookie}` } });
       assert.equal(manage.status, 404);
       const html = await manage.text();
-      assert.match(html, /Este enlace ya no está disponible\./);
+      assert.match(html, /<meta name="cns-page-state" content="uniform-error">/); // la SPA pinta "Este enlace ya no está disponible." (E2E-CNS-043)
       htmls.push(html);
     }
     assert.equal(htmls[0], htmls[1]);
@@ -320,14 +322,18 @@ test("TEST-CNS-616: el handle __Host-cns-i-handle no sirve como sesión en /welc
 // El botón "Contactar a soporte" de 59:3 apunta al contacto de ayuda, no a /rights-case/open.
 // ---------------------------------------------------------------------------
 
-test("TEST-CNS-617: el botón 'Contactar a soporte' del error uniforme de /manage (59:3) es un enlace mailto al contacto de ayuda, nunca un POST a /rights-case/open", async () => {
+test("TEST-CNS-617: el botón 'Contactar a soporte' del error uniforme de /manage (59:3) es un enlace mailto al contacto de ayuda (fuente de la SPA), nunca un POST a /rights-case/open", async () => {
   const harness = await startHarness();
   try {
     const manage = await fetch(`${harness.baseUrl}/manage`, { headers: { cookie: `${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=handle-inexistente-617` } });
     assert.equal(manage.status, 404);
     const html = await manage.text();
-    assert.match(html, /href="mailto:ayuda@example\.invalid"[^>]*id="contact-support-btn"/);
+    assert.match(html, /<meta name="cns-page-state" content="uniform-error">/);
     assert.doesNotMatch(html, /rights-case\/open/);
+    // El botón lo pinta la SPA: su fuente apunta a mailto y no llama a /rights-case/open (comportamiento: TEST-CNS-1922, E2E-CNS-043).
+    const source = readFileSync(new URL("../../../frontend/src/pages/manage.tsx", import.meta.url), "utf8");
+    assert.match(source, /href="mailto:ayuda@example\.invalid"[^>]*id="contact-support-btn"/);
+    assert.doesNotMatch(source, /rights-case\/open/);
   } finally {
     await new Promise((resolve) => harness.server.close(() => resolve(undefined)));
   }
@@ -379,7 +385,7 @@ test("TEST-CNS-618: /welcome — sesión A vigente + handle inválido -> error u
       headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionA}; ${INVITATION_HANDLE_COOKIE_NAME}=${invalidHandle}` },
     });
     assert.equal(welcomeInvalid.status, 404);
-    assert.match(await welcomeInvalid.text(), /No pudimos abrir esta invitación\./);
+    assert.match(await welcomeInvalid.text(), /<meta name="cns-page-state" content="uniform-error">/);
     const clearedCookie = welcomeInvalid.headers.get("set-cookie") ?? "";
     assert.match(clearedCookie, new RegExp(`${SESSION_COOKIE_NAME}=;`));
     assert.match(clearedCookie, /Max-Age=0/);
@@ -432,7 +438,7 @@ test("TEST-CNS-619: /manage — sesión A vigente + handle inválido -> error un
       headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionA}; ${MANAGE_ENTRY_HANDLE_COOKIE_NAME}=${invalidHandle}` },
     });
     assert.equal(manageInvalid.status, 404);
-    assert.match(await manageInvalid.text(), /Este enlace ya no está disponible\./);
+    assert.match(await manageInvalid.text(), /<meta name="cns-page-state" content="uniform-error">/);
     const clearedCookie = manageInvalid.headers.get("set-cookie") ?? "";
     assert.match(clearedCookie, new RegExp(`${SESSION_COOKIE_NAME}=;`));
     assert.match(clearedCookie, /Max-Age=0/);

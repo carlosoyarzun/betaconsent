@@ -8,6 +8,7 @@
 // common.spec.yaml) sigue siendo la defensa real de los POST: token CSRF double-submit +
 // comparación de Origin por igualdad exacta, sin debilitar. TEST-CNS-599.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import { fixtureUuid } from "../../contract/uuid-fixture.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -55,7 +56,7 @@ test("TEST-CNS-599: __Host-cns-session y __Host-cns-csrf se fijan con SameSite=L
   });
   const { token } = await sendInvitation(ports.invitation, TENANT_ID, "INVITER", fixtureUuid("inv-599"), { deliveryChannel: "CONSENT_APP_EMAIL" });
 
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports });
   const baseUrl = await new Promise<string>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as AddressInfo;

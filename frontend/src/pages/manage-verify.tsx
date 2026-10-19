@@ -1,13 +1,7 @@
-// Gobierna: ADR-001 F1 (migración de /manage/verify). TODO(fase B): migrar desde verify-page.ts + assets/verify.js (scope MANAGE; reusar el componente de verify.tsx); patrón en pages/README.md.
-// Esqueleto: la ruta ya está registrada en routes.ts; solo reemplazar el cuerpo de este componente.
-import { usePageTitle } from "../components/use-page-title.ts";
+// Gobierna: UX-CNS-004 §3 + ADR-001 F1 (fase C). Equivale a renderVerifyPage("MANAGE") + assets/verify.js (scope MANAGE).
+import { RightsVerify } from "../components/c/rights-verify.tsx";
 import type { PageProps } from "../router.ts";
 
-export function ManageVerifyPage(_props: PageProps) {
-  usePageTitle("Verificación");
-  return (
-    <main className="lp-page-container" aria-labelledby="todo-h1">
-      <h1 id="todo-h1">Pantalla pendiente de migración</h1>
-    </main>
-  );
+export function ManageVerifyPage(props: PageProps) {
+  return <RightsVerify scope="MANAGE" {...props} />;
 }

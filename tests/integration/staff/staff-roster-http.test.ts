@@ -4,6 +4,7 @@
 // 1084 (503 si falla access_log; el GET no escribe estado), 1089 (directorio y participationRef), 1090 (aislamiento cross-tenant).
 // Solo datos sinteticos, cero PII.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -100,7 +101,7 @@ async function start(opts: { subjects?: Array<{ tenantId: string; subjectRef: st
   const consolePorts: StaffConsolePorts = { ...staff, ...(roster ? { roster } : {}), subjectDirectory: directory };
   const sessionSecret = randomBytes(32);
   const cursorKey = deriveStaffRosterCursorKey(randomBytes(32));
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL,
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL,
     config: { allowedOrigin: ORIGIN },
     ports,
     sessionSecret,
@@ -317,7 +318,7 @@ test("TEST-CNS-1084 http: si el access_log falla -> 503 sin datos; el GET no cre
     // Sin lector configurado: tambien 503 (fail-closed).
     const { roster: _omit, ...withoutRoster } = h.console;
     void _omit;
-    const server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ORIGIN }, ports: createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET), sessionSecret: h.sessionSecret, environment: "LOCAL", staffIdentity: createInMemoryStaffIdentityAdapter(ROSTER), staffConsole: withoutRoster });
+    const server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ORIGIN }, ports: createDefaultConsentFlowPorts(LOCAL_ONLY_DEV_OTP_POLICY, LOCAL_ONLY_DEV_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET), sessionSecret: h.sessionSecret, environment: "LOCAL", staffIdentity: createInMemoryStaffIdentityAdapter(ROSTER), staffConsole: withoutRoster });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     try {
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/staff/roster`;

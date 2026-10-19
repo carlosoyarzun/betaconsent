@@ -1,4 +1,4 @@
-// Tabla de rutas de la SPA: las 8 rutas HTML de los titulares (mismas que el servidor entrega en CNS_UI_MODE=spa).
+// Tabla de rutas de la SPA: las 8 rutas HTML de los titulares (las que el servidor entrega como shell).
 // Una página nueva SOLO reemplaza el cuerpo de su archivo pages/*.tsx; esta tabla no se toca (ver pages/README.md).
 import type { RouteDef } from "./router.ts";
 import { DecisionPage } from "./pages/decision.tsx";

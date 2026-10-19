@@ -2,7 +2,7 @@
 // Lógica pura del guardrail de frontera de `frontend/`: ningún archivo de frontend/src ni frontend/tests puede importar
 // (ni vía @import de CSS) algo que resuelva FUERA de frontend/, salvo:
 //   - `import type` hacia contracts/** (tipos de contrato, si existen), y
-//   - las excepciones exactas de EXACT_EXCEPTIONS (enlaces de CSS al design system y al app.css que sirve el SSR hasta su retiro).
+//   - las excepciones exactas de EXACT_EXCEPTIONS (enlace de CSS al design system; app.css ya vive en frontend/, SSR retirado).
 // El I/O vive en ./frontend-boundary-check.ts; probada con fixtures en memoria en tests/unit/framework/frontend-boundary.test.ts.
 
 import { posix } from "node:path";
@@ -13,10 +13,9 @@ export interface SourceFile {
   readonly content: string;
 }
 
-/** Excepciones exactas `archivo -> destino` (relativos a la raíz del repo). Retirar `app.css` cuando se retire el SSR. */
+/** Excepciones exactas `archivo -> destino` (relativos a la raíz del repo). */
 export const EXACT_EXCEPTIONS: ReadonlyArray<{ readonly from: string; readonly to: string }> = [
   { from: "frontend/src/styles/index.css", to: "design-system/index.css" },
-  { from: "frontend/src/styles/index.css", to: "src/server/entrypoints/http/assets/app.css" },
 ];
 
 interface Specifier {

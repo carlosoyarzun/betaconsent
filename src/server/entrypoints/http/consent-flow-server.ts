@@ -85,7 +85,7 @@ import {
   type RevocationFlowPorts,
 } from "./revocation-flow.handler.ts";
 import { parseCookies } from "./cookies.ts";
-import { decodeSession } from "./consent-session.ts";
+import { decodeSession, type ConsentSessionPayload } from "./consent-session.ts";
 import { createApplyGuardConfig, createTenantAlertSink } from "../../../infra/adapters/postgres/apply-guard.adapter.ts";
 import { deriveStaffSessionKey } from "./staff-session.ts";
 import { createInMemoryStaffSessionStore } from "../../../infra/adapters/in-memory-staff-session-store.adapter.ts";
@@ -102,16 +102,10 @@ import {
 import { generateCsrfToken, serializeCsrfCookie } from "./csrf.ts";
 import { deriveRecoveryCsrfKey, deriveRecoveryHandleKey, generateRecoveryCsrfToken } from "./recovery-handle.ts";
 import { deriveLinkHandleKey } from "./link-handle.ts";
-import { renderWelcomePage, renderWelcomeUniformErrorPage } from "./welcome-page.ts";
-import { renderVerifyPage, renderVerifyUniformErrorPage } from "./verify-page.ts";
-import { renderDecisionPage, renderDecisionUniformErrorPage } from "./decision-page.ts";
-import { renderManageEntryPage, renderManageRevokedPage, renderManageStatusPage, renderManageUniformErrorPage } from "./manage-page.ts";
-import { renderRevocationConfirmPage, renderRevocationUniformErrorPage } from "./revocation-page.ts";
-import { renderRecoveryConfirmPage, renderRecoveryUniformErrorPage } from "./recovery-page.ts";
 import { getServedConsentVersion } from "./served-consent-version.ts";
 import { resolveStaticAsset } from "./static-assets.ts";
-import { HTML_CONTENT_SECURITY_POLICY, STAFF_HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
-import { assertSpaAllowed, DEFAULT_SPA_DIST_DIR, loadSpaBundle, type UiMode } from "./spa-assets.ts";
+import { HTML_CONTENT_SECURITY_POLICY, HTML_X_CONTENT_TYPE_OPTIONS, STAFF_HTML_CONTENT_SECURITY_POLICY } from "./html-security.ts";
+import { DEFAULT_SPA_DIST_DIR, loadSpaBundle } from "./spa-assets.ts";
 import { handleDevStaffConsole, isDevStaffConsolePath, type DevStaffConsoleFixture } from "./dev-staff-console.handler.ts";
 import { handleListStaffRoster, STAFF_ROSTER_PATH } from "./staff-roster.handler.ts";
 import { STAFF_LOGOUT_PATH } from "./staff-ui-pages.ts";
@@ -122,10 +116,8 @@ import { createPgStaffRosterReader } from "../../../infra/adapters/postgres/staf
 import type { SubjectDirectoryPort } from "../../ports/subject-directory.port.ts";
 
 interface ConsentFlowHttpServerBaseOptions {
-  /** ADR-001 F1 (fase A): `ssr` (default, HTML renderizado por las *-page.ts) | `spa` (las 8 rutas HTML del invitado
-   * devuelven `dist/index.html`; la lógica de cookie/sesión/404 uniforme de cada handler se conserva intacta). */
-  readonly uiMode?: UiMode;
-  /** Directorio del build de Vite (default: `<raíz>/dist`). Solo se lee con `uiMode: "spa"`. */
+  /** Directorio del build de Vite (default: `<raíz>/dist`). La SPA es el único modo de las 8 rutas HTML del invitado
+   * (ADR-001 F1, AD-1 cerrada): `dist/index.html` se carga al arrancar y su ausencia o invalidez impide arrancar (fail-closed). */
   readonly spaDistDir?: string;
   /** P2-6: obligatoria si no se pasa `ports` (sin default aleatorio): clave HMAC del chainRef. */
   readonly chainRefKey?: Buffer;
@@ -570,6 +562,7 @@ function writeHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
+  res.setHeader("X-Content-Type-Options", HTML_X_CONTENT_TYPE_OPTIONS);
 }
 
 /** GET /recovery/confirm (SEC-CNS-014): además de las cabeceras de writeHtmlSecurityHeaders,
@@ -580,6 +573,7 @@ function writeRecoveryHtmlSecurityHeaders(res: ServerResponse): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Content-Security-Policy", HTML_CONTENT_SECURITY_POLICY);
+  res.setHeader("X-Content-Type-Options", HTML_X_CONTENT_TYPE_OPTIONS);
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
 }
 
@@ -634,14 +628,21 @@ export type ConsentFlowHttpServerOptions = ConsentFlowHttpServerBaseOptions &
 
 export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOptions): Server {
   const config = loadRightsCaseHttpConfig(options.config);
-  // ADR-001 F1: con `spa` el build se carga UNA vez al arrancar (falla si no existe: fail-closed).
-  if (options.uiMode === "spa") assertSpaAllowed(options.environment);
-  const spa = options.uiMode === "spa" ? loadSpaBundle(options.spaDistDir ?? DEFAULT_SPA_DIST_DIR) : undefined;
-  /** Cuerpo de una de las 8 páginas HTML del invitado. `ssr`: el HTML de la *-page.ts (perezoso). `spa`: el mismo
-   * `index.html` en ambos casos; el 404 uniforme (INV-CM-05) lleva `cns-page-state=uniform-error` y el mismo status. */
-  const sendPage = (res: ServerResponse, status: 200 | 404, renderSsr: () => string): void => {
+  // ADR-001 F1: el build de la SPA se carga UNA vez al arrancar (falla si no existe o es inválido: fail-closed).
+  const spa = loadSpaBundle(options.spaDistDir ?? DEFAULT_SPA_DIST_DIR);
+  /** Cuerpo de una de las 8 páginas HTML del invitado: el mismo `index.html` en ambos casos; el 404 uniforme (INV-CM-05)
+   * lleva `cns-page-state=uniform-error` y el mismo status. */
+  const sendPage = (res: ServerResponse, status: 200 | 404): void => {
     res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
-    res.end(spa ? (status === 404 ? spa.indexUniformError : spa.indexReady) : renderSsr());
+    res.end(status === 404 ? spa.indexUniformError : spa.indexReady);
+  };
+  /** ADR-001 F1 (fase B): respuesta JSON de `GET /decision/page-state` y `GET /manage/page-state`. Solo lectura, `no-store`
+   * (datos ligados a la sesión) y sin Referrer; el 404 reutiliza el cuerpo uniforme `{status:404}` (INV-CM-05). */
+  const sendPageStateJson = (res: ServerResponse, status: 200 | 404, body: unknown): void => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
   };
   // P2-6: sin default aleatorio; fail-closed y sin volcar material de clave.
   const sessionSecret = options.sessionSecret;
@@ -712,9 +713,28 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
   const staffConsolePorts: StaffConsolePorts = options.staffNowMs ? { ...staffConsoleBase, nowMs: options.staffNowMs } : staffConsoleBase;
   // API-CNS-116 (R4): clave propia del cursor de GET /staff/roster (no deriva de la sesion); validada arriba.
 
+  /** C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar. SEC-CNS-016: la lectura corre BAJO el
+   * tenant de la sesión (inTenant). Compartida por GET /manage (SSR) y GET /manage/page-state (SPA). */
+  const resolveManageVariant = async (session: ConsentSessionPayload): Promise<"entry" | "status" | "revoked"> => {
+    if (!session.manageDecisionMakerRef) return "entry";
+    const revokedDecisionRef = session.revokedDecisionRef;
+    const decisionRevoked =
+      revokedDecisionRef !== undefined &&
+      (await revocationPorts.revocation.uow.inTenant(session.tenantId, (tx) => tx.consentDecisionRepo.findByConsentId(session.tenantId, revokedDecisionRef)))?.state === "REVOKED";
+    return decisionRevoked ? "revoked" : "status";
+  };
+
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "";
     const path = url.split("?", 1)[0] ?? "";
+
+    // Despliegue manual (tools/deploy/verify.sh, nginx): liveness del proceso. No toca la base, no lee cookies ni estado, no
+    // devuelve datos; mismo contrato que GET /healthz del proceso platform.
+    if (req.method === "GET" && path === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ status: "ok", process: "web" }));
+      return;
+    }
 
     if (req.method === "GET" && path.startsWith("/i/") && path.length > "/i/".length) {
       // API-CNS-101 (P-12, SEC-CNS-014): único GET de canje de este entrypoint IT0 (INV-CM-08
@@ -746,7 +766,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       writeHtmlSecurityHeaders(res);
       if (!view.session) {
         if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
-        sendPage(res, 404, () => renderWelcomeUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       // Cookie CSRF del double-submit (csrf.ts): legible por welcome.js, distinta de la cookie
@@ -756,7 +776,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
       if (view.sessionCookieToSet) cookiesToSet.push(serializeSessionCookie(config, view.sessionCookieToSet));
       res.setHeader("Set-Cookie", cookiesToSet);
-      sendPage(res, 200, () => renderWelcomePage());
+      sendPage(res, 200);
       return;
     }
 
@@ -768,11 +788,31 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.verificationRef) {
-        sendPage(res, 404, () => renderVerifyUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      sendPage(res, 200, () => renderVerifyPage());
+      sendPage(res, 200);
+      return;
+    }
+
+    if (req.method === "GET" && path === "/decision/page-state") {
+      // ADR-001 F1 (fase B), API-CNS-194: los datos que el SSR interpola en GET /decision (relaciones permitidas, versión servida y
+      // etiqueta del titular) para la página React. MISMAS comprobaciones y MISMO 404 uniforme que GET /decision (INV-CM-05); solo
+      // lectura (INV-CM-08), no emite CONSENT_VERSION_VIEWED. Devuelve solo lo que la pantalla muestra: nunca el hash.
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      if (!session || !session.verificationRef || !session.decisionMakerRef || !(await isInvitationVerifiedForSession(ports, session))) {
+        sendPageStateJson(res, 404, { status: 404 });
+        return;
+      }
+      const served = getServedConsentVersion();
+      const subjectLabel = await resolveSubjectLabel(ports, session);
+      sendPageStateJson(res, 200, {
+        relationshipRefs: [...ports.decision.relationships.allowedRelationshipRefs],
+        servedVersion: { consentVersion: served.consentVersion, privacyNoticeVersion: served.privacyNoticeVersion, text: served.text },
+        ...(subjectLabel !== undefined ? { subjectLabel } : {}),
+      });
       return;
     }
 
@@ -784,14 +824,13 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.verificationRef || !session.decisionMakerRef || !(await isInvitationVerifiedForSession(ports, session))) {
-        sendPage(res, 404, () => renderDecisionUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      // SPA: las opciones de relación, la versión servida y la etiqueta del titular salen del HTML en `ssr`; la página React
-      // las necesitará por un endpoint JSON (pendiente en su fase, ver frontend/src/pages/README.md). No se lee nada en `spa`.
-      const decisionHtml = spa ? "" : renderDecisionPage(ports.decision.relationships.allowedRelationshipRefs, getServedConsentVersion(), await resolveSubjectLabel(ports, session));
-      sendPage(res, 200, () => decisionHtml);
+      // Las opciones de relación, la versión servida y la etiqueta del titular las lee la página React por
+      // GET /decision/page-state (API-CNS-194). No se lee nada aquí.
+      sendPage(res, 200);
       return;
     }
 
@@ -830,6 +869,23 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       return;
     }
 
+    if (req.method === "GET" && path === "/manage/page-state") {
+      // ADR-001 F1 (fase B), API-CNS-195: la variante de GET /manage (entrada / estado / ya retirado) para la página React. MISMA
+      // resolución de sesión (resolveManageLandingSession) y MISMO 404 uniforme (con la limpieza de cookie) que GET /manage; solo
+      // lectura. Devuelve solo la variante: el copy sigue en la página (sin PII ni datos del dominio).
+      const cookies = parseCookies(headerValue(req.headers.cookie));
+      const existingSession = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
+      const view = await resolveManageLandingSession(revocationPorts, sessionSecret, existingSession, manageEntryHandleKey, cookies, config.manageEntryHandleCookieName);
+      if (!view.session) {
+        if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
+        sendPageStateJson(res, 404, { status: 404 });
+        return;
+      }
+      if (view.sessionCookieToSet) res.setHeader("Set-Cookie", serializeSessionCookie(config, view.sessionCookieToSet));
+      sendPageStateJson(res, 200, { variant: await resolveManageVariant(view.session) });
+      return;
+    }
+
     if (req.method === "GET" && path === "/manage") {
       // UX-CNS-004 §1 (33:2 entrada / 33:21 estado / 59:3 error, SEC-CNS-014, FINDING P1): una
       // sola ruta, que resuelve en solo lectura. El handle MANAGE_ENTRY vigente (fijado por el
@@ -850,7 +906,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       writeHtmlSecurityHeaders(res);
       if (!view.session) {
         if (view.clearSessionCookie) res.setHeader("Set-Cookie", serializeClearSessionCookie(config));
-        sendPage(res, 404, () => renderManageUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       const cookiesToSet = [serializeCsrfCookie(config.csrfCookieName, generateCsrfToken())];
@@ -858,18 +914,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Set-Cookie", cookiesToSet);
       // C6 (INV-5): con la decisión de la sesión ya REVOKED, estado neutro sin CTA de retirar.
       // SEC-CNS-016: la lectura de la decisión corre BAJO el tenant de la sesión (inTenant).
-      // SPA: la variante (entrada/estado/revocada) se resolverá por JSON en la fase de /manage; en `spa` no se lee.
-      let manageHtml = "";
-      if (!spa) {
-        const revokedDecisionRef = view.session.revokedDecisionRef;
-        const decisionRevoked =
-          revokedDecisionRef !== undefined &&
-          (await revocationPorts.revocation.uow.inTenant(view.session.tenantId, (tx) =>
-            tx.consentDecisionRepo.findByConsentId(view.session!.tenantId, revokedDecisionRef),
-          ))?.state === "REVOKED";
-        manageHtml = !view.session.manageDecisionMakerRef ? renderManageEntryPage() : decisionRevoked ? renderManageRevokedPage() : renderManageStatusPage();
-      }
-      sendPage(res, 200, () => manageHtml);
+      // La variante (entrada/estado/revocada) la lee la página React por GET /manage/page-state (API-CNS-195); no se lee aquí.
+      sendPage(res, 200);
       return;
     }
 
@@ -879,11 +925,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.manageVerificationRef) {
-        sendPage(res, 404, () => renderVerifyUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      sendPage(res, 200, () => renderVerifyPage("MANAGE"));
+      sendPage(res, 200);
       return;
     }
 
@@ -893,11 +939,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.revocationVerificationRef) {
-        sendPage(res, 404, () => renderVerifyUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      sendPage(res, 200, () => renderVerifyPage("REVOCATION"));
+      sendPage(res, 200);
       return;
     }
 
@@ -907,11 +953,11 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       const session = decodeSession(sessionSecret, cookies[config.sessionCookieName]);
       writeHtmlSecurityHeaders(res);
       if (!session || !session.revocationOtpVerified || !session.revocationRef || !session.manageDecisionMakerRef) {
-        sendPage(res, 404, () => renderRevocationUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateCsrfToken()));
-      sendPage(res, 200, () => renderRevocationConfirmPage());
+      sendPage(res, 200);
       return;
     }
 
@@ -927,14 +973,14 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       writeRecoveryHtmlSecurityHeaders(res);
       if (!view.eligible || !view.tokenHash) {
         await floorDelay(startedAt, RECOVERY_CONFIRM_UNIFORM_FLOOR_MS);
-        sendPage(res, 404, () => renderRecoveryUniformErrorPage());
+        sendPage(res, 404);
         return;
       }
       // P2 (fijación de cookie): el CSRF de esta página queda ligado al hash vigente ahora
       // mismo; POST /recovery/revoke lo recalcula contra la cookie __Host-cns-recovery ACTUAL
       // (recovery-handle.ts verifyRecoveryCsrfToken).
       res.setHeader("Set-Cookie", serializeCsrfCookie(config.csrfCookieName, generateRecoveryCsrfToken(recoveryCsrfKey, view.tokenHash)));
-      sendPage(res, 200, () => renderRecoveryConfirmPage());
+      sendPage(res, 200);
       return;
     }
 
@@ -949,8 +995,8 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
         decodedPath = undefined;
       }
       const asset = decodedPath ? resolveStaticAsset(decodedPath) : null;
-      // ADR-001 F1: assets con hash del build de Vite (solo `spa`), igualdad exacta contra el mapa cargado al arrancar.
-      const spaAsset = !asset && spa && decodedPath ? spa.assets.get(decodedPath) : undefined;
+      // ADR-001 F1: assets con hash del build de Vite, igualdad exacta contra el mapa cargado al arrancar.
+      const spaAsset = !asset && decodedPath ? spa.assets.get(decodedPath) : undefined;
       if (spaAsset) {
         res.writeHead(200, {
           "content-type": spaAsset.contentType,
@@ -1097,6 +1143,7 @@ export function createConsentFlowHttpServer(options: ConsentFlowHttpServerOption
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "same-origin"); // formularios sin JS: con no-referrer Chromium manda Origin: null
       res.setHeader("Content-Security-Policy", STAFF_HTML_CONTENT_SECURITY_POLICY);
+      res.setHeader("X-Content-Type-Options", HTML_X_CONTENT_TYPE_OPTIONS);
       if (consoleResponse.setCookies && consoleResponse.setCookies.length > 0) res.setHeader("Set-Cookie", [...consoleResponse.setCookies]);
       if (consoleResponse.location) res.setHeader("Location", consoleResponse.location);
       res.writeHead(consoleResponse.status, { "content-type": "text/html; charset=utf-8" });

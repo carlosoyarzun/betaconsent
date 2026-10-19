@@ -3,6 +3,7 @@
 // environment=LOCAL; en cualquier otro valor (incluido "no declarado") es 404. Solo expone
 // refs opacas y enums. TEST-CNS-696.
 
+import { SYNTHETIC_SPA_DIST_DIR } from "../../helpers/synthetic-spa-dist.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
@@ -17,7 +18,7 @@ const LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG = { allowedRelationshipRefs: ["SYNTHET
 
 async function startServer(environment: "LOCAL" | "DEV" | "STAGING" | "PRODUCTION" | undefined): Promise<{ baseUrl: string; close(): Promise<void> }> {
   const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-  const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, environment });
+  const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY, config: { allowedOrigin: ALLOWED_ORIGIN }, ports, environment });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       resolve({
@@ -53,7 +54,7 @@ test("TEST-CNS-696: GET /__dev/outbox-sink existe (200, {enqueued: []}) en LOCAL
 test("TEST-CNS-881: storeMode=postgres sin devOutboxSink responde 404 (nunca TypeError del Proxy); con el lector responde sus sobres", async () => {
   for (const [sink, expected] of [[undefined, 404], [async () => [], 200]] as const) {
     const ports = createDefaultConsentFlowPorts(LOCAL_ONLY_TEST_OTP_POLICY, LOCAL_ONLY_TEST_RELATIONSHIP_CONFIG, TEST_CHAIN_REF_KEY, TEST_DECISION_MAKER_REF_KEY, TEST_OTP_SECRET);
-    const server: Server = createConsentFlowHttpServer({ guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
+    const server: Server = createConsentFlowHttpServer({ spaDistDir: SYNTHETIC_SPA_DIST_DIR, guestMessageChannel: TEST_GUEST_CHANNEL, sessionSecret: TEST_SESSION_SECRET, staffRosterCursorKey: TEST_STAFF_ROSTER_CURSOR_KEY,
       config: { allowedOrigin: ALLOWED_ORIGIN },
       ports,
       environment: "LOCAL",
