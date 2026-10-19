@@ -60,7 +60,7 @@ test("consent_app no es miembro de consent_owner; el migrador solo tiene SET (si
 
 test("UPDATE/DELETE/TRUNCATE del ledger fallan como consent_app Y como consent_owner (privilegio) y el trigger los frena incluso al superusuario", async () => {
   // Sembrar una fila para que UPDATE/DELETE tengan objetivo.
-  await app.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-seed', 'stu-seed', 'Ana', 'a@example.test')");
+  await app.query("SELECT app.import_invitation('stu-seed', 'Ana', 'a@example.test', NULL)");
   for (const [who, c] of [["consent_app", app], ["consent_owner", owner]] as const) {
     for (const sql of ["UPDATE integrity.audit_event SET payload = '{}'::jsonb", "DELETE FROM integrity.audit_event", "TRUNCATE integrity.audit_event"]) {
       const err = await failure(c, sql);
@@ -90,18 +90,18 @@ test("consent_app no puede escribir otp_challenge ni consent_decision ni leer co
 });
 
 test("los índices parciales rechazan 2 invitaciones vivas por student_ref (y permiten otra tras cancelar)", async () => {
-  await app.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-a', 'stu-dup', 'Ana', 'a@example.test')");
-  const err = await failure(app, "INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup', 'Ana', 'a@example.test')");
+  await owner.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-a', 'stu-dup', 'Ana', 'a@example.test')");
+  const err = await failure(owner, "INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup', 'Ana', 'a@example.test')");
   assert.match(err ?? "", /invitation_single_live_per_student_uq/);
   await owner.query("UPDATE app.invitation SET state = 'CANCELLED' WHERE invitation_ref = 'inv-a'");
-  await app.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup', 'Ana', 'a@example.test')");
+  await owner.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ('inv-b', 'stu-dup', 'Ana', 'a@example.test')");
 });
 
 test("formas inválidas: correo sin minúsculas/forma, nombre vacío", async () => {
   const base = "INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ";
-  assert.match((await failure(app, base + "('x1', 's-x1', 'Ana', 'A@Example.test')")) ?? "", /invitation_email_shape/);
-  assert.match((await failure(app, base + "('x2', 's-x2', 'Ana', 'sin-arroba')")) ?? "", /invitation_email_shape/);
-  assert.match((await failure(app, base + "('x3', 's-x3', '', 'a@example.test')")) ?? "", /invitation_first_name_len/);
+  assert.match((await failure(owner, base + "('x1', 's-x1', 'Ana', 'A@Example.test')")) ?? "", /invitation_email_shape/);
+  assert.match((await failure(owner, base + "('x2', 's-x2', 'Ana', 'sin-arroba')")) ?? "", /invitation_email_shape/);
+  assert.match((await failure(owner, base + "('x3', 's-x3', '', 'a@example.test')")) ?? "", /invitation_first_name_len/);
 });
 
 test("flujo completo: cada INSERT/transición emite exactamente 1 evento encadenado y el verificador TS recalcula la misma cabeza", async () => {
