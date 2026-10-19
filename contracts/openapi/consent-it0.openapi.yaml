@@ -497,7 +497,7 @@ paths:
       x-actor: {source: STAFF, actorType: HUMAN, actorRole: INVITER}
       x-guards: [GRD-CM-01, GRD-CM-02, GRD-CM-07]
       x-forbidden-fields: [invitationRef, state, token, tokenHash, recipientChannelRef, recipientBinding, deliveryChannel, expiresAt, reasonCode, enrollmentRef, consentVersion, boundDecisionMakerRef, sentOn, tenantRef, organizationRef]
-      x-pending: ["PC-1 SUBJECT_MISMATCH_REPORTED se muestra SENT hasta expiresAt (aplica cuando CANCELLED persista)", "D-3 resuelto por CA-138: el sid de la sesión staff entra en el AAD del cursor (cursor de otra sesión = 422 uniforme)", "F-3 sentOn fuera del contrato (AC-04 pide fecha de envío)", "LD-b / LD-c / LD-e (LEGAL DECISION, post-IT0)"]
+      x-pending: ["PC-1 SUBJECT_MISMATCH_REPORTED se muestra SENT hasta expiresAt (aplica cuando CANCELLED persista)", "D-3 resuelto por CA-138: el sid de la sesión staff entra en el AAD del cursor (cursor de otra sesión = 422 uniforme)", "F-3 sentOn fuera del contrato (AC-04 pide fecha de envío)", "LQ del documento de consulta legal única (2026-10-18) (LEGAL DECISION, post-IT0)"]
       security: [{staffSession: []}]
       parameters:
         - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
