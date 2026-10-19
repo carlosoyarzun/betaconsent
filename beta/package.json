@@ -10,7 +10,8 @@
     "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
     "test:integration": "node --test --test-concurrency=1 \"tests/integration/**/*.test.ts\"",
     "migrate": "node src/db/migrate-cli.ts",
-    "ci": "npm run typecheck && npm run test:unit && npm run test:integration"
+    "ci": "npm run typecheck && npm run test:unit && npm run test:integration && npm run test:contract",
+    "test:contract": "node --test --test-concurrency=1 \"tests/contract/**/*.test.ts\""
   },
   "dependencies": {
     "pg": "8.23.0"

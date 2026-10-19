@@ -96,3 +96,8 @@ jobs:
           # Superusuario del service container: crea roles y bases desechables (bootstrap-roles.sql).
           TEST_DATABASE_URL: postgresql://beta_ci_super:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/postgres
         run: npm run test:integration
+
+      - name: Contract tests de puertos (memoria y PostgreSQL 16, mismos casos)
+        env:
+          TEST_DATABASE_URL: postgresql://beta_ci_super:${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/postgres
+        run: npm run test:contract
