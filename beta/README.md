@@ -71,3 +71,15 @@ El código OTP se genera (pgcrypto) y se verifica DENTRO de la base; no existe `
 el código viaja al proceso Node (pool del mailer) para ir al correo. `verify_otp` corre siempre en su propia transacción (`OtpRepo.verify` no admite unidad de trabajo externa). Ventana verificación -> decisión: 10 min.
 Arranque: `assertEnvironment` (entorno vs catálogo) y `assertRuntimeRole` (rechaza superusuario, BYPASSRLS, `session_user != current_user`, membresías). `pg_dump -Fc` + `pg_restore` restaura el ledger (CHECK con `now()` van NOT VALID).
 Requiere la extensión `pgcrypto` (incluida en postgres:16; la crea el dueño en el esquema `ext`, sin USAGE para `consent_app`).
+
+## Operación (consent-admin)
+CLI por SSH (`npm run admin -- <comando> [--json]`, o `node src/cli/main.ts`). Entorno: `CNS_ENVIRONMENT`, `CNS_DATABASE_URL` (consent_app), `CNS_MAILER_DATABASE_URL` (consent_mailer); con `--run-worker-once`, además la config SMTP/allowlist. Aborta si algún pool no conecta con su rol. Salida sin PII (correos como `a***@dominio`); código de salida ≠0 ante error.
+- `import-csv <archivo> --batch <ref> [--dry-run|--apply]`: `--dry-run` por defecto. Todo o nada (una fila inválida rechaza el lote). Idempotente (reimportar = 0 nuevas). Resumen `total/nuevas/existentes/inválidas`.
+- `send-invitations --batch <ref> [--limit n] [--run-worker-once]`: encola la primera invitación de cada READY. El envío lo hace el worker del proceso web; sin web, use `--run-worker-once`.
+- `resend <invitation_ref> --reason <CODE> [--run-worker-once]`: reenvío de operador (rota el token; motivo `^[A-Z][A-Z0-9_]{2,39}$` queda en el ledger). Solo pool mailer.
+- `status [--batch <ref>] [--student <ref>]`: conteos por estado de invitación, decisión y outbox; con `--student`, `authorization_status`.
+- `verify-ledger`: recomputa la cadena con el verificador TS; imprime OK/FALLA, cabeza (`chain_seq`, `event_hash`) y conteo; exit 0/1. Usa el pool app (tiene SELECT del ledger).
+- `cancel`: NO disponible (exit 3). `cancel_invitation` solo admite `SUBJECT_MISMATCH_REPORTED` sobre OPENED/VERIFIED; cancelar READY/SENT por operador (`OPERATOR_CANCELLED`) requiere una función nueva en H2.
+
+CSV UTF-8, cabecera exacta `student_ref,student_first_name,guardian_email` (ver `examples/invitations.example.csv`):
+`student_ref` opaco `[A-Za-z0-9_-]{8,64}` (no RUT), nombre de pila 1-40 caracteres (sin apellidos), correo válido (se guarda en minúsculas); `--batch` con la misma forma que `student_ref`. Máx. 10.000 filas.

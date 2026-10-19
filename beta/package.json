@@ -17,7 +17,8 @@
     "test:frontend": "vitest run --config frontend/vite.config.ts",
     "dev:frontend": "vite --config frontend/vite.config.ts",
     "check:dist": "node scripts/check-dist.ts",
-    "start": "node src/server/main.ts"
+    "start": "node src/server/main.ts",
+    "admin": "node src/cli/main.ts"
   },
   "dependencies": {
     "nodemailer": "10.1.7",
