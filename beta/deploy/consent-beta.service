@@ -1,0 +1,48 @@
+# Gobierna: DEC "Reconstrucción mínima" (2026-10-19), decisión 3; plan v2 H1-12. Hardening tomado de infra/systemd/consent-web.service.
+# H1: SIN IPAddressDeny (el proceso necesita SMTP saliente); el cierre de egress (nftables) es H2. Solo datos sintéticos.
+[Unit]
+Description=Consent Beta (HTTP del titular + outbox de correo) - solo datos sintéticos en H1
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=consent
+Group=consent
+WorkingDirectory=/opt/consent-beta/beta
+EnvironmentFile=/etc/consent-beta/consent.env
+ExecStart=/usr/local/bin/node src/server/main.ts
+Restart=on-failure
+RestartSec=5s
+# Arranque fail-closed (rol equivocado, catálogo distinto): sale con código 1; no reintentar en bucle apretado.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+RestrictRealtime=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# El proceso no escribe en disco (código en solo lectura, tmp privado): no hace falta ReadWritePaths.
+
+[Install]
+WantedBy=multi-user.target

@@ -102,3 +102,7 @@ Gobierna: DEC "Reconstrucción mínima" (2026-10-19) y plan v2 H1-11. `tests/e2e
 | Consistencia ante duplicados y concurrencia (20 `submit` paralelos = 1 decisión y 1 evento) | `extra: 20 POST /decision/submit` |
 | Segundo apoderado DECLINED => no se puede leer | `extra: segundo apoderado DECLINED` |
 | Subject-mismatch cancela la invitación | `extra: subject-mismatch` |
+
+## Despliegue en VPS (H1-12)
+Paquete en `beta/deploy/` (Caddy + una unidad systemd + `.env`, Ubuntu 24.04; sin nftables ni backups, eso es H2). Genera el zip desde la raíz del repo con `beta/deploy/build-package.sh`
+(`build/consent-beta-deploy.zip`) y sigue `beta/deploy/README-DEPLOY-BETA.md`. Solo datos sintéticos y destinatarios de prueba; `CNS_ENVIRONMENT=LOCAL` es el único modo soportado en H1 (REAL = H2-08).

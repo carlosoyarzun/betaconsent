@@ -1,0 +1,32 @@
+# Gobierna: DEC "Reconstrucción mínima" (2026-10-19), decisión 3; plan v2 H1-12. TLS automático (Let's Encrypt) requiere DNS A -> este VPS y puertos 80/443 abiertos.
+consent.lectorpro.cl {
+	encode zstd gzip
+
+	header {
+		# Solo HSTS: CSP, nosniff, Referrer-Policy y Cache-Control ya los envía la app (no duplicar).
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		# main.ts solo respeta X-Forwarded-Proto desde loopback; el proxy lo fija siempre.
+		header_up X-Forwarded-Proto https
+	}
+
+	# Los enlaces /i/<token>, /m/<token>, /r/<token> son secretos: el log de acceso NO registra URI (ruta ni query), cookies ni Authorization.
+	# Limitación: tampoco queda la ruta de las demás peticiones; la app registra en su journal la ruta normalizada sin query.
+	log {
+		output file /var/log/caddy/consent-access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			fields {
+				request>uri replace "[redacted]"
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+}
