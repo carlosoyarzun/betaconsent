@@ -44,6 +44,7 @@ declare module "pg" {
   export class Pool {
     constructor(config?: PoolConfig);
     connect(): Promise<PoolClient>;
+    query<R = Record<string, unknown>>(text: string, values?: readonly unknown[]): Promise<QueryResult<R>>;
     end(): Promise<void>;
     on(event: "error", listener: (error: Error) => void): this;
   }

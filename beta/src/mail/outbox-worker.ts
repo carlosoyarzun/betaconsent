@@ -1,6 +1,7 @@
-// Gobierna: plan v2 H1-06. Outbox en proceso sobre app.email_outbox, con SOLO los grants que consent_app ya tiene
-// (SELECT; INSERT(kind, invitation_ref, dedupe_key, payload, next_attempt_at); UPDATE(status, attempts, next_attempt_at, provider_message_id, last_error_code)).
-// El destinatario NO está en la tabla: se resuelve al enviar desde app.invitation (SELECT concedido).
+// Gobierna: plan v2 H1-06 + SEC-CNS-024-V1. Outbox en proceso sobre app.email_outbox. `deps.db` DEBE ser el pool de consent_mailer (no el de la app): el worker usa
+// SELECT/UPDATE(status, attempts, next_attempt_at, provider_message_id, last_error_code) del outbox, SELECT(invitation_ref, student_first_name, guardian_email) de
+// app.invitation y EXECUTE de arm_invitation_token. El encolado (enqueueEmail, INSERT) lo hace consent_app con su propio pool.
+// El destinatario NO está en la tabla: se resuelve al enviar desde app.invitation.
 //
 // Ciclo de vida: PENDING -> (claim) SENDING -> SENT | PENDING con backoff (fallo transitorio) | FAILED (3 intentos, o suprimido/no enviable).
 // Claim: UPDATE ... WHERE email_id IN (SELECT ... FOR UPDATE SKIP LOCKED); el claim fija un "lease" en next_attempt_at.
@@ -12,7 +13,7 @@
 //
 // INVITACIÓN (SEC-CNS-024): el outbox NO guarda el token. La fila INVITATION solo lleva {consentVersion}; al reclamarla el worker (1) comprueba la allowlist,
 // (2) genera el token en TS (generateInvitationToken: aleatorio, a la base solo va su hash), (3) llama app.arm_invitation_token(ref, hash, expiresAt, consentVersion)
-// y (4) envía el enlace /i/<token>. Cada reintento rota el token (el anterior queda muerto). Si la invitación ya no es armable (INVITATION_NOT_ARMABLE: cancelada,
+// y (4) envía el enlace /i/<token>. Cada reintento (attempts > 1) rota el token con motivo OUTBOX_RETRY (INVITATION_LINK_REISSUED en el ledger); un primer intento sobre una invitación con token vigente falla con TOKEN_STILL_VALID (FAILED, no se envía). Si la invitación ya no es armable (INVITATION_NOT_ARMABLE: cancelada,
 // abierta o decidida) la fila pasa a FAILED con ese motivo y NO se envía nada. Residual conocido: si el proceso muere entre el envío y la marca SENT, el reenvío
 // rota el token y el enlace del primer correo queda muerto (duplicado aceptado, ver arriba).
 
@@ -37,6 +38,7 @@ export interface MailLogger {
 }
 
 export interface OutboxDeps {
+  /** Pool/cliente del rol consent_mailer. */
   readonly db: Queryable;
   readonly mailer: Mailer;
   readonly policy: RecipientPolicy;
@@ -128,10 +130,13 @@ async function prepareInvitation(deps: OutboxDeps, row: Claimed, to: string, fir
   const { token, tokenHash } = generateInvitationToken();
   const expiresAt = new Date((deps.now ?? Date.now)() + (deps.invitationTokenTtlMs ?? INVITATION_TOKEN_TTL_MS));
   try {
-    await deps.db.query("SELECT app.arm_invitation_token($1, $2, $3, $4)", [row.invitation_ref, tokenHash, expiresAt, consentVersion]);
+    // Reenvío explícito: un reintento (attempts > 1: el envío anterior pudo haber salido) o un motivo del payload (p. ej. OPERATOR_RESEND) rota el token y queda en el ledger.
+    const payloadReason = typeof row.payload.reissueReason === "string" ? row.payload.reissueReason : undefined;
+    const reason = payloadReason ?? (row.attempts > 1 ? "OUTBOX_RETRY" : null);
+    await deps.db.query("SELECT app.arm_invitation_token($1, $2, $3, $4, $5)", [row.invitation_ref, tokenHash, expiresAt, consentVersion, reason]);
   } catch (e) {
     const mapped = mapPgError(e);
-    if (mapped instanceof DomainError && (mapped.code === "INVITATION_NOT_ARMABLE" || mapped.code === "INVITATION_NOT_FOUND")) throw new Unsendable(mapped.code);
+    if (mapped instanceof DomainError && (mapped.code === "INVITATION_NOT_ARMABLE" || mapped.code === "INVITATION_NOT_FOUND" || mapped.code === "TOKEN_STILL_VALID")) throw new Unsendable(mapped.code);
     throw e;
   }
   return { to, template: "invitation", params: { studentFirstName: firstName, linkPath: `/i/${token}` } };

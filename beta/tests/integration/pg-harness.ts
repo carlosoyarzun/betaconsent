@@ -32,6 +32,7 @@ export interface TestDb {
   readonly dbName: string;
   readonly migratorUrl: string;
   readonly appUrl: string;
+  readonly mailerUrl: string;
   readonly superDbUrl: string;
   drop(): Promise<void>;
 }
@@ -41,9 +42,10 @@ export async function createTestDb(): Promise<TestDb> {
   const dbName = `consent_beta_${randomBytes(6).toString("hex")}`;
   const migratorPw = randomBytes(12).toString("hex");
   const appPw = randomBytes(12).toString("hex");
+  const mailerPw = randomBytes(12).toString("hex");
   const run = spawnSync(
     process.env.PSQL ?? "psql",
-    [sup, "-v", `dbname=${dbName}`, "-v", `migrator_password=${migratorPw}`, "-v", `app_password=${appPw}`, "-v", "ON_ERROR_STOP=1", "-q", "-f", BOOTSTRAP],
+    [sup, "-v", `dbname=${dbName}`, "-v", `migrator_password=${migratorPw}`, "-v", `app_password=${appPw}`, "-v", `mailer_password=${mailerPw}`, "-v", "ON_ERROR_STOP=1", "-q", "-f", BOOTSTRAP],
     { encoding: "utf8" },
   );
   if (run.status !== 0) throw new Error(`bootstrap-roles.sql falló (${run.status}): ${run.stderr || run.error?.message}`);
@@ -52,6 +54,7 @@ export async function createTestDb(): Promise<TestDb> {
     dbName,
     migratorUrl: withCredentials(sup, "consent_migrator", migratorPw, dbName),
     appUrl: withCredentials(sup, "consent_app", appPw, dbName),
+    mailerUrl: withCredentials(sup, "consent_mailer", mailerPw, dbName),
     superDbUrl,
     async drop() {
       const c = new Client({ connectionString: sup });

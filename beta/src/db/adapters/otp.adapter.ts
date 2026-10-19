@@ -5,10 +5,11 @@ import type { IssueOtpInput, IssuedOtp, OtpRepo } from "../../ports/otp.port.ts"
 import { translating } from "../map-error.ts";
 import type { UnitOfWork } from "../unit-of-work.ts";
 
-export function createPgOtpRepo(uow: UnitOfWork): OtpRepo {
+/** `uow` = pool de la app (verify_otp); `mailerUow` = pool del mailer (issue_otp). Ninguno de los dos roles tiene ambas funciones (SEC-CNS-024-V1). */
+export function createPgOtpRepo(uow: UnitOfWork, mailerUow: UnitOfWork): OtpRepo {
   const issue = (input: IssueOtpInput): Promise<IssuedOtp> =>
     translating(() =>
-      uow.withTransaction(async (tx) => {
+      mailerUow.withTransaction(async (tx) => {
         const r = await tx.query<{ o_verification_ref: string; o_code: string; o_expires_at: Date }>("SELECT * FROM app.issue_otp($1, $2)", [input.parentRef, input.scope]);
         const row = r.rows[0];
         if (!row) throw new Error("issue_otp no devolvió fila.");

@@ -4,8 +4,7 @@ import type { ConsentId, DecisionState, RevocationRef, VerificationRef } from ".
 export interface ManageState {
   readonly consentId: ConsentId;
   readonly state: DecisionState;
-  /** Seudónimo del apoderado que decidió: el OTP de REVOCATION|MANAGE debe verificarse con el mismo valor. */
-  readonly decisionMakerRef: string;
+  // decision_maker_ref NO se expone: consent_app no lo lee (SEC-CNS-024-V1). revoke_decision compara dentro de la base el seudónimo del OTP con el de la decisión.
   readonly decidedAt: Date;
 }
 

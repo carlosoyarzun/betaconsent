@@ -15,7 +15,10 @@ export interface ApiKey {
 
 export interface Config {
   readonly environment: Environment;
+  /** Pool HTTP: rol consent_app. */
   readonly databaseUrl: string;
+  /** Pool del mailer: rol consent_mailer (único con EXECUTE de issue_otp / arm_invitation_token). Distinta de databaseUrl. */
+  readonly mailerDatabaseUrl: string;
   readonly sessionSecret: Buffer;
   readonly publicOrigin: string;
   readonly smtpUrl: string;
@@ -34,6 +37,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 export const REQUIRED_VARIABLES = [
   "CNS_ENVIRONMENT",
   "CNS_DATABASE_URL",
+  "CNS_MAILER_DATABASE_URL",
   "CNS_SESSION_SECRET",
   "CNS_PUBLIC_ORIGIN",
   "CNS_SMTP_URL",
@@ -73,6 +77,10 @@ export function loadConfig(env: Env = process.env): Config {
 
   const databaseUrl = required(env, "CNS_DATABASE_URL");
   if (!/^postgres(ql)?:\/\//.test(databaseUrl)) throw new ConfigError("CNS_DATABASE_URL debe empezar por postgresql://. Abortando (fail-closed).");
+
+  const mailerDatabaseUrl = required(env, "CNS_MAILER_DATABASE_URL");
+  if (!/^postgres(ql)?:\/\//.test(mailerDatabaseUrl)) throw new ConfigError("CNS_MAILER_DATABASE_URL debe empezar por postgresql://. Abortando (fail-closed).");
+  if (mailerDatabaseUrl === databaseUrl) throw new ConfigError("CNS_MAILER_DATABASE_URL debe ser distinta de CNS_DATABASE_URL (otro rol). Abortando (fail-closed).");
 
   const sessionSecret = decodeSecret(required(env, "CNS_SESSION_SECRET"), "CNS_SESSION_SECRET");
 
@@ -117,5 +125,5 @@ export function loadConfig(env: Env = process.env): Config {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("PORT debe ser un entero entre 1 y 65535. Abortando (fail-closed).");
   const bind = required(env, "BIND");
 
-  return { environment, databaseUrl, sessionSecret, publicOrigin, smtpUrl, smtpFrom, mailAllowlist, apiKeys, port, bind };
+  return { environment, databaseUrl, mailerDatabaseUrl, sessionSecret, publicOrigin, smtpUrl, smtpFrom, mailAllowlist, apiKeys, port, bind };
 }

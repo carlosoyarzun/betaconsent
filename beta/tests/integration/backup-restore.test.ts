@@ -19,6 +19,7 @@ let dst: TestDb;
 let srcSuper: Client;
 let dstSuper: Client;
 let app: Client;
+let mailer: Client;
 let dir: string;
 
 before(async () => {
@@ -32,9 +33,10 @@ before(async () => {
   }
   srcSuper = await connect(src.superDbUrl);
   app = await connect(src.appUrl);
+  mailer = await connect(src.mailerUrl);
 });
 after(async () => {
-  for (const c of [srcSuper, dstSuper, app]) if (c) await c.end();
+  for (const c of [srcSuper, dstSuper, app, mailer]) if (c) await c.end();
   await src.drop();
   if (dst) await dst.drop();
   rmSync(dir, { recursive: true, force: true });
@@ -45,9 +47,9 @@ test("pg_dump -Fc + pg_restore en una base nueva restaura todas las filas del le
   const student = `stu-${randomBytes(4).toString("hex")}`;
   const inv = (await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Ana', 'g@example.test', 'batch-001')", [student])).rows[0]!.invitation_ref;
   const tok = createHash("sha256").update(inv).digest("hex");
-  await app.query("SELECT app.arm_invitation_token($1, $2, now() + interval '1 day', 'v-test')", [inv, tok]);
+  await mailer.query("SELECT app.arm_invitation_token($1, $2, now() + interval '1 day', 'v-test')", [inv, tok]);
   await app.query("SELECT * FROM app.open_invitation($1)", [tok]);
-  const o = (await app.query<{ o_verification_ref: string; o_code: string }>("SELECT * FROM app.issue_otp($1, 'DECISION')", [inv])).rows[0]!;
+  const o = (await mailer.query<{ o_verification_ref: string; o_code: string }>("SELECT * FROM app.issue_otp($1, 'DECISION')", [inv])).rows[0]!;
   await app.query("SELECT * FROM app.verify_otp($1, $2, 'dm-backup-0001')", [o.o_verification_ref, o.o_code]);
   await app.query("SELECT * FROM app.record_decision($1, $2, 'GRANTED', 'v-test', $3, 'idem-backup-01', '[\"STUDY_PARTICIPATION\"]'::jsonb)", [inv, o.o_verification_ref, "a".repeat(64)]);
 

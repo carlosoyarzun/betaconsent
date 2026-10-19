@@ -2,16 +2,20 @@
 -- origen (lógica adaptada a UN dueño, sin RH2 ni HELD): db/migrations/0037_adr010_case_state_revocation.sql:286-413,594-644@9345b78;
 -- parámetros OTP de src/server/modules/common/approved-parameters.ts:39-72@9345b78 (espejo en beta/src/otp/approved-parameters.ts).
 --
--- Funciones SECURITY DEFINER (dueño consent_owner, search_path fijo, EXECUTE solo para consent_app). Son la ÚNICA vía de escritura de consent_app sobre
--- invitation, otp_challenge, otp_budget, consent_decision y revocation: la verificación del OTP y la decisión viven en la base (mitiga RES-OTP-WEB-PRB; residual F-RB-03 aceptado por Carlos (proceso único)):
+-- Funciones SECURITY DEFINER (dueño consent_owner, search_path fijo). Son la ÚNICA vía de escritura de los roles de runtime sobre invitation, otp_challenge,
+-- otp_budget, consent_decision y revocation: la verificación del OTP y la decisión viven en la base. Mitiga RES-OTP-WEB-PRB frente a SQLi en el pool de la app;
+-- residual: RCE del proceso único (F-RB-03), aceptado por Carlos.
+-- SEC-CNS-024-V1 (P0): quién EMITE secretos != quién atiende HTTP. issue_otp devuelve el código en claro y arm_invitation_token fija el token: ambas son EXECUTE
+-- SOLO de consent_mailer (pool propio, 2 conexiones, mismo proceso Node). consent_app conserva open_invitation, verify_otp, record_decision, revoke_decision,
+-- authorization_status e import_invitation: sin el código entregado por issue_otp, ninguna sentencia SQL como consent_app produce VERIFIED/GRANTED/REVOKED.
+-- consent_mailer NO tiene verify_otp/record_decision/revoke_decision ni lectura de token_hash/code_hash (la cadena issue->verify->record exige ambos roles).
 -- issue_otp GENERA el código (CSPRNG) y lo devuelve en claro una sola vez al llamador, que debe enviarlo por correo; verify_otp recibe el intento y lo compara dentro.
--- consent_app no aporta ningún verificador ni lee code_hash, así que sin el código entregado ninguna secuencia de llamadas produce VERIFIED (SEC-CNS-024 F-SB-01).
--- Residual (F-RB-03): el código sale hacia el proceso web para ir al correo; una RCE en ese proceso lo vería.
+-- Residual (F-RB-03): el código sale hacia el proceso Node (pool mailer) para ir al correo; una RCE en ese proceso lo vería.
 -- Las fallas "esperables" de verify_otp NO lanzan excepción (revertiría el conteo de intentos): devuelven un código. Las demás lanzan SQLSTATE P0001 con
 -- un mensaje estable (ALREADY_DECIDED, VERIFICATION_REQUIRED, ...).
 -- Los eventos los emiten los triggers de 0002 (INVITATION_*, OTP verificado/LOCKED, CONSENT_GRANTED|DECLINED) y revoke_decision (CONSENT_REVOKED).
 
--- 0. Importación y armado del token (el CLI de H1-09 y el outbox de H1-06 los usan; sin ellos no habría cómo crear invitaciones al retirar el INSERT) ----------
+-- 0. Importación y armado del token (el CLI de H1-09 usa import_invitation con consent_app; el outbox de H1-06 usa arm_invitation_token con consent_mailer; sin ellos no habría cómo crear invitaciones al retirar el INSERT) ----------
 CREATE FUNCTION app.import_invitation(p_student_ref text, p_first_name text, p_email text, p_batch_ref text)
   RETURNS TABLE (invitation_ref text, created boolean)
   LANGUAGE plpgsql SECURITY DEFINER
@@ -44,24 +48,37 @@ END
 $fn$;
 
 -- READY>SENT (primer token) o SENT>SENT (rotación: el token anterior queda muerto). El hash lo calcula el llamador; el token en claro nunca llega a la base.
-CREATE FUNCTION app.arm_invitation_token(p_invitation_ref text, p_token_hash text, p_expires_at timestamptz, p_consent_version text)
+-- SEC-CNS-024-V1 P2: (a) vigencia <= now() + 7 días (P-10; 60 s de tolerancia por desfase de reloj entre Node y la base), si no TOKEN_EXPIRY_TOO_LONG;
+-- (b) la rotación SENT>SENT solo si NO hay token vigente (vencido) o el llamador pide reenvío explícito con un motivo (^[A-Z][A-Z0-9_]{2,39}$, p. ej. OUTBOX_RETRY,
+-- OPERATOR_RESEND) que queda en el ledger como INVITATION_LINK_REISSUED; con token vigente y sin motivo: TOKEN_STILL_VALID. El motivo se ignora en READY>SENT.
+CREATE FUNCTION app.arm_invitation_token(p_invitation_ref text, p_token_hash text, p_expires_at timestamptz, p_consent_version text, p_reissue_reason text DEFAULT NULL)
   RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
 AS $fn$
 #variable_conflict use_column
 DECLARE
+  c_max_ttl constant interval := interval '7 days' + interval '60 seconds'; -- P-10 + tolerancia de reloj
   v_state text;
+  v_live boolean;
 BEGIN
-  SELECT i.state INTO v_state FROM app.invitation i WHERE i.tenant_id = app.current_tenant_id() AND i.invitation_ref = p_invitation_ref FOR UPDATE;
+  SELECT i.state, (i.token_hash IS NOT NULL AND i.token_expires_at > pg_catalog.now() AND i.token_consumed_at IS NULL) INTO v_state, v_live
+    FROM app.invitation i WHERE i.tenant_id = app.current_tenant_id() AND i.invitation_ref = p_invitation_ref FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'INVITATION_NOT_FOUND'; END IF;
   IF p_expires_at <= pg_catalog.now() THEN RAISE EXCEPTION 'TOKEN_EXPIRY_IN_PAST'; END IF;
+  IF p_expires_at > pg_catalog.now() + c_max_ttl THEN RAISE EXCEPTION 'TOKEN_EXPIRY_TOO_LONG'; END IF;
+  IF p_reissue_reason IS NOT NULL AND p_reissue_reason !~ '^[A-Z][A-Z0-9_]{2,39}$' THEN RAISE EXCEPTION 'INVALID_REISSUE_REASON'; END IF;
   IF v_state = 'READY' THEN
     UPDATE app.invitation SET state = 'SENT', token_hash = p_token_hash, token_expires_at = p_expires_at, consent_version = p_consent_version
      WHERE tenant_id = app.current_tenant_id() AND invitation_ref = p_invitation_ref;
   ELSIF v_state = 'SENT' THEN
+    IF v_live AND p_reissue_reason IS NULL THEN RAISE EXCEPTION 'TOKEN_STILL_VALID'; END IF;
     UPDATE app.invitation SET token_hash = p_token_hash, token_expires_at = p_expires_at
-     WHERE tenant_id = app.current_tenant_id() AND invitation_ref = p_invitation_ref;
+     WHERE tenant_id = app.current_tenant_id() AND invitation_ref = p_invitation_ref; -- emite INVITATION_TOKEN_ROTATED
+    IF p_reissue_reason IS NOT NULL THEN
+      PERFORM ledger_gen.ledger_append('Invitation', p_invitation_ref, 'INVITATION_LINK_REISSUED', 'HUMAN', 'OPERATOR',
+        pg_catalog.jsonb_build_object('invitationRef', p_invitation_ref, 'reason', p_reissue_reason), p_invitation_ref || ':reissued:' || p_token_hash);
+    END IF;
   ELSE
     RAISE EXCEPTION 'INVITATION_NOT_ARMABLE';
   END IF;
@@ -339,18 +356,29 @@ AS $fn$
                         LIMIT 1) d ON true
 $fn$;
 
-REVOKE ALL ON FUNCTION app.import_invitation(text, text, text, text), app.arm_invitation_token(text, text, timestamptz, text), app.open_invitation(text),
+REVOKE ALL ON FUNCTION app.import_invitation(text, text, text, text), app.arm_invitation_token(text, text, timestamptz, text, text), app.open_invitation(text),
   app.issue_otp(text, text), app.verify_otp(text, text, text),
   app.record_decision(text, text, text, text, text, text, jsonb), app.revoke_decision(text, text, text), app.authorization_status(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION app.import_invitation(text, text, text, text), app.arm_invitation_token(text, text, timestamptz, text), app.open_invitation(text),
-  app.issue_otp(text, text), app.verify_otp(text, text, text),
+-- consent_app (pool HTTP): NO emite secretos.
+GRANT EXECUTE ON FUNCTION app.import_invitation(text, text, text, text), app.open_invitation(text), app.verify_otp(text, text, text),
   app.record_decision(text, text, text, text, text, text, jsonb), app.revoke_decision(text, text, text), app.authorization_status(text) TO consent_app;
+-- consent_mailer (pool del mailer): SOLO emite secretos (OTP y token de invitación).
+GRANT EXECUTE ON FUNCTION app.issue_otp(text, text), app.arm_invitation_token(text, text, timestamptz, text, text) TO consent_mailer;
+
+-- consent_mailer: lo que necesitan el worker del outbox y sendOtpNow, nada más. Sin token_hash/code_hash/decision_maker_ref; sin acceso a ledger, decisiones ni OTP.
+GRANT USAGE ON SCHEMA app TO consent_mailer;
+GRANT EXECUTE ON FUNCTION app.current_tenant_id() TO consent_mailer; -- lo evalúan las políticas RLS
+GRANT SELECT (invitation_ref, student_first_name, guardian_email) ON app.invitation TO consent_mailer; -- destinatario y nombre para la plantilla
+GRANT SELECT ON app.email_outbox TO consent_mailer;
+GRANT UPDATE (status, attempts, next_attempt_at, provider_message_id, last_error_code) ON app.email_outbox TO consent_mailer; -- claim y marcas del outbox
+ALTER POLICY invitation_tenant ON app.invitation TO consent_app, consent_owner, consent_mailer;
+ALTER POLICY email_outbox_tenant ON app.email_outbox TO consent_app, consent_owner, consent_mailer;
 
 -- Retiro de los grants directos marcados TODO H1-03 ---------------------------------------------------------------------------------------------------------
 REVOKE INSERT ON app.invitation FROM consent_app;
--- consent_app queda con SELECT en invitation, otp_challenge (sin code_hash), consent_decision y revocation; ningún INSERT/UPDATE/DELETE en ellas ni en otp_budget.
--- Se CONSERVAN, porque ninguna función de H1-03 los cubre: email_outbox (SELECT, INSERT acotado, UPDATE acotado de status/attempts/next_attempt_at/provider_message_id/
--- last_error_code: el outbox en proceso y su reintento son de H1-06; ahí pasa a claim_emails()/mark_email_*()), api_nonce (INSERT para la verificación de replay, H1-08)
+-- consent_app queda con SELECT POR COLUMNAS en invitation (sin token_hash), otp_challenge (sin code_hash ni decision_maker_ref) y consent_decision (sin decision_maker_ref),
+-- SELECT en revocation; ningún INSERT/UPDATE/DELETE en ellas ni en otp_budget; sin UPDATE de email_outbox (es de consent_mailer).
+-- Se CONSERVAN, porque ninguna función de H1-03 los cubre: email_outbox (SELECT, INSERT acotado; el UPDATE de las marcas es de consent_mailer), api_nonce (INSERT para la verificación de replay, H1-08)
 -- y api_access_log (INSERT append-only, H1-08).
 
 -- Tabla de verdad rol x objeto x privilegio ------------------------------------------------------------------------------------------------------------------
@@ -360,13 +388,13 @@ DECLARE
   v boolean;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
-    -- rol, objeto, privilegio, esperado
-    ('consent_app', 'app.invitation', 'SELECT', true), ('consent_app', 'app.invitation', 'INSERT', false), ('consent_app', 'app.invitation', 'UPDATE', false),
+    -- rol, objeto, privilegio (de TABLA completa; los de columna se comprueban más abajo), esperado
+    ('consent_app', 'app.invitation', 'SELECT', false) /* solo por columnas */, ('consent_app', 'app.invitation', 'INSERT', false), ('consent_app', 'app.invitation', 'UPDATE', false),
     ('consent_app', 'app.invitation', 'DELETE', false), ('consent_app', 'app.invitation', 'TRUNCATE', false),
     ('consent_app', 'app.otp_challenge', 'INSERT', false), ('consent_app', 'app.otp_challenge', 'UPDATE', false),
     ('consent_app', 'app.otp_challenge', 'DELETE', false),
     ('consent_app', 'app.otp_budget', 'SELECT', false), ('consent_app', 'app.otp_budget', 'INSERT', false), ('consent_app', 'app.otp_budget', 'UPDATE', false),
-    ('consent_app', 'app.consent_decision', 'SELECT', true), ('consent_app', 'app.consent_decision', 'INSERT', false), ('consent_app', 'app.consent_decision', 'UPDATE', false),
+    ('consent_app', 'app.consent_decision', 'SELECT', false) /* solo por columnas */, ('consent_app', 'app.consent_decision', 'INSERT', false), ('consent_app', 'app.consent_decision', 'UPDATE', false),
     ('consent_app', 'app.consent_decision', 'DELETE', false),
     ('consent_app', 'app.revocation', 'SELECT', true), ('consent_app', 'app.revocation', 'INSERT', false), ('consent_app', 'app.revocation', 'UPDATE', false),
     ('consent_app', 'app.revocation', 'DELETE', false),
@@ -377,7 +405,19 @@ BEGIN
     ('consent_app', 'integrity.audit_event', 'DELETE', false), ('consent_app', 'integrity.audit_event', 'TRUNCATE', false),
     ('consent_owner', 'integrity.audit_event', 'UPDATE', false), ('consent_owner', 'integrity.audit_event', 'DELETE', false), ('consent_owner', 'integrity.audit_event', 'TRUNCATE', false),
     ('consent_app', 'ops.db_catalog', 'SELECT', true), ('consent_app', 'ops.db_catalog', 'UPDATE', false), ('consent_app', 'ops.db_catalog', 'INSERT', false),
-    ('consent_app', 'app.school', 'SELECT', true), ('consent_app', 'app.school', 'UPDATE', false)
+    ('consent_app', 'app.school', 'SELECT', true), ('consent_app', 'app.school', 'UPDATE', false),
+    -- consent_mailer: lectura de tabla completa NO (invitation va por columnas), nada de dominio, ledger ni catálogo.
+    ('consent_mailer', 'app.invitation', 'SELECT', false), ('consent_mailer', 'app.invitation', 'INSERT', false), ('consent_mailer', 'app.invitation', 'UPDATE', false),
+    ('consent_mailer', 'app.invitation', 'DELETE', false), ('consent_mailer', 'app.invitation', 'TRUNCATE', false),
+    ('consent_mailer', 'app.otp_challenge', 'SELECT', false), ('consent_mailer', 'app.otp_challenge', 'INSERT', false), ('consent_mailer', 'app.otp_challenge', 'UPDATE', false),
+    ('consent_mailer', 'app.otp_budget', 'SELECT', false), ('consent_mailer', 'app.otp_budget', 'INSERT', false), ('consent_mailer', 'app.otp_budget', 'UPDATE', false),
+    ('consent_mailer', 'app.consent_decision', 'SELECT', false), ('consent_mailer', 'app.consent_decision', 'INSERT', false), ('consent_mailer', 'app.consent_decision', 'UPDATE', false),
+    ('consent_mailer', 'app.revocation', 'SELECT', false), ('consent_mailer', 'app.revocation', 'INSERT', false), ('consent_mailer', 'app.revocation', 'UPDATE', false),
+    ('consent_mailer', 'app.email_outbox', 'SELECT', true), ('consent_mailer', 'app.email_outbox', 'INSERT', false), ('consent_mailer', 'app.email_outbox', 'UPDATE', false),
+    ('consent_mailer', 'app.email_outbox', 'DELETE', false), ('consent_app', 'app.email_outbox', 'UPDATE', false),
+    ('consent_mailer', 'app.api_nonce', 'SELECT', false), ('consent_mailer', 'app.api_access_log', 'SELECT', false),
+    ('consent_mailer', 'integrity.audit_event', 'SELECT', false), ('consent_mailer', 'integrity.audit_event', 'INSERT', false), ('consent_mailer', 'ops.db_catalog', 'SELECT', false),
+    ('consent_mailer', 'app.school', 'SELECT', false)
   ) AS t(rol, obj, priv, expected) LOOP
     v := pg_catalog.has_table_privilege(r.rol, r.obj, r.priv);
     IF v IS DISTINCT FROM r.expected THEN RAISE EXCEPTION 'tabla de verdad: % % % = % (esperado %)', r.rol, r.obj, r.priv, v, r.expected; END IF;
@@ -391,12 +431,38 @@ BEGIN
     RAISE EXCEPTION 'tabla de verdad: privilegios de columna indebidos para consent_app';
   END IF;
 
+  -- SEC-CNS-024-V1: columnas secretas. consent_app no lee token_hash, code_hash ni decision_maker_ref; consent_mailer solo lee invitation_ref, student_first_name, guardian_email
+  -- y puede actualizar únicamente las marcas del outbox.
+  IF pg_catalog.has_column_privilege('consent_app', 'app.invitation', 'token_hash', 'SELECT') OR pg_catalog.has_column_privilege('consent_app', 'app.consent_decision', 'decision_maker_ref', 'SELECT')
+     OR pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'decision_maker_ref', 'SELECT') THEN
+    RAISE EXCEPTION 'tabla de verdad: consent_app no debe leer token_hash ni decision_maker_ref';
+  END IF;
+  IF NOT (pg_catalog.has_column_privilege('consent_mailer', 'app.invitation', 'guardian_email', 'SELECT') AND pg_catalog.has_column_privilege('consent_mailer', 'app.invitation', 'invitation_ref', 'SELECT')
+          AND pg_catalog.has_column_privilege('consent_mailer', 'app.invitation', 'student_first_name', 'SELECT')) THEN
+    RAISE EXCEPTION 'tabla de verdad: consent_mailer debe leer invitation_ref, guardian_email y student_first_name';
+  END IF;
+  IF pg_catalog.has_column_privilege('consent_mailer', 'app.invitation', 'token_hash', 'SELECT') OR pg_catalog.has_column_privilege('consent_mailer', 'app.invitation', 'state', 'SELECT')
+     OR pg_catalog.has_column_privilege('consent_mailer', 'app.otp_challenge', 'code_hash', 'SELECT') OR pg_catalog.has_any_column_privilege('consent_mailer', 'app.invitation', 'UPDATE')
+     OR pg_catalog.has_column_privilege('consent_mailer', 'app.email_outbox', 'payload', 'UPDATE') OR pg_catalog.has_column_privilege('consent_mailer', 'app.email_outbox', 'invitation_ref', 'UPDATE')
+     OR NOT pg_catalog.has_column_privilege('consent_mailer', 'app.email_outbox', 'status', 'UPDATE') THEN
+    RAISE EXCEPTION 'tabla de verdad: privilegios de columna indebidos para consent_mailer';
+  END IF;
+  IF pg_catalog.pg_has_role('consent_mailer', 'consent_owner', 'MEMBER') OR pg_catalog.pg_has_role('consent_mailer', 'consent_app', 'MEMBER')
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'consent_mailer' AND (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication OR NOT rolcanlogin))
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles mr ON mr.oid = m.member WHERE mr.rolname = 'consent_mailer') THEN
+    RAISE EXCEPTION 'tabla de verdad: consent_mailer debe ser LOGIN, NOBYPASSRLS, sin DDL y sin membresías';
+  END IF;
+  IF pg_catalog.has_schema_privilege('consent_mailer', 'ext', 'USAGE') OR pg_catalog.has_schema_privilege('consent_mailer', 'ledger_gen', 'USAGE')
+     OR pg_catalog.has_schema_privilege('consent_mailer', 'app', 'CREATE') OR pg_catalog.has_schema_privilege('consent_mailer', 'integrity', 'USAGE') THEN
+    RAISE EXCEPTION 'tabla de verdad: consent_mailer no debe alcanzar ext/ledger_gen/integrity ni crear en app';
+  END IF;
+
   -- pgcrypto vive en el esquema ext: consent_app no lo ve (solo lo llaman las funciones SECURITY DEFINER del dueño).
   IF pg_catalog.has_schema_privilege('consent_app', 'ext', 'USAGE') OR pg_catalog.has_schema_privilege('consent_app', 'ext', 'CREATE') THEN
     RAISE EXCEPTION 'tabla de verdad: consent_app no debe alcanzar el esquema ext (pgcrypto)';
   END IF;
 
-  -- EXECUTE: solo consent_app (y el dueño); nadie por PUBLIC; ledger_gen.* no es ejecutable por consent_app.
+  -- EXECUTE: consent_app y consent_mailer por separado (y el dueño); nadie por PUBLIC; ledger_gen.* no es ejecutable por ninguno de los dos.
   FOR r IN SELECT p.oid, p.oid::regprocedure::text AS sig FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname IN ('app', 'ledger_gen', 'ops', 'integrity') AND p.prokind = 'f' LOOP
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p2, pg_catalog.aclexplode(COALESCE(p2.proacl, pg_catalog.acldefault('f', p2.proowner))) a WHERE p2.oid = r.oid AND a.grantee = 0) THEN
@@ -405,12 +471,15 @@ BEGIN
     IF pg_catalog.pg_get_userbyid((SELECT proowner FROM pg_catalog.pg_proc WHERE oid = r.oid)) <> 'consent_owner' THEN RAISE EXCEPTION 'tabla de verdad: % no es de consent_owner', r.sig; END IF;
   END LOOP;
   FOR r IN SELECT * FROM (VALUES
-    ('app.import_invitation(text,text,text,text)', true), ('app.arm_invitation_token(text,text,timestamptz,text)', true), ('app.open_invitation(text)', true),
-    ('app.issue_otp(text,text)', true), ('app.verify_otp(text,text,text)', true),
-    ('app.record_decision(text,text,text,text,text,text,jsonb)', true), ('app.revoke_decision(text,text,text)', true), ('app.authorization_status(text)', true),
-    ('ledger_gen.ledger_append(text,text,text,text,text,jsonb,text)', false), ('ledger_gen.canonical_json(jsonb)', false), ('ledger_gen.emit_invitation()', false)
-  ) AS t(fn, expected) LOOP
-    IF pg_catalog.has_function_privilege('consent_app', r.fn, 'EXECUTE') IS DISTINCT FROM r.expected THEN RAISE EXCEPTION 'tabla de verdad: EXECUTE de consent_app sobre % (esperado %)', r.fn, r.expected; END IF;
+    -- función, EXECUTE de consent_app, EXECUTE de consent_mailer
+    ('app.import_invitation(text,text,text,text)', true, false), ('app.arm_invitation_token(text,text,timestamptz,text,text)', false, true), ('app.open_invitation(text)', true, false),
+    ('app.issue_otp(text,text)', false, true), ('app.verify_otp(text,text,text)', true, false),
+    ('app.record_decision(text,text,text,text,text,text,jsonb)', true, false), ('app.revoke_decision(text,text,text)', true, false), ('app.authorization_status(text)', true, false),
+    ('app.current_tenant_id()', true, true),
+    ('ledger_gen.ledger_append(text,text,text,text,text,jsonb,text)', false, false), ('ledger_gen.canonical_json(jsonb)', false, false), ('ledger_gen.emit_invitation()', false, false)
+  ) AS t(fn, app_expected, mailer_expected) LOOP
+    IF pg_catalog.has_function_privilege('consent_app', r.fn, 'EXECUTE') IS DISTINCT FROM r.app_expected THEN RAISE EXCEPTION 'tabla de verdad: EXECUTE de consent_app sobre % (esperado %)', r.fn, r.app_expected; END IF;
+    IF pg_catalog.has_function_privilege('consent_mailer', r.fn, 'EXECUTE') IS DISTINCT FROM r.mailer_expected THEN RAISE EXCEPTION 'tabla de verdad: EXECUTE de consent_mailer sobre % (esperado %)', r.fn, r.mailer_expected; END IF;
   END LOOP;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
               WHERE n.nspname = 'app' AND p.prokind = 'f' AND p.proname <> 'current_tenant_id' AND (NOT p.prosecdef OR p.proconfig IS NULL OR NOT ('search_path=pg_catalog, pg_temp' = ANY (p.proconfig)))) THEN

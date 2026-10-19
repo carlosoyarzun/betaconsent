@@ -10,6 +10,7 @@ const S3 = Buffer.alloc(32, 3).toString("base64");
 const GOOD: Record<string, string> = {
   CNS_ENVIRONMENT: "LOCAL",
   CNS_DATABASE_URL: "postgresql://consent_app:x@127.0.0.1:5432/consent",
+  CNS_MAILER_DATABASE_URL: "postgresql://consent_mailer:y@127.0.0.1:5432/consent",
   CNS_SESSION_SECRET: S1,
   CNS_PUBLIC_ORIGIN: "http://localhost:8080",
   CNS_SMTP_URL: "smtp://127.0.0.1:1025",
@@ -44,6 +45,9 @@ test("loadConfig rechaza entorno inválido, secretos cortos, origen no exacto y 
   assert.throws(() => loadConfig({ ...GOOD, CNS_ENVIRONMENT: "REAL" }), /https en REAL/);
   assert.throws(() => loadConfig({ ...GOOD, CNS_API_KEYS: `a:${S1},b:${S2},c:${S3}` }), /1 o 2 claves/);
   assert.throws(() => loadConfig({ ...GOOD, PORT: "0" }), /PORT/);
+  // SEC-CNS-024-V1: el pool del mailer es OTRO rol; no puede apuntar a la misma URL que el de la app.
+  assert.throws(() => loadConfig({ ...GOOD, CNS_MAILER_DATABASE_URL: GOOD.CNS_DATABASE_URL }), /distinta de CNS_DATABASE_URL/);
+  assert.throws(() => loadConfig({ ...GOOD, CNS_MAILER_DATABASE_URL: "mysql://x" }), /CNS_MAILER_DATABASE_URL/);
 });
 
 test("los mensajes de error no filtran valores de secretos", () => {

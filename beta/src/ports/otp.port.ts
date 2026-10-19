@@ -28,7 +28,7 @@ export interface VerifyOtpResult {
 }
 
 export interface OtpRepo {
-  /** Un OTP vivo por (padre, scope): emitir expira el anterior. El vencimiento (P-02, 10 min) lo fija la base. Lanza PARENT_NOT_ELIGIBLE, OTP_RESEND_TOO_SOON, OTP_SEND_LIMIT, OTP_BUDGET_EXHAUSTED, OTP_EXHAUSTED. */
+  /** Se ejecuta con el pool del MAILER (consent_mailer): consent_app no tiene EXECUTE de issue_otp (SEC-CNS-024-V1). Un OTP vivo por (padre, scope): emitir expira el anterior. El vencimiento (P-02, 10 min) lo fija la base. Lanza PARENT_NOT_ELIGIBLE, OTP_RESEND_TOO_SOON, OTP_SEND_LIMIT, OTP_BUDGET_EXHAUSTED, OTP_EXHAUSTED. */
   issue(input: IssueOtpInput): Promise<IssuedOtp>;
   /** Reenvío: mismas reglas y mismo efecto que issue (código nuevo; el anterior queda EXPIRED); los límites P-06 los aplica la base. */
   resend(input: IssueOtpInput): Promise<IssuedOtp>;

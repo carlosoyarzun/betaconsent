@@ -117,7 +117,7 @@ CREATE TABLE integrity.audit_event (
   CONSTRAINT audit_event_previous_hash_unique UNIQUE (tenant_id, previous_event_hash),
   -- Lista blanca de tipos de evento (subconjunto del repo anterior: lo que emiten los triggers de beta/). Ampliar = migración nueva.
   CONSTRAINT audit_event_event_type_allowlist CHECK (event_type IN (
-    'INVITATION_CREATED', 'INVITATION_SENT', 'INVITATION_TOKEN_ROTATED', 'INVITATION_OPENED', 'INVITATION_VERIFIED',
+    'INVITATION_CREATED', 'INVITATION_SENT', 'INVITATION_TOKEN_ROTATED', 'INVITATION_LINK_REISSUED', 'INVITATION_OPENED', 'INVITATION_VERIFIED',
     'INVITATION_COMPLETED', 'INVITATION_DECLINED', 'INVITATION_CANCELLED',
     'DECISION_MAKER_CHANNEL_VERIFIED', 'OTP_LOCKED',
     'CONSENT_GRANTED', 'CONSENT_DECLINED', 'RECEIPT_CREATED', 'CONSENT_REVOKED',

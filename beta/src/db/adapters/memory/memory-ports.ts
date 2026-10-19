@@ -49,10 +49,15 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
         const inv = s.invitations.get(input.invitationRef);
         if (!inv) throw new DomainError("INVITATION_NOT_FOUND");
         if (input.expiresAt.getTime() <= s.now()) throw new DomainError("TOKEN_EXPIRY_IN_PAST");
+        if (input.expiresAt.getTime() > s.now() + 7 * 24 * 3_600_000 + 60_000) throw new DomainError("TOKEN_EXPIRY_TOO_LONG"); // P-10 + 60 s de tolerancia
+        if (input.reissueReason !== undefined && !/^[A-Z][A-Z0-9_]{2,39}$/.test(input.reissueReason)) throw new DomainError("INVALID_REISSUE_REASON");
         if (inv.state === "READY") {
           inv.state = "SENT";
           inv.consentVersion = input.consentVersion;
-        } else if (inv.state !== "SENT") {
+        } else if (inv.state === "SENT") {
+          const live = inv.tokenHash !== null && (inv.tokenExpiresAt ?? 0) > s.now() && !inv.tokenConsumed;
+          if (live && input.reissueReason === undefined) throw new DomainError("TOKEN_STILL_VALID");
+        } else {
           throw new DomainError("INVITATION_NOT_ARMABLE");
         }
         inv.tokenHash = input.tokenHash;
@@ -161,7 +166,7 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
       },
       async getManageState(consentId) {
         const d = s.decisions.get(consentId);
-        return d ? { consentId, state: d.state, decisionMakerRef: d.decisionMakerRef, decidedAt: new Date(d.decidedAt) } : null;
+        return d ? { consentId, state: d.state, decidedAt: new Date(d.decidedAt) } : null;
       },
     },
 

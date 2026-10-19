@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Gobierna: plan v2 H1-01. Clúster PostgreSQL TEMPORAL para los tests de integración (fuera del repo; nunca el Postgres de uso diario).
 #   eval "$(beta/scripts/pg-temp.sh start)"   # crea el clúster en un directorio temporal, exporta TEST_DATABASE_URL y PSQL
+#   Los 4 roles (consent_owner/migrator/app/mailer) los crea db/bootstrap-roles.sql por cada base de test (tests/integration/pg-harness.ts, con sus
+#   contraseñas efímeras): no hay CNS_*_DATABASE_URL que exportar aquí; CNS_MAILER_DATABASE_URL solo existe para el proceso real (ver .env.example).
 #   npm run test:integration
 #   beta/scripts/pg-temp.sh stop <dir>        # apaga y borra el clúster
 set -euo pipefail

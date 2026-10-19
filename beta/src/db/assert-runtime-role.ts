@@ -1,4 +1,4 @@
-// Gobierna: SEC-CNS-024 F-SB-02 (SEC-CNS-023 §B). Gate de arranque del ROL de runtime: el proceso web debe conectarse como consent_app, sin superusuario, sin BYPASSRLS,
+// Gobierna: SEC-CNS-024 F-SB-02 (SEC-CNS-023 §B). Gate de arranque del ROL de runtime: cada pool debe conectarse con SU rol (consent_app el pool HTTP, consent_mailer el del mailer; parámetro expectedRole), sin superusuario, sin BYPASSRLS,
 // sin SET ROLE activo y sin membresía en ningún rol (ni consent_owner/consent_migrator ni predefinidos como pg_write_all_data). Si CNS_DATABASE_URL apuntara al
 // superusuario o al migrador, el proceso NO arranca. Complementa a assertEnvironment (entorno vs catálogo); ambos se llaman antes de aceptar tráfico.
 
@@ -26,8 +26,11 @@ interface RoleRow {
 }
 
 export const RUNTIME_ROLE = "consent_app";
+export const MAILER_ROLE = "consent_mailer";
+export type ExpectedRole = typeof RUNTIME_ROLE | typeof MAILER_ROLE;
 
-export async function assertRuntimeRole(db: Queryable): Promise<void> {
+/** `expectedRole`: consent_app para el pool HTTP (default), consent_mailer para el pool del mailer. Cada pool se verifica contra SU rol. */
+export async function assertRuntimeRole(db: Queryable, expectedRole: ExpectedRole = RUNTIME_ROLE): Promise<void> {
   const { rows } = await db.query<RoleRow>(
     `SELECT session_user::text AS session_user, current_user::text AS current_user,
             r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
@@ -44,6 +47,6 @@ export async function assertRuntimeRole(db: Queryable): Promise<void> {
   if (r.session_user !== r.current_user) v.push("session_user distinto de current_user (SET ROLE activo)");
   if (r.member_of_privileged) v.push("es miembro de consent_owner o consent_migrator");
   else if (r.member_of_any) v.push("es miembro de otro rol (p. ej. pg_write_all_data)");
-  if (r.current_user !== RUNTIME_ROLE) v.push(`no es ${RUNTIME_ROLE}`);
+  if (r.current_user !== expectedRole) v.push(`no es ${expectedRole}`);
   if (v.length > 0) throw new RuntimeRoleError(v);
 }

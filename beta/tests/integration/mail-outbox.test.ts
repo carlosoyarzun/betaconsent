@@ -1,4 +1,4 @@
-// Gobierna: plan v2 H1-06. Outbox en proceso contra Postgres real con el rol consent_app (valida los grants existentes),
+// Gobierna: plan v2 H1-06 + SEC-CNS-024-V1. Outbox en proceso contra Postgres real: el worker corre con el rol consent_mailer (mdb), el encolado/lectura de dominio con consent_app (app); valida los grants de ambos,
 // allowlist sintética, reintentos, concurrencia y OTP sin rastro. La parte Mailpit corre solo si MAILPIT_SMTP_URL y MAILPIT_API_URL
 // están definidas (CI: servicio axllent/mailpit del job beta-integration; local: docker run -p 1025:1025 -p 8025:8025 axllent/mailpit).
 import assert from "node:assert/strict";
@@ -11,14 +11,15 @@ import { migrate } from "../../src/db/migrate.ts";
 import { MemoryMailer } from "../../src/mail/memory-mailer.ts";
 import { enqueueEmail, MAX_ATTEMPTS, runOutboxTick, SUPPRESSED_STATUS, type MailLogger, type OutboxDeps } from "../../src/mail/outbox-worker.ts";
 import { hashInvitationToken } from "../../src/domain/crypto.ts";
-import { sendOtpNow } from "../../src/mail/otp.ts";
+import { readGuardianEmail, sendOtpNow } from "../../src/mail/otp.ts";
 import { readDataClass, type RecipientPolicy } from "../../src/mail/recipient-policy.ts";
 import { SmtpMailer } from "../../src/mail/smtp-mailer.ts";
 import { connect, connectAsOwner, createTestDb, MIGRATIONS_DIR, type TestDb } from "./pg-harness.ts";
 
 let db: TestDb;
 let app: Client;
-let app2: Client;
+let mdb: Client; // consent_mailer
+let mdb2: Client;
 let owner: Client;
 let sup: Client;
 let seq = 0;
@@ -46,17 +47,18 @@ before(async () => {
     await m.end();
   }
   app = await connect(db.appUrl);
-  app2 = await connect(db.appUrl);
+  mdb = await connect(db.mailerUrl);
+  mdb2 = await connect(db.mailerUrl);
   owner = await connectAsOwner(db);
   sup = await connect(db.superDbUrl);
 });
 after(async () => {
-  for (const c of [app, app2, owner, sup]) await c.end();
+  for (const c of [app, mdb, mdb2, owner, sup]) await c.end();
   await db.drop();
 });
 
 function deps(mailer: MemoryMailer, over: Partial<OutboxDeps> = {}): OutboxDeps {
-  return { db: app, mailer, policy: POLICY, logger, backoffMs: [0, 0], ...over };
+  return { db: mdb, mailer, policy: POLICY, logger, backoffMs: [0, 0], ...over };
 }
 
 /** Crea invitación (READY) vía los grants de consent_app y encola un correo. Devuelve email_id. */
@@ -140,13 +142,51 @@ test("fallo transitorio y luego éxito: un solo envío", async () => {
   assert.equal(mailer.sent.length, 1);
 });
 
+test("SEC-CNS-024-V1: el reintento rota el token con motivo OUTBOX_RETRY (ledger); un reenvío con token vigente sin motivo falla; con reissueReason rota", async () => {
+  const mailer = new MemoryMailer();
+  await runOutboxTick(deps(new MemoryMailer(), { batchSize: 100 })); // drena filas de tests anteriores
+  mailer.failWith = new Error("down");
+  const id = await seed("qa@example.invalid");
+  const ref = (await app.query<{ invitation_ref: string }>("SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!.invitation_ref;
+  await runOutboxTick(deps(mailer)); // intento 1: arma el token (READY>SENT) y el SMTP falla
+  mailer.failWith = undefined;
+  await runOutboxTick(deps(mailer)); // intento 2: token vigente -> rota con OUTBOX_RETRY
+  assert.equal((await row(id)).status, "SENT");
+  const reasons = (await owner.query<{ payload: { reason: string } }>("SELECT payload FROM integrity.audit_event WHERE aggregate_id = $1 AND event_type = 'INVITATION_LINK_REISSUED'", [ref])).rows.map((r) => r.payload.reason);
+  assert.deepEqual(reasons, ["OUTBOX_RETRY"]);
+  // Segundo correo de invitación (otra dedupe_key) en el primer intento, sin motivo, sobre un token vigente: no se rota ni se envía.
+  assert.equal(await enqueueEmail(app, { kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION-AGAIN:${ref}`, payload: { consentVersion: "v1-borrador" } }), true);
+  const before = (await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!.token_hash;
+  const sentBefore = mailer.sent.length;
+  await runOutboxTick(deps(mailer));
+  assert.equal(mailer.sent.length, sentBefore);
+  const failed = (await app.query<{ status: string; last_error_code: string }>("SELECT status, last_error_code FROM app.email_outbox WHERE dedupe_key = $1", [`INVITATION-AGAIN:${ref}`])).rows[0]!;
+  assert.deepEqual([failed.status, failed.last_error_code], ["FAILED", "TOKEN_STILL_VALID"]);
+  assert.equal((await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!.token_hash, before);
+  // Reenvío explícito del operador: el payload lleva el motivo.
+  assert.equal(await enqueueEmail(app, { kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION-RESEND:${ref}`, payload: { consentVersion: "v1-borrador", reissueReason: "OPERATOR_RESEND" } }), true);
+  await runOutboxTick(deps(mailer));
+  assert.equal(mailer.sent.length, sentBefore + 1);
+  assert.notEqual((await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!.token_hash, before);
+});
+
+test("el pool de la app no puede ejecutar el outbox (UPDATE) ni emitir token; el del mailer lee el destinatario por columnas", async () => {
+  const id = await seed("qa@example.invalid");
+  const ref = (await app.query<{ invitation_ref: string }>("SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!.invitation_ref;
+  await assert.rejects(app.query("UPDATE app.email_outbox SET status = 'SENT' WHERE email_id = $1", [id]), /permission denied/);
+  await assert.rejects(runOutboxTick(deps(new MemoryMailer(), { db: app })), /permission denied/);
+  assert.equal(await readGuardianEmail(mdb, ref), "qa@example.invalid");
+  assert.equal(await readGuardianEmail(mdb, "inv-no-existe"), null);
+  await runOutboxTick(deps(new MemoryMailer(), { batchSize: 100 })); // drena la fila sembrada
+});
+
 test("dos workers concurrentes (SKIP LOCKED): cada correo se envía una sola vez", async () => {
   const mailer = new MemoryMailer();
   const ids: string[] = [];
   for (let i = 0; i < 12; i++) ids.push(await seed("qa@example.invalid"));
-  await Promise.all([runOutboxTick(deps(mailer, { batchSize: 4 })), runOutboxTick(deps(mailer, { db: app2, batchSize: 4 })), runOutboxTick(deps(mailer, { batchSize: 4 })).catch(() => undefined)]);
+  await Promise.all([runOutboxTick(deps(mailer, { batchSize: 4 })), runOutboxTick(deps(mailer, { db: mdb2, batchSize: 4 })), runOutboxTick(deps(mailer, { batchSize: 4 })).catch(() => undefined)]);
   await runOutboxTick(deps(mailer, { batchSize: 20 }));
-  await runOutboxTick(deps(mailer, { db: app2, batchSize: 20 }));
+  await runOutboxTick(deps(mailer, { db: mdb2, batchSize: 20 }));
   assert.equal(mailer.sent.length, 12);
   assert.equal(new Set(mailer.sent.map((m) => m.text)).size, 12);
   for (const id of ids) assert.equal((await row(id)).status, "SENT");
@@ -163,7 +203,7 @@ test("muerte entre envío y marca SENT: queda SENDING y, vencido el lease, se re
   await runOutboxTick(deps(new MemoryMailer())); // drena filas PENDING de tests anteriores
   const id = await seed("qa@example.invalid");
   // La BD "se cae" justo al marcar SENT.
-  const flaky = { query: (async (sql: string, v?: readonly unknown[]) => (sql.includes("'SENDING'") && sql.includes("WHERE email_id") ? Promise.reject(new Error("db caída")) : app.query(sql, v as unknown[]))) as never };
+  const flaky = { query: (async (sql: string, v?: readonly unknown[]) => (sql.includes("'SENDING'") && sql.includes("WHERE email_id") ? Promise.reject(new Error("db caída")) : mdb.query(sql, v as unknown[]))) as never };
   await runOutboxTick(deps(mailer, { db: flaky }));
   assert.equal(mailer.sent.length, 1);
   assert.equal((await row(id)).status, "SENDING");
@@ -243,7 +283,7 @@ test("Mailpit: llegan invitación, OTP y recibo (vía SmtpMailer)", { skip: MAIL
     void outboxMailer;
     const rcpt = await seed("qa@example.invalid", "DECISION_RECEIPT");
     const inv = await seed("qa@example.invalid", "INVITATION");
-    await runOutboxTick({ db: app, mailer: smtp, policy: POLICY, logger, backoffMs: [0, 0] });
+    await runOutboxTick({ db: mdb, mailer: smtp, policy: POLICY, logger, backoffMs: [0, 0] });
     assert.equal((await row(rcpt)).status, "SENT");
     assert.equal((await row(inv)).status, "SENT");
     await sendOtpNow(smtp, "qa@example.invalid", CODE);

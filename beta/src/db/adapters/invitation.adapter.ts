@@ -5,7 +5,8 @@ import type { InvitationRepo } from "../../ports/invitation.port.ts";
 import { translating } from "../map-error.ts";
 import type { UnitOfWork } from "../unit-of-work.ts";
 
-export function createPgInvitationRepo(uow: UnitOfWork): InvitationRepo {
+/** `uow` = pool de la app (consent_app); `mailerUow` = pool del mailer (consent_mailer), el único con EXECUTE de arm_invitation_token. */
+export function createPgInvitationRepo(uow: UnitOfWork, mailerUow: UnitOfWork): InvitationRepo {
   return {
     import: (input) =>
       translating(() =>
@@ -24,8 +25,8 @@ export function createPgInvitationRepo(uow: UnitOfWork): InvitationRepo {
 
     armToken: (input) =>
       translating(() =>
-        uow.withTransaction(async (tx) => {
-          await tx.query("SELECT app.arm_invitation_token($1, $2, $3, $4)", [input.invitationRef, input.tokenHash, input.expiresAt, input.consentVersion]);
+        mailerUow.withTransaction(async (tx) => {
+          await tx.query("SELECT app.arm_invitation_token($1, $2, $3, $4, $5)", [input.invitationRef, input.tokenHash, input.expiresAt, input.consentVersion, input.reissueReason ?? null]);
         }),
       ),
 

@@ -31,6 +31,7 @@ describe("contrato de puertos: memoria", () => {
 describe("contrato de puertos: PostgreSQL", () => {
   let db: TestDb;
   let pool: ReturnType<typeof createPool>;
+  let mailerPool: ReturnType<typeof createPool>;
   let env: ContractEnv;
   let owner: Awaited<ReturnType<typeof connect>>;
 
@@ -44,8 +45,9 @@ describe("contrato de puertos: PostgreSQL", () => {
     }
     owner = await connectAsOwner(db);
     pool = createPool({ connectionString: db.appUrl, max: 4 });
+    mailerPool = createPool({ connectionString: db.mailerUrl, max: 2 });
     env = {
-      ports: createPgPorts(new PgUnitOfWork(pool)),
+      ports: createPgPorts(new PgUnitOfWork(pool), { mailerUow: new PgUnitOfWork(mailerPool) }),
       now: () => Date.now(),
       advance: (ms) => new Promise((r) => setTimeout(r, ms)),
       // La base fija expires_at = now() + 10 min: para vencerlo se desactiva el guard del dueño solo dentro de la tx (igual que tests/integration/functions.test.ts).
@@ -66,6 +68,7 @@ describe("contrato de puertos: PostgreSQL", () => {
   after(async () => {
     await owner.end();
     await pool.end();
+    await mailerPool.end();
     await db.drop();
   });
 

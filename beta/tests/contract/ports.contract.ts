@@ -68,7 +68,13 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
     const b2 = await env.ports.invitations.import({ studentRef: `stu-${uniq()}`, studentFirstName: "Ana", guardianEmail: "g2@example.test", batchRef: "batch-001" });
     const t1 = generateInvitationToken().tokenHash;
     const t2 = generateInvitationToken().tokenHash;
-    for (const h of [t1, t2]) await env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: h, expiresAt: new Date(env.now() + 60_000), consentVersion: "v-test" });
+    const exp = new Date(env.now() + 60_000);
+    await env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: t1, expiresAt: exp, consentVersion: "v-test" });
+    // SEC-CNS-024-V1 P2: con token vigente la rotación exige motivo (queda en el ledger); tope de vigencia 7 días.
+    await rejectsWith(env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: t2, expiresAt: exp, consentVersion: "v-test" }), "TOKEN_STILL_VALID");
+    await rejectsWith(env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: t2, expiresAt: exp, consentVersion: "v-test", reissueReason: "mal motivo" }), "INVALID_REISSUE_REASON");
+    await rejectsWith(env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: t2, expiresAt: new Date(env.now() + 8 * 86_400_000), consentVersion: "v-test", reissueReason: "OPERATOR_RESEND" }), "TOKEN_EXPIRY_TOO_LONG");
+    await env.ports.invitations.armToken({ invitationRef: b2.invitationRef, tokenHash: t2, expiresAt: exp, consentVersion: "v-test", reissueReason: "OPERATOR_RESEND" });
     assert.equal(await env.ports.invitations.openByTokenHash(t1), null);
     assert.equal((await env.ports.invitations.openByTokenHash(t2))?.invitationRef, b2.invitationRef);
   });
@@ -153,7 +159,8 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
     assert.deepEqual([auth.status, auth.decisionRef], ["AUTHORIZED", d.consentId]);
 
     const manage = await env.ports.revocations.getManageState(d.consentId);
-    assert.deepEqual([manage?.state, manage?.decisionMakerRef], ["GRANTED", DM]);
+    assert.equal(manage?.state, "GRANTED");
+    assert.ok(!("decisionMakerRef" in (manage ?? {})), "el seudónimo del apoderado no sale de la base hacia consent_app");
     // El OTP de decisión no sirve para revocar.
     await rejectsWith(env.ports.revocations.revoke({ consentId: d.consentId, verificationRef: ver, idempotencyKey: "rev-key-0001" }), "VERIFICATION_REQUIRED");
     const rotp = await env.ports.otp.issue({ parentRef: d.consentId, scope: "REVOCATION" });

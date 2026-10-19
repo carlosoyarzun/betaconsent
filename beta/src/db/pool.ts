@@ -2,10 +2,13 @@
 // origen: src/infra/adapters/postgres/pool.ts@9345b78 (createPool, guardBorrowedClient, logClientError; se elimina acquireCleanClient/TenantContextLeakError:
 // beta tiene un único tenant constante en la base y no usa GUC de sesión).
 //
-// Pool de PostgreSQL del proceso web: conecta como `consent_app` con CNS_DATABASE_URL (nunca el migrador).
+// Dos pools en el MISMO proceso Node (SEC-CNS-024-V1): `app` (consent_app, CNS_DATABASE_URL, 10 conexiones) atiende HTTP y NO puede emitir secretos;
+// `mailer` (consent_mailer, CNS_MAILER_DATABASE_URL, 2 conexiones) solo emite OTP/tokens y lleva el outbox. Nunca el migrador. assertPoolRoles verifica cada pool contra su rol.
 
 import pg from "pg";
 import type { Pool, PoolClient, QueryResult } from "pg";
+
+import { assertRuntimeRole, MAILER_ROLE, RUNTIME_ROLE } from "./assert-runtime-role.ts";
 
 /** Superficie mínima para consultar; la implementan Client, PoolClient y la transacción. */
 export interface Queryable {
@@ -33,6 +36,29 @@ export function createPool(options: CreatePoolOptions): Pool {
   // Un error en una conexión ociosa no debe tumbar el proceso ni filtrar detalles (solo name/code, sin mensaje).
   pool.on("error", (error) => logClientError("pool_idle_client_error", error));
   return pool;
+}
+
+export const APP_POOL_MAX = 10;
+export const MAILER_POOL_MAX = 2;
+
+export interface RuntimePools {
+  /** consent_app: peticiones HTTP. */
+  readonly app: Pool;
+  /** consent_mailer: issue_otp, arm_invitation_token y outbox. */
+  readonly mailer: Pool;
+}
+
+export function createPools(urls: { readonly appUrl: string; readonly mailerUrl: string }): RuntimePools {
+  return {
+    app: createPool({ connectionString: urls.appUrl, max: APP_POOL_MAX, applicationName: "consent-beta-app" }),
+    mailer: createPool({ connectionString: urls.mailerUrl, max: MAILER_POOL_MAX, applicationName: "consent-beta-mailer" }),
+  };
+}
+
+/** Gate de arranque por pool: el pool app debe conectar como consent_app y el mailer como consent_mailer (F-SB-02). Lanza RuntimeRoleError. */
+export async function assertPoolRoles(pools: RuntimePools): Promise<void> {
+  await assertRuntimeRole(pools.app, RUNTIME_ROLE);
+  await assertRuntimeRole(pools.mailer, MAILER_ROLE);
 }
 
 function logClientError(event: string, error: unknown): void {

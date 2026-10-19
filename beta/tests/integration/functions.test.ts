@@ -1,4 +1,5 @@
-// Gobierna: plan v2 H1-03 (funciones SECURITY DEFINER; criterios verificables de la tarea). Todo se ejecuta como consent_app, el rol del proceso web.
+// Gobierna: plan v2 H1-03 (funciones SECURITY DEFINER; criterios verificables de la tarea) + SEC-CNS-024-V1. consent_app (pool HTTP) llama import/open/verify/record/revoke/status;
+// consent_mailer (pool del mailer) llama issue_otp y arm_invitation_token. Ningún rol tiene ambos grupos.
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { after, before, test } from "node:test";
@@ -11,6 +12,7 @@ import { connect, connectAsOwner, createTestDb, failure, MIGRATIONS_DIR, type Te
 
 let db: TestDb;
 let app: Client;
+let mailer: Client;
 let owner: Client;
 
 const hex = (seed: string): string => createHash("sha256").update(seed).digest("hex");
@@ -26,28 +28,30 @@ before(async () => {
     await m.end();
   }
   app = await connect(db.appUrl);
+  mailer = await connect(db.mailerUrl);
   owner = await connectAsOwner(db);
 });
 after(async () => {
   await app.end();
+  await mailer.end();
   await owner.end();
   await db.drop();
 });
 
 /** Invitación importada, con token armado y abierta. Devuelve sus refs y el hash del token. */
-async function openedInvitation(c: Client = app): Promise<{ inv: string; student: string; token: string }> {
+async function openedInvitation(c: Client = app, m: Client = mailer): Promise<{ inv: string; student: string; token: string }> {
   const student = `stu-${uniq()}`;
   const imp = await c.query<{ invitation_ref: string; created: boolean }>("SELECT * FROM app.import_invitation($1, 'Ana', $2, 'batch-001')", [student, `g-${uniq()}@example.test`]);
   const inv = imp.rows[0]!.invitation_ref;
   const token = hex(`token-${inv}`);
-  await c.query(`SELECT app.arm_invitation_token($1, $2, ${EXPIRES}, 'v-test')`, [inv, token]);
+  await m.query(`SELECT app.arm_invitation_token($1, $2, ${EXPIRES}, 'v-test')`, [inv, token]);
   const opened = await c.query<{ invitation_ref: string; state: string }>("SELECT * FROM app.open_invitation($1)", [token]);
   assert.deepEqual(opened.rows.map((r) => [r.invitation_ref, r.state]), [[inv, "OPENED"]]);
   return { inv, student, token };
 }
 
 /** issue_otp genera el código en la base y lo devuelve en claro una sola vez. */
-async function issue(parent: string, scope = "DECISION", c: Client = app): Promise<{ ver: string; code: string }> {
+async function issue(parent: string, scope = "DECISION", c: Client = mailer): Promise<{ ver: string; code: string }> {
   const r = (await c.query<{ o_verification_ref: string; o_code: string }>("SELECT * FROM app.issue_otp($1, $2)", [parent, scope])).rows[0]!;
   assert.match(r.o_code, /^[0-9]{6}$/);
   return { ver: r.o_verification_ref, code: r.o_code };
@@ -91,7 +95,7 @@ test("import_invitation es idempotente y open_invitation no consume el token (2 
   assert.deepEqual(b.rows[0], { invitation_ref: a.rows[0]?.invitation_ref, created: false });
   const inv = a.rows[0]!.invitation_ref;
   const token = hex(`t-${inv}`);
-  await app.query(`SELECT app.arm_invitation_token($1, $2, ${EXPIRES}, 'v-test')`, [inv, token]);
+  await mailer.query(`SELECT app.arm_invitation_token($1, $2, ${EXPIRES}, 'v-test')`, [inv, token]);
   for (let i = 0; i < 2; i++) assert.equal((await app.query("SELECT * FROM app.open_invitation($1)", [token])).rows.length, 1);
   assert.deepEqual(await events(inv), ["INVITATION_CREATED", "INVITATION_SENT", "INVITATION_OPENED"]);
   assert.equal((await owner.query("SELECT token_consumed_at FROM app.invitation WHERE invitation_ref = $1", [inv])).rows[0]?.token_consumed_at, null);
@@ -372,4 +376,98 @@ test("el verify_otp confirmado no se revierte con un fallo posterior (WRONG_CODE
     await c.end();
   }
   assert.equal((await owner.query("SELECT attempts FROM app.otp_challenge WHERE verification_ref = $1", [ver])).rows[0]?.attempts, 1);
+});
+
+// ---- SEC-CNS-024-V1: quién emite secretos != quién atiende HTTP --------------------------------------------------------------------------------------------
+
+test("V1 (a): como consent_app, issue_otp y arm_invitation_token dan permission denied, y la cadena del informe (una sola sentencia) falla", async () => {
+  const { inv } = await openedInvitation();
+  assert.match((await failure(app, "SELECT * FROM app.issue_otp($1, 'DECISION')", [inv])) ?? "", /permission denied for function issue_otp/);
+  assert.match((await failure(app, "SELECT app.arm_invitation_token($1, $2, now() + interval '1 day', 'v-test')", [inv, hex("x")])) ?? "", /permission denied for function arm_invitation_token/);
+  // Cadena issue_otp -> verify_otp -> record_decision en UNA sentencia (reproducción del P0 de SEC-CNS-024-V1).
+  const chain =
+    "SELECT d.* FROM app.issue_otp($1) i, LATERAL app.verify_otp(i.o_verification_ref, i.o_code, 'attacker-dm-01') v, " +
+    "LATERAL app.record_decision($1, v.verification_ref, 'GRANTED', 'v-test', $2, 'idem-chain-01', '[\"STUDY_PARTICIPATION\"]'::jsonb) d";
+  assert.match((await failure(app, chain, [inv, hex("texto")])) ?? "", /permission denied for function issue_otp/);
+  // Re-armado del token de una invitación SENT y apertura (variante del informe): tampoco.
+  const armOpen = "SELECT o.* FROM app.arm_invitation_token($1, $2, now() + interval '1 day', 'v-test') a, LATERAL app.open_invitation($2) o";
+  assert.match((await failure(app, armOpen, [inv, hex("y")])) ?? "", /permission denied for function arm_invitation_token/);
+  // issue_otp(…,'REVOCATION') -> revoke_decision: la emisión ya no existe para este rol.
+  assert.match((await failure(app, "SELECT * FROM app.issue_otp('consent-x', 'REVOCATION')")) ?? "", /permission denied for function issue_otp/);
+  // Las columnas secretas no se leen: token_hash (basta para open_invitation), decision_maker_ref y la tabla completa.
+  assert.match((await failure(app, "SELECT token_hash FROM app.invitation")) ?? "", /permission denied/);
+  assert.match((await failure(app, "SELECT * FROM app.invitation")) ?? "", /permission denied/);
+  assert.match((await failure(app, "SELECT decision_maker_ref FROM app.consent_decision")) ?? "", /permission denied/);
+  assert.match((await failure(app, "SELECT decision_maker_ref FROM app.otp_challenge")) ?? "", /permission denied/);
+  assert.match((await failure(app, "UPDATE app.email_outbox SET status = 'SENT'")) ?? "", /permission denied/);
+  assert.equal((await owner.query("SELECT 1 FROM app.consent_decision WHERE invitation_ref = $1", [inv])).rows.length, 0);
+});
+
+test("V1 (b): como consent_mailer, verify_otp, record_decision y revoke_decision dan permission denied; no lee secretos ni dominio", async () => {
+  const { inv } = await openedInvitation();
+  const { ver, code } = await issue(inv);
+  assert.match((await failure(mailer, "SELECT * FROM app.verify_otp($1, $2, 'attacker-dm-01')", [ver, code])) ?? "", /permission denied for function verify_otp/);
+  assert.match((await failure(mailer, "SELECT * FROM app.record_decision($1, $2, 'GRANTED', 'v-test', $3, 'idem-mailer-01')", [inv, ver, hex("texto")])) ?? "", /permission denied for function record_decision/);
+  assert.match((await failure(mailer, "SELECT * FROM app.revoke_decision('consent-x', $1, 'rev-mailer-01')", [ver])) ?? "", /permission denied for function revoke_decision/);
+  for (const f of ["open_invitation($1)", "import_invitation($1, 'A', 'a@example.test', NULL)", "authorization_status($1)"]) {
+    assert.match((await failure(mailer, `SELECT * FROM app.${f}`, [hex("z")])) ?? "", /permission denied for function/);
+  }
+  for (const q of [
+    "SELECT token_hash FROM app.invitation", "SELECT state FROM app.invitation", "SELECT code_hash FROM app.otp_challenge", "SELECT * FROM app.otp_challenge",
+    "SELECT * FROM app.consent_decision", "SELECT * FROM app.revocation", "SELECT * FROM integrity.audit_event", "SELECT * FROM ops.db_catalog",
+    "UPDATE app.invitation SET state = 'CANCELLED'", "UPDATE app.email_outbox SET payload = '{}'::jsonb", "DELETE FROM app.email_outbox", "INSERT INTO app.email_outbox (kind, invitation_ref, dedupe_key) VALUES ('INVITATION', 'x', 'k')",
+    "SELECT ext.gen_random_bytes(4)", "SELECT ledger_gen.ledger_append('Invitation','x','INVITATION_CREATED','HUMAN','OPERATOR','{}'::jsonb,NULL)",
+  ]) {
+    assert.match((await failure(mailer, q)) ?? "", /permission denied/, q);
+  }
+  // Lo que SÍ necesita el worker.
+  assert.equal((await mailer.query("SELECT guardian_email, student_first_name FROM app.invitation WHERE invitation_ref = $1", [inv])).rows.length, 1);
+  assert.equal((await mailer.query("SELECT count(*)::int AS n FROM app.email_outbox")).rows.length, 1);
+});
+
+test("V1 (c): la vigencia del token en la base no supera 7 días (P-10, +60 s de tolerancia de reloj); 7 días exactos sí", async () => {
+  const imp = await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Ana', $2, 'batch-001')", [`stu-${uniq()}`, `g-${uniq()}@example.test`]);
+  const ref = imp.rows[0]!.invitation_ref;
+  assert.match((await failure(mailer, "SELECT app.arm_invitation_token($1, $2, now() + interval '7 days 2 minutes', 'v-test')", [ref, hex("long-1")])) ?? "", /TOKEN_EXPIRY_TOO_LONG/);
+  assert.match((await failure(mailer, "SELECT app.arm_invitation_token($1, $2, now() + interval '10 years', 'v-test')", [ref, hex("long-2")])) ?? "", /TOKEN_EXPIRY_TOO_LONG/);
+  assert.match((await failure(mailer, "SELECT app.arm_invitation_token($1, $2, now() - interval '1 minute', 'v-test')", [ref, hex("past")])) ?? "", /TOKEN_EXPIRY_IN_PAST/);
+  await mailer.query("SELECT app.arm_invitation_token($1, $2, now() + interval '7 days', 'v-test')", [ref, hex("ok-7d")]);
+  assert.equal((await owner.query("SELECT state FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]?.state, "SENT");
+});
+
+test("V1 P2: rotar un token vigente exige motivo (INVITATION_LINK_REISSUED en el ledger); un token vencido o READY no", async () => {
+  const imp = await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Ana', $2, 'batch-001')", [`stu-${uniq()}`, `g-${uniq()}@example.test`]);
+  const ref = imp.rows[0]!.invitation_ref;
+  const arm = (hash: string, reason: string | null = null, interval = "1 day"): Promise<unknown> =>
+    mailer.query(`SELECT app.arm_invitation_token($1, $2, now() + interval '${interval}', 'v-test', $3)`, [ref, hash, reason]);
+  await arm(hex("t1")); // READY>SENT
+  await assert.rejects(arm(hex("t2")), /TOKEN_STILL_VALID/); // token vigente, sin motivo: no se rota
+  await assert.rejects(arm(hex("t2"), "motivo en minusculas"), /INVALID_REISSUE_REASON/);
+  const tokenHash = async (r: string): Promise<string> => (await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [r])).rows[0]!.token_hash;
+  assert.equal(await tokenHash(ref), hex("t1")); // el token original sigue vivo
+  await arm(hex("t3"), "OPERATOR_RESEND"); // reenvío explícito
+  assert.equal(await tokenHash(ref), hex("t3")); // el anterior murió
+  assert.equal((await app.query("SELECT * FROM app.open_invitation($1)", [hex("t1")])).rows.length, 0);
+  assert.deepEqual(await events(ref), ["INVITATION_CREATED", "INVITATION_SENT", "INVITATION_TOKEN_ROTATED", "INVITATION_LINK_REISSUED"]);
+  const ev = (await owner.query<{ payload: { reason: string } }>("SELECT payload FROM integrity.audit_event WHERE aggregate_id = $1 AND event_type = 'INVITATION_LINK_REISSUED'", [ref])).rows[0]!;
+  assert.equal(ev.payload.reason, "OPERATOR_RESEND");
+  const rep = await verifyLedger(owner);
+  assert.equal(rep.ok, true, JSON.stringify(rep));
+
+  // Token vencido: se puede rearmar sin motivo (otra invitación SENT cuyo token venció).
+  const imp2 = await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Ana', $2, 'batch-001')", [`stu-${uniq()}`, `g-${uniq()}@example.test`]);
+  const ref2 = imp2.rows[0]!.invitation_ref;
+  await mailer.query("SELECT app.arm_invitation_token($1, $2, now() + interval '1 day', 'v-test')", [ref2, hex("u1")]);
+  await owner.query("BEGIN");
+  try {
+    await owner.query("ALTER TABLE app.invitation DISABLE TRIGGER invitation_ledger_guard");
+    await owner.query("UPDATE app.invitation SET token_expires_at = now() - interval '1 minute' WHERE invitation_ref = $1", [ref2]);
+    await owner.query("ALTER TABLE app.invitation ENABLE ALWAYS TRIGGER invitation_ledger_guard");
+    await owner.query("COMMIT");
+  } catch (e) {
+    await owner.query("ROLLBACK");
+    throw e;
+  }
+  await mailer.query("SELECT app.arm_invitation_token($1, $2, now() + interval '1 day', 'v-test')", [ref2, hex("u2")]);
+  assert.equal((await app.query("SELECT * FROM app.open_invitation($1)", [hex("u2")])).rows.length, 1);
 });

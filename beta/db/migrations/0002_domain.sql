@@ -430,21 +430,26 @@ ALTER TABLE app.consent_decision ENABLE ALWAYS TRIGGER consent_decision_ledger_e
 -- Grants mínimos a consent_app -------------------------------------------------------------------------------------------------------
 -- TODO H1-03: import_invitation / arm_invitation_token / open_invitation / issue_otp / verify_otp / record_decision / *_revocation / claim_emails /
 -- record_api_nonce serán funciones SECURITY DEFINER (dueño consent_owner, EXECUTE solo para consent_app); entonces se retiran los INSERT/UPDATE directos de abajo.
-GRANT SELECT ON app.invitation TO consent_app;
+-- SEC-CNS-024-V1: consent_app lee invitation POR COLUMNAS y sin token_hash (ese hash basta para llamar open_invitation). La fila del token la mueven las funciones del dueño.
+GRANT SELECT (tenant_id, invitation_ref, student_ref, student_first_name, guardian_email, state, token_expires_at, token_consumed_at, consent_version, import_batch_ref, reissue_of_ref, created_at)
+  ON app.invitation TO consent_app;
 GRANT INSERT (invitation_ref, student_ref, student_first_name, guardian_email, import_batch_ref, reissue_of_ref) ON app.invitation TO consent_app; -- TODO H1-03: pasa a import_invitation()
 
--- Sin SELECT de code_hash: el verificador jamás sale de la BD; lo calcula issue_otp y lo compara verify_otp.
-GRANT SELECT (tenant_id, verification_ref, scope, parent_ref, attempts, state, expires_at, consumed_at, decision_maker_ref, send_count, send_window_start, last_sent_at, created_at)
+-- Sin SELECT de code_hash ni de decision_maker_ref (lo comparan verify_otp/revoke_decision dentro de la base): el verificador jamás sale de la BD; lo calcula issue_otp y lo compara verify_otp.
+GRANT SELECT (tenant_id, verification_ref, scope, parent_ref, attempts, state, expires_at, consumed_at, send_count, send_window_start, last_sent_at, created_at)
   ON app.otp_challenge TO consent_app;
 -- Sin INSERT ni UPDATE sobre otp_challenge (state, code_hash, attempts): TODO H1-03 issue_otp() / verify_otp().
 
 -- Sin INSERT ni UPDATE sobre consent_decision ni revocation: TODO H1-03 record_decision() / request_revocation() / confirm_revocation() / apply_revocation().
-GRANT SELECT ON app.consent_decision, app.revocation TO consent_app;
+-- consent_decision por columnas SIN decision_maker_ref (el seudónimo del apoderado; revoke_decision lo compara dentro de la base).
+GRANT SELECT (tenant_id, consent_id, invitation_ref, student_ref, verification_ref, state, purposes, consent_version, consent_text_sha256, idempotency_key_hash, decided_at, revoked_at)
+  ON app.consent_decision TO consent_app;
+GRANT SELECT ON app.revocation TO consent_app;
 
 -- app.otp_budget: sin grants (solo las funciones de H1-03).
 
 GRANT SELECT, INSERT (kind, invitation_ref, dedupe_key, payload, next_attempt_at) ON app.email_outbox TO consent_app;
-GRANT UPDATE (status, attempts, next_attempt_at, provider_message_id, last_error_code) ON app.email_outbox TO consent_app; -- TODO H1-03: pasa a claim_emails()/mark_email_*()
+-- El UPDATE de las marcas del outbox NO es de consent_app: lo tiene solo consent_mailer (0003, SEC-CNS-024-V1).
 GRANT SELECT ON app.email_outbox TO consent_app;
 
 GRANT SELECT, INSERT (key_id, nonce) ON app.api_nonce TO consent_app; -- TODO H1-03: pasa a record_api_nonce()
@@ -471,8 +476,11 @@ BEGIN
   END LOOP;
   IF pg_catalog.has_table_privilege('consent_app', 'app.consent_decision', 'UPDATE') OR pg_catalog.has_table_privilege('consent_app', 'app.consent_decision', 'INSERT')
      OR pg_catalog.has_any_column_privilege('consent_app', 'app.otp_challenge', 'UPDATE')
-     OR pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'code_hash', 'SELECT') THEN
-    RAISE EXCEPTION 'consent_app no puede escribir otp_challenge/consent_decision ni leer code_hash';
+     OR pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'code_hash', 'SELECT')
+     OR pg_catalog.has_column_privilege('consent_app', 'app.invitation', 'token_hash', 'SELECT')
+     OR pg_catalog.has_column_privilege('consent_app', 'app.consent_decision', 'decision_maker_ref', 'SELECT')
+     OR pg_catalog.has_column_privilege('consent_app', 'app.otp_challenge', 'decision_maker_ref', 'SELECT') THEN
+    RAISE EXCEPTION 'consent_app no puede escribir otp_challenge/consent_decision ni leer code_hash, token_hash o decision_maker_ref';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger tg JOIN pg_catalog.pg_class c ON c.oid = tg.tgrelid
               WHERE c.oid IN ('integrity.audit_event'::regclass, 'app.invitation'::regclass, 'app.otp_challenge'::regclass, 'app.consent_decision'::regclass, 'ops.db_catalog'::regclass)
