@@ -9,7 +9,9 @@ import type { Pool } from "pg";
 import { generateInvitationToken } from "../../../src/domain/crypto.ts";
 import { createPgPorts } from "../../../src/db/adapters/index.ts";
 import { migrate } from "../../../src/db/migrate.ts";
-import { createPool } from "../../../src/db/pool.ts";
+import { createPools } from "../../../src/db/pool.ts";
+import type { RuntimePools } from "../../../src/db/pool.ts";
+import { readGuardianEmail } from "../../../src/mail/otp.ts";
 import { PgUnitOfWork } from "../../../src/db/unit-of-work.ts";
 import { MemoryMailer } from "../../../src/mail/memory-mailer.ts";
 import { enqueueEmail, runOutboxTick } from "../../../src/mail/outbox-worker.ts";
@@ -30,7 +32,8 @@ const PURPOSES = ["STUDY_PARTICIPATION", "AUDIO_RECORDING", "AUTOMATED_ANALYSIS"
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 let db: TestDb;
-let pool: Pool;
+let pools: RuntimePools;
+let pool: Pool; // = pools.app
 let server: Server;
 let base: string;
 const mailer = new MemoryMailer(ORIGIN);
@@ -47,12 +50,14 @@ before(async () => {
   } finally {
     await m.end();
   }
-  pool = createPool({ connectionString: db.appUrl });
-  ports = createPgPorts(new PgUnitOfWork(pool));
+  pools = createPools({ appUrl: db.appUrl, mailerUrl: db.mailerUrl });
+  pool = pools.app;
+  ports = createPgPorts(new PgUnitOfWork(pools.app), { mailerUow: new PgUnitOfWork(pools.mailer) });
   const app = createApp({
     config: { publicOrigin: ORIGIN, sessionSecret: SECRET, environment: "LOCAL" },
     ports,
     recipients: createPgRecipientLookup(pool),
+    readGuardianEmail: (ref) => readGuardianEmail(pools.mailer, ref),
     mailer,
     policy: POLICY,
     outbox: { enqueue: async (i) => void (await enqueueEmail(pool, i)) },
@@ -69,7 +74,8 @@ before(async () => {
 });
 after(async () => {
   await new Promise((r) => server.close(r));
-  await pool.end();
+  await pools.app.end();
+  await pools.mailer.end();
   await db.drop();
 });
 
@@ -107,7 +113,7 @@ async function decide(b: Browser, choice: "GRANT" | "DECLINE"): Promise<{ consen
 }
 
 async function tick(): Promise<void> {
-  await runOutboxTick({ db: pool, mailer, policy: POLICY, logger: { info() {}, warn() {} }, backoffMs: [0, 0], manageLinkPath: (c) => `/m/${signManageToken(SECRET, c, Math.floor(Date.now() / 1000) + MANAGE_TOKEN_TTL_SECONDS)}` });
+  await runOutboxTick({ db: pools.mailer, mailer, policy: POLICY, logger: { info() {}, warn() {} }, backoffMs: [0, 0], manageLinkPath: (c) => `/m/${signManageToken(SECRET, c, Math.floor(Date.now() / 1000) + MANAGE_TOKEN_TTL_SECONDS)}` });
 }
 
 test("CSP exacta, cabeceras y cookie CSRF __Host- en el shell; assets por manifest", async () => {

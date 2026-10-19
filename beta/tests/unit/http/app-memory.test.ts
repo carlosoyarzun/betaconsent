@@ -20,7 +20,8 @@ before(async () => {
   const app = createApp({
     config: { publicOrigin: ORIGIN, sessionSecret: Buffer.alloc(48, 4), environment: "LOCAL" },
     ports,
-    recipients: { forInvitation: async () => "a@pruebas.example.invalid", forConsent: async () => "a@pruebas.example.invalid" },
+    recipients: { forInvitation: async () => "a@pruebas.example.invalid" },
+    readGuardianEmail: async () => "a@pruebas.example.invalid",
     mailer,
     policy: { dataClass: "SYNTHETIC", allowlist: ["@pruebas.example.invalid"] },
     outbox: { enqueue: async () => undefined },

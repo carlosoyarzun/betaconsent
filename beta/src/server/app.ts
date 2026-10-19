@@ -53,7 +53,10 @@ export interface OutboxEnqueuer {
 export interface AppDeps {
   readonly config: Pick<Config, "publicOrigin" | "sessionSecret" | "environment">;
   readonly ports: Ports;
+  /** Pool consent_app: solo para el seudónimo del canal en verify. */
   readonly recipients: RecipientLookup;
+  /** Pool consent_mailer: correo del apoderado para ENVIAR el OTP (readGuardianEmail). */
+  readonly readGuardianEmail: (invitationRef: string) => Promise<string | null>;
   readonly mailer: Mailer;
   readonly policy: RecipientPolicy;
   readonly outbox: OutboxEnqueuer;
@@ -278,8 +281,9 @@ export function createApp(deps: AppDeps): App {
     if (!parent) return uniform404();
     if (mode === "resend" && !s.ver) return uniform404();
     const scope = otpScope(s);
-    const to = s.k === "D" ? await deps.recipients.forInvitation(parent) : await deps.recipients.forConsent(parent);
-    if (!to) return uniform404();
+    // REVOCATION|MANAGE: el padre es la decisión; la invitación que la originó da el destinatario.
+    const invitationRef = s.k === "D" ? parent : ((await ports.revocations.getManageState(parent))?.invitationRef ?? null);
+    if (!invitationRef) return uniform404();
     let issued;
     try {
       issued = await (mode === "resend" ? ports.otp.resend : ports.otp.issue)({ parentRef: parent, scope });
@@ -303,6 +307,8 @@ export function createApp(deps: AppDeps): App {
       throw e;
     }
     try {
+      const to = await deps.readGuardianEmail(invitationRef);
+      if (!to) return uniform404();
       await sendOtpNow(deps.mailer, to, issued.code, { policy: deps.policy });
     } catch (e) {
       if (e instanceof OtpSuppressedError) {
@@ -384,17 +390,12 @@ export function createApp(deps: AppDeps): App {
     if (!s?.ver || !s.sc || s.vok) return uniform404();
     const code = typeof body.code === "string" && /^[0-9A-Za-z]{1,16}$/.test(body.code) ? body.code : null;
     if (code === null) return problem(422, "OTP_CODE_REJECTED");
-    let decisionMakerRef: string;
-    if (s.k === "D") {
-      const to = s.inv ? await deps.recipients.forInvitation(s.inv) : null;
-      if (!to) return uniform404();
-      decisionMakerRef = deriveDecisionMakerRef(config.sessionSecret, to);
-    } else {
-      // El OTP de gestión/revocación se verifica con el seudónimo que quedó en la decisión (revoke_decision exige igualdad).
-      const ms = s.con ? await ports.revocations.getManageState(s.con) : null;
-      if (!ms) return uniform404();
-      decisionMakerRef = ms.decisionMakerRef;
-    }
+    // Seudónimo del canal verificado (HKDF del correo). En gestión/revocación revoke_decision exige que sea el mismo que quedó en la decisión (mismo correo => mismo seudónimo).
+    let invitationRef: string | null | undefined = s.inv;
+    if (s.k === "M") invitationRef = s.con ? ((await ports.revocations.getManageState(s.con))?.invitationRef ?? null) : null;
+    const to = invitationRef ? await deps.recipients.forInvitation(invitationRef) : null;
+    if (!to) return uniform404();
+    const decisionMakerRef = deriveDecisionMakerRef(config.sessionSecret, to);
     const result = await ports.otp.verify({ verificationRef: s.ver, code, decisionMakerRef });
     const rights = s.sc !== "DECISION";
     switch (result.outcome) {

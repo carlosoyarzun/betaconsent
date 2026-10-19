@@ -31,12 +31,13 @@ async function freePort(): Promise<number> {
   });
 }
 
-function run(databaseUrl: string, port: number) {
+function run(databaseUrl: string, port: number, mailerUrl: string = db.mailerUrl) {
   const child = spawn(process.execPath, [join(BETA_ROOT, "src", "server", "main.ts")], {
     env: {
       PATH: process.env.PATH ?? "",
       CNS_ENVIRONMENT: "LOCAL",
       CNS_DATABASE_URL: databaseUrl,
+      CNS_MAILER_DATABASE_URL: mailerUrl,
       CNS_SESSION_SECRET: Buffer.alloc(48, 3).toString("base64"),
       CNS_PUBLIC_ORIGIN: "http://localhost:8080",
       CNS_SMTP_URL: "smtp://127.0.0.1:1",

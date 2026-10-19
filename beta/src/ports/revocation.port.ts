@@ -6,6 +6,8 @@ export interface ManageState {
   readonly state: DecisionState;
   // decision_maker_ref NO se expone: consent_app no lo lee (SEC-CNS-024-V1). revoke_decision compara dentro de la base el seudónimo del OTP con el de la decisión.
   readonly decidedAt: Date;
+  /** Invitación que originó la decisión (consent_app la lee): sirve para resolver el correo del OTP de gestión/revocación. */
+  readonly invitationRef: string;
 }
 
 export interface RevocationRepo {

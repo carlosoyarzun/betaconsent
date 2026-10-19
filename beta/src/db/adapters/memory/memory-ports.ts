@@ -166,7 +166,7 @@ export function createMemoryPorts(options: MemoryPortsOptions): Ports {
       },
       async getManageState(consentId) {
         const d = s.decisions.get(consentId);
-        return d ? { consentId, state: d.state, decidedAt: new Date(d.decidedAt) } : null;
+        return d ? { consentId, state: d.state, decidedAt: new Date(d.decidedAt), invitationRef: d.invitationRef } : null;
       },
     },
 

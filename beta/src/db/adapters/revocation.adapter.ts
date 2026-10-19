@@ -20,12 +20,12 @@ export function createPgRevocationRepo(uow: UnitOfWork): RevocationRepo {
     getManageState: (consentId) =>
       translating(() =>
         uow.withTransaction(async (tx) => {
-          const r = await tx.query<{ consent_id: string; state: DecisionState; decided_at: Date }>(
-            "SELECT consent_id, state, decided_at FROM app.consent_decision WHERE consent_id = $1",
+          const r = await tx.query<{ consent_id: string; state: DecisionState; decided_at: Date; invitation_ref: string }>(
+            "SELECT consent_id, state, decided_at, invitation_ref FROM app.consent_decision WHERE consent_id = $1",
             [consentId],
           );
           const row = r.rows[0];
-          return row ? { consentId: row.consent_id, state: row.state, decidedAt: row.decided_at } : null;
+          return row ? { consentId: row.consent_id, state: row.state, decidedAt: row.decided_at, invitationRef: row.invitation_ref } : null;
         }),
       ),
   };
