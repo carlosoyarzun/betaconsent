@@ -37,6 +37,7 @@ const STATIC_ROUTES = new Set([
 /** Ruta sin tokens ni query: `/i/<token>` => `/i/:token`; rutas desconocidas => `/other`. Solo recibe el pathname (nunca la URL completa). */
 export function normalizeRoute(pathname: string): string {
   if (/^\/(i|m|r)\/[^/]+$/.test(pathname)) return `/${pathname[1]}/:token`;
+  if (/^\/api\/v1\/authorization-status\/[^/]+$/.test(pathname)) return "/api/v1/authorization-status/:studentRef";
   if (pathname.startsWith("/assets/")) return "/assets/:file";
   return STATIC_ROUTES.has(pathname) ? pathname : "/other";
 }

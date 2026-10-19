@@ -19,6 +19,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import type { Queryable } from "../db/pool.ts";
 import { deriveDecisionMakerRef } from "../domain/crypto.ts";
 import { isDomainError } from "../domain/errors.ts";
 import type { DomainErrorCode } from "../domain/errors.ts";
@@ -38,6 +39,7 @@ import {
   CSRF_COOKIE, CSRF_HEADER, generateCsrfToken, INVITATION_HANDLE_COOKIE, MANAGE_HANDLE_COOKIE, safeEqual, securityHeaders, serializeClearCookie,
   serializeCsrfCookie, serializeHttpOnlyCookie, SESSION_COOKIE,
 } from "./http-security.ts";
+import { createAuthorizationApi } from "./api/authorization.ts";
 import type { Logger } from "./log.ts";
 import { normalizeRoute } from "./log.ts";
 import type { RecipientLookup } from "./recipients.ts";
@@ -46,7 +48,10 @@ import type { SpaBundle } from "./spa-assets.ts";
 export const MAX_BODY_BYTES = 16 * 1024;
 
 export interface AppDeps {
-  readonly config: Pick<Config, "publicOrigin" | "sessionSecret" | "environment">;
+  readonly config: Pick<Config, "publicOrigin" | "sessionSecret" | "environment"> & Partial<Pick<Config, "apiKeys">>;
+  /** API-CNS-001 (H1-08): pool consent_app para nonce, authorization_status y api_access_log. Sin esto (o sin apiKeys) la ruta /api/v1 no existe. */
+  readonly apiDb?: Queryable;
+  readonly apiRateLimitPerMinute?: number;
   readonly ports: Ports;
   /** Pool consent_app: solo para el seudónimo del canal en verify. */
   readonly recipients: RecipientLookup;
@@ -109,6 +114,7 @@ const header = (req: IncomingMessage, name: string): string | undefined => {
 export function createApp(deps: AppDeps): App {
   const { config, ports, logger } = deps;
   const codecs = createCodecs(config.sessionSecret);
+  const authorizationApi = deps.apiDb && config.apiKeys ? createAuthorizationApi({ keys: config.apiKeys, db: deps.apiDb, logger, rateLimitPerMinute: deps.apiRateLimitPerMinute }) : null;
   const secure = (): string[] => [];
   void secure;
 
@@ -617,7 +623,9 @@ export function createApp(deps: AppDeps): App {
       const pathname = (req.url ?? "/").split("?")[0] ?? "/";
       let status = 500;
       try {
-        status = await dispatch(req, res, requestId);
+        status = authorizationApi && pathname.startsWith("/api/v1/authorization-status/")
+          ? await authorizationApi.handle(req, res, requestId)
+          : await dispatch(req, res, requestId);
       } finally {
         logger.info("request", {
           method: (req.method ?? "GET").slice(0, 8),

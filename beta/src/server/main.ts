@@ -40,6 +40,7 @@ async function main(): Promise<void> {
       policy,
       spa,
       logger,
+      apiDb: pools.app,
       checkHealth: async () => void (await pool.query("SELECT 1")),
     });
     const running = await startHttpServer({ app, bind: config.bind, port: config.port, logger, requireSecure: config.environment === "REAL" });

@@ -1,0 +1,83 @@
+# Gobierna: plan v2 H1-08; API-CNS-001; DEC-BR-022 rev. 2 (a) NOT_AUTHORIZED inmediato tras revocar, (b) consulta antes de cada lectura, (c) fail-closed, (e) auditable.
+openapi: 3.1.0
+info:
+  title: Consent App - API de autorización para LectorPro (API-CNS-001)
+  version: 1.0.0
+  description: >
+    Consulta si un estudiante puede ser leído. Lectura fresca en cada llamada (sin caché). Un studentRef desconocido responde 200 NOT_AUTHORIZED
+    (no revela existencia). El cliente DEBE tratar cualquier error como NOT_AUTHORIZED (fail-closed).
+servers:
+  - url: https://consent.example.invalid
+security:
+  - hmac-v1: []
+paths:
+  /api/v1/authorization-status/{studentRef}:
+    get:
+      operationId: getAuthorizationStatus
+      summary: Estado de autorización del estudiante
+      parameters:
+        - name: studentRef
+          in: path
+          required: true
+          description: Referencia opaca del estudiante (sin PII). Patrón A-Za-z0-9._:- hasta 100 caracteres; otra forma responde NOT_AUTHORIZED.
+          schema: { type: string, maxLength: 100 }
+        - { $ref: "#/components/parameters/KeyId" }
+        - { $ref: "#/components/parameters/Timestamp" }
+        - { $ref: "#/components/parameters/Nonce" }
+        - { $ref: "#/components/parameters/Signature" }
+      responses:
+        "200":
+          description: Estado vigente (incluye estudiante desconocido, declinado o revocado como NOT_AUTHORIZED).
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthorizationStatus" }
+        "401":
+          description: Firma inválida, clave desconocida, replay de nonce o fuera de la ventana de ±60 s. Cuerpo uniforme (no distingue la causa).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429":
+          description: Más de 60 solicitudes por minuto para el keyId.
+          headers:
+            Retry-After: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: La base de datos no responde. El cliente trata esto como NOT_AUTHORIZED.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Problem" }
+      # No existe 404 para esta ruta: un studentRef desconocido es 200 NOT_AUTHORIZED.
+components:
+  securitySchemes:
+    hmac-v1:
+      type: apiKey
+      in: header
+      name: X-CNS-Signature
+      description: >
+        Cabeceras X-CNS-Key-Id, X-CNS-Timestamp (unix s, ventana ±60 s), X-CNS-Nonce (>= 16 bytes base64url, único por key dentro de la ventana) y
+        X-CNS-Signature = base64url(HMAC-SHA256(secret, METHOD "\n" PATH "\n" TIMESTAMP "\n" NONCE "\n" SHA256_hex(body))). PATH es la ruta tal como se envía, sin query.
+        Dos claves activas (keyId distinto) permiten rotar sin corte; secreto de >= 32 bytes, nunca en logs.
+  parameters:
+    KeyId: { name: X-CNS-Key-Id, in: header, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,40}$" } }
+    Timestamp: { name: X-CNS-Timestamp, in: header, required: true, schema: { type: string, pattern: "^[0-9]{1,12}$" } }
+    Nonce: { name: X-CNS-Nonce, in: header, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{22,128}$" } }
+    Signature: { name: X-CNS-Signature, in: header, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" } }
+  schemas:
+    AuthorizationStatus:
+      type: object
+      required: [status, asOf]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [AUTHORIZED, NOT_AUTHORIZED] }
+        asOf: { type: string, format: date-time, description: RFC 3339 }
+        decisionRef: { type: string, description: Referencia opaca de la decisión; solo presente con AUTHORIZED. }
+    Problem:
+      type: object
+      required: [code, status]
+      properties:
+        code: { type: string }
+        status: { type: integer }
