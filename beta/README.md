@@ -71,3 +71,7 @@ El código OTP se genera (pgcrypto) y se verifica DENTRO de la base; no existe `
 el código viaja al proceso Node (pool del mailer) para ir al correo. `verify_otp` corre siempre en su propia transacción (`OtpRepo.verify` no admite unidad de trabajo externa). Ventana verificación -> decisión: 10 min.
 Arranque: `assertEnvironment` (entorno vs catálogo) y `assertRuntimeRole` (rechaza superusuario, BYPASSRLS, `session_user != current_user`, membresías). `pg_dump -Fc` + `pg_restore` restaura el ledger (CHECK con `now()` van NOT VALID).
 Requiere la extensión `pgcrypto` (incluida en postgres:16; la crea el dueño en el esquema `ext`, sin USAGE para `consent_app`).
+
+## Despliegue en VPS (H1-12)
+Paquete en `beta/deploy/` (Caddy + una unidad systemd + `.env`, Ubuntu 24.04; sin nftables ni backups, eso es H2). Genera el zip desde la raíz del repo con `beta/deploy/build-package.sh`
+(`build/consent-beta-deploy.zip`) y sigue `beta/deploy/README-DEPLOY-BETA.md`. Solo datos sintéticos y destinatarios de prueba; `CNS_ENVIRONMENT=LOCAL` es el único modo soportado en H1 (REAL = H2-08).
