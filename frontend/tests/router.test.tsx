@@ -33,7 +33,7 @@ describe("router", () => {
     render(<App />);
     expect(screen.getByRole("heading", { level: 1, name: "Bienvenida a la invitación" })).toBeInTheDocument();
     act(() => navigate("/verify"));
-    expect(screen.getByRole("heading", { level: 1, name: "Pantalla pendiente de migración" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Verifica el código" })).toBeInTheDocument();
     act(() => navigate("/no-existe"));
     expect(screen.getByRole("heading", { level: 1, name: "Página no encontrada" })).toBeInTheDocument();
   });
