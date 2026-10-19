@@ -1,0 +1,22 @@
+{
+  "name": "consent-beta",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:unit": "node --test \"tests/unit/**/*.test.ts\"",
+    "test:integration": "node --test --test-concurrency=1 \"tests/integration/**/*.test.ts\"",
+    "migrate": "node src/db/migrate-cli.ts",
+    "ci": "npm run typecheck && npm run test:unit && npm run test:integration"
+  },
+  "dependencies": {
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4",
+    "typescript": "6.0.3"
+  }
+}
