@@ -2,6 +2,7 @@
 // allowlist sintética, reintentos, concurrencia y OTP sin rastro. La parte Mailpit corre solo si MAILPIT_SMTP_URL y MAILPIT_API_URL
 // están definidas (CI: servicio axllent/mailpit del job beta-integration; local: docker run -p 1025:1025 -p 8025:8025 axllent/mailpit).
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { after, before, test } from "node:test";
 
 import type { Client } from "pg";
@@ -60,8 +61,9 @@ function deps(mailer: MemoryMailer, over: Partial<OutboxDeps> = {}): OutboxDeps 
 /** Crea invitación (READY) vía los grants de consent_app y encola un correo. Devuelve email_id. */
 async function seed(email: string, kind: "INVITATION" | "DECISION_RECEIPT" = "INVITATION"): Promise<string> {
   const n = ++seq;
-  const ref = `inv-${n}`;
-  await app.query("INSERT INTO app.invitation (invitation_ref, student_ref, student_first_name, guardian_email) VALUES ($1, $2, 'Valentina', $3)", [ref, `stu-${n}`, email]);
+  // consent_app ya no inserta en app.invitation (0003): la invitación nace por import_invitation().
+  const imp = await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Valentina', $2, 'batch-mail')", [`stu-${n}-${randomBytes(3).toString("hex")}`, email]);
+  const ref = imp.rows[0]!.invitation_ref;
   const payload = kind === "INVITATION" ? { linkPath: `/i/tok${n}` } : RECEIPT_PAYLOAD;
   assert.equal(await enqueueEmail(app, { kind, invitationRef: ref, dedupeKey: `${kind}:${ref}`, payload }), true);
   return (await app.query<{ email_id: string }>("SELECT email_id FROM app.email_outbox WHERE invitation_ref = $1", [ref])).rows[0]!.email_id;
