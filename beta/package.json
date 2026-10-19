@@ -16,7 +16,8 @@
     "build:frontend": "npm run typecheck:frontend && vite build --config frontend/vite.config.ts",
     "test:frontend": "vitest run --config frontend/vite.config.ts",
     "dev:frontend": "vite --config frontend/vite.config.ts",
-    "check:dist": "node scripts/check-dist.ts"
+    "check:dist": "node scripts/check-dist.ts",
+    "start": "node src/server/main.ts"
   },
   "dependencies": {
     "nodemailer": "10.1.7",
