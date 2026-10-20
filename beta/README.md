@@ -1,0 +1,53 @@
+# consent-beta (reconstrucción mínima, 1 colegio)
+
+Gobierna: DEC de Carlos "Reconstrucción mínima de Consent App para un colegio beta" (2026-10-19) y el plan v2
+(H1-01 esqueleto, H1-02 esquema + roles). Carpeta autocontenida: no importa nada de `src/`, `db/` ni `frontend/`;
+lo reutilizado se copió con cabecera `// origen: <ruta>@9345b78`. Solo datos sintéticos hasta el Hito 2.
+
+Node 24 con type-stripping (`node src/...ts`, sin build). Dependencias de producción: `pg` y `nodemailer` (solo en `src/mail/smtp-mailer.ts`).
+
+## Correr en local (Postgres temporal, fuera del repo)
+```
+cd beta && npm ci
+eval "$(scripts/pg-temp.sh start)"    # clúster efímero + TEST_DATABASE_URL y PSQL (nunca el Postgres de uso diario)
+npm run ci                            # typecheck + unit + integration
+scripts/pg-temp.sh stop "$PG_TEMP_DIR"
+```
+Para una base propia: un superusuario ejecuta una vez
+`psql "$SUPER_URL" -v dbname=consent -v migrator_password=... -v app_password=... -v mailer_password=... -f db/bootstrap-roles.sql`
+y luego `CNS_MIGRATOR_DATABASE_URL=postgresql://consent_migrator:...@host/consent npm run migrate`.
+
+## Roles (4)
+- `consent_owner` (NOLOGIN): dueño de la base y de todos los objetos y funciones SECURITY DEFINER.
+- `consent_migrator` (LOGIN, NOINHERIT): hace `SET ROLE consent_owner` en cada migración; no hereda privilegios.
+- `consent_app` (LOGIN, pool HTTP de 10 conexiones, `CNS_DATABASE_URL`): atiende las peticiones. EXECUTE de `import_invitation`, `open_invitation`, `verify_otp`, `record_decision`,
+  `revoke_decision`, `authorization_status`. SELECT por columnas **sin** `token_hash`, `code_hash` ni `decision_maker_ref`; sin UPDATE del outbox. **No puede emitir secretos.**
+- `consent_mailer` (LOGIN, NOBYPASSRLS, sin DDL, sin membresías; pool de 2 conexiones, `CNS_MAILER_DATABASE_URL`): ÚNICO con EXECUTE de `issue_otp` y `arm_invitation_token`; lee
+  `invitation(invitation_ref, student_first_name, guardian_email)` y el outbox (SELECT + UPDATE de las marcas). Nada de `verify_otp`/`record_decision`/`revoke_decision`, ni `token_hash`/`code_hash`.
+
+Por qué dos roles de runtime en el mismo proceso Node (SEC-CNS-024-V1, P0): `issue_otp` devuelve el código en claro; si lo ejecutara el mismo rol que ejecuta `verify_otp` y `record_decision`, una SOLA
+sentencia SQL inyectada en el pool de la app (`issue_otp -> verify_otp -> record_decision`) fabricaría un GRANTED (o un REVOKED) sin acceso al correo del apoderado. Con la separación, una SQLi en el
+pool de la app ya no obtiene el código ni el token. Mitiga RES-OTP-WEB-PRB frente a SQLi en el pool de la app; residual: RCE del proceso único (tiene las dos credenciales), F-RB-03, aceptado por Carlos.
+Ambos roles se verifican al arrancar por pool (`assertPoolRoles`: `assertRuntimeRole(db, expectedRole)`). `createPgPorts(uow, { mailerUow })` enruta `OtpRepo.issue/resend` y `InvitationRepo.armToken` al pool del mailer.
+`arm_invitation_token` acota la vigencia a 7 días (P-10) y solo rota un token vigente con un motivo explícito (`INVITATION_LINK_REISSUED` en el ledger).
+
+## Variables (`loadConfig`, todas obligatorias; si falta una el proceso aborta)
+`CNS_ENVIRONMENT` (LOCAL|REAL; debe coincidir con `ops.db_catalog`), `CNS_DATABASE_URL`, `CNS_MAILER_DATABASE_URL` (otro rol), `CNS_SESSION_SECRET`
+(base64 >= 32 bytes), `CNS_PUBLIC_ORIGIN`, `CNS_SMTP_URL`, `CNS_SMTP_FROM`, `CNS_MAIL_ALLOWLIST` (correos o @dominios),
+`CNS_API_KEYS` (`keyId:secretoBase64[,keyId2:...]`), `PORT`, `BIND`. Migraciones: `CNS_MIGRATOR_DATABASE_URL`. Tests: `TEST_DATABASE_URL`.
+
+## Correo (H1-06)
+Puerto `Mailer` (`src/mail/mailer.port.ts`) con `SmtpMailer` (nodemailer; TLS obligatorio: `smtps://`/465 => `secure`, otro puerto => `requireTLS`; nunca `rejectUnauthorized:false`;
+SMTP sin TLS solo a loopback y solo con `CNS_ENVIRONMENT=LOCAL`) y `MemoryMailer` (tests). Con `ops.db_catalog.data_class = SYNTHETIC` solo se envía a `CNS_MAIL_ALLOWLIST`;
+el resto no se envía (`email_outbox` queda `SUPPRESSED` + `last_error_code='SUPPRESSED_ALLOWLIST'`). Con REAL la allowlist se ignora.
+Outbox en proceso (`startOutboxWorker`, `setInterval`): claim con `FOR UPDATE SKIP LOCKED`, 3 intentos con backoff 30 s / 120 s y luego `FAILED`; SENT solo tras la respuesta del proveedor.
+Garantía al-menos-una-vez: si el proceso muere entre el envío y la marca SENT, la fila queda `SENDING` y se reenvía al vencer el lease (5 min); ese duplicado se acepta.
+La invitación NO guarda el token en el outbox: al reclamar la fila el worker genera el token, llama a `arm_invitation_token(hash)` y envía `/i/<token>` (si ya no es armable, la fila queda `FAILED` con `INVITATION_NOT_ARMABLE`).
+El OTP lo genera `issue_otp` en la base con el pool del mailer (se devuelve en claro una sola vez) y va por `sendOtpNow`; el destinatario se lee con `readGuardianEmail` sobre ese mismo pool. El worker del outbox (`deps.db`) usa el pool del mailer (síncrono, sin outbox, sin persistencia ni log). Todo el copy de `src/mail/templates/` es BORRADOR (copy legal = LEGAL DECISION de Carlos).
+Test con Mailpit: `docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit` y `MAILPIT_SMTP_URL=smtp://localhost:1025 MAILPIT_API_URL=http://localhost:8025 npm run test:integration` (sin esas variables se salta).
+
+## Seguridad del esquema (SEC-CNS-024, PROPUESTO)
+El código OTP se genera (pgcrypto) y se verifica DENTRO de la base; no existe `CNS_OTP_SECRET` ni HMAC en Node. Mitiga RES-OTP-WEB-PRB; residual F-RB-03 aceptado por Carlos (proceso único):
+el código viaja al proceso Node (pool del mailer) para ir al correo. `verify_otp` corre siempre en su propia transacción (`OtpRepo.verify` no admite unidad de trabajo externa). Ventana verificación -> decisión: 10 min.
+Arranque: `assertEnvironment` (entorno vs catálogo) y `assertRuntimeRole` (rechaza superusuario, BYPASSRLS, `session_user != current_user`, membresías). `pg_dump -Fc` + `pg_restore` restaura el ledger (CHECK con `now()` van NOT VALID).
+Requiere la extensión `pgcrypto` (incluida en postgres:16; la crea el dueño en el esquema `ext`, sin USAGE para `consent_app`).
