@@ -66,12 +66,13 @@ describe("/recovery/confirm (equivale a recovery-page.ts + recovery.js)", () => 
     const busy = await screen.findByRole("button", { name: "Confirmando…" });
     expect(busy).toHaveAttribute("aria-busy", "true");
     expect(busy).toHaveAttribute("aria-disabled", "true");
-    expect(busy).toHaveFocus();
-    await userEvent.click(busy);
+    // Determinista: el foco se comprueba con espera explícita (el estado aria-busy y el foco se asientan en commits distintos de React; antes la aserción corría entre ambos y fallaba 1 de cada N veces en CI).
+    await waitFor(() => expect(confirmBtn()).toHaveFocus());
+    await userEvent.click(confirmBtn());
     expect(fn).toHaveBeenCalledTimes(1);
     release(json(200, { result: "IN_PROGRESS" }));
     const heading = await screen.findByRole("heading", { level: 2, name: "Este retiro ya está en curso" });
-    expect(heading).toHaveFocus();
+    await waitFor(() => expect(heading).toHaveFocus());
     expect(heading).toHaveAttribute("id", "in-progress-heading");
     expect(screen.getByText("Ya confirmamos este retiro antes: no necesitas hacer nada más.")).toBeInTheDocument();
   });

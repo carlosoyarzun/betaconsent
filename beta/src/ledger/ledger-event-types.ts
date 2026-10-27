@@ -1,6 +1,6 @@
 // Gobierna: plan v2 H1-02. Espejo EXACTO del CHECK audit_event_event_type_allowlist de db/migrations/0001_catalog_school_ledger.sql
 // (lo verifica tests/unit/ledger-chain.test.ts). Subconjunto del repo anterior (origen: src/server/modules/common/ledger-event-types.ts@9345b78).
-// Ampliar = migración nueva + esta lista.
+// Ampliar = migración nueva + esta lista (0004 añadió MANAGE_LINK_ISSUED).
 
 export const LEDGER_EVENT_TYPES = [
   "INVITATION_CREATED",
@@ -23,6 +23,7 @@ export const LEDGER_EVENT_TYPES = [
   "REVOCATION_CONFIRMED",
   "REVOCATION_APPLIED",
   "REVOCATION_HELD",
+  "MANAGE_LINK_ISSUED",
 ] as const;
 
 export type LedgerEventType = (typeof LEDGER_EVENT_TYPES)[number];

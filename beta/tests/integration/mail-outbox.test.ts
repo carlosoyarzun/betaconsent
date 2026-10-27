@@ -9,7 +9,7 @@ import type { Client } from "pg";
 
 import { migrate } from "../../src/db/migrate.ts";
 import { MemoryMailer } from "../../src/mail/memory-mailer.ts";
-import { enqueueEmail, MAX_ATTEMPTS, runOutboxTick, SUPPRESSED_STATUS, type MailLogger, type OutboxDeps } from "../../src/mail/outbox-worker.ts";
+import { MAX_ATTEMPTS, runOutboxTick, SUPPRESSED_STATUS, type MailLogger, type OutboxDeps } from "../../src/mail/outbox-worker.ts";
 import { hashInvitationToken } from "../../src/domain/crypto.ts";
 import { readGuardianEmail, sendOtpNow } from "../../src/mail/otp.ts";
 import { readDataClass, type RecipientPolicy } from "../../src/mail/recipient-policy.ts";
@@ -61,6 +61,15 @@ function deps(mailer: MemoryMailer, over: Partial<OutboxDeps> = {}): OutboxDeps 
   return { db: mdb, mailer, policy: POLICY, logger, backoffMs: [0, 0], ...over };
 }
 
+/** consent_app ya no inserta en el outbox (0004): las filas de prueba con payload arbitrario las siembra el dueño. */
+async function enqueueRaw(input: { kind: string; invitationRef: string; dedupeKey: string; payload: Record<string, unknown> }): Promise<boolean> {
+  const r = await owner.query(
+    "INSERT INTO app.email_outbox (kind, invitation_ref, dedupe_key, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (tenant_id, dedupe_key) DO NOTHING RETURNING email_id",
+    [input.kind, input.invitationRef, input.dedupeKey, JSON.stringify(input.payload)],
+  );
+  return r.rows.length === 1;
+}
+
 /** Crea invitación (READY) vía los grants de consent_app y encola un correo. Devuelve email_id. */
 async function seed(email: string, kind: "INVITATION" | "DECISION_RECEIPT" = "INVITATION"): Promise<string> {
   const n = ++seq;
@@ -68,7 +77,7 @@ async function seed(email: string, kind: "INVITATION" | "DECISION_RECEIPT" = "IN
   const imp = await app.query<{ invitation_ref: string }>("SELECT * FROM app.import_invitation($1, 'Valentina', $2, 'batch-mail')", [`stu-${n}-${randomBytes(3).toString("hex")}`, email]);
   const ref = imp.rows[0]!.invitation_ref;
   const payload = kind === "INVITATION" ? { consentVersion: "v1-borrador" } : RECEIPT_PAYLOAD; // el outbox NO guarda el token: lo genera el worker al enviar
-  assert.equal(await enqueueEmail(app, { kind, invitationRef: ref, dedupeKey: `${kind}:${ref}`, payload }), true);
+  assert.equal(await enqueueRaw({ kind, invitationRef: ref, dedupeKey: `${kind}:${ref}`, payload }), true);
   return (await app.query<{ email_id: string }>("SELECT email_id FROM app.email_outbox WHERE invitation_ref = $1", [ref])).rows[0]!.email_id;
 }
 
@@ -155,7 +164,7 @@ test("SEC-CNS-024-V1: el reintento rota el token con motivo OUTBOX_RETRY (ledger
   const reasons = (await owner.query<{ payload: { reason: string } }>("SELECT payload FROM integrity.audit_event WHERE aggregate_id = $1 AND event_type = 'INVITATION_LINK_REISSUED'", [ref])).rows.map((r) => r.payload.reason);
   assert.deepEqual(reasons, ["OUTBOX_RETRY"]);
   // Segundo correo de invitación (otra dedupe_key) en el primer intento, sin motivo, sobre un token vigente: no se rota ni se envía.
-  assert.equal(await enqueueEmail(app, { kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION-AGAIN:${ref}`, payload: { consentVersion: "v1-borrador" } }), true);
+  assert.equal(await enqueueRaw({ kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION-AGAIN:${ref}`, payload: { consentVersion: "v1-borrador" } }), true);
   const before = (await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!.token_hash;
   const sentBefore = mailer.sent.length;
   await runOutboxTick(deps(mailer));
@@ -164,7 +173,7 @@ test("SEC-CNS-024-V1: el reintento rota el token con motivo OUTBOX_RETRY (ledger
   assert.deepEqual([failed.status, failed.last_error_code], ["FAILED", "TOKEN_STILL_VALID"]);
   assert.equal((await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!.token_hash, before);
   // Reenvío explícito del operador: el payload lleva el motivo.
-  assert.equal(await enqueueEmail(app, { kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION-RESEND:${ref}`, payload: { consentVersion: "v1-borrador", reissueReason: "OPERATOR_RESEND" } }), true);
+  assert.equal(await enqueueRaw({ kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION-RESEND:${ref}`, payload: { consentVersion: "v1-borrador", reissueReason: "OPERATOR_RESEND" } }), true);
   await runOutboxTick(deps(mailer));
   assert.equal(mailer.sent.length, sentBefore + 1);
   assert.notEqual((await owner.query<{ token_hash: string }>("SELECT token_hash FROM app.invitation WHERE invitation_ref = $1", [ref])).rows[0]!.token_hash, before);
@@ -195,7 +204,7 @@ test("dos workers concurrentes (SKIP LOCKED): cada correo se envía una sola vez
 test("encolado idempotente por dedupe_key", async () => {
   const id = await seed("qa@example.invalid");
   const ref = (await app.query<{ invitation_ref: string }>("SELECT invitation_ref FROM app.email_outbox WHERE email_id = $1", [id])).rows[0]!.invitation_ref;
-  assert.equal(await enqueueEmail(app, { kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION:${ref}`, payload: { linkPath: "/i/otro" } }), false);
+  assert.equal(await enqueueRaw({ kind: "INVITATION", invitationRef: ref, dedupeKey: `INVITATION:${ref}`, payload: { linkPath: "/i/otro" } }), false);
 });
 
 test("muerte entre envío y marca SENT: queda SENDING y, vencido el lease, se reenvía (duplicado aceptado y documentado)", async () => {
