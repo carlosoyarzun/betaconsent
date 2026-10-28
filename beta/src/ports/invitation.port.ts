@@ -32,4 +32,9 @@ export interface InvitationRepo {
   }): Promise<void>;
   /** null = token inválido, vencido, consumido o invitación terminal (respuesta uniforme). No consume el token. */
   openByTokenHash(tokenHash: string): Promise<OpenedInvitation | null>;
+  /**
+   * "No es mi estudiante" (cancel_invitation de 0004): OPENED|VERIFIED -> CANCELLED con `reasonCode` cerrado (SUBJECT_MISMATCH_REPORTED; sin texto libre). Idempotente si ya está CANCELLED.
+   * Lanza INVITATION_NOT_FOUND / INVITATION_NOT_CANCELLABLE / INVALID_REASON_CODE.
+   */
+  cancel(input: { readonly invitationRef: InvitationRef; readonly reasonCode: string }): Promise<void>;
 }

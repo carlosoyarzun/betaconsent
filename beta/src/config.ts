@@ -115,7 +115,9 @@ export function loadConfig(env: Env = process.env): Config {
       if (!keyId || !secret || rest.length > 0 || !/^[A-Za-z0-9_-]{1,40}$/.test(keyId)) {
         throw new ConfigError("CNS_API_KEYS debe tener la forma keyId:secretoBase64[,keyId2:secretoBase64]. Abortando (fail-closed).");
       }
-      return { keyId, secret: decodeSecret(secret, "CNS_API_KEYS") };
+      // Acepta base64 estándar o base64url (sin relleno): se normaliza al alfabeto estándar antes de la validación estricta.
+      const std = secret.replace(/-/g, "+").replace(/_/g, "/");
+      return { keyId, secret: decodeSecret(std + "=".repeat((4 - (std.length % 4)) % 4), "CNS_API_KEYS") };
     });
   if (apiKeys.length > 2 || new Set(apiKeys.map((k) => k.keyId)).size !== apiKeys.length) {
     throw new ConfigError("CNS_API_KEYS admite 1 o 2 claves con keyId distinto. Abortando (fail-closed).");

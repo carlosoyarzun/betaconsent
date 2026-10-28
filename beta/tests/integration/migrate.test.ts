@@ -23,13 +23,13 @@ after(async () => {
   await db.drop();
 });
 
-test("migra en limpio (3 archivos) y registra checksum en ops.schema_migrations", async () => {
+test("migra en limpio (5 archivos) y registra checksum en ops.schema_migrations", async () => {
   const r = await migrate(migrator, MIGRATIONS_DIR);
-  assert.deepEqual(r.applied, ["0001_catalog_school_ledger.sql", "0002_domain.sql", "0003_functions.sql"]);
+  assert.deepEqual(r.applied, ["0001_catalog_school_ledger.sql", "0002_domain.sql", "0003_functions.sql", "0004_manage_link.sql", "0005_api_nonce.sql"]);
   const owner = await connectAsOwner(db);
   try {
     const { rows } = await owner.query<{ filename: string; sha256: string }>("SELECT filename, sha256 FROM ops.schema_migrations ORDER BY filename");
-    assert.equal(rows.length, 3);
+    assert.equal(rows.length, 5);
     for (const row of rows) assert.equal(row.sha256.trim(), sha256File(readFileSync(join(MIGRATIONS_DIR, row.filename), "utf8")));
     const cat = await owner.query<{ environment: string; data_class: string }>("SELECT environment, data_class FROM ops.db_catalog");
     assert.deepEqual(cat.rows, [{ environment: "LOCAL", data_class: "SYNTHETIC" }]);
@@ -44,7 +44,7 @@ test("migra en limpio (3 archivos) y registra checksum en ops.schema_migrations"
 test("reaplicar es no-op", async () => {
   const r = await migrate(migrator, MIGRATIONS_DIR);
   assert.deepEqual(r.applied, []);
-  assert.equal(r.skipped.length, 3);
+  assert.equal(r.skipped.length, 5);
 });
 
 test("checksum alterado -> MigrationChecksumError (sin aplicar nada)", async () => {

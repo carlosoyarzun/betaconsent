@@ -125,7 +125,7 @@ test("autorizar y revocar: decisión idempotente, ALREADY_DECIDED, y NOT_AUTHORI
   const consumed = await owner.query<{ token_consumed_at: Date | null }>("SELECT token_consumed_at FROM app.invitation WHERE invitation_ref = $1", [inv]);
   assert.notEqual(consumed.rows[0]?.token_consumed_at, null);
   const outbox = await owner.query<{ kind: string; payload: Record<string, unknown> }>("SELECT kind, payload FROM app.email_outbox WHERE invitation_ref = $1", [inv]);
-  assert.deepEqual(outbox.rows.map((r) => r.kind), ["DECISION_RECEIPT"]);
+  assert.deepEqual(outbox.rows.map((r) => r.kind).sort(), ["DECISION_RECEIPT", "RECOVERY_LINK"]); // 0004: el enlace de gestión se encola en la misma tx que la decisión
   assert.ok(!JSON.stringify(outbox.rows).includes("@"));
 
   // Revocación: OTP de gestión sobre la decisión; sin verificación no se puede.
@@ -141,7 +141,7 @@ test("autorizar y revocar: decisión idempotente, ALREADY_DECIDED, y NOT_AUTHORI
   await assert.rejects(app.query("SELECT * FROM app.revoke_decision($1, $2, 'rev-key-0002')", [d1.consent_id, rver]), /ALREADY_REVOKED/);
   assert.deepEqual(await events(d1.consent_id), ["CONSENT_GRANTED", "CONSENT_REVOKED"]);
   const kinds = await owner.query<{ kind: string }>("SELECT kind FROM app.email_outbox WHERE invitation_ref = $1 ORDER BY kind", [inv]);
-  assert.deepEqual(kinds.rows.map((r) => r.kind), ["DECISION_RECEIPT", "REVOCATION_RECEIPT"]);
+  assert.deepEqual(kinds.rows.map((r) => r.kind), ["DECISION_RECEIPT", "RECOVERY_LINK", "REVOCATION_RECEIPT"]);
   const rep = await verifyLedger(owner);
   assert.equal(rep.ok, true, JSON.stringify(rep));
 });
@@ -169,7 +169,7 @@ test("20 record_decision paralelos con la misma clave -> 1 decisión y 1 evento 
     const id = res[0]!.consent_id;
     assert.equal((await owner.query("SELECT 1 FROM app.consent_decision WHERE invitation_ref = $1", [inv])).rows.length, 1);
     assert.deepEqual(await events(id), ["CONSENT_GRANTED"]);
-    assert.equal((await owner.query("SELECT 1 FROM app.email_outbox WHERE invitation_ref = $1", [inv])).rows.length, 1);
+    assert.equal((await owner.query("SELECT 1 FROM app.email_outbox WHERE invitation_ref = $1", [inv])).rows.length, 2, "recibo + enlace de gestión, una vez cada uno");
   } finally {
     await Promise.all(clients.map((c) => c.end()));
   }

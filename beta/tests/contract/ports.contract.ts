@@ -207,4 +207,19 @@ export function runPortsContract(label: string, makeEnv: () => Promise<ContractE
     assert.equal((await env.ports.otp.verify({ verificationRef: o.verificationRef, code: o.code, decisionMakerRef: DM })).outcome, "VERIFIED");
     assert.equal((await env.ports.decisions.record({ ...base, verificationRef: o.verificationRef, idempotencyKey: "idem-win-0001" })).state, "GRANTED");
   });
+  test(`[${label}] cancel (subject-mismatch): OPENED|VERIFIED -> CANCELLED, idempotente, el enlace deja de resolver; decidida no se cancela; motivo cerrado`, async () => {
+    const env = await makeEnv();
+    const a = await openedInvitation(env);
+    await rejectsWith(env.ports.invitations.cancel({ invitationRef: a.inv, reasonCode: "texto libre" }), "INVALID_REASON_CODE");
+    await env.ports.invitations.cancel({ invitationRef: a.inv, reasonCode: "SUBJECT_MISMATCH_REPORTED" });
+    await env.ports.invitations.cancel({ invitationRef: a.inv, reasonCode: "SUBJECT_MISMATCH_REPORTED" });
+    assert.equal(await env.ports.invitations.openByTokenHash(a.tokenHash), null);
+    const v = await verifiedDecision(env);
+    await env.ports.invitations.cancel({ invitationRef: v.inv, reasonCode: "SUBJECT_MISMATCH_REPORTED" });
+    assert.equal((await env.ports.decisions.getPageState(v.inv))?.invitationState, "CANCELLED");
+    await rejectsWith(env.ports.invitations.cancel({ invitationRef: "inv-no-existe", reasonCode: "SUBJECT_MISMATCH_REPORTED" }), "INVITATION_NOT_FOUND");
+    const d = await verifiedDecision(env);
+    await env.ports.decisions.record({ invitationRef: d.inv, verificationRef: d.ver, outcome: "GRANTED", consentVersion: "v-test", consentTextHash: TEXT_HASH, idempotencyKey: "idem-cancel-001" });
+    await rejectsWith(env.ports.invitations.cancel({ invitationRef: d.inv, reasonCode: "SUBJECT_MISMATCH_REPORTED" }), "INVITATION_NOT_CANCELLABLE");
+  });
 }
